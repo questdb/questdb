@@ -48,7 +48,8 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 configuration,
@@ -65,7 +66,8 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                isFromToUtc
         );
         this.value = value;
         record.of(value);
@@ -73,7 +75,12 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
-        initTimestamps();
-        return baseRecord != null && notKeyedLoop(value);
+        // initTimestamps() returns true when it aggregated the NULL bucket into the value: that bucket goes out first
+        return initTimestamps() || (baseRecord != null && notKeyedLoop(value));
+    }
+
+    @Override
+    protected boolean aggregateNullTimestampRows() {
+        return notKeyedNullLoop(value);
     }
 }

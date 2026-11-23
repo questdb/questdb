@@ -60,6 +60,8 @@ SecurityContextTest {
         assertTrue(sc.isSystemAdmin());
         assertTrue(sc.isQueryCancellationAllowed());
         assertFalse(sc.isExternal());
+        assertTrue(sc.isTableVisible(userTableToken));
+        assertNull(sc.getSelectCacheScope());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -102,6 +104,9 @@ SecurityContextTest {
         assertTrue(sc.isSystemAdmin());
         assertFalse(sc.isQueryCancellationAllowed());
         assertFalse(sc.isExternal());
+        // may read no object, so it may see none, and must not share statements with those that do
+        assertFalse(sc.isTableVisible(userTableToken));
+        assertNotNull(sc.getSelectCacheScope());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -151,6 +156,8 @@ SecurityContextTest {
         assertTrue(sc.isSystemAdmin());
         assertFalse(sc.isQueryCancellationAllowed());
         assertFalse(sc.isExternal());
+        assertTrue(sc.isTableVisible(userTableToken));
+        assertNull(sc.getSelectCacheScope());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {

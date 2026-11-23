@@ -636,6 +636,90 @@ public class ConcurrentTest {
     }
 
     @Test
+    public void testFanOutResumeNotLappedByPublisherDuringCatchUp() {
+        try (RingQueue<LongMsg> queue = new RingQueue<>(LongMsg::new, 4)) {
+            final AtomicReference<Runnable> onUpstreamRead = new AtomicReference<>();
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence workSeq = new MCSequence(queue.getCycle()) {
+                @Override
+                public long current() {
+                    final long current = super.current();
+                    final Runnable action = onUpstreamRead.getAndSet(null);
+                    if (action != null) {
+                        action.run();
+                    }
+                    return current;
+                }
+            };
+            final FanOut collectFanOut = new FanOut();
+            pubSeq.then(workSeq).then(collectFanOut).then(pubSeq);
+            final SCSequence activeSeq = new SCSequence();
+            final SCSequence idleSeq = new SCSequence();
+            collectFanOut.and(activeSeq);
+            collectFanOut.and(idleSeq);
+
+            publishCorrelationIds(pubSeq, queue, 0, 4);
+            workSeq.consumeAll(queue, msg -> {
+            });
+            Assert.assertEquals("[0,1,2,3]", consumeCorrelationIds(activeSeq, queue));
+            Assert.assertEquals("[0,1,2,3]", consumeCorrelationIds(idleSeq, queue));
+
+            collectFanOut.suspend(idleSeq);
+            // between resume()'s upstream read and its write, the publisher laps the slots idleSeq reads next
+            onUpstreamRead.set(() -> {
+                publishCorrelationIds(pubSeq, queue, 4, 6);
+                workSeq.consumeAll(queue, msg -> {
+                });
+                Assert.assertEquals("[4,5]", consumeCorrelationIds(activeSeq, queue));
+                publishCorrelationIds(pubSeq, queue, 6, 10);
+            });
+            collectFanOut.resume(idleSeq);
+            Assert.assertNull(onUpstreamRead.get());
+
+            workSeq.consumeAll(queue, msg -> {
+            });
+            Assert.assertEquals("[6,7,8,9]", consumeCorrelationIds(idleSeq, queue));
+        }
+    }
+
+    @Test
+    public void testFanOutSuspendResume() {
+        try (RingQueue<LongMsg> queue = new RingQueue<>(LongMsg::new, 4)) {
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence workSeq = new MCSequence(queue.getCycle());
+            final FanOut collectFanOut = new FanOut();
+            pubSeq.then(workSeq).then(collectFanOut).then(pubSeq);
+            final SCSequence activeSeq = new SCSequence();
+            final SCSequence idleSeq = new SCSequence();
+            collectFanOut.and(activeSeq);
+            collectFanOut.and(idleSeq);
+
+            publishCorrelationIds(pubSeq, queue, 0, 4);
+            workSeq.consumeAll(queue, msg -> {
+            });
+            Assert.assertEquals("[0,1,2,3]", consumeCorrelationIds(activeSeq, queue));
+            Assert.assertEquals(-1, pubSeq.next());
+
+            collectFanOut.suspend(idleSeq);
+            publishCorrelationIds(pubSeq, queue, 4, 8);
+            workSeq.consumeAll(queue, msg -> {
+            });
+            Assert.assertEquals("[4,5,6,7]", consumeCorrelationIds(activeSeq, queue));
+
+            collectFanOut.resume(idleSeq);
+            Assert.assertEquals(-1, idleSeq.next());
+            publishCorrelationIds(pubSeq, queue, 8, 12);
+            workSeq.consumeAll(queue, msg -> {
+            });
+            Assert.assertEquals("[8,9,10,11]", consumeCorrelationIds(activeSeq, queue));
+            Assert.assertEquals(-1, pubSeq.next());
+
+            Assert.assertEquals("[8,9,10,11]", consumeCorrelationIds(idleSeq, queue));
+            publishCorrelationIds(pubSeq, queue, 12, 13);
+        }
+    }
+
+    @Test
     public void testManyHybrid() throws Exception {
         LOG.info().$("testManyHybrid").$();
         int threadCount = 4;
@@ -985,6 +1069,21 @@ public class ConcurrentTest {
         long cursor = sequence.nextBully();
         queue.get(cursor).value = Integer.MIN_VALUE;
         sequence.done(cursor);
+    }
+
+    private static String consumeCorrelationIds(SCSequence subSeq, RingQueue<LongMsg> queue) {
+        final LongList correlationIds = new LongList();
+        subSeq.consumeAll(queue, msg -> correlationIds.add(msg.correlationId));
+        return correlationIds.toString();
+    }
+
+    private static void publishCorrelationIds(MPSequence pubSeq, RingQueue<LongMsg> queue, long lo, long hi) {
+        for (long correlationId = lo; correlationId < hi; correlationId++) {
+            final long cursor = pubSeq.next();
+            Assert.assertTrue(cursor > -1);
+            queue.get(cursor).correlationId = correlationId;
+            pubSeq.done(cursor);
+        }
     }
 
     private static class BusyConsumer extends Thread {

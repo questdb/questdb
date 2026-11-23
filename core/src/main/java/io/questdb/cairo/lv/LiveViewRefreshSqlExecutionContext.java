@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.MemoryTracker;
@@ -165,7 +166,9 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
                         baseTableReader.getMetadataVersion()
                 );
             }
-            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            final TableReader reader = getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            reader.setMemoryTracker(getMemoryTracker());
+            return reader;
         }
         return super.getReader(tableToken, version);
     }
@@ -173,7 +176,9 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (baseTableReader != null && tableToken.equals(baseTableReader.getTableToken())) {
-            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            final TableReader reader = getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            reader.setMemoryTracker(getMemoryTracker());
+            return reader;
         }
         return super.getReader(tableToken);
     }
@@ -184,6 +189,11 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     @Override
     public boolean isBackgroundJob() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewRefresh() {
         return true;
     }
 
@@ -206,5 +216,20 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         this.refreshingInstance = refreshingInstance;
         setCancelledFlag(refreshingInstance != null ? refreshingInstance.getRefreshCancelledFlag() : NEVER_CANCELLED);
         getCircuitBreaker().resetTimer();
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return refreshingInstance != null ? refreshingInstance.getDefinition().getViewName() : null;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return ExpiryReadPolicy.REJECT;
     }
 }

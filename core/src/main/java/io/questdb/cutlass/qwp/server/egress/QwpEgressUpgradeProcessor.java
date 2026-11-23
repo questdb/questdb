@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -83,6 +84,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -144,7 +146,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * into no-ops.
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
-    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
     // Carries the byte count of a 4xx upgrade rejection staged in the raw
@@ -220,6 +224,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final QwpEgressMetrics metrics;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
+    // builds the principal-qualified select cache key, see SelectCacheKey
+    private final StringSink scopedSelectCacheKeySink = new StringSink();
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
      * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
@@ -1355,8 +1361,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // present so factories compiled under different bind signatures
             // occupy different cache slots. A SQL-only key can otherwise
             // return a factory whose bind signature does not match the
-            // current request. Mirrors pgwire's TypesAndSelect design.
-            final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
+            // current request. Mirrors pgwire's TypesAndSelect design. The principal's
+            // select cache scope qualifies the key, see SecurityContext.getSelectCacheScope().
+            final CharSequence cacheKey = SelectCacheKey.of(
+                    sqlCtx.getSecurityContext().getSelectCacheScope(),
+                    decoder.buildSelectCacheKey(state.getBindVariableService()),
+                    scopedSelectCacheKeySink
+            );
             short compiledQueryType = CompiledQuery.SELECT;
             boolean queryCacheable = true;
             for (int retries = 0; ; retries++) {
@@ -1458,7 +1469,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // the parquet exporter), the partition stays mapped on pool
                 // return so the next QWP query reuses the FdCache.
                 pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
-                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, sqlCtx.getMemoryTracker(),
                         columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             } else {
                 state.beginStreaming(requestId, factory, cursor,
@@ -1752,8 +1763,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
             boolean isFirstBatch,
-            int rowsToShip,
-            boolean isPartialEmit
+            int rowsToShip
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Asserts the caller bumped streamingBatchSeq (via state.onStreamingBatchSent)
         // BEFORE reaching the socket. See QwpEgressProcessorState.consumeBatchSeqCommit.
@@ -1839,9 +1849,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // committed bytes are queued for resumeResponseSend. The bytes always
         // reach the wire, so bookkeeping must always advance.
         state.consumeStreamingCredit(qwpSize);
-        if (isPartialEmit) {
-            batchBuffer.advanceDeltaStart();
-        }
         batchBuffer.advanceStartRow(rowsToShip);
         metrics.markBatchSent(qwpSize, rowsToShip);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
@@ -1982,19 +1989,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         rawSocket.send(frame1Size + ws2HeaderSize + qwp2Size);
     }
 
-    private void sendResultBatchPrefix(
-            HttpConnectionContext context,
-            QwpEgressProcessorState state,
-            long requestId,
-            long batchSeq,
-            QwpResultBatchBuffer batchBuffer,
-            boolean isFirstBatch,
-            int rowsToShip
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendResultBatch(context, state, requestId, batchSeq, batchBuffer,
-                isFirstBatch, rowsToShip, true);
-    }
-
     private void sendResultEnd(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -2071,6 +2065,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", batchSeq=").$(state.getStreamingBatchSeq())
                         .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
                         .I$();
+                // Drop a suffix left by a partial emit; otherwise the next query
+                // skips beginBatch and ships these rows as its own.
+                batchBuffer.rollbackCurrentBatch();
                 state.endStreaming();
                 metrics.markQueryCancelled();
                 sendQueryError(context, state, requestId, QwpConstants.STATUS_CANCELLED, "cancelled by client");
@@ -2097,18 +2094,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // (no suffix carried over from a prior partial emit). Suffix-
             // carryover iterations skip it -- the scratches are already
             // partially filled and re-running beginBatch would clear them.
-            if (batchBuffer.getRowCount() == 0) {
+            final boolean hasCarriedRows = batchBuffer.getRowCount() > 0;
+            if (!hasCarriedRows) {
                 batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
             }
             // Effective cap = server MAX clamped against any client preference
             // set during the handshake. Read once per batch so a later config
             // change (e.g. a hypothetical PER-QUERY knob) would not partially
-            // apply within the inner loop. The cap counts the suffix already
-            // sitting in the buffer (getRowCount()) as well as new appends.
+            // apply within the inner loop. Drain a suffix left by partial emit
+            // before appending more rows. Scratch positions reset when the
+            // suffix is exhausted, so the next iteration can reuse them from 0.
             final HttpRawSocket rawSocket = context.getRawResponseSocket();
             final int bufSize = rawSocket.getBufferSize();
             final int batchCap = state.getMaxBatchRows();
-            int rowsToAdd = batchCap - batchBuffer.getRowCount();
+            int rowsToAdd = hasCarriedRows ? 0 : batchCap;
             // Dict ships as one wire unit; cap on wire bytes (heap + per-entry
             // varint headers). 60% leaves room for prelude + schema + table block.
             final int dictBudgetWireBytes = (bufSize * 6) / 10;
@@ -2230,14 +2229,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         batchBuffer, isFirstBatch, totalRows, rowsToShip);
                 return;
             }
-            if (isPartialEmit) {
-                sendResultBatchPrefix(context, state, requestId, currentSeq, batchBuffer,
-                        isFirstBatch, rowsToShip);
-            } else {
-                sendResultBatch(context, state, requestId, currentSeq, batchBuffer,
-                        isFirstBatch, rowsToShip, false);
-            }
-            // Credit debit, metric update, advanceStartRow, advanceDeltaStart
+            sendResultBatch(context, state, requestId, currentSeq, batchBuffer,
+                    isFirstBatch, rowsToShip);
+            // Credit debit, metric update and advanceStartRow
             // all live inside the send functions so they commit before any
             // PeerIsSlowToReadException thrown by sendFrame.
         }

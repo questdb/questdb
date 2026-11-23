@@ -264,7 +264,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             cleanupFailure = th;
         }
         try {
-            dropTempTable(task.getEntry(), tempTableToken);
+            dropTempTable(task.getEntry(), task.getTableName(), tempTableToken);
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }

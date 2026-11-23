@@ -38,7 +38,7 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
     public TxnScoreboard getTxnScoreboard(TableToken token) {
         return new TxnScoreboard() {
             @Override
-            public boolean acquireTxn(int id, long txn) {
+            public boolean acquireTxn(int id, long tableTxn, long seqTxn) {
                 return true;
             }
 
@@ -62,7 +62,7 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             }
 
             @Override
-            public boolean incrementTxn(int id, long txn) {
+            public boolean incrementTxn(int id, long tableTxn, long seqTxn) {
                 return false;
             }
 
@@ -74,6 +74,11 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             @Override
             public boolean isRangeAvailable(long fromTxn, long toTxn) {
                 return true;
+            }
+
+            @Override
+            public int scanRangeHolders(long fromTxn, long toTxn) {
+                return RANGE_FREE;
             }
 
             @Override

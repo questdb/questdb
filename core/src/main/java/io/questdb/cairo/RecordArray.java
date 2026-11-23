@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
@@ -141,6 +142,10 @@ public class RecordArray extends RecordChain {
         long offset = beginRecord();
         recordSink.copy(record, this);
         return offset;
+    }
+
+    public void putArrayAtRowIndex(long rowIndex, int columnIndex, @NotNull ArrayView value) {
+        putArray(rowToOffset(rowIndex), columnIndex, value);
     }
 
     public void recordAtRowIndex(Record record, long rowIndex) {

@@ -76,6 +76,10 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void flushFile(boolean barrier) {
+    }
+
+    @Override
     public long getAppendOffset() {
         throw new UnsupportedOperationException();
     }
@@ -381,6 +385,18 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void sync(boolean async) {
+    }
+
+    @Override
+    public void syncFlushDrain() {
+    }
+
+    @Override
+    public void syncFlushFinishIfExtended() {
+    }
+
+    @Override
+    public void syncFlushKick() {
     }
 
     @Override

@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
@@ -45,9 +47,11 @@ import org.jetbrains.annotations.Nullable;
 public class HorizonJoinSlaveState implements QuietCloseable {
     private final @Nullable ColumnTypes asOfJoinKeyTypes;
     private final boolean isKeyed;
+    private final @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate;
     private final int masterColumnCount;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final long masterTsScale;
+    private final @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private final long slaveTsScale;
     private RecordCursorFactory factory;
@@ -70,6 +74,8 @@ public class HorizonJoinSlaveState implements QuietCloseable {
             long masterTsScale,
             long slaveTsScale,
             @Nullable ColumnTypes asOfJoinKeyTypes,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
@@ -78,10 +84,13 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         this.masterTsScale = masterTsScale;
         this.slaveTsScale = slaveTsScale;
         this.asOfJoinKeyTypes = asOfJoinKeyTypes;
+        this.masterAsOfJoinMapSinkTemplate = masterAsOfJoinMapSinkTemplate;
+        this.slaveAsOfJoinMapSinkTemplate = slaveAsOfJoinMapSinkTemplate;
         this.masterColumnCount = masterColumnCount;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.isKeyed = asOfJoinKeyTypes != null;
+        assert !isKeyed || (masterAsOfJoinMapSinkTemplate != null && slaveAsOfJoinMapSinkTemplate != null);
     }
 
     @Override
@@ -150,6 +159,22 @@ public class HorizonJoinSlaveState implements QuietCloseable {
 
     public boolean isKeyed() {
         return isKeyed;
+    }
+
+    /**
+     * Creates a new master-side ASOF join key sink, or returns null for a slave without join keys.
+     * Each caller that runs on its own thread needs its own instance.
+     */
+    public @Nullable RecordSink newMasterAsOfJoinMapSink() {
+        return isKeyed ? masterAsOfJoinMapSinkTemplate.newInstance() : null;
+    }
+
+    /**
+     * Creates a new slave-side ASOF join key sink, or returns null for a slave without join keys.
+     * Each caller that runs on its own thread needs its own instance.
+     */
+    public @Nullable RecordSink newSlaveAsOfJoinMapSink() {
+        return isKeyed ? slaveAsOfJoinMapSinkTemplate.newInstance() : null;
     }
 
     public void setFilter(@Nullable Function filter) {

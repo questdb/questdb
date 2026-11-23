@@ -103,27 +103,47 @@ public interface SqlParserCallback {
 
     default RecordCursorFactory generateShowCreateLiveViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getLiveViewToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getMatViewToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+        return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowCreateTableFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken tableToken = getTableToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
+        return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowCreateViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getViewToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+        return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
+    }
+
+    /**
+     * Returns whether {@code tok} starts an edition-specific clause following an {@code EXPIRE ROWS}
+     * body. Implementations that use lookahead must restore every token they read so the trailing-clause
+     * parser can consume it normally.
+     */
+    default boolean isExpireRowsClauseBoundary(GenericLexer lexer, CharSequence tok) throws SqlException {
+        return false;
     }
 
     default RecordCursorFactory generateShowSqlFactory(IQueryModel model) {
         assert false;
         return null;
+    }
+
+    /**
+     * Returns the {@link SqlExecutionRequirements} that the factory this callback generates for a
+     * SHOW statement that lists objects or reads their metadata has on top of
+     * {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}, e.g. a factory that authorizes the caller
+     * needs the security context of the caller, which the refresh of a materialized or live view does
+     * not have.
+     */
+    default int getShowExecutionRequirements(IQueryModel model) {
+        return SqlExecutionRequirements.NONE;
     }
 
     default CreateLiveViewOperationBuilder parseCreateLiveViewExt(
@@ -221,9 +241,13 @@ public interface SqlParserCallback {
         return tok;
     }
 
+    // An object the principal may not see resolves exactly like a missing one, and before the
+    // callers' object kind checks, whose "got view name" style errors would disclose it too. A SHOW
+    // written in a view reads the object through that view, see SqlExecutionContext.isTableFunctionVisible().
     private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                || !executionContext.isTableFunctionVisibleAtCompile(tableToken, executionContext.getTableFunctionView())) {
             throw notExistsError;
         }
         return tableToken;

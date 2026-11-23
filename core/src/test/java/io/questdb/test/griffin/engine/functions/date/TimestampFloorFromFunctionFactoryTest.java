@@ -242,6 +242,39 @@ public class TimestampFloorFromFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMonthsAndYearsFloorNearMaxNanosTimestamp() throws Exception {
+        // The bucket after the value would start after the largest nanosecond timestamp,
+        // 2262-04-11T23:47:16.854775807Z. Its start must not wrap around to 1677.
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT timestamp_floor('1M', '2262-04-10T00:00:00.000000000Z'::TIMESTAMP_NS, '2024-01-15T00:00:00Z')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            timestamp_floor
+                            2262-03-15T00:00:00.000000000Z
+                            """);
+            assertQuery("SELECT timestamp_floor('1y', '2262-03-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2024-06-01T00:00:00Z')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            timestamp_floor
+                            2261-06-01T00:00:00.000000000Z
+                            """);
+
+            execute("CREATE TABLE x (ts TIMESTAMP_NS)");
+            execute("INSERT INTO x VALUES ('2262-04-10T00:00:00.000000000Z'), ('2262-04-11T23:00:00.000000000Z')");
+            assertQuery("SELECT timestamp_floor('1M', ts, '2024-01-15T00:00:00Z') month, timestamp_floor('1y', ts, '2024-06-01T00:00:00Z') year FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            month\tyear
+                            2262-03-15T00:00:00.000000000Z\t2261-06-01T00:00:00.000000000Z
+                            2262-03-15T00:00:00.000000000Z\t2261-06-01T00:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMonthsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select timestamp_floor('3M', '2016-02-10T16:18:22.862145123Z', '2016-02-10T00:00:00Z')")

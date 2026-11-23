@@ -45,6 +45,10 @@ import io.questdb.std.ObjList;
  * {@code shape} names the generator the query came from. The clause generators leave it
  * {@link QueryShape#SIMPLE}; {@link QueryGenerator} stamps the real shape on the way out, so the
  * driver can hold each generator to a minimum accepted-query rate.
+ * <p>
+ * {@code referenceSql}, when set, is an independent rewrite of the query that must return the same
+ * rows, such as the UNION ALL of plain GROUP BYs that {@code GroupingSetsClause} writes for a
+ * grouping sets query. QueryRunner compares the two when both compile and run.
  */
 public record GeneratedQuery(
         String sql,
@@ -52,11 +56,12 @@ public record GeneratedQuery(
         String bindSql,
         ObjList<String> bindNames,
         ObjList<String> bindValues,
-        QueryShape shape
+        QueryShape shape,
+        String referenceSql
 ) {
 
     public GeneratedQuery(String sql, boolean deterministic) {
-        this(sql, deterministic, null, null, null, QueryShape.SIMPLE);
+        this(sql, deterministic, null, null, null, QueryShape.SIMPLE, null);
     }
 
     public boolean hasBind() {
@@ -64,10 +69,14 @@ public record GeneratedQuery(
     }
 
     public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues) {
-        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape);
+        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape, this.referenceSql);
+    }
+
+    public GeneratedQuery withReference(String referenceSql) {
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.shape, referenceSql);
     }
 
     public GeneratedQuery withShape(QueryShape shape) {
-        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape);
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape, this.referenceSql);
     }
 }

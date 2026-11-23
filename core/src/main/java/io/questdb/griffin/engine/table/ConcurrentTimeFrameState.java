@@ -62,7 +62,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
 public class ConcurrentTimeFrameState implements QuietCloseable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final IntList columnIndexes = new IntList();
-    private final LongList columnTops = new LongList();
+    private final NativeFrameBoundaries frameBoundaries = new NativeFrameBoundaries();
     private final DirectIntList framePartitionIndexes;
     private final DirectLongList frameRowCounts;
     private final Object openLock = new Object();
@@ -172,7 +172,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
      * @param frameCursor      page frame cursor (used for lazy partition opening)
      * @param metadata         slave table metadata
      * @param columnMapping    column mapping (column indexes + writer indexes)
-     * @param isExternal       whether the cursor wraps an external data source
      * @param pageFrameMinRows min rows per page frame (from SqlExecutionContext)
      * @param pageFrameMaxRows max rows per page frame (from SqlExecutionContext)
      * @param workerCount      shared query worker count
@@ -181,7 +180,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
             TablePageFrameCursor frameCursor,
             RecordMetadata metadata,
             ColumnMapping columnMapping,
-            boolean isExternal,
             int pageFrameMinRows,
             int pageFrameMaxRows,
             int workerCount,
@@ -200,7 +198,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         }
 
         // Initialize the address cache structure (no frames added yet)
-        addressCache.of(metadata, columnMapping, isExternal);
+        addressCache.of(metadata, frameCursor);
         framePartitionIndexes.reopen();
         framePartitionIndexes.clear();
         frameRowCounts.reopen();
@@ -212,9 +210,9 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         final TableReader tableReader = frameCursor.getTableReader();
         frameCount = 0;
 
-        if (frameCursor.hasIntervalFilter()) {
-            // Interval filtering makes frame counts unpredictable from metadata.
-            // Fall back to eager enumeration of all page frames (like master).
+        if (frameCursor.hasIntervalFilter() || tableReader.hasAnyDelta()) {
+            // Interval filters and delta merges make logical frame counts unpredictable from base metadata.
+            // Fall back to eager enumeration of all page frames.
             buildFrameCacheEagerly();
         } else {
             // Pre-compute frame boundaries for all partitions.
@@ -314,36 +312,24 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
             int pageFrameMaxRows,
             int workerCount
     ) {
-        final long pageFrameRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                0,
+        frameBoundaries.of(
+                tableReader,
+                columnVersionReader,
+                columnIndexes,
+                columnCount,
+                partitionIndex,
+                partitionTimestamp,
                 partitionRowCount,
                 pageFrameMinRows,
                 pageFrameMaxRows,
                 workerCount
         );
 
-        FwdTableReaderPageFrameCursor.populateColumnTops(
-                columnTops,
-                tableReader,
-                columnVersionReader,
-                columnIndexes,
-                columnCount,
-                partitionTimestamp,
-                partitionRowCount
-        );
-
         long lo = 0;
-        while (lo < partitionRowCount) {
-            long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
-            // Shrink frame boundary at column top splits
-            for (int i = 0; i < columnCount; i++) {
-                long top = columnTops.getQuick(i);
-                if (top > lo && top < adjustedHi) {
-                    adjustedHi = top;
-                }
-            }
-            addUninitializedFrame(partitionIndex, lo, adjustedHi);
-            lo = adjustedHi;
+        for (int i = 0, n = frameBoundaries.size(); i < n; i++) {
+            final long hi = frameBoundaries.getQuick(i);
+            addUninitializedFrame(partitionIndex, lo, hi);
+            lo = hi;
         }
     }
 

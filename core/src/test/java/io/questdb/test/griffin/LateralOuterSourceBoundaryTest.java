@@ -465,7 +465,7 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
                         // The row selectors and the partition scan are siblings within this
                         // FilterOnValues, so inspect only this source's selector subtree.
                         for (int k = j + 1; k < i; k++) {
-                            if (plan.getLine(k).toString().contains("and 5<extra")) {
+                            if (plan.getLine(k).toString().contains("filter: 5<extra")) {
                                 filteredKeys++;
                             }
                         }

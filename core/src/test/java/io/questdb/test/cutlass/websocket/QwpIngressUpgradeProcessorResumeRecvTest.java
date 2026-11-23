@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -45,6 +47,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -76,6 +79,169 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     private static final byte[] DEFAULT_MASK_KEY = {0x12, 0x34, 0x56, 0x78};
     private static final int RECV_BUFFER_SIZE = 1024;
     private static final int SEND_BUFFER_SIZE = 256;
+
+    @Test
+    public void testBoundaryFailureResumesPrefixAckBeforeErrorWithoutAppendingTail() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_b"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_c")
+            );
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                state.of(-1, new AllowAllSecurityContext() {
+                    private int boundaryBChecks;
+
+                    // Passes boundary_b's check as it joins the batch and refuses the one in
+                    // its own commit: boundary_a commits first, as on a storage fault in
+                    // boundary_b's commit.
+                    @Override
+                    public void authorizeInsert(TableToken token) {
+                        if ("boundary_b".equals(token.getTableName()) && ++boundaryBChecks > 1) {
+                            throw CairoException.authorization().put("refused boundary prefix");
+                        }
+                    }
+                });
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("prefix ACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals(0, state.getHighestProcessedSequence());
+                    Assert.assertEquals(1, state.getDeferredErrorSequence());
+                    Assert.assertTrue(state.hasUnresolvedSequence());
+                    Assert.assertEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                    Assert.assertEquals(0, Unsafe.getLong(send + 3));
+                }
+                processor.resumeSend(context);
+                Assert.assertTrue("resume drains the parked ACK before writing the error", context.resumeResponseSendCalled);
+                Assert.assertEquals(2, socket.sendCallCount);
+                Assert.assertNotEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                Assert.assertEquals(1, Unsafe.getLong(send + 3));
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals("no repeated error or frame processing on resume", 2, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n");
+            assertQuery("SELECT v FROM boundary_c").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    /**
+     * A client CLOSE behind a commit batch: the batch commits before the CLOSE is
+     * handled, the commit fails, and its NACK hits backpressure. The CLOSE must still
+     * be in the receive buffer, unconsumed and masked, so the resume pass answers it.
+     */
+    @Test
+    public void testClientCloseBehindFailedBatchCommitIsHandledAfterBlockedNack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] close = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+            byte[] wire = QwpIngressWireHarness.concat(QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"), close);
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                state.of(-1, new AllowAllSecurityContext() {
+                    private boolean hasJoined;
+
+                    // Passes the check as boundary_a joins the batch and refuses the batch
+                    // commit's, which runs as the CLOSE arrives.
+                    @Override
+                    public void authorizeInsert(TableToken token) {
+                        if (hasJoined) {
+                            throw CairoException.authorization().put("refused batch commit");
+                        }
+                        hasJoined = true;
+                    }
+                });
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the batch's NACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals(0, state.getDeferredErrorSequence());
+                    Assert.assertEquals("the CLOSE must stay buffered behind the blocked NACK", close.length, state.getRecvBufferLen());
+                }
+                try {
+                    processor.resumeSend(context);
+                    Assert.fail("the buffered CLOSE must be handled after the parked NACK");
+                } catch (ServerDisconnectException expected) {
+                    // handleClose completes the handshake and tears the connection down
+                }
+                Assert.assertEquals("the parked NACK, then the CLOSE response", 2, socket.sendCallCount);
+                Assert.assertEquals("the last frame sent is a CLOSE", (byte) 0x88, Unsafe.getByte(send));
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    @Test
+    public void testBoundarySuccessConsumesStandaloneFrameBeforeBlockedAck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_b", "boundary_b")
+            );
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("ACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals("both frames must finish before any send", 1, state.getHighestProcessedSequence());
+                }
+                processor.resumeSend(context);
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals(1, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n1\n1\n");
+        });
+    }
 
     @Test
     public void testAckBlocked() throws Exception {
@@ -120,8 +286,11 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * Also when the send buffer is smaller than the ack's fixed fields.
+     */
     @Test
-    public void testAckBufferTooSmall() throws Exception {
+    public void testAckLargerThanSendBufferLeavesInPieces() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
@@ -130,7 +299,7 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
 
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            // ACK frame = 11 bytes (2 header + 9 payload). Use 10-byte buffer.
+            // ACK frame = 13 bytes (2 header + 11 payload: status, sequence, table count).
             int tinyBufSize = 10;
             long sendBuf = Unsafe.malloc(tinyBufSize, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, tinyBufSize);
@@ -140,13 +309,13 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.setHighestProcessedSequence(5);
 
-                try {
-                    processor.resumeRecv(context);
-                    Assert.fail("Expected ServerDisconnectException");
-                } catch (ServerDisconnectException e) {
-                    // expected: buffer too small for ACK (PeerDisconnectedException
-                    // caught by resumeRecv's Throwable handler → ServerDisconnectException)
-                }
+                processor.resumeRecv(context);
+
+                // The PING flushes the ack before its pong: 10 and 3 bytes of ack, then the 2-byte pong.
+                Assert.assertEquals("[10,3,2]", mockRawSocket.sentSizes.toString());
+                Assert.assertEquals(5, state.getLastAckedSequence());
+                Assert.assertTrue(state.isSendReady());
+                Assert.assertFalse(state.hasStagedFrame());
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, tinyBufSize, MemoryTag.NATIVE_DEFAULT);
@@ -1641,6 +1810,66 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A rewound frame's NACK queues behind the batch's blocked ack; resuming sends both in order.
+     */
+    @Test
+    public void testRewoundFrameNackBehindBlockedAckResumesInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rewind_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE rewind_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY,
+                            QwpIngressWireHarness.oneRowMessage("rewind_a", 100L, 1_000_000L)),
+                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY,
+                            QwpIngressWireHarness.oneRowMessage("rewind_b", 200L, 2_000_000L)),
+                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY, QwpIngressWireHarness.qwpMessage(
+                            QwpIngressWireHarness.tableBlock("rewind_a", 300L, 3_000_000L),
+                            QwpIngressWireHarness.varcharTableBlock("rewind_b", "not-a-long", 3_000_000L)
+                    ))
+            );
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the ack ahead of the NACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals("the batch's frames are covered", 1, state.getHighestProcessedSequence());
+                    Assert.assertEquals(2, state.getDeferredErrorSequence());
+                    Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, state.getDeferredErrorStatus());
+                    Assert.assertTrue(state.hasUnresolvedSequence());
+                    Assert.assertFalse(state.isCommitBatchPending());
+                    Assert.assertEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                    Assert.assertEquals(1, Unsafe.getLong(send + 3));
+                }
+                processor.resumeSend(context);
+                Assert.assertTrue("resume drains the parked ack before writing the NACK", context.resumeResponseSendCalled);
+                Assert.assertEquals(2, socket.sendCallCount);
+                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, Unsafe.getByte(send + 2));
+                Assert.assertEquals(2, Unsafe.getLong(send + 3));
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals("no repeated NACK or frame processing on resume", 2, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM rewind_a").noLeakCheck().expectSize().returns("v\n100\n");
+            assertQuery("SELECT v FROM rewind_b").noLeakCheck().expectSize().returns("v\n200\n");
+        });
+    }
+
     @Test
     public void testStateReuse() throws Exception {
         assertMemoryLeak(() -> {
@@ -2075,6 +2304,8 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
      * with configurable exception throwing.
      */
     private static class MockRawSocket implements HttpRawSocket {
+        // The size of each send that went through, in order.
+        final IntList sentSizes = new IntList();
         private final long bufferAddress;
         private final int bufferSize;
         int sendCallCount;
@@ -2107,11 +2338,13 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 throw PeerDisconnectedException.INSTANCE;
             }
             sentSize = size;
+            sentSizes.add(size);
         }
 
         void reset() {
             sendCallCount = 0;
             sentSize = 0;
+            sentSizes.clear();
         }
     }
 

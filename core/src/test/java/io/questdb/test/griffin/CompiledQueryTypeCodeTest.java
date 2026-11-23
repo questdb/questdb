@@ -82,9 +82,9 @@ public class CompiledQueryTypeCodeTest {
         Assert.assertEquals(36, CompiledQuery.ALTER_VIEW);
         Assert.assertEquals(37, CompiledQuery.ALTER_STORAGE_POLICY);
         Assert.assertEquals(38, CompiledQuery.TABLE_REBASE);
-        // Live views are the newest statement type and must sit at the end.
         Assert.assertEquals(39, CompiledQuery.CREATE_LIVE_VIEW);
         Assert.assertEquals(40, CompiledQuery.EMPTY);
-        Assert.assertEquals(CompiledQuery.EMPTY, CompiledQuery.TYPES_COUNT);
+        Assert.assertEquals(41, CompiledQuery.COMPACT);
+        Assert.assertEquals(CompiledQuery.COMPACT, CompiledQuery.TYPES_COUNT);
     }
 }

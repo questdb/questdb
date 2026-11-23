@@ -30,6 +30,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -119,6 +120,13 @@ public interface MetadataService {
      */
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
 
+    /**
+     * Called after a change no WAL replay can redo, such as an attach. A table writer takes a durable epoch on
+     * an adaptive table; nothing else needs to act.
+     */
+    default void advanceDurableEpochAfter(CharSequence operation) {
+    }
+
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
@@ -151,15 +159,38 @@ public interface MetadataService {
     void dropIndex(@NotNull CharSequence columnName);
 
     /**
-     * Enables deduplication with the given upsert keys.
+     * Enables deduplication with the given dedup keys and dedup mode.
      *
-     * @return returns true when dedup was already enabled on the table and the new upsert keys
-     * are a subset of the previous upsert keys. Implementations that don't have access
+     * @param columnsIndexes writer indexes of the dedup key columns, must include the designated timestamp
+     * @param dedupMode      {@code TableUtils.DEDUP_MODE_UPSERT} or {@code TableUtils.DEDUP_MODE_SKIP}
+     * @return returns true when dedup was already enabled on the table and the new dedup keys
+     * are a subset of the previous dedup keys. Implementations that don't have access
      * to the table metadata always return false.
      */
-    boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+    boolean enableDeduplication(LongList columnsIndexes, int dedupMode);
+
+    /**
+     * {@code ALTER TABLE ... FORCE REINDEX PARQUET}: rebuilds the indexes of the given parquet partitions outside the
+     * WAL.
+     *
+     * @param columnName        the indexed column to rebuild, or null for every index
+     * @param partitions        (partition timestamp, partition name position in SQL) pairs, empty for every parquet
+     *                          partition
+     * @param tableNamePosition SQL position of the table name, for errors without a partition of their own
+     * @param circuitBreaker    consulted between partitions for a cancel or a dropped connection, or null
+     */
+    void forceReindex(
+            @Nullable CharSequence columnName,
+            LongList partitions,
+            int tableNamePosition,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    );
 
     void forceRemovePartitions(LongList partitionTimestamps);
+
+    long getExpiryCleanupIntervalMicros();
+
+    String getExpiryPredicate();
 
     int getMetaMaxUncommittedRows();
 
@@ -234,6 +265,14 @@ public interface MetadataService {
      * Sets incremental refresh timer values for materialized view.
      */
     void setMatViewRefreshTimer(long startUs, int interval, char unit);
+
+    /**
+     * Sets (or clears) the row-expiry policy of this table. {@code predicate} is the raw SQL
+     * text of the EXPIRE ROWS WHEN predicate, or {@code null} to drop the policy.
+     * {@code cleanupIntervalMicros} is the physical-cleanup cadence in microseconds (ignored
+     * when {@code predicate} is null).
+     */
+    void setMetaExpiry(String predicate, long cleanupIntervalMicros);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

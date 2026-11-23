@@ -43,12 +43,16 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     private final String value;
 
     public SymbolConstant(CharSequence value, int index) {
+        this(value, index, true);
+    }
+
+    private SymbolConstant(CharSequence value, int index, boolean isSqlLiteral) {
         if (value == null) {
             this.value = null;
             this.utf8Value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
         } else {
-            if (Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'') && value.length() > 1) {
+            if (isSqlLiteral && Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'') && value.length() > 1) {
                 this.value = Chars.toString(value, 1, value.length() - 1);
             } else {
                 this.value = Chars.toString(value);
@@ -69,6 +73,10 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             return FALSE;
         }
         return new SymbolConstant(Chars.toString(value), 0);
+    }
+
+    public static SymbolConstant newUnquotedInstance(CharSequence value) {
+        return value != null ? new SymbolConstant(value, 0, false) : NULL;
     }
 
     @Override

@@ -20,12 +20,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class LogCapture {
-    private static final long DRAIN_TIMEOUT_MS = 2_000;
+    public static final long DRAIN_TIMEOUT_MS = 2_000;
+    // stop() must not lose a record a starved logging worker has not delivered
+    // yet; the price of this deadline is paid only when the worker is stuck.
+    public static final long STOP_DRAIN_TIMEOUT_MS = 30_000;
     private static final Log LOG = LogFactory.getLog(LogCapture.class);
     private static final AtomicLong SENTINEL_SEQ = new AtomicLong();
     private final LogConsoleWriter consoleWriter;
     private final StringSink sink = new SynchronizedSink();
     private final LogConsoleWriter.LogInterceptor interceptor = this::onLog;
+    private boolean isCapturing;
     // Real by default; a test pins the exact deadline boundary in waitFor(CharSequence, long) by
     // swapping these for a fake clock/sleeper instead of racing real wall-clock granularity.
     private LongSupplier clockMillis = System::currentTimeMillis;
@@ -81,11 +85,15 @@ public class LogCapture {
      * and all levels one writer subscribes to share a single ring queue.
      */
     public void drain() {
+        drain(DRAIN_TIMEOUT_MS);
+    }
+
+    public void drain(long timeoutMs) {
         final String sentinel = "log-capture-drain-" + SENTINEL_SEQ.incrementAndGet();
         // advisory() waits for a ring slot, so a full ring cannot drop the sentinel;
         // the deadline only bounds delivery once the record is queued
         LOG.advisory().$(sentinel).$();
-        final long deadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS;
+        final long deadline = System.currentTimeMillis() + timeoutMs;
         while (sink.indexOf(sentinel) == -1 && System.currentTimeMillis() < deadline) {
             Os.sleep(1);
         }
@@ -93,12 +101,25 @@ public class LogCapture {
 
     public void start() {
         consoleWriter.setInterceptor(interceptor);
+        isCapturing = true;
         drain();
         sink.clear();
     }
 
     public void stop() {
+        // A second stop() (a test's own finally plus assertMemoryLeak's) has nothing
+        // to drain: the sentinel could no longer reach the sink and would only wait
+        // out the deadline.
+        if (!isCapturing) {
+            return;
+        }
+        // Records are delivered by the logging worker after the caller's log call
+        // returns. Without this drain a record logged just before stop() can still
+        // be in the ring when the interceptor is removed, and it then reaches the
+        // console instead of the capture.
+        drain(STOP_DRAIN_TIMEOUT_MS);
         consoleWriter.setInterceptor(null);
+        isCapturing = false;
     }
 
     public void waitFor(String value) {

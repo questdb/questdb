@@ -98,11 +98,6 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             failure = th;
         }
         try {
-            dispatcher.signalQueueProgress();
-        } catch (Throwable th) {
-            failure = Misc.foldCleanupFailure(failure, th);
-        }
-        try {
             runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, ctx, shardIndex, isOwner);
         } catch (Throwable th) {
             failure = Misc.foldCleanupFailure(failure, th);

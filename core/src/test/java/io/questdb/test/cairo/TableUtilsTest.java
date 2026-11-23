@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -33,6 +34,9 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -41,6 +45,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -54,6 +60,8 @@ import org.junit.Test;
 import java.io.File;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -70,6 +78,35 @@ public class TableUtilsTest extends AbstractTest {
     @After
     public void tearDown() {
         Misc.free(path);
+    }
+
+    @Test
+    public void testActivePartitionLastCommitSecondsRoundTrip() {
+        // Absent and non-positive stamps persist as 0, "no stamp", which reads back as LONG_NULL.
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(Numbers.LONG_NULL));
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(0));
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(-1));
+        Assert.assertEquals(Numbers.LONG_NULL, TableUtils.activePartitionLastCommitSecondsToMicros(0));
+
+        // A partial second rounds up, so the IDLE window the stamp opens never ends early.
+        Assert.assertEquals(1, TableUtils.activePartitionLastCommitMicrosToSeconds(1));
+        Assert.assertEquals(1, TableUtils.activePartitionLastCommitMicrosToSeconds(Micros.SECOND_MICROS));
+        Assert.assertEquals(2, TableUtils.activePartitionLastCommitMicrosToSeconds(Micros.SECOND_MICROS + 1));
+        Assert.assertEquals(Micros.SECOND_MICROS, TableUtils.activePartitionLastCommitSecondsToMicros(1));
+
+        // A wall clock reading round trips at whole-second resolution.
+        final long now = 1_767_225_600_123_456L; // 2026-01-01T00:00:00.123456Z
+        Assert.assertEquals(
+                1_767_225_601 * Micros.SECOND_MICROS,
+                TableUtils.activePartitionLastCommitSecondsToMicros(TableUtils.activePartitionLastCommitMicrosToSeconds(now))
+        );
+
+        // The value is unsigned: the top of the 32-bit range, 2106-02-07T06:28:15Z, still round trips, and a
+        // stamp past it does not fit and persists as "no stamp".
+        final long maxMicros = 0xFFFF_FFFFL * Micros.SECOND_MICROS;
+        Assert.assertEquals(-1, TableUtils.activePartitionLastCommitMicrosToSeconds(maxMicros));
+        Assert.assertEquals(maxMicros, TableUtils.activePartitionLastCommitSecondsToMicros(-1));
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(maxMicros + 1));
     }
 
     @Test
@@ -91,7 +128,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -122,7 +160,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -152,7 +191,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -236,10 +276,25 @@ public class TableUtilsTest extends AbstractTest {
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_STORAGE_POLICY)));
+        // The partition compaction sweep holds the writer to land its swap, exactly as
+        // STORAGE POLICY does; apply must not log its own scheduled work as an intruder.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_COMPOSITE_PARTITION_SWAP)));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_PARQUET_PARTITION_SWAP)));
+        // A publisher that finds the writer back in the pool ticks the queue under the pool's own reason.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("test"));
+
+        // The pool reports OWNERSHIP_REASON_UNKNOWN while a holder is still constructing the
+        // writer and has not stamped its reason yet. That string interns to the same reference
+        // as AbstractMultiTenantPool.NO_LOCK_REASON ("unknown"), which a reference-equality
+        // escape used to misread as "no reason, treat as solicited" - silently dropping the
+        // in-flight WAL apply notification with no recovery. An unidentified holder must be
+        // unsolicited so ApplyWal2TableJob re-arms notification delivery.
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_UNKNOWN));
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(AbstractMultiTenantPool.NO_LOCK_REASON));
     }
 
     @Test
@@ -261,6 +316,13 @@ public class TableUtilsTest extends AbstractTest {
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
         testIsValidColumnName('\n', false);
+        // 0x10-0x1f stay legal, including 0x1f and 0x1e, which RowExpiryUtil uses as the EXPIRE ROWS
+        // policy separator and escape character. The policy encoding escapes them in its fields, so a
+        // name an earlier release accepted keeps working.
+        testIsValidColumnName((char) 0x10, true);
+        testIsValidColumnName((char) 0x1b, true);
+        testIsValidColumnName((char) 0x1e, true);
+        testIsValidColumnName((char) 0x1f, true);
         Assert.assertFalse(TableUtils.isValidColumnName("..", 127));
         Assert.assertFalse(TableUtils.isValidColumnName(".", 127));
         Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv", 127));
@@ -278,6 +340,10 @@ public class TableUtilsTest extends AbstractTest {
     @Test
     public void testIsValidTableName() {
         Assert.assertFalse(TableUtils.isValidTableName("?abcd", 127));
+        // 0x10-0x1f stay legal in a table name too (see testIsValidColumnName).
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x1f + "t", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x1e + "t", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x10 + "t", 127));
         Assert.assertFalse(TableUtils.isValidTableName("", 127));
         Assert.assertFalse(TableUtils.isValidTableName(" ", 127));
         Assert.assertFalse(TableUtils.isValidTableName("./", 127));
@@ -336,6 +402,28 @@ public class TableUtilsTest extends AbstractTest {
             Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testSymbolDataHasNullsAcrossScanChunks() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long rowCount = TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS + 2L;
+            final long size = rowCount * Integer.BYTES;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memset(address, size, 0);
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+                final long[] nullRows = {0, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS - 1, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - 1};
+                for (long row : nullRows) {
+                    Unsafe.putInt(address + row * Integer.BYTES, SymbolTable.VALUE_IS_NULL);
+                    Assert.assertTrue("null at row " + row, TableUtils.symbolDataHasNulls(address, rowCount));
+                    Unsafe.putInt(address + row * Integer.BYTES, 0);
+                }
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test

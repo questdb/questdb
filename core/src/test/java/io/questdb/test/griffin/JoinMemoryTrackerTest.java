@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.std.MemoryTag;
@@ -710,11 +711,21 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(20))");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
             drainWalQueue();
-            assertQuery("SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n20\n");
+            // The fused hash join GROUP BY factory takes this aggregate when it is enabled, so the
+            // test switches it off to keep the light hash outer join that it targets.
+            final boolean isHashJoinGroupByEnabled = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            try {
+                final String sql = "SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)";
+                assertUsesFactory(sql, HashOuterJoinLightRecordCursorFactory.class);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n20\n");
+            } finally {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isHashJoinGroupByEnabled);
+            }
         });
     }
 
@@ -755,21 +766,15 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testMarkoutHorizonCompileWithoutOpenDoesNotLeak() throws Exception {
-        // The markout cross-join optimization holds a RecordArray for the slave offset grid. It is
-        // lazy (no native backing until the first of() materializes the slave), so a factory compiled
-        // but never opened frees nothing on close(). assertMemoryLeak catches a regression that makes
-        // the RecordArray allocate eagerly in the constructor.
+        // Verify the compiled markout factory releases its resources without opening a cursor.
+        // Inspect the factory chain because EXPLAIN opens the cursor and materializes the slave.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp)");
             final String sql = "SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts " +
                     "FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(100)) offsets " +
                     "ORDER BY order_ts + usec_offs";
-            assertUsesMarkoutHorizon(sql);
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                // intentionally never call getCursor()
-            }
+            assertUsesFactory(sql, MarkoutHorizonRecordCursorFactory.class);
         });
     }
 

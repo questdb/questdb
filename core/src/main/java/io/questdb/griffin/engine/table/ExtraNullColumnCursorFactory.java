@@ -395,6 +395,21 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getDesignatedTimestampPageAddress() {
+            return baseFrame.getDesignatedTimestampPageAddress();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageSize() {
+            return baseFrame.getDesignatedTimestampPageSize();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageTop() {
+            return baseFrame.getDesignatedTimestampPageTop();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }
@@ -405,6 +420,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getIndexRowHi() {
+            return baseFrame.getIndexRowHi();
+        }
+
+        @Override
+        public long getIndexRowLo() {
+            return baseFrame.getIndexRowLo();
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             return columnIndex < columnSplit ? baseFrame.getPageAddress(columnIndex) : 0;
         }
@@ -412,6 +437,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public long getPageSize(int columnIndex) {
             return columnIndex < columnSplit ? baseFrame.getPageSize(columnIndex) : 0;
+        }
+
+        @Override
+        public long getPageTop(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getPageTop(columnIndex) : 0;
         }
 
         @Override
@@ -435,6 +465,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getPartitionFrameState() {
+            return baseFrame.getPartitionFrameState();
+        }
+
+        @Override
         public long getPartitionHi() {
             return baseFrame.getPartitionHi();
         }
@@ -447,6 +482,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
+        }
+
+        @Override
+        public boolean isSkipSkeleton() {
+            return baseFrame.isSkipSkeleton();
         }
 
         public ExtraNullColumnPageFrame of(PageFrame basePageFrame) {
@@ -503,6 +543,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public boolean hasActivePushdownFilter() {
             return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
         }
 
         @Override
@@ -640,7 +685,14 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
-            return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
+            return columnIndex < columnSplit
+                    ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction)
+                    : null;
+        }
+
+        @Override
+        public long getIndexRowLoForCurrentFrame() {
+            return baseCursor.getIndexRowLoForCurrentFrame();
         }
 
         @Override
@@ -721,6 +773,15 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((ExtraNullColumnRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+            return baseCursor.recordAtSourceRow(
+                    ((ExtraNullColumnRecord) record).getBaseRecord(),
+                    sourceRowRef,
+                    timestamp
+            );
         }
 
         @Override

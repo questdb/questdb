@@ -55,6 +55,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -92,6 +93,20 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public static Status classifyFailureStatus(SqlExecutionCircuitBreaker circuitBreaker) {
         return circuitBreaker.checkIfTrippedNoThrottle() ? Status.CANCELLED : Status.FAILED;
+    }
+
+    /**
+     * The select text that reads a whole table, for an export that materializes through a temp table. The table
+     * name has to go in quoted: a name that needs quoting, such as {@code my table}, otherwise parses as table
+     * {@code my} aliased {@code table}, which exports a DIFFERENT table when one named {@code my} exists and
+     * fails asynchronously when it does not. Nothing inside the name needs escaping - a double quote is one of
+     * the characters {@link io.questdb.cairo.TableUtils#isValidTableName} rejects, so a table name never holds
+     * one.
+     */
+    public static String selectAllText(CharSequence tableName) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.putAscii("SELECT * FROM \"").put(tableName).putAscii('"');
+        return sink.toString();
     }
 
     public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
@@ -398,6 +413,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setWriteCallback(@Nullable StreamWriteParquetCallBack writeCallback) {
         this.writeCallback = writeCallback;
+    }
+
+    // The zero-copy paths hand raw page addresses to the streaming writer. A custom
+    // (Delta) frame has none, so reading it would export wrong rows or abort the JVM.
+    // Callers route such cursors row by row; this catches a path that does not.
+    static void checkRawPageFrame(PageFrame frame) {
+        if (frame.getPartitionFrameState() != 0) {
+            throw CairoException.critical(0)
+                    .put("parquet export cannot read a custom page frame [partitionIndex=")
+                    .put(frame.getPartitionIndex())
+                    .put(']');
+        }
     }
 
     protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
@@ -783,6 +810,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {
             assert streamWriter != -1 && writeCallback != null;
+            checkRawPageFrame(frame);
             if (frame.getFormat() == PartitionFormat.NATIVE) {
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();

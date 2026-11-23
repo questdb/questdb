@@ -235,7 +235,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     slaveFrameCursor,
                     slaveMetadata,
                     slaveFrameCursor.getColumnMapping(),
-                    slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
                     executionContext.getSharedQueryWorkerCount(),
@@ -288,6 +287,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
+
+            if (!allFramesActive) {
+                throw buildInterruptionException();
             }
         } finally {
             masterFrameSequence.getAtom().setSkipAggregation(oldSkipAggregation);

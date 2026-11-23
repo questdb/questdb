@@ -279,10 +279,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                         .query("filename", "concurrent_cancel_" + threadId)
                                         .query("row_group_size", "1000");
 
-                                try (var ignore = req.send()) {
-
-                                    // Let the export start
-                                    Os.sleep(100);
+                                // ExportQueryProcessor registers the export before it sends the response headers.
+                                // Disconnecting only once they arrive leaves no request queued on the server, so no
+                                // export can start after the wait below finds none active.
+                                try (var respHeaders = req.send()) {
+                                    respHeaders.await();
+                                    TestUtils.assertEquals("200", respHeaders.getStatusCode());
                                 }
                                 completedCount.incrementAndGet();
                             } catch (Exception e) {

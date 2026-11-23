@@ -337,7 +337,9 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
                         single_process!(row, row_vec, idx, i8, u16_to_str);
                     }
                     _ => {
-                        todo!("Don't support {} type now.", column.type_().name())
+                        // Treat unknown types as varchar/text
+                        eprintln!("WARNING: unknown PG type '{}' (oid={}), treating as text", column.type_().name(), column.type_().oid());
+                        single_process!(row, row_vec, idx, String, varchar_to_str);
                     }
                 }
             }

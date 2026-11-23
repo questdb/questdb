@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -49,6 +50,18 @@ public class IndexFwdNullReader implements IndexReader {
     @Override
     public void close() {
         Misc.clear(freeCursors);
+    }
+
+    // The reader stands in for a partition that does not hold the column: every row of it reads as NULL, key 0. Callers
+    // ask only about partitions that hold rows.
+    @Override
+    public int collectDistinctKeys(DirectBitSet foundKeys) {
+        return foundKeys.getAndSet(0) ? 0 : 1;
+    }
+
+    @Override
+    public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        return rowLo > rowHi || foundKeys.getAndSet(0) ? 0 : 1;
     }
 
     @Override

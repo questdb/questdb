@@ -138,6 +138,70 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevBucketRenameKeepsUserFloorKey() throws Exception {
+        // FILL(PREV) variant of the 2h user floor shape. PREV carries the last real value
+        // forward per key: the 04:00 key repeats 4.0 at 02:00 and 03:00, the 02:00 key
+        // has nothing before 03:00 and stays null.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(PREV) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevBucketWhenLastTimestampAliasedAsTimestamp() throws Exception {
+        // last(ts) AS ts takes the timestamp's name, so generateFill must fill by the recorded
+        // bucket and not by the TIMESTAMP column that merely carries the name ts (#7838).
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT last(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            2024-01-01T03:30:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevBucketWhenTimestampNamedLikeAggregate() throws Exception {
+        // The designated timestamp is named max, so max(v) carries the same token and
+        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
+        // column surfaces as max1 because of the pre-existing alias de-duplication; the
+        // test pins the filled gap row, not that name.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createTimestampNamedMaxTable();
+            assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("max")
+                    .returns("""
+                            max\tmax1
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevByte() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1201,6 +1265,30 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevKeyedBucketKeyRenamedByAggregateAlias() throws Exception {
+        // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
+        // renames the bucket key to avg1. The column surfaces as avg1 instead of avg: that
+        // naming comes from the pre-existing key rename, not from fill, and this test does
+        // not endorse it.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT k, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(PREV) ORDER BY k, v")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv\tavg1
+                            a\t2.0\t2024-01-01T00:00:00.000000Z
+                            a\t2.0\t2024-01-01T01:00:00.000000Z
+                            a\t2.0\t2024-01-01T02:00:00.000000Z
+                            a\t6.0\t2024-01-01T03:00:00.000000Z
+                            b\t4.0\t2024-01-01T01:00:00.000000Z
+                            b\t4.0\t2024-01-01T02:00:00.000000Z
+                            b\t8.0\t2024-01-01T03:00:00.000000Z
+                            b\tnull\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevKeyedCte() throws Exception {
         assertMemoryLeak(() -> {
             // Wrapping SAMPLE BY FILL(PREV) in a CTE verifies the FILL_KEY
@@ -1773,6 +1861,31 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2024-01-01T10:00:00.000000Z\t1.0
                             2024-01-02T10:00:00.000000Z\t1.0
                             2024-01-03T10:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevOuterFilteredGroupByDoesNotRefill() throws Exception {
+        // FILL(PREV) takes the keyword path in generateFill (a placeholder instead of a
+        // parsed function). The inner fill yields 1.0, 2.0, 2.0 (prev), 3.5; the filter
+        // keeps 00:00 and 03:00 only. A leaked outer PREV fill would re-insert 01:00
+        // and 02:00 with the previous count.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV))
+                    WHERE v < 1.5 OR v > 3
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
                             """);
         });
     }

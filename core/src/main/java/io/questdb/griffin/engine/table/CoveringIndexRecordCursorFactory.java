@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ScannedColumnTopProbe;
@@ -38,8 +39,11 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
+import io.questdb.cairo.idx.CoveringIndexCursor;
+import io.questdb.cairo.idx.CoveringRow;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.SourceRowCursor;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.DataSource;
@@ -119,6 +123,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // exposes frames.
     private final RecordCursorFactory backup;
     private final IntList columnIndexes;
+    private final CompositeAwarePartitionFrameCursor compositeFrameCursor = new CompositeAwarePartitionFrameCursor();
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
@@ -127,10 +132,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // checks that per open rather than trusting it.
     private final boolean isBackupSuppressedByHint;
     // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
-    // was built from them and so already owns them; see the constructor parameter.
+    // was built from them and so already owns them.
     private final boolean isKeyFunctionOwner;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
+    private final IntList keyValueKeyCache;
     // Runtime-owned key list for adaptive symbol-pattern routing. The adaptive factory refreshes this
     // list before opening this delegate and retains ownership; this factory only reads it.
     private final IntList patternKeys;
@@ -140,27 +146,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final MultiKeyCoveringCursor multiKeyCursor;
     private final MultiKeyCoveringPageFrameCursor multiKeyPageFrameCursor;
     private final int[] queryColToIncludeIdx;
-    private final IntList resolvedKeys;
     private final SingleKeyCoveringCursor singleKeyCursor;
     private final SingleKeyCoveringPageFrameCursor singleKeyPageFrameCursor;
     private final Function symbolFunction;
-    private final boolean symbolFunctionRuntimeConstant;
+    private int symbolKeyCache = SymbolTable.VALUE_NOT_FOUND;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory dfcFactory,
             int indexColumnIndex,
-            int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
             int @NotNull [] queryColToIncludeIdx,
             @Nullable ObjList<Function> keyValueFuncs,
-            @Nullable TableReader reader,
             boolean latestBy,
             @Nullable Function latestByFilter,
             @Nullable IntList patternKeys,
             @Nullable RecordCursorFactory backup,
-            boolean backupOwnsKeyFunctions,
             boolean isBackupSuppressedByHint
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
@@ -168,14 +170,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
         this.backup = backup;
-        this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
+        this.isKeyFunctionOwner = backup == null;
         this.isBackupSuppressedByHint = isBackupSuppressedByHint;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
-        this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
@@ -190,6 +191,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
         this.keyValueFuncs = keyValueFuncs != null ? new ObjList<>(keyValueFuncs) : null;
+        if (this.keyValueFuncs != null) {
+            this.keyValueKeyCache = new IntList(this.keyValueFuncs.size());
+            keyValueKeyCache.setAll(this.keyValueFuncs.size(), SymbolTable.VALUE_NOT_FOUND);
+        } else {
+            this.keyValueKeyCache = null;
+        }
         int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
@@ -199,26 +206,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // a refactor hazard if the defensive copy above is ever changed or removed.
         final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
         if (keyValueFuncsCopy != null || patternKeys != null) {
-            final int multiKeyCapacity;
-            if (patternKeys != null) {
-                // Pattern path: the matched-key set is not known until getCursor (the adaptive owner
-                // resolves it from the static symbol table at execution time, so it also reflects symbols
-                // added after compile). Leave resolvedKeys null and size the merge with a small growable
-                // default.
-                this.resolvedKeys = null;
-                multiKeyCapacity = 16;
-            } else {
-                this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
-                multiKeyCapacity = keyValueFuncsCopy.size();
-                if (reader != null) {
-                    SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                    for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
-                        Function f = keyValueFuncsCopy.getQuick(i);
-                        int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
-                        resolvedKeys.add(key);
-                    }
-                }
-            }
+            final int multiKeyCapacity = patternKeys != null ? 16 : keyValueFuncsCopy.size();
             final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
             this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
             this.singleKeyCursor = null;
@@ -227,11 +215,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     : null;
             this.singleKeyPageFrameCursor = null;
         } else {
-            this.resolvedKeys = null;
-            this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+            this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
             this.multiKeyCursor = null;
             this.singleKeyPageFrameCursor = !latestBy
-                    ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
+                    ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
                     : null;
             this.multiKeyPageFrameCursor = null;
         }
@@ -318,8 +305,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(dfcFactory);
             Misc.free(latestByFilter);
         }
-        // The key functions are the one part the backup does not always adopt: the LATEST ON
-        // single-key backup takes a resolved key as an int and never sees the function.
+        // The composite wrapper is this factory's own, never shared with the backup.
+        Misc.free(compositeFrameCursor);
         if (isKeyFunctionOwner) {
             Misc.free(symbolFunction);
             Misc.freeObjList(keyValueFuncs);
@@ -410,12 +397,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
     }
 
+    private int resolveKey(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
+        symbolFunction.init(frameCursor, executionContext);
+        symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
+        return symbolKeyCache;
+    }
+
+    private void resolveKeys(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext, IntList keys) throws SqlException {
+        Function.init(keyValueFuncs, frameCursor, executionContext, null);
+        final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+        keys.clear();
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
+            keyValueKeyCache.setQuick(i, key);
+            if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
+                keys.add(key);
+            }
+        }
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                latestBy
         );
         try {
             if (multiKeyCursor != null) {
@@ -423,28 +432,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     multiKeyCursor.multiKeys = patternKeys;
                     multiKeyCursor.of(frameCursor);
                 } else {
-                    if (keyValueFuncs != null) {
-                        Function.init(keyValueFuncs, frameCursor, executionContext, null);
-                    }
-                    SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                    multiKeyCursor.multiKeys.clear();
-                    for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                        int key = resolvedKeys.getQuick(i);
-                        if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                            // keyOf() maps a null value to VALUE_IS_NULL, the NULL key, which
-                            // the chain does carry postings for. Short-circuiting to
-                            // VALUE_NOT_FOUND instead would drop every NULL row of the scan.
-                            key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
-                        }
-                        // Bind-variable / runtime-constant list elements may resolve
-                        // to the same symbol key; dedup so the multi-key merge does
-                        // not open a duplicate posting cursor per key and merge the
-                        // same row-id stream twice (duplicate rows / inflated
-                        // aggregates).
-                        if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
-                            multiKeyCursor.multiKeys.add(key);
-                        }
-                    }
+                    resolveKeys(frameCursor, executionContext, multiKeyCursor.multiKeys);
                     if (mustUseBackup(frameCursor, multiKeyCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL))) {
                         frameCursor = Misc.free(frameCursor);
                         return backup.getCursor(executionContext);
@@ -465,16 +453,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return multiKeyCursor;
             }
 
-            int resolvedKey;
-            if (!this.symbolFunctionRuntimeConstant) {
-                resolvedKey = singleKeyCursor.symbolKey;
-            } else {
-                symbolFunction.init(frameCursor, executionContext);
-                SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                // See the multi-key branch above: keyOf() answers VALUE_IS_NULL for a null
-                // value, so let it, rather than reporting the key as unknown.
-                resolvedKey = symbolMapReader.keyOf(symbolFunction.getStrA(null));
-            }
+            final int resolvedKey = resolveKey(frameCursor, executionContext);
             if (mustUseBackup(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL)) {
                 frameCursor = Misc.free(frameCursor);
                 return backup.getCursor(executionContext);
@@ -519,36 +498,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             throw CairoException.nonCritical().put("backward covering scan is not supported for multi-key index queries");
         }
         int configMaxRows = executionContext.getPageFrameMaxRows();
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                descending
         );
         try {
-            TableReader reader = frameCursor.getTableReader();
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
                     multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                     return multiKeyPageFrameCursor;
                 }
-                if (keyValueFuncs != null) {
-                    Function.init(keyValueFuncs, frameCursor, executionContext, null);
-                }
-                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                multiKeyPageFrameCursor.multiKeys.clear();
-                for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                    int key = resolvedKeys.getQuick(i);
-                    if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                        // See getCursor(): keyOf() resolves a null value to the NULL key.
-                        key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
-                    }
-                    // See getCursor(): dedup duplicate resolved keys so the
-                    // parallel GROUP BY page-frame path does not over-count.
-                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyPageFrameCursor.multiKeys.contains(key)) {
-                        multiKeyPageFrameCursor.multiKeys.add(key);
-                    }
-                }
+                resolveKeys(frameCursor, executionContext, multiKeyPageFrameCursor.multiKeys);
                 // A suppressed backup is exactly what leaves this page-frame cursor reachable
                 // for a null-capable key, so the promise is checked here too.
                 checkHintPromise(frameCursor, multiKeyPageFrameCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL));
@@ -557,16 +522,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                 return multiKeyPageFrameCursor;
             }
-            // Single-key path: see the matching block in getCursor().
-            int resolvedKey;
-            if (!this.symbolFunctionRuntimeConstant) {
-                resolvedKey = singleKeyPageFrameCursor.symbolKey;
-            } else {
-                symbolFunction.init(frameCursor, executionContext);
-                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                // See getCursor(): keyOf() resolves a null value to the NULL key.
-                resolvedKey = smr.keyOf(symbolFunction.getStrA(null));
-            }
+            final int resolvedKey = resolveKey(frameCursor, executionContext);
             // See the multi-key branch above.
             checkHintPromise(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL);
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
@@ -743,28 +699,59 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     /**
      * Open a forward {@link CoveringRowCursor} for a single key over a partition's
-     * row range, or null when the key has no rows there (the index reader returns
-     * EmptyRowCursor, which is not a CoveringRowCursor). Shared by the record and
-     * page-frame multi-key mergers, which hold one such cursor per key at a time.
+     * row range, or null when the key has no rows there (the native index reader
+     * returns EmptyRowCursor, which is not a CoveringRowCursor). Shared by the
+     * record and page-frame multi-key mergers, which hold one such cursor per key
+     * at a time.
      */
     private static CoveringRowCursor openForwardCoveringCursor(
-            TableReader tableReader,
-            int indexColumnIndex,
+            IndexReader indexReader,
             int[] requiredIncludeIndices,
-            int partitionIndex,
             int rawSymbolKey,
             long rowLo,
             long rowHi
     ) {
-        IndexReader indexReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
-        RowCursor rowCursor = indexReader.getCursor(
+        final RowCursor rowCursor = indexReader.getCursor(
                 TableUtils.toIndexKey(rawSymbolKey),
                 rowLo,
                 rowHi - 1,
                 requiredIncludeIndices
         );
-        if (rowCursor instanceof CoveringRowCursor crc) {
-            return crc;
+        if (rowCursor instanceof CoveringRowCursor coveringCursor) {
+            return coveringCursor;
+        }
+        Misc.free(rowCursor);
+        return null;
+    }
+
+    /**
+     * Opens a source-aware Delta cursor when available, otherwise a native
+     * covering posting cursor. Native storage is transactional and writers seal
+     * sidecars before commit, so a partition that holds rows for the key returns
+     * a CoveringRowCursor. A missing key returns EmptyRowCursor, which is
+     * normalized to null so callers can advance to the next partition.
+     */
+    private static CoveringIndexCursor openTimestampBoundedCursor(
+            IndexReader indexReader,
+            int key,
+            long rowLo,
+            long rowHi,
+            int[] requiredIncludeIndices,
+            long timestampLo,
+            long timestampHi
+    ) {
+        final SourceRowCursor sourceCursor = indexReader.getSourceRowCursor(
+                key,
+                requiredIncludeIndices,
+                timestampLo,
+                timestampHi
+        );
+        if (sourceCursor != null) {
+            return sourceCursor;
+        }
+        final RowCursor rowCursor = indexReader.getCursor(key, rowLo, rowHi, requiredIncludeIndices);
+        if (rowCursor instanceof CoveringRowCursor coveringCursor) {
+            return coveringCursor;
         }
         Misc.free(rowCursor);
         return null;
@@ -779,16 +766,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final SymbolTable[] symTablesCache;
         protected final int[] symbolIncludeCols;
         protected SqlExecutionCircuitBreaker circuitBreaker;
+        // Native and Delta cursors stay on separate fields and call sites, so each site
+        // keeps a single receiver type and the JIT inlines the row loop.
         protected CoveringRowCursor currentRowCursor;
+        protected SourceRowCursor currentSourceCursor;
         protected PartitionFrameCursor frameCursor;
         protected Function latestByFilter;
         protected TableReader tableReader;
 
-        CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx,
+        CoveringCursor(int indexColumnIndex, int[] queryColToIncludeIdx,
                        int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                        boolean latestBy, RecordMetadata metadata) {
             this.indexColumnIndex = indexColumnIndex;
-            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, symbolKey, metadata);
+            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, metadata);
             this.requiredIncludeIndices = requiredIncludeIndices;
             this.symbolIncludeCols = symbolIncludeCols;
             this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
@@ -806,7 +796,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // still holds it), so the cursor re-pools into a live reader rather than a
             // stale/closed one. Mirrors CoveringPageFrameCursor.close() (closePendingCursor
             // before freeing frameCursor).
-            this.currentRowCursor = Misc.free(currentRowCursor);
+            freeCurrentCursors();
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -844,6 +834,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     coveringRecord.setRowId(currentRowCursor.next());
                     return true;
                 }
+                if (currentSourceCursor != null && currentSourceCursor.hasNext()) {
+                    coveringRecord.setRowId(currentSourceCursor.nextOrdinal());
+                    return true;
+                }
                 if (!advanceKey()) {
                     return false;
                 }
@@ -873,7 +867,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (frameCursor != null) {
                 frameCursor.toTop();
             }
-            currentRowCursor = Misc.free(currentRowCursor);
+            freeCurrentCursors();
             resetIterationState();
         }
 
@@ -888,21 +882,37 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 int partitionIndex = frame.getPartitionIndex();
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi() - 1;
+                long timestampLo = frame.getTimestampLo();
+                long timestampHi = frame.getTimestampHi();
                 int indexKey = TableUtils.toIndexKey(rawSymbolKey);
 
                 if (latestByFilter != null) {
                     IndexReader bwdReader = tableReader.getIndexReader(
                             partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
-                    RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
+                    CoveringIndexCursor bwdCursor = openTimestampBoundedCursor(
+                            bwdReader,
+                            indexKey,
+                            rowLo,
+                            rowHi,
+                            requiredIncludeIndices,
+                            timestampLo,
+                            timestampHi
+                    );
                     try {
-                        // Storage is transactional and writers seal sidecars
-                        // before commit, so a partition that holds rows for
-                        // this key always returns a CoveringRowCursor. The
-                        // index reader returns EmptyRowCursor (which is not
-                        // a CoveringRowCursor) when the key has no rows in
-                        // this partition; in that case skip and advance.
-                        if (bwdCursor instanceof CoveringRowCursor crc) {
-                            Misc.free(currentRowCursor);
+                        if (bwdCursor instanceof SourceRowCursor sourceCursor) {
+                            freeCurrentCursors();
+                            currentSourceCursor = sourceCursor;
+                            bwdCursor = null;
+                            coveringRecord.of(sourceCursor);
+                            coveringRecord.setSymbolKey(rawSymbolKey);
+                            while (sourceCursor.hasNext()) {
+                                coveringRecord.setRowId(sourceCursor.nextOrdinal());
+                                if (latestByFilter.getBool(coveringRecord)) {
+                                    return true;
+                                }
+                            }
+                        } else if (bwdCursor instanceof CoveringRowCursor crc) {
+                            freeCurrentCursors();
                             currentRowCursor = crc;
                             bwdCursor = null;
                             coveringRecord.of(crc);
@@ -920,12 +930,33 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 } else {
                     IndexReader bwdReader = tableReader.getIndexReader(
                             partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
-                    RowCursor rowCursor = bwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
+                    CoveringIndexCursor rowCursor = openTimestampBoundedCursor(
+                            bwdReader,
+                            indexKey,
+                            rowLo,
+                            rowHi,
+                            requiredIncludeIndices,
+                            timestampLo,
+                            timestampHi
+                    );
                     try {
-                        if (rowCursor instanceof CoveringRowCursor crc) {
-                            long lastRowId = crc.seekToLast();
+                        // The reader is backward: hasNext() positions a Delta cursor on the logically last row.
+                        if (rowCursor instanceof SourceRowCursor sourceCursor) {
+                            if (sourceCursor.hasNext()) {
+                                final long lastRowId = sourceCursor.nextOrdinal();
+                                freeCurrentCursors();
+                                currentSourceCursor = sourceCursor;
+                                rowCursor = null;
+                                coveringRecord.of(sourceCursor);
+                                coveringRecord.setSymbolKey(rawSymbolKey);
+                                coveringRecord.setRowId(lastRowId);
+                                return true;
+                            }
+                            freeCurrentCursors();
+                        } else if (rowCursor instanceof CoveringRowCursor crc) {
+                            final long lastRowId = crc.seekToLast();
                             if (lastRowId >= 0) {
-                                Misc.free(currentRowCursor);
+                                freeCurrentCursors();
                                 currentRowCursor = crc;
                                 rowCursor = null;
                                 coveringRecord.of(crc);
@@ -933,7 +964,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 coveringRecord.setRowId(lastRowId);
                                 return true;
                             }
-                            currentRowCursor = Misc.free(currentRowCursor);
+                            freeCurrentCursors();
                         }
                     } finally {
                         Misc.free(rowCursor);
@@ -942,12 +973,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
+        void freeCurrentCursors() {
+            currentRowCursor = Misc.free(currentRowCursor);
+            currentSourceCursor = Misc.free(currentSourceCursor);
+        }
+
         abstract boolean hasNextLatestBy();
 
         void of(PartitionFrameCursor frameCursor) {
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
-            this.currentRowCursor = Misc.free(this.currentRowCursor);
+            freeCurrentCursors();
             resetIterationState();
             this.coveringRecord.of(null);
             SymbolTable indexSymbolTable = tableReader.getSymbolMapReader(indexColumnIndex);
@@ -962,27 +998,37 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         abstract void resetIterationState();
 
-        boolean tryOpenKey(int partitionIndex, int rawSymbolKey, long rowLo, long rowHi) {
+        boolean tryOpenKey(PartitionFrame frame, int rawSymbolKey) {
+            final int partitionIndex = frame.getPartitionIndex();
+            final long rowLo = frame.getRowLo();
+            final long rowHi = frame.getRowHi();
             IndexReader indexReader = tableReader.getIndexReader(
                     partitionIndex,
                     indexColumnIndex,
                     IndexReader.DIR_FORWARD
             );
-            RowCursor rowCursor = indexReader.getCursor(
+            CoveringIndexCursor rowCursor = openTimestampBoundedCursor(
+                    indexReader,
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
                     rowHi - 1,
-                    requiredIncludeIndices
+                    requiredIncludeIndices,
+                    frame.getTimestampLo(),
+                    frame.getTimestampHi()
             );
             try {
-                // EmptyRowCursor (returned when the key has no rows in this
-                // partition) is not a CoveringRowCursor; treat it as "no
-                // rows, try the next partition" rather than a failure.
-                if (rowCursor instanceof CoveringRowCursor crc) {
-                    Misc.free(currentRowCursor);
-                    currentRowCursor = crc;
+                // openTimestampBoundedCursor normalizes the native EmptyRowCursor
+                // and a Delta no-hit result to null: either means "try the next
+                // partition", not a covering-index failure.
+                if (rowCursor != null) {
+                    freeCurrentCursors();
+                    if (rowCursor instanceof SourceRowCursor sourceCursor) {
+                        currentSourceCursor = sourceCursor;
+                    } else {
+                        currentRowCursor = (CoveringRowCursor) rowCursor;
+                    }
+                    coveringRecord.of(rowCursor);
                     rowCursor = null;
-                    coveringRecord.of(crc);
                     coveringRecord.setSymbolKey(rawSymbolKey);
                     return true;
                 }
@@ -1236,21 +1282,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected PartitionFrameCursor frameCursor;
         protected boolean isExhausted;
         // Resume state for chunked fillFrameForKey. When a key+partition
-        // has more rows than maxRowsPerFrame, the open RowCursor is
+        // has more rows than maxRowsPerFrame, the open covering cursor is
         // kept here and the next fillFrameForKey call continues from
-        // where the previous returned. pendingRowCursor == null means
+        // where the previous returned. pendingCursor == null means
         // no fill (via the MIXED/fallback traverse) is in progress.
-        protected CoveringRowCursor pendingCoveringCursor;
+        protected CoveringIndexCursor pendingCursor;
         protected int pendingPartitionIndex = -1;
-        protected RowCursor pendingRowCursor;
+        protected long pendingTimestampHi;
+        protected long pendingTimestampLo;
         // Fresh-cursor prep slots. openOrContinueCoveringCursor opens a cursor here
         // (for reader prep: valueMem extend + sidecar open) WITHOUT parking it; the
         // cheap path frees it (freePrepCursor) after taking its size()/metadata, and
         // the traverse path promotes it to the parked cursor (parkPrepCursor) only if
-        // it breaks at the row cap. Exactly one of {prepRowCursor, pendingRowCursor}
+        // it breaks at the row cap. Exactly one of {prepCursor, pendingCursor}
         // is non-null for a given (key, partition) at a time.
-        protected CoveringRowCursor prepCoveringCursor;
-        protected RowCursor prepRowCursor;
+        protected CoveringIndexCursor prepCursor;
         // Cheap-path (O(genCount)) resume state, replacing the parked cursor for
         // the common non-MIXED forward single-key fill. When a (key, partition)
         // has more matches than maxRowsPerFrame the metadata is emitted in
@@ -1259,7 +1305,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // clamp, and the cached total) are held so each resume slices the next
         // chunk without re-opening or re-counting. cheapChunkActive == true means
         // a cheap fill is mid-partition; it is mutually exclusive with
-        // pendingRowCursor (the fallback parks instead). Keyed by the SAME
+        // pendingCursor (the fallback parks instead). Keyed by the SAME
         // pendingSymbolKey / pendingPartitionIndex guard as the parked cursor.
         protected boolean cheapChunkActive;
         // long (not int): a single (key, partition) match set — most reachably the implicit-null
@@ -1518,7 +1564,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return newCapacity;
         }
 
-        protected void writeCoveredRow(long[] addrs, int count, CoveringRowCursor crc) {
+        protected void writeCoveredRow(long[] addrs, int count, CoveringRow crc) {
             // Test-only: one row materialized eagerly at production. Single-key
             // production no longer calls this (metadata-only), so a non-zero
             // value means the multi-key eager merge ran. See
@@ -1576,40 +1622,55 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         /**
          * Produce up to {@code rowCap} rows for {@code rawSymbolKey} in the given
          * partition's row range. If the key has more rows than the cap, the open
-         * {@link RowCursor} is parked in {@link #pendingRowCursor}; the caller is
+         * {@link CoveringIndexCursor} is parked in {@link #pendingCursor}; the caller is
          * expected to call {@code fillFrameForKey} again with the SAME
-         * key/partition until it returns {@code null} (or {@link #pendingRowCursor}
+         * key/partition until it returns {@code null} (or {@link #pendingCursor}
          * clears) before advancing to the next partition.
          * {@link SingleKeyCoveringPageFrameCursor#nextImpl} /
          * {@link MultiKeyCoveringPageFrameCursor#nextImpl} drive that loop.
          * <p>
-         * Single-key frame production is METADATA-ONLY: it traverses the covering
-         * cursor (to count the chunk's rows, record its absolute posting span, and
-         * -- critically -- WARM the per-key genLookup cache on natural exhaustion,
-         * so the workers' detached cursors run read-only under the freeze) but does
-         * NOT materialize covered values. The covered columns and the symbol key
-         * are decoded on the async workers
-         * ({@link PageFrameMemoryPool#patchCoveredFrameMemory}); the frame's covered
-         * page addresses are emitted as placeholders ({@link #finalizeFrame} with
-         * {@code materialized == false}), which the worker arm overrides. No
-         * per-frame value buffers are allocated. (The multi-key merge still
-         * materializes eagerly -- see {@code fillMergedFrame}.)
+         * Native single-key frame production is metadata-only: it traverses the
+         * covering cursor to count the chunk, record its absolute posting span,
+         * and, critically, warm the per-key genLookup cache on natural
+         * exhaustion. That lets detached cursors run read-only after the reader
+         * is frozen. Covered values are decoded later by
+         * {@link PageFrameMemoryPool#patchCoveredFrameMemory}; the frame initially
+         * carries placeholder addresses. A composite reader cannot reproduce its
+         * merge from one posting span, so it materializes the same rows during
+         * this traversal. The multi-key merge is likewise materialized eagerly.
          */
-        protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap, boolean cheapEligible) {
+        protected @Nullable PageFrame fillFrameForKey(
+                int rawSymbolKey,
+                int partitionIndex,
+                long rowLo,
+                long rowHi,
+                long timestampLo,
+                long timestampHi,
+                int rowCap,
+                boolean cheapEligible
+        ) {
             // Open (or continue) the covering cursor. KEEPING this is load-bearing
             // even on the cheap path: getCursor -> reloadConditionally pre-extends
             // valueMem and openRequiredSidecars opens the sidecars, BOTH of which the
             // async workers' detached cursors depend on once the reader is frozen.
             // It also pins framePostingReader / framePostingCursorMinValue.
-            final CoveringRowCursor coveringCursor = openOrContinueCoveringCursor(rawSymbolKey, partitionIndex, rowLo, rowHi);
+            final CoveringIndexCursor coveringCursor = openOrContinueCoveringCursor(
+                    rawSymbolKey,
+                    partitionIndex,
+                    rowLo,
+                    rowHi,
+                    timestampLo,
+                    timestampHi
+            );
             if (coveringCursor == null) {
                 return null;
             }
-            // prepRowCursor != null => this is a FRESH cursor (not a resumed parked
+            final boolean isMaterializationRequired = framePostingReader.isCoveringFrameMaterializationRequired();
+            // prepCursor != null => this is a FRESH cursor (not a resumed parked
             // traverse). The cheap O(genCount) path only engages on a fresh forward
             // single-key cursor; once a (key, partition) has fallen back to the
-            // parked traverse it stays there (prepRowCursor == null on resume).
-            if (cheapEligible && prepRowCursor != null) {
+            // parked traverse it stays there (prepCursor == null on resume).
+            if (!isMaterializationRequired && cheapEligible && prepCursor != null) {
                 final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) framePostingReader;
                 final PageFrame cheap;
                 try {
@@ -1633,7 +1694,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // parks the prep cursor under that guard and owns this (key, partition).
                 clearCheapChunkState();
             }
-            return fillFrameByTraverse(coveringCursor, rawSymbolKey, partitionIndex, rowCap);
+            return fillFrameByTraverse(
+                    coveringCursor,
+                    rawSymbolKey,
+                    partitionIndex,
+                    rowCap,
+                    isMaterializationRequired
+            );
         }
 
         /**
@@ -1752,27 +1819,37 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * cheap path and the sole path for descending and for MIXED layouts. Advances
          * {@code coveringCursor} to {@code rowCap} (parking it) or to natural
          * exhaustion (warming the genLookup cache), recording the chunk's count and
-         * absolute posting span. Value-decode stays lazy (workers decode), so this is
-         * row-id-only.
+         * absolute posting span. Native readers leave value decoding to frame
+         * consumers, so their traversal is row-id-only. Composite readers copy the
+         * covered values while performing the same traversal.
          */
-        private @Nullable PageFrame fillFrameByTraverse(CoveringRowCursor coveringCursor, int rawSymbolKey, int partitionIndex, int rowCap) {
+        private @Nullable PageFrame fillFrameByTraverse(
+                CoveringIndexCursor coveringCursor,
+                int rawSymbolKey,
+                int partitionIndex,
+                int rowCap,
+                boolean materialize
+        ) {
             // Promote a freshly-opened prep cursor to the parked cursor so the
             // chunk-break-at-rowCap / natural-exhaustion lifecycle below (and
             // closePendingCursor at exhaustion) behaves exactly as it did when
             // openOrContinueCoveringCursor parked unconditionally. No-op on a
             // traverse resume (the cursor is already parked).
             parkPrepCursor();
+            int capacity = 0;
             int count = 0;
-            // Track the base row-id range of the postings this frame actually
-            // covers. A partition whose matched rows exceed maxRowsPerFrame is
-            // emitted as several chunk frames over the SAME parked cursor, so the
-            // partition [rowLo, rowHi) is NOT this chunk's range; the worker-side
-            // covered arm reproduces the chunk by opening a detached cursor over
-            // exactly [firstRowId, lastRowId]. Postings are row-id ascending, so
-            // first is the chunk's first next() and last is its last.
+            // Track the base row-id range only for native metadata frames. A
+            // partition whose matches exceed maxRowsPerFrame is emitted as several
+            // chunks over the same parked cursor, so the partition [rowLo, rowHi)
+            // is not the current chunk. The detached cursor must reopen exactly
+            // [firstRowId, lastRowId]. Composite materialized frames instead use
+            // their own [0, count) coordinate space.
             long firstRowId = -1;
             long lastRowId = -1;
             boolean cursorExhausted = true;
+            // Typed locals keep one receiver type at each row call site.
+            final SourceRowCursor sourceCursor = coveringCursor instanceof SourceRowCursor c ? c : null;
+            final CoveringRowCursor rowCursor = sourceCursor == null ? (CoveringRowCursor) coveringCursor : null;
             try {
                 // Traverse-only: advancing the cursor to NATURAL exhaustion is what
                 // fires the posting reader's putCacheEntries (warming the per-key
@@ -1780,11 +1857,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // chunk break at rowCap parks the cursor and resumes on the next
                 // call, which still reaches natural exhaustion eventually.
                 while (coveringCursor.hasNext()) {
-                    final long rowId = coveringCursor.next();
-                    if (count == 0) {
-                        firstRowId = rowId;
+                    final long rowId = rowCursor != null ? rowCursor.next() : sourceCursor.nextOrdinal();
+                    if (materialize) {
+                        if (capacity == 0) {
+                            capacity = allocFrameBuffers();
+                        } else if (count == capacity) {
+                            capacity = growFrameBuffers(frameAddrs, count, capacity);
+                        }
+                        writeCoveredRow(frameAddrs, count, coveringCursor);
+                    } else {
+                        if (count == 0) {
+                            firstRowId = rowId;
+                        }
+                        lastRowId = rowId;
                     }
-                    lastRowId = rowId;
                     count++;
                     if (count >= rowCap) {
                         cursorExhausted = false;
@@ -1798,21 +1884,36 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 closePendingCursor();
                 throw t;
             }
-            if (cursorExhausted) {
-                closePendingCursor();
-            }
             if (count == 0) {
+                if (cursorExhausted) {
+                    closePendingCursor();
+                }
                 return null;
             }
-            // firstRowId / lastRowId are relative to the cursor's minValue; shift to
-            // absolute base row ids so the worker's detached cursor reproduces this
+            if (materialize) {
+                if (cursorExhausted) {
+                    closePendingCursor();
+                }
+                CoveredColumnDecoder.fillSymbolKey(frameAddrs[queryColCount], rawSymbolKey, count);
+                return finalizeFrame(count, partitionIndex, rawSymbolKey, 0, count, true);
+            }
+            // firstRowId / lastRowId are relative to the cursor's minValue. Shift
+            // them to absolute base row ids so the detached cursor reproduces this
             // exact posting span [firstAbs, lastAbs + 1).
             final long firstAbs = firstRowId + framePostingCursorMinValue;
             final long lastAbs = lastRowId + framePostingCursorMinValue;
-            // Single-key frames are metadata-only: no value buffers were
-            // allocated, so emit placeholder (zero) page addresses. The worker
-            // covered arm overrides them after decoding from the sidecar.
-            return finalizeFrame(count, partitionIndex, rawSymbolKey, firstAbs, lastAbs + 1, false);
+            final PageFrame result = finalizeFrame(
+                    count,
+                    partitionIndex,
+                    rawSymbolKey,
+                    firstAbs,
+                    lastAbs + 1,
+                    false
+            );
+            if (cursorExhausted) {
+                closePendingCursor();
+            }
+            return result;
         }
 
         /**
@@ -1838,7 +1939,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * {@code partitionIndex} and record the covered-decode metadata (key, base
          * row range, posting reader, include indices) the worker arm consumes.
          * <p>
-         * When {@code materialized} is true (the multi-key merge), the frame's
+         * When {@code materialized} is true (the multi-key merge or composite fallback), the frame's
          * covered + symbol page addresses point at the eagerly filled buffers
          * (the symbol buffer {@code frameAddrs[queryColCount]} must already be
          * populated per row by the merge). When false (single-key, metadata-only
@@ -1848,7 +1949,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * values and overrides these addresses. The non-address metadata below is
          * set identically in both cases.
          */
-        protected PageFrame finalizeFrame(int count, int partitionIndex, int rawSymbolKey, long rowLo, long rowHi, boolean materialized) {
+        protected PageFrame finalizeFrame(
+                int count,
+                int partitionIndex,
+                int rawSymbolKey,
+                long rowLo,
+                long rowHi,
+                boolean materialized
+        ) {
             long symAddr = frameAddrs[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
@@ -1891,16 +1999,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             frame.partitionLo = 0;
             frame.partitionHi = count;
             frame.partitionIndex = partitionIndex;
-            // Decorator surface (consumed by later tasks): base format, the
-            // per-partition posting reader, the resolved symbol key + base
-            // row range, and the covered include indices. framePartitionFormat
-            // / framePostingReader were captured when this partition's frame
-            // and index reader were taken.
+            // Decorator surface consumed by later frame tasks: base format, the
+            // per-partition posting reader, resolved symbol key and posting range,
+            // and covered include indices. framePartitionFormat /
+            // framePostingReader were captured when this partition and its reader
+            // were opened. Materialized frames clear postingReader because their
+            // published addresses are already the complete decode.
             frame.format = framePartitionFormat;
-            frame.postingReader = framePostingReader;
+            frame.postingReader = materialized ? null : framePostingReader;
             frame.rawSymbolKey = rawSymbolKey;
-            frame.rowLo = rowLo;
-            frame.rowHi = rowHi;
+            frame.rowLo = materialized ? 0 : rowLo;
+            frame.rowHi = materialized ? count : rowHi;
             frame.coveredIncludeIndices = requiredIncludeIndices;
             return frame;
         }
@@ -1908,7 +2017,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         abstract @Nullable PageFrame nextImpl();
 
         /**
-         * Either return the already-open {@link CoveringRowCursor} parked across a
+         * Either return the already-open {@link CoveringIndexCursor} parked across a
          * previous traverse fillFrameForKey call (the MIXED/fallback or descending
          * resume), or open a FRESH one for the given key + partition range. A fresh
          * cursor is NOT parked here: the cheap path uses it only for the reader prep
@@ -1918,18 +2027,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * {@link #pendingPartitionIndex} / {@link #pendingSymbolKey} confirm a parked
          * cursor matches; a mismatch means the caller advanced past it without
          * draining (a bug in nextImpl), so we defensively close + re-open. The
-         * returned cursor is the parked one iff {@code pendingRowCursor != null}
+         * returned cursor is the parked one iff {@code pendingCursor != null}
          * after this call and it equals the result -- callers detect "resumed parked"
-         * via {@code pendingRowCursor}.
+         * via {@code pendingCursor}.
          */
-        private CoveringRowCursor openOrContinueCoveringCursor(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
-            if (pendingRowCursor != null) {
+        private CoveringIndexCursor openOrContinueCoveringCursor(
+                int rawSymbolKey,
+                int partitionIndex,
+                long rowLo,
+                long rowHi,
+                long timestampLo,
+                long timestampHi
+        ) {
+            if (pendingCursor != null) {
                 if (pendingSymbolKey == rawSymbolKey && pendingPartitionIndex == partitionIndex) {
                     // Resume path: same (key, partition) as the parked cursor, so the
                     // framePostingReader captured on this partition's first frame is still
                     // the correct per-partition reader -- no re-assignment needed. (Holds
                     // only while parking never crosses partitions; see the mismatch branch.)
-                    return pendingCoveringCursor;
+                    return pendingCursor;
                 }
                 // Defensive: parked cursor doesn't match. Close and re-open.
                 closePendingCursor();
@@ -1939,32 +2055,50 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     indexColumnIndex,
                     IndexReader.DIR_FORWARD
             );
-            // Carry the per-partition posting reader onto the frame (Task 6
-            // surface; the worker-side covered arm consumes it later).
+            // Carry the per-partition posting reader onto the frame. Native
+            // metadata-only frames use it for detached covered-column decoding;
+            // finalizeFrame clears it for composite materialized frames.
             framePostingReader = indexReader;
-            // The cursor's next() yields row ids relative to this minValue; record
-            // it so fillFrameForKey can recover absolute base row ids.
+            // A native cursor's next() yields row ids relative to this minValue;
+            // record it so fillFrameForKey can recover absolute base row ids.
             framePostingCursorMinValue = rowLo;
-            RowCursor rowCursor = indexReader.getCursor(
-                    TableUtils.toIndexKey(rawSymbolKey),
-                    rowLo,
-                    rowHi - 1,
-                    requiredIncludeIndices
+            final int indexKey = TableUtils.toIndexKey(rawSymbolKey);
+            final SourceRowCursor sourceCursor = indexReader.getSourceRowCursor(
+                    indexKey,
+                    requiredIncludeIndices,
+                    timestampLo,
+                    timestampHi
             );
-            // EmptyRowCursor (returned when the key has no rows in this
-            // partition) is not a CoveringRowCursor; emit no frame.
-            if (!(rowCursor instanceof CoveringRowCursor coveringCursor)) {
-                Misc.free(rowCursor);
+            final CoveringIndexCursor coveringCursor;
+            if (sourceCursor != null) {
+                coveringCursor = sourceCursor;
+            } else {
+                final RowCursor rowCursor = indexReader.getCursor(
+                        indexKey,
+                        rowLo,
+                        rowHi - 1,
+                        requiredIncludeIndices
+                );
+                // EmptyRowCursor means this key has no rows in the partition. It
+                // is deliberately not a CoveringRowCursor, so emit no frame.
+                if (!(rowCursor instanceof CoveringRowCursor)) {
+                    Misc.free(rowCursor);
+                    return null;
+                }
+                coveringCursor = (CoveringRowCursor) rowCursor;
+            }
+            if (coveringCursor == null) {
                 return null;
             }
             // Stash the fresh cursor + its identity in the prep slots, but DO NOT
-            // mark it parked (pendingRowCursor stays null). The cheap path frees it
+            // mark it parked (pendingCursor stays null). The cheap path frees it
             // via freePrepCursor(); the traverse path promotes it to a parked cursor
             // via parkPrepCursor() only when it breaks at the row cap.
-            prepRowCursor = rowCursor;
-            prepCoveringCursor = coveringCursor;
+            prepCursor = coveringCursor;
             pendingSymbolKey = rawSymbolKey;
             pendingPartitionIndex = partitionIndex;
+            pendingTimestampHi = timestampHi;
+            pendingTimestampLo = timestampLo;
             return coveringCursor;
         }
 
@@ -1974,11 +2108,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * shape). No-op when the cursor is already parked (a traverse resume re-uses it).
          */
         private void parkPrepCursor() {
-            if (prepRowCursor != null) {
-                pendingRowCursor = prepRowCursor;
-                pendingCoveringCursor = prepCoveringCursor;
-                prepRowCursor = null;
-                prepCoveringCursor = null;
+            if (prepCursor != null) {
+                pendingCursor = prepCursor;
+                prepCursor = null;
             }
         }
 
@@ -1986,13 +2118,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * Free the fresh prep cursor opened by {@link #openOrContinueCoveringCursor}
          * once the cheap path has taken its metadata from it. Clears only the prep
          * slots; the (key, partition) guard + any cheap chunk-resume state survive.
-         * No-op when the cursor was a resumed parked one (prepRowCursor == null).
+         * No-op when the cursor was a resumed parked one (prepCursor == null).
          */
         private void freePrepCursor() {
-            if (prepRowCursor != null) {
-                Misc.free(prepRowCursor);
-                prepRowCursor = null;
-                prepCoveringCursor = null;
+            if (prepCursor != null) {
+                prepCursor = Misc.free(prepCursor);
             }
         }
 
@@ -2004,18 +2134,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * of() / close() / exhaustion all converge here.
          */
         protected final void closePendingCursor() {
-            if (pendingRowCursor != null) {
-                Misc.free(pendingRowCursor);
-                pendingRowCursor = null;
-                pendingCoveringCursor = null;
-            }
+            pendingCursor = Misc.free(pendingCursor);
             // A prep cursor can be live if a throw landed between opening it and the
             // cheap-free / traverse-park handoff; free it so it is never orphaned.
-            if (prepRowCursor != null) {
-                Misc.free(prepRowCursor);
-                prepRowCursor = null;
-                prepCoveringCursor = null;
-            }
+            prepCursor = Misc.free(prepCursor);
             // Cheap-path resume state shares the pendingSymbolKey /
             // pendingPartitionIndex guard; clear both unconditionally here.
             cheapChunkActive = false;
@@ -2026,6 +2148,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             cheapTotal = 0;
             pendingSymbolKey = -1;
             pendingPartitionIndex = -1;
+            pendingTimestampHi = 0;
+            pendingTimestampLo = 0;
         }
 
         void of(
@@ -2065,7 +2189,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * <p>
      * Storage is transactional and writers seal sidecars before commit, so
      * readers never observe a covered include column without its sidecar.
-     * The accessors therefore call {@link CoveringRowCursor} directly and
+     * The accessors therefore call {@link CoveringRow} directly and
      * assume the row cursor and column data are present.
      */
     private static class CoveringRecord implements Record {
@@ -2073,15 +2197,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final Long256Impl long256B = new Long256Impl();
         private final RecordMetadata metadata;
         private final int[] queryColToIncludeIdx;
-        private CoveringRowCursor cursor;
+        private CoveringRow cursor;
         private SymbolTable[] includeSymbolTables;
         private long rowId;
         private int symbolKey;
         private SymbolTable symbolTable;
 
-        CoveringRecord(int[] queryColToIncludeIdx, int symbolKey, RecordMetadata metadata) {
+        CoveringRecord(int[] queryColToIncludeIdx, RecordMetadata metadata) {
             this.queryColToIncludeIdx = queryColToIncludeIdx;
-            this.symbolKey = symbolKey;
+            this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
             this.metadata = metadata;
         }
 
@@ -2467,7 +2591,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return queryColToIncludeIdx[col];
         }
 
-        void of(CoveringRowCursor cursor) {
+        void of(CoveringRow cursor) {
             this.cursor = cursor;
         }
 
@@ -2519,8 +2643,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // same IntLongSortedList HeapRowCursorFactory uses) for broad symbol
         // patterns that match thousands of keys. Both merges emit byte-identical
         // rows -- keys share no row id, so the smallest head is unambiguous.
+        private int[] indexKeys;
         private CoveringRowCursor[] keyCursors;
         private long[] keyHeads;
+        private long nextOrdinal;
+        private SourceRowCursor sourceCursor;
         // Min-heap of (keyIndex -> head row id) over the open per-key heads, used
         // when isHeapMerge. Kept in lockstep with keyHeads: the winning entry stays at
         // position 0 (peeked, not polled) while its covered values are read, then
@@ -2537,7 +2664,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                                boolean latestBy, RecordMetadata metadata, MergeObserver mergeObserver) {
-            super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
+            super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.multiKeys = new IntList(multiKeyCapacity);
             this.mergeObserver = mergeObserver;
         }
@@ -2561,6 +2688,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             final int n = multiKeys.size();
             while (true) {
+                if (sourceCursor != null) {
+                    if (sourceCursor.hasNext()) {
+                        coveringRecord.of(sourceCursor);
+                        coveringRecord.setSymbolKey(sourceCursor.getCursorSymbolKey());
+                        coveringRecord.setRowId(nextOrdinal++);
+                        return true;
+                    }
+                    sourceCursor = Misc.free(sourceCursor);
+                }
                 if (!isHeapMerge) {
                     // Linear min-scan (small key sets).
                     // Advance the cursor we emitted last; we deferred this so its
@@ -2589,7 +2725,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         selectedKeyIdx = best;
                         coveringRecord.of(keyCursors[best]);
                         coveringRecord.setSymbolKey(multiKeys.getQuick(best));
-                        coveringRecord.setRowId(bestRow);
+                        coveringRecord.setRowId(nextOrdinal++);
                         return true;
                     }
                 } else {
@@ -2623,7 +2759,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         selectedKeyIdx = best;
                         coveringRecord.of(keyCursors[best]);
                         coveringRecord.setSymbolKey(multiKeys.getQuick(best));
-                        coveringRecord.setRowId(keyHeads[best]);
+                        coveringRecord.setRowId(nextOrdinal++);
                         return true;
                     }
                 }
@@ -2651,6 +2787,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 int rawSymbolKey = multiKeys.getQuick(currentKeyIdx);
                 frameCursor.toTop(); // each key scans from the latest partition
                 if (findLatestRow(rawSymbolKey)) {
+                    coveringRecord.setRowId(nextOrdinal++);
                     currentKeyIdx++;
                     return true;
                 }
@@ -2662,13 +2799,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             currentKeyIdx = 0;
+            nextOrdinal = 0;
             closeKeyCursors();
             final int n = multiKeys.size();
+            if (indexKeys == null || indexKeys.length < n) {
+                indexKeys = new int[n];
+            }
             if (keyCursors == null || keyCursors.length < n) {
                 keyCursors = new CoveringRowCursor[n];
                 keyHeads = new long[n];
             }
             for (int i = 0; i < n; i++) {
+                indexKeys[i] = TableUtils.toIndexKey(multiKeys.getQuick(i));
                 keyCursors[i] = null;
                 keyHeads[i] = NO_ROW;
             }
@@ -2680,6 +2822,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private void closeKeyCursors() {
+            sourceCursor = Misc.free(sourceCursor);
             if (keyCursors != null) {
                 for (int i = 0; i < keyCursors.length; i++) {
                     keyCursors[i] = Misc.free(keyCursors[i]);
@@ -2711,9 +2854,30 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 final int partitionIndex = frame.getPartitionIndex();
                 final long rowLo = frame.getRowLo();
                 final long rowHi = frame.getRowHi();
+                final IndexReader indexReader = tableReader.getIndexReader(
+                        partitionIndex,
+                        indexColumnIndex,
+                        IndexReader.DIR_FORWARD
+                );
+                sourceCursor = indexReader.getSourceRowCursor(
+                        indexKeys,
+                        n,
+                        requiredIncludeIndices,
+                        frame.getTimestampLo(),
+                        frame.getTimestampHi()
+                );
+                if (sourceCursor != null) {
+                    return true;
+                }
                 boolean any = false;
                 for (int i = 0; i < n; i++) {
-                    CoveringRowCursor c = openForwardCoveringCursor(tableReader, indexColumnIndex, requiredIncludeIndices, partitionIndex, multiKeys.getQuick(i), rowLo, rowHi);
+                    CoveringRowCursor c = openForwardCoveringCursor(
+                            indexReader,
+                            requiredIncludeIndices,
+                            multiKeys.getQuick(i),
+                            rowLo,
+                            rowHi
+                    );
                     // Park the cursor before probing it: the cursor owns native
                     // memory and its index reader stops tracking it once checked
                     // out, so a throw from hasNext()/next() before the store
@@ -2758,6 +2922,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // partition being merged. Real row ids are non-negative.
         private static final long NO_ROW = -1;
         IntList multiKeys = new IntList();
+        private int[] indexKeys;
         // Per-key open cursors for the partition currently being merged and their
         // peeked head row ids. Merging the per-key cursors by row id makes each
         // emitted frame hold rows in ascending designated-timestamp order (with
@@ -2769,6 +2934,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // state persists across nextImpl() calls so a partition that exceeds
         // maxRowsPerFrame resumes in the next frame.
         private int mergePartitionIndex = -1;
+        private SourceRowCursor mergeSourceCursor;
         private long mergeRowLo;
         // Dual-mode merge: linear O(N) min-scan for small N, heap O(log N) for
         // large N (above effectiveHeapMergeMinKeys()). Mirrors the same mechanism
@@ -2828,9 +2994,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             closeMergeCursors();
+            final int n = multiKeys.size();
+            if (indexKeys == null || indexKeys.length < n) {
+                indexKeys = new int[n];
+            }
+            for (int i = 0; i < n; i++) {
+                indexKeys[i] = TableUtils.toIndexKey(multiKeys.getQuick(i));
+            }
         }
 
         private void closeMergeCursors() {
+            mergeSourceCursor = Misc.free(mergeSourceCursor);
             if (mergeCursors != null) {
                 for (int i = 0; i < mergeCursors.length; i++) {
                     mergeCursors[i] = Misc.free(mergeCursors[i]);
@@ -2851,6 +3025,36 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Nullable
         private PageFrame fillMergedFrame(int partitionIndex, int rowCap) {
             final int n = multiKeys.size();
+            if (mergeSourceCursor != null) {
+                int capacity = allocFrameBuffers();
+                long symAddr = frameAddrs[queryColCount];
+                int count = 0;
+                while (count < rowCap && mergeSourceCursor.hasNext()) {
+                    if (count >= capacity) {
+                        capacity = growFrameBuffers(frameAddrs, count, capacity);
+                        symAddr = frameAddrs[queryColCount];
+                    }
+                    writeCoveredRow(frameAddrs, count, mergeSourceCursor);
+                    Unsafe.putInt(
+                            symAddr + (long) count * Integer.BYTES,
+                            mergeSourceCursor.getCursorSymbolKey()
+                    );
+                    count++;
+                }
+                if (count < rowCap) {
+                    mergeSourceCursor = Misc.free(mergeSourceCursor);
+                }
+                return count == 0
+                        ? null
+                        : finalizeFrame(
+                        count,
+                        partitionIndex,
+                        SymbolTable.VALUE_NOT_FOUND,
+                        0,
+                        count,
+                        true
+                );
+            }
             // nextImpl re-enters once more per partition to learn it is drained:
             // the prior call emitted the last rows but left mergePartitionIndex
             // set. Detect the all-heads-drained case here and return before
@@ -2869,8 +3073,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int capacity = allocFrameBuffers();
             long symAddr = frameAddrs[queryColCount];
             int count = 0;
-            // Posting span of this frame, ascending across the merge (see the
-            // single-key fillFrameForKey for why the partition range is not it).
             long firstRowId = -1;
             long lastRowId = -1;
             while (count < rowCap) {
@@ -2936,21 +3138,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // Each emitted row performs one peek and one poll or replacement.
                 mergeObserver.onHeapOperations(2L * count, true);
             }
-            // Multi-key frames interleave keys per row, so there is no single
-            // resolved symbol key for the frame; report VALUE_NOT_FOUND. The
-            // per-key merge cursors were opened over the partition [rowLo, rowHi)
-            // (minValue == mergeRowLo), so shift the relative heads to absolute
-            // base row ids for the covered span [firstAbs, lastAbs + 1). (The
-            // worker arm skips multi-key frames; this keeps the metadata coherent.)
-            final long firstAbs = firstRowId + mergeRowLo;
-            final long lastAbs = lastRowId + mergeRowLo;
             if (mergeObserver != null) {
-                mergeObserver.onPageFrame(firstAbs, lastAbs + 1);
+                mergeObserver.onPageFrame(firstRowId + mergeRowLo, lastRowId + mergeRowLo + 1);
             }
-            // materialized == true: the worker arm SKIPS multi-key (VALUE_NOT_FOUND)
-            // frames, so these eagerly filled buffers are the only decode. Their
-            // real page addresses MUST be published.
-            return finalizeFrame(count, partitionIndex, SymbolTable.VALUE_NOT_FOUND, firstAbs, lastAbs + 1, true);
+            // Multi-key frames interleave symbols, so there is no single resolved
+            // key to carry for detached decoding. They are therefore materialized
+            // here, publish their real addresses, and use their synthetic
+            // [0, count) coordinate space.
+            return finalizeFrame(count, partitionIndex, SymbolTable.VALUE_NOT_FOUND, 0, count, true);
         }
 
         /**
@@ -2964,6 +3159,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (mergeCursors == null || mergeCursors.length < n) {
                 mergeCursors = new CoveringRowCursor[n];
                 mergeHeads = new long[n];
+                // A drained source-row cursor re-enters fillMergedFrame(), which must see no heads.
+                Arrays.fill(mergeHeads, NO_ROW);
             }
             isHeapMerge = n > effectiveHeapMergeMinKeys();
             final int partitionIndex = partFrame.getPartitionIndex();
@@ -2975,14 +3172,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             framePartitionFormat = partFrame.getPartitionFormat();
             framePostingReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
             mergeRowLo = rowLo;
-            // Base row range of the partition currently being merged. Carried onto
-            // each emitted frame (Task 6 surface); persists across nextImpl()
-            // re-entry alongside mergePartitionIndex.
+            mergeSourceCursor = framePostingReader.getSourceRowCursor(
+                    indexKeys,
+                    n,
+                    requiredIncludeIndices,
+                    partFrame.getTimestampLo(),
+                    partFrame.getTimestampHi()
+            );
+            if (mergeSourceCursor != null) {
+                return true;
+            }
             boolean any = false;
             for (int i = 0; i < n; i++) {
                 CoveringRowCursor c = openForwardCoveringCursor(
-                        tableReader, indexColumnIndex, requiredIncludeIndices,
-                        partitionIndex, multiKeys.getQuick(i), rowLo, rowHi);
+                        framePostingReader,
+                        requiredIncludeIndices,
+                        multiKeys.getQuick(i),
+                        rowLo,
+                        rowHi
+                );
                 // Park the cursor before probing it: the cursor owns native
                 // memory and its index reader stops tracking it once checked
                 // out, so a throw from hasNext()/next() before the store would
@@ -3020,11 +3228,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         int symbolKey;
         private boolean isLatestByDone;
 
-        SingleKeyCoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx,
+        SingleKeyCoveringCursor(int indexColumnIndex, int[] queryColToIncludeIdx,
                                 int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                                 boolean latestBy, RecordMetadata metadata) {
-            super(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
-            this.symbolKey = symbolKey;
+            super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
+            this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         }
 
         /**
@@ -3059,7 +3267,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // The covering index is a POSTING index, but a partition that predates the
                     // index (e.g. the column was added later) yields a non-posting null reader; only
                     // a real posting reader has the O(genCount) metadata count.
-                    if (reader instanceof AbstractPostingIndexReader posting) {
+                    //
+                    // A COMPOSITE partition is excluded: its index chain is keyed by FILE row, while
+                    // rowLo/rowHi here are PARTITION rows, and the two differ by each piece's shift.
+                    // Counting metadata against the wrong row space would miscount, so a composite
+                    // partition takes the traverse below, exactly as it did before the metadata count
+                    // existed.
+                    if (reader instanceof AbstractPostingIndexReader posting
+                            && !tableReader.getTxFile().isPartitionComposite(frame.getPartitionIndex())) {
                         // Bounds mirror the page-frame cheap-chunk path: the gen walk clamps the
                         // inclusive upper bound to min(rowHi - 1, entryMaxValue); the implicit-null
                         // prefix (key 0) is clamped by columnTop only, so it takes the UNCLAMPED
@@ -3076,10 +3291,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                     // Non-posting / null reader (empty -> 0) OR a MIXED gen: fall back to the cursor
                     // traverse for THIS frame, correctness-equivalent to the metadata count.
-                    try (RowCursor rc = reader.getCursor(key, rowLo, rowHi - 1)) {
-                        while (rc.hasNext()) {
-                            rc.next();
-                            total++;
+                    try (CoveringIndexCursor rc = openTimestampBoundedCursor(
+                            reader,
+                            key,
+                            rowLo,
+                            rowHi - 1,
+                            null,
+                            frame.getTimestampLo(),
+                            frame.getTimestampHi()
+                    )) {
+                        if (rc instanceof SourceRowCursor sourceCursor) {
+                            while (sourceCursor.hasNext()) {
+                                sourceCursor.nextOrdinal();
+                                total++;
+                            }
+                        } else if (rc instanceof CoveringRowCursor crc) {
+                            while (crc.hasNext()) {
+                                crc.next();
+                                total++;
+                            }
                         }
                     }
                 }
@@ -3102,7 +3332,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 if (frame == null) {
                     return false;
                 }
-                if (tryOpenKey(frame.getPartitionIndex(), symbolKey, frame.getRowLo(), frame.getRowHi())) {
+                if (tryOpenKey(frame, symbolKey)) {
                     return true;
                 }
             }
@@ -3133,25 +3363,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private static class SingleKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
         int resolvedKey;
-        int symbolKey;
         // Backward-scan state: the partition currently being drained from its
         // high row-range downward, and the exclusive upper bound of the next
         // sub-frame to emit. descPartitionIndex < 0 means no partition is open.
         private int descPartitionIndex = -1;
         private long descPartitionLo;
         private long descSubHi;
+        private long descTimestampHi;
+        private long descTimestampLo;
 
         SingleKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
-                int symbolKey,
                 int[] queryColToIncludeIdx,
                 int[] requiredIncludeIndices,
                 RecordMetadata metadata,
                 IntList columnIndexes
         ) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
-            this.symbolKey = symbolKey;
-            this.resolvedKey = symbolKey;
+            this.resolvedKey = SymbolTable.VALUE_NOT_FOUND;
         }
 
         @Override
@@ -3170,17 +3399,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // If a previous fillFrameForKey left this (key, partition) mid-drain,
             // resume it before advancing the partition iterator. Two resume shapes:
             // the cheap O(genCount) path (cheapChunkActive, no parked cursor) and the
-            // MIXED/fallback traverse (pendingRowCursor parked). For the parked-cursor
+            // MIXED/fallback traverse (pendingCursor parked). For the parked-cursor
             // shape the row range is unused (the cursor owns it); for the cheap shape
             // the cursor opened here is for reader prep only and the stored rowLo/clamp
             // drive selectKthMatch -- pass cheapRowLo so the prep cursor's minValue
             // matches and a defensive re-open would use the correct range.
-            if (cheapChunkActive || pendingRowCursor != null) {
+            if (cheapChunkActive || pendingCursor != null) {
                 final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
                 PageFrame result = fillFrameForKey(
                         pendingSymbolKey,
                         pendingPartitionIndex,
-                        resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
+                        resumeRowLo,
+                        resumeRowLo,
+                        pendingTimestampLo,
+                        pendingTimestampHi,
+                        maxRowsPerFrame,
+                        true
+                );
                 if (result != null) {
                     return result;
                 }
@@ -3197,6 +3432,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         partFrame.getPartitionIndex(),
                         partFrame.getRowLo(),
                         partFrame.getRowHi(),
+                        partFrame.getTimestampLo(),
+                        partFrame.getTimestampHi(),
                         maxRowsPerFrame,
                         true
                 );
@@ -3243,6 +3480,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 descPartitionIndex,
                                 subLo,
                                 descSubHi,
+                                descTimestampLo,
+                                descTimestampHi,
                                 Integer.MAX_VALUE,
                                 false
                         );
@@ -3259,9 +3498,37 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     return null;
                 }
                 framePartitionFormat = partFrame.getPartitionFormat();
+                // A composite index cursor returns frame-local ordinals, not data-row
+                // IDs, so the logical row sub-ranges below cannot clip it. Materialize
+                // the whole interval once; emitting it as one ascending frame preserves
+                // the backward frame order without duplicating the interval for every
+                // logical sub-range.
+                IndexReader reader = tableReader.getIndexReader(
+                        partFrame.getPartitionIndex(),
+                        indexColumnIndex,
+                        IndexReader.DIR_FORWARD
+                );
+                if (reader.isCoveringFrameMaterializationRequired()) {
+                    PageFrame result = fillFrameForKey(
+                            resolvedKey,
+                            partFrame.getPartitionIndex(),
+                            partFrame.getRowLo(),
+                            partFrame.getRowHi(),
+                            partFrame.getTimestampLo(),
+                            partFrame.getTimestampHi(),
+                            Integer.MAX_VALUE,
+                            false
+                    );
+                    if (result != null) {
+                        return result;
+                    }
+                    continue;
+                }
                 descPartitionIndex = partFrame.getPartitionIndex();
                 descPartitionLo = partFrame.getRowLo();
                 descSubHi = partFrame.getRowHi();
+                descTimestampHi = partFrame.getTimestampHi();
+                descTimestampLo = partFrame.getTimestampLo();
             }
         }
     }

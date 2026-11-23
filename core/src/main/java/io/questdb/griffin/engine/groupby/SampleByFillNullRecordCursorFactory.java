@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
@@ -44,10 +45,14 @@ import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
 import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -165,6 +170,11 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             case ColumnType.GEOINT -> GeoIntConstant.NULL;
             case ColumnType.GEOLONG -> GeoLongConstant.NULL;
             case ColumnType.UUID -> UuidConstant.NULL;
+            case ColumnType.DATE -> DateConstant.NULL;
+            case ColumnType.STRING -> StrConstant.NULL;
+            case ColumnType.VARCHAR -> VarcharConstant.NULL;
+            case ColumnType.SYMBOL -> SymbolConstant.NULL;
+            case ColumnType.LONG256 -> Long256NullConstant.INSTANCE;
             case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
             default -> {
                 if (ColumnType.isArray(type)) {

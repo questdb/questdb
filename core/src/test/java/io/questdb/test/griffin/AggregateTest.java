@@ -303,12 +303,16 @@ public class AggregateTest extends AbstractCairoTest {
                     .expectSize()
                     .withPlan("Encode sort light\n" +
                             "  keys: [account_uuid]\n" +
-                            "    GroupBy vectorized: false\n" +
+                            // ORDER BY on the indexed symbol no longer compiles to an index row cursor, and a
+                            // plain frame scan makes the vector aggregate path eligible again - so this line
+                            // follows the randomized cairo.sql.parallel.groupby.enabled setting
+                            (enableParallelGroupBy
+                                    ? "    GroupBy vectorized: true workers: " + sqlExecutionContext.getSharedQueryWorkerCount() + "\n"
+                                    : "    GroupBy vectorized: false\n") +
                             "      keys: [account_uuid]\n" +
                             "      values: [sum(requests)]\n" +
-                            "        SortedSymbolIndex\n" +
-                            "            Index forward scan on: account_uuid\n" +
-                            "              symbolOrder: asc\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
                             "            Interval forward scan on: records\n" +
                             (ColumnType.isTimestampMicro(timestampType) ?
                                     "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"

@@ -75,14 +75,14 @@ import java.util.Comparator;
  * chains. A view's dependencies come from the view graph; a materialized view's
  * dependencies are discovered by compiling its query and walking the plan for
  * the tables it reads (a materialized view may join tables beyond its declared
- * base). The enterprise build extends this with ACL principals (emitted first,
- * ahead of any inline {@code OWNED BY}) and the trailing grants and memberships.
+ * base). The enterprise build extends this with ACL principals, emitted ahead of
+ * the objects, and the trailing grants and memberships.
  * <p>
  * Each object's DDL is produced by delegating to the matching per-object
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
- * commands without duplicating their formatting logic. Objects the caller is not
- * authorized to read are skipped, so the dump never discloses DDL the caller
- * could not otherwise see. The token set is snapshotted up front, but each object's
+ * commands without duplicating their formatting logic. Objects the caller may not
+ * see (see {@link SecurityContext#isTableVisible(TableToken)}) are skipped, so the
+ * dump never discloses DDL the caller could not otherwise see. The token set is snapshotted up front, but each object's
  * liveness is re-checked just before its DDL is produced: an object dropped, renamed
  * or recreated in that window is skipped (with a logged warning) for every object
  * type alike, so the dump reflects the schema as of emit time rather than failing or
@@ -150,8 +150,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     protected void appendAclGrants(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
     }
 
-    // emitted before the object DDL so that inline OWNED BY targets already exist;
-    // no-op in OSS, overridden in ent to add CREATE USER/GROUP/SERVICE ACCOUNT
+    // emitted before the object DDL; no-op in OSS, overridden in ent to add CREATE USER/GROUP/SERVICE ACCOUNT
     protected void appendAclPrincipals(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
     }
 
@@ -164,20 +163,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
     // has no per-object source position, so it passes 0. An object dropped between collection and emit
     // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
+    // The dump reads every object as the caller, not through a view, so it passes no view either.
     protected RecordCursorFactory liveViewFactory(TableToken token) {
-        return new ShowCreateLiveViewRecordCursorFactory(token, 0);
+        return new ShowCreateLiveViewRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory matViewFactory(TableToken token) {
-        return new ShowCreateMatViewRecordCursorFactory(token, 0);
+        return new ShowCreateMatViewRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory tableFactory(TableToken token) {
-        return new ShowCreateTableRecordCursorFactory(token, 0);
+        return new ShowCreateTableRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory viewFactory(TableToken token) {
-        return new ShowCreateViewRecordCursorFactory(token, 0);
+        return new ShowCreateViewRecordCursorFactory(token, 0, null);
     }
 
     private static int categoryBit(TableToken token) {
@@ -205,20 +205,6 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         final TableToken base = engine.getTableTokenIfExists(definition.getBaseTableName());
         if (base != null) {
             out.add(base);
-        }
-    }
-
-    // returns false only when the caller is explicitly denied read access to the object;
-    // under AllowAllSecurityContext (open-source builds) this never denies
-    private static boolean isVisible(SecurityContext securityContext, TableToken token) {
-        try {
-            securityContext.authorizeSelectOnAnyColumn(token);
-            return true;
-        } catch (CairoException e) {
-            if (e.isAuthorizationError()) {
-                return false;
-            }
-            throw e;
         }
     }
 
@@ -301,7 +287,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         final ObjHashSet<TableToken> visible = new ObjHashSet<>();
         for (int i = 0, n = tokens.size(); i < n; i++) {
             final TableToken token = tokens.get(i);
-            if (token.isSystem() || (includeMask & categoryBit(token)) == 0 || !isVisible(securityContext, token)) {
+            if (token.isSystem() || (includeMask & categoryBit(token)) == 0 || !securityContext.isTableVisible(token)) {
                 continue;
             }
             objects.add(token);
@@ -378,6 +364,14 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         if (definition == null) {
             return;
         }
+        // The compile below builds the plan of the mat view's SQL only to walk it, and opens none of its
+        // cursors. When a view's PIVOT IN subquery reads this dump, the context rejects administrative
+        // functions, see SqlExecutionContext.isViewMetadataSubquery(): one that a view the mat view reads
+        // calls would fail the compile, and the fallback would order the mat view by its base table only.
+        // A PIVOT IN subquery of the mat view's own SQL does run here, so the view compile flag stays set
+        // and that subquery raises the flag again for itself.
+        final boolean wasViewMetadataSubquery = executionContext.isViewMetadataSubquery();
+        executionContext.setViewMetadataSubquery(false);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             // Compile the mat view SQL once: build the execution model, then derive the factory
             // from that same model. The two walks below need different artifacts but share one
@@ -400,11 +394,11 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                 }
                 // generate the factory from the already-compiled model (no second parse+optimise)
                 // and walk its plan to collect the physical base tables the mat view reads.
-                // NB: both walks are needed and neither subsumes the other. The model walk above sees
-                // referenced views (which the plan never shows, as they are inlined) but the model only
-                // exposes join/union/nested table names, missing tables referenced from sub-queries
-                // (e.g. WHERE x IN (SELECT ... FROM t)); the plan walk reaches those via nested cursor
-                // factories. So do not collapse this into a single collectAllTableAndViewNames(.., false).
+                // NB: both walks are needed and neither subsumes the other. The model walk above is the
+                // only one that sees referenced views, which the plan never shows as they are inlined;
+                // the plan walk is the only one that sees a table reached through a table function or a
+                // model the optimiser rewrote away. So do not collapse this into a single
+                // collectAllTableAndViewNames(.., false).
                 try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, model, executionContext)) {
                     if (factory != null) {
                         tableTokenCollector.collect(factory, executionContext);
@@ -423,6 +417,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
         } catch (SqlException e) {
             fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
         }
     }
 
@@ -491,7 +487,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                 topoEmit(dependency, engine, executionContext, visible, emitted, ordered);
             } else {
                 // the dependency was filtered out of this dump (a different INCLUDE/EXCLUDE category,
-                // a system object, or one the caller is not authorized to read), so this object's DDL
+                // a system object, or one the caller may not see), so this object's DDL
                 // references something the dump does not contain; warn that it may not replay as-is
                 logUnreplayableDependency(token, dependency);
             }
