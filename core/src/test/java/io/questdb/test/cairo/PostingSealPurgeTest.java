@@ -29,6 +29,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
@@ -1605,6 +1606,86 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 assertFalse(".pc0 must be gone after successful removal", fsFf.exists(pc0));
             }
         });
+    }
+
+    // A seal that took no flush leaves the generation it superseded on disk: only the purge, under the save point's
+    // pin, may delete it.
+    @Test
+    public void testRemoveSupersededGenerationsKeepsGenerationOfUnflushedSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "unflushed", COLUMN_NAME_TXN_NONE)) {
+                writer.setCommitMode(CommitMode.ADAPTIVE);
+                writer.setCommittedTxnSource(() -> 5L);
+                writer.setNextTxnAtSeal(6L);
+                final long supersededSealTxn = sealOneGeneration(writer);
+                writer.removeSupersededGenerations();
+                assertEquals(1, writer.getPendingPurgesSizeForTesting());
+                assertTrue(configuration.getFilesFacade().exists(
+                        PostingIndexUtils.valueFileName(path, "unflushed", COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveSupersededGenerationsKeepsPurgeWhenUnlinkFails() throws Exception {
+        final boolean[] isFailing = {true};
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isFailing[0] && Utf8s.containsAscii(name, ".pv.")) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "locked", COLUMN_NAME_TXN_NONE)) {
+                final long supersededSealTxn = sealOneGeneration(writer);
+                final int plen = path.size();
+                writer.removeSupersededGenerations();
+                assertEquals(1, writer.getPendingPurgesSizeForTesting());
+                assertEquals(supersededSealTxn, writer.getPendingPurgeSealTxnForTesting(0));
+                assertTrue(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "locked", COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+
+                isFailing[0] = false;
+                writer.removeSupersededGenerations();
+                assertEquals(0, writer.getPendingPurgesSizeForTesting());
+                assertFalse(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "locked", COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+            }
+        });
+    }
+
+    // A seal without a committed-txn source takes the ordered flush, so the generation it superseded goes at once.
+    @Test
+    public void testRemoveSupersededGenerationsUnlinksGenerationOfFlushedSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "flushed", COLUMN_NAME_TXN_NONE)) {
+                writer.setCommitMode(CommitMode.ADAPTIVE);
+                final long supersededSealTxn = sealOneGeneration(writer);
+                final int plen = path.size();
+                writer.removeSupersededGenerations();
+                assertEquals(0, writer.getPendingPurgesSizeForTesting());
+                final FilesFacade ff = configuration.getFilesFacade();
+                assertFalse(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "flushed", COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                // the sealed generation stays
+                assertTrue(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "flushed", COLUMN_NAME_TXN_NONE, supersededSealTxn + 1)));
+            }
+        });
+    }
+
+    // Indexes rows into the first generation and seals it into a new one; returns the superseded sealTxn.
+    private static long sealOneGeneration(PostingIndexWriter writer) {
+        for (int i = 0; i < 8; i++) {
+            writer.add(i % BATCH_KEYS, i);
+        }
+        writer.setMaxValue(7);
+        writer.commit();
+        writer.seal();
+        assertEquals(1, writer.getPendingPurgesSizeForTesting());
+        return writer.getPendingPurgeSealTxnForTesting(0);
     }
 
     private void touchFile(FilesFacade ff, LPSZ file) {

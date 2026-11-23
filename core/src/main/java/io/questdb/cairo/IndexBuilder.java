@@ -209,6 +209,8 @@ public class IndexBuilder extends RebuildColumnBase {
                             configureCoveringIfNeeded(metadata, columnIndex, columnVersionReader, partitionTimestamp);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);
                             indexer.seal();
+                            // REINDEX holds the table lock: no reader can hold the generation the seal superseded.
+                            indexer.getWriter().removeSupersededGenerations();
                         } finally {
                             ff.close(columnDataFd);
                             indexer.clear();

@@ -235,6 +235,8 @@ public class PostingIndexWriter implements IndexWriter {
     private final int[] strideBpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
     private final int[] strideKeyCounts = new int[PostingIndexUtils.DENSE_STRIDE];
     private final long[] strideKeyOffsets = new long[PostingIndexUtils.DENSE_STRIDE];
+    // The sealTxns removeSupersededGenerations() unlinks; a failed unlink sets its slot to -1.
+    private final LongList supersededSealTxns = new LongList();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
     private int activeKeyCount;
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
@@ -1802,6 +1804,75 @@ public class PostingIndexWriter implements IndexWriter {
      */
     public void releaseSidecarWriteMappings() {
         closeSidecarMems();
+    }
+
+    /**
+     * For a one-shot build right after {@link #seal()}: unlinks the value and cover files of every generation the
+     * outbox holds and drops those entries, instead of leaving them to a purge nobody publishes. The seal's ordered
+     * flush has put the new files and the {@code .pk} on disk, so nothing names the superseded files after a power
+     * loss. Does nothing when the last seal took no ordered flush. A file that fails to unlink (Windows keeps a mapped
+     * file) leaves its entry queued.
+     */
+    @Override
+    public void removeSupersededGenerations() {
+        if (pendingPurges.size() == 0 || partitionPath.size() == 0 || sealFlushGrade() != SEAL_FLUSH_ORDERED) {
+            return;
+        }
+        final LongList sealTxns = supersededSealTxns;
+        sealTxns.clear();
+        for (int i = 0, n = pendingPurges.size(); i < n; i++) {
+            final PendingSealPurge entry = pendingPurges.getQuick(i);
+            if (entry.postingColumnNameTxn == postingColumnNameTxn
+                    && !(chain.hasHead() && chain.getHeadSealTxn() == entry.sealTxn)) {
+                sealTxns.add(entry.sealTxn);
+            }
+        }
+        if (sealTxns.size() == 0) {
+            return;
+        }
+        final Path path = Path.getThreadLocal(partitionPath);
+        final int plen = path.size();
+        for (int i = 0, n = sealTxns.size(); i < n; i++) {
+            final LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), indexName, postingColumnNameTxn, sealTxns.getQuick(i));
+            if (!ff.removeQuiet(pv)) {
+                LOG.error().$("could not remove superseded posting index file, its purge stays queued [path=").$(pv)
+                        .$(", errno=").$(ff.errno()).I$();
+                sealTxns.setQuick(i, -1L);
+            }
+        }
+        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, postingColumnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                final int i = sealTxns.indexOf(sealTxn);
+                if (i < 0) {
+                    return;
+                }
+                final LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                if (!ff.removeQuiet(pc)) {
+                    LOG.error().$("could not remove superseded posting index file, its purge stays queued [path=").$(pc)
+                            .$(", errno=").$(ff.errno()).I$();
+                    sealTxns.setQuick(i, -1L);
+                }
+            }
+
+            @Override
+            public void onValueFile(long sealTxn) {
+            }
+        });
+        path.trimTo(plen);
+        int writePos = 0;
+        for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
+            final PendingSealPurge entry = pendingPurges.getQuick(readPos);
+            if (entry.postingColumnNameTxn == postingColumnNameTxn && sealTxns.indexOf(entry.sealTxn) >= 0) {
+                entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
+                pendingPurgePool.add(entry);
+            } else {
+                pendingPurges.setQuick(writePos++, entry);
+            }
+        }
+        for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
+            pendingPurges.remove(i);
+        }
     }
 
     /**

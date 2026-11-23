@@ -316,6 +316,15 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Called by a one-shot index build (ADD INDEX, REINDEX) right after {@link #seal()}, while no reader can hold the
+     * index files: deletes the files of the generations the seal superseded at once, instead of queueing their purge.
+     * See {@link io.questdb.cairo.idx.PostingIndexWriter#removeSupersededGenerations()}. An index without generations
+     * has nothing to delete.
+     */
+    default void removeSupersededGenerations() {
+    }
+
+    /**
      * Rolls back values that are strictly greater than the given row.
      * <p>
      * This operation is only supported by some index implementations.

@@ -12292,6 +12292,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
                     }
                 }
                 indexer.seal();
+                indexer.getWriter().removeSupersededGenerations();
             } finally {
                 indexer.releaseIndexWriter();
             }
@@ -12317,6 +12318,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
         indexer.seal();
+        indexer.getWriter().removeSupersededGenerations();
 
         if (isLastPartitionComposite()) {
             // rowHwm came off the partition's PHYSICAL extent, so the index built above already covers
@@ -12369,6 +12371,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
                 indexer.seal();
+                indexer.getWriter().removeSupersededGenerations();
             } finally {
                 ff.close(columnDataFd);
             }
@@ -12535,6 +12538,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
 
                 indexWriter.setMaxValue(indexRowCount - 1);
                 indexer.seal();
+                // Only the ADD INDEX build: the O3/squash covering reseal runs while readers may hold the files.
+                if (allowDestructiveRecovery) {
+                    indexWriter.removeSupersededGenerations();
+                }
             } finally {
                 if (hasCovering) {
                     coveredColumnAccumulator.releaseScratchFiles(indexer, ff, path, plen);
