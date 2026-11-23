@@ -5209,7 +5209,8 @@ public final class IntervalUtils {
         validateDuration(timestampDriver, seq, semicolon + 1, periodSemicolon, position);
         final char periodType = seq.charAt(countSemicolon - 1);
         switch (periodType) {
-            case PeriodType.YEAR, PeriodType.MONTH, PeriodType.HOUR, PeriodType.MINUTE, PeriodType.SECOND, PeriodType.DAY -> {
+            case PeriodType.YEAR, PeriodType.MONTH, PeriodType.HOUR, PeriodType.MINUTE, PeriodType.SECOND,
+                 PeriodType.DAY -> {
             }
             default -> throw SqlException.$(position, "Unknown period: ").put(periodType).put(" at 1");
         }
