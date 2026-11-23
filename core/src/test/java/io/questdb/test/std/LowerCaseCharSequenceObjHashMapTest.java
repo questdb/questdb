@@ -58,6 +58,49 @@ public class LowerCaseCharSequenceObjHashMapTest {
     }
 
     @Test
+    public void testKeyIndexWithLowerCaseHashCodeMatchesCharacterToLowerCase() {
+        final LowerCaseCharSequenceObjHashMap<Integer> map = new LowerCaseCharSequenceObjHashMap<>();
+        // pairs that differ in case, and pairs that do not, for every char
+        final char[] others = new char[6];
+        for (int i = 0; i <= Character.MAX_VALUE; i++) {
+            final char c = (char) i;
+            others[0] = c;
+            others[1] = Character.toLowerCase(c);
+            others[2] = Character.toUpperCase(c);
+            others[3] = Character.toTitleCase(c);
+            others[4] = (char) (c ^ 0x20);
+            others[5] = (char) (c + 1);
+            for (char other : others) {
+                assertKeyIndexWithLowerCaseHashCode(map, "k" + c, "k" + other);
+            }
+        }
+
+        // keys of different length
+        assertKeyIndexWithLowerCaseHashCode(map, "", "");
+        assertKeyIndexWithLowerCaseHashCode(map, "", "k");
+        assertKeyIndexWithLowerCaseHashCode(map, "Trades", "trade");
+        assertKeyIndexWithLowerCaseHashCode(map, "Trades", "TRADES_1");
+
+        // keys mixing ASCII, Latin-1 and other chars, some spelled in another case; U+0130, U+0131 and U+212A
+        // are the dotted capital I, the dotless small i and the Kelvin sign
+        final Rnd rnd = new Rnd(42, 7);
+        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', '\u0130', '\u0131', 'Ω', 'ω', '\u212A'};
+        final StringBuilder mapKey = new StringBuilder();
+        final StringBuilder key = new StringBuilder();
+        for (int i = 0; i < 10_000; i++) {
+            mapKey.setLength(0);
+            key.setLength(0);
+            for (int j = 0, n = rnd.nextInt(12); j < n; j++) {
+                final char c = alphabet[rnd.nextInt(alphabet.length)];
+                mapKey.append(c);
+                final int spelling = rnd.nextInt(4);
+                key.append(spelling == 0 ? Character.toUpperCase(c) : spelling == 1 ? Character.toLowerCase(c) : spelling == 2 ? alphabet[rnd.nextInt(alphabet.length)] : c);
+            }
+            assertKeyIndexWithLowerCaseHashCode(map, mapKey.toString(), key.toString());
+        }
+    }
+
+    @Test
     public void testKeyIndexWithLowerCaseHashCodeSkipsHashing() {
         // the keys count the chars a lookup reads; hashing a key would read every one of them
         final String name = "Some_Table_Name";
@@ -83,6 +126,28 @@ public class LowerCaseCharSequenceObjHashMapTest {
         key = new CountingCharSequence(name);
         Assert.assertEquals(Integer.valueOf(42), map.valueAt(map.keyIndex(key, hashCode)));
         Assert.assertEquals(name.length(), key.charAtCount);
+    }
+
+    @Test
+    public void testKeyIndexWithLowerCaseHashCodeWrapsAround() {
+        // keys whose slot is the last one: the second key goes to the first slot, past the end of the table
+        final LowerCaseCharSequenceObjHashMap<Integer> map = new LowerCaseCharSequenceObjHashMap<>();
+        final int lastSlot = map.getKeyCount() - 1;
+        final List<String> keys = findKeysWithSlot(lastSlot, 3);
+        map.put(keys.get(0), 0);
+        map.put(keys.get(1), 1);
+        Assert.assertEquals(lastSlot, slotOf(map, keys.get(0)));
+        Assert.assertEquals(0, slotOf(map, keys.get(1)));
+
+        for (String key : new String[]{keys.get(0), keys.get(0).toUpperCase()}) {
+            Assert.assertEquals(-lastSlot - 1, map.keyIndex(key, Chars.lowerCaseHashCode(key)));
+        }
+        for (String key : new String[]{keys.get(1), keys.get(1).toUpperCase()}) {
+            Assert.assertEquals(-1, map.keyIndex(key, Chars.lowerCaseHashCode(key)));
+            Assert.assertEquals(Integer.valueOf(1), map.valueAt(map.keyIndex(key, Chars.lowerCaseHashCode(key))));
+        }
+        // absent, with the same slot: the lookup walks past both keys, to the first empty slot
+        Assert.assertEquals(1, map.keyIndex(keys.get(2), Chars.lowerCaseHashCode(keys.get(2))));
     }
 
     @Test
@@ -272,6 +337,28 @@ public class LowerCaseCharSequenceObjHashMapTest {
         }
     }
 
+    // Looks key up in a map that holds only mapKey, from the slot of mapKey, so that the lookup compares the two keys
+    // whether they are equal or not, and checks the result against Character.toLowerCase(), char by char. Two Strings
+    // take the loop of keyIndex(CharSequence, int), any other pair takes Chars.equalsIgnoreCase().
+    private static void assertKeyIndexWithLowerCaseHashCode(LowerCaseCharSequenceObjHashMap<Integer> map, String mapKey, String key) {
+        boolean isEqual = mapKey.length() == key.length();
+        for (int i = 0; isEqual && i < key.length(); i++) {
+            isEqual = Character.toLowerCase(mapKey.charAt(i)) == Character.toLowerCase(key.charAt(i));
+        }
+        final int hashCode = Chars.lowerCaseHashCode(mapKey);
+        final int mask = map.getKeyCount() - 1;
+        final int slot = hashCode & mask;
+        // a key that is equal is found in the slot of mapKey, any other is absent, with the empty slot after it
+        final int expectedKeyIndex = isEqual ? -slot - 1 : (slot + 1) & mask;
+        final String message = "mapKey=" + mapKey + ", key=" + key;
+        for (CharSequence storedKey : new CharSequence[]{mapKey, new StringBuilder(mapKey)}) {
+            map.clear();
+            map.put(storedKey, 1);
+            Assert.assertEquals(message, expectedKeyIndex, map.keyIndex(key, hashCode));
+            Assert.assertEquals(message, expectedKeyIndex, map.keyIndex(new StringBuilder(key), hashCode));
+        }
+    }
+
     // expectedKeys are in lower case, KEYS holds some of them in upper case
     private static void assertMap(LowerCaseCharSequenceObjHashMap<Integer> map, String... expectedKeys) {
         Assert.assertEquals(expectedKeys.length, map.size());
@@ -314,6 +401,22 @@ public class LowerCaseCharSequenceObjHashMapTest {
             }
         }
         throw new AssertionError("could not find " + keyCount + " colliding keys");
+    }
+
+    private static List<String> findKeysWithSlot(int slot, int keyCount) {
+        // keyIndex() on an empty map returns the key's ideal slot
+        final LowerCaseCharSequenceObjHashMap<Integer> emptyMap = new LowerCaseCharSequenceObjHashMap<>();
+        final List<String> keys = new ArrayList<>();
+        for (int i = 0; i < 10_000; i++) {
+            String key = "key" + i;
+            if (emptyMap.keyIndex(key) == slot) {
+                keys.add(key);
+                if (keys.size() == keyCount) {
+                    return keys;
+                }
+            }
+        }
+        throw new AssertionError("could not find " + keyCount + " keys with slot " + slot);
     }
 
     private static LowerCaseCharSequenceObjHashMap<Integer> newMap() {

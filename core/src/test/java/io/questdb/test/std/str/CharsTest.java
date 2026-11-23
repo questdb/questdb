@@ -593,7 +593,7 @@ public class CharsTest {
             final String value = "x" + c;
             Assert.assertEquals("char " + i, Character.toLowerCase(c), Chars.lowerCaseHashCode(value, 1, 2));
             Assert.assertEquals("char " + i, 31 * 'x' + Character.toLowerCase(c), Chars.lowerCaseHashCode(value));
-            // a CharSequence that is not a String takes another loop
+            // and through a CharSequence that is not a String
             Assert.assertEquals("char " + i, 31 * 'x' + Character.toLowerCase(c), Chars.lowerCaseHashCode(new StringBuilder(value)));
         }
         Assert.assertEquals(Chars.lowerCaseHashCode("ingest_sensor_measurements_eu1"), Chars.lowerCaseHashCode("Ingest_SENSOR_Measurements_EU1"));
@@ -812,7 +812,7 @@ public class CharsTest {
         }
         final String message = "l=" + l + ", r=" + r;
         Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, r));
-        // CharSequences that are not Strings take another loop
+        // and through CharSequences that are not Strings
         Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(new StringBuilder(l), r));
         Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, new StringBuilder(r)));
         Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, "#" + r, 1, r.length() + 1));
