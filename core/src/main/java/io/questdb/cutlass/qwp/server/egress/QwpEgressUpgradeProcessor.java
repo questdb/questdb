@@ -921,36 +921,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         return true;
     }
 
-    /**
-     * Detaches a cacheable SELECT factory from {@code state} and puts it into
-     * the compile cache keyed by the query's SQL text. EXPLAIN and PSEUDO_SELECT
-     * factories deliberately remain owned by the state and are freed by
-     * {@link QwpEgressProcessorState#endStreaming}; a later cache hit cannot then
-     * lose their statement type by being classified as SELECT. Idempotent: safe
-     * to call when the factory was already detached (no-op), or when the SQL text
-     * is null (drops the factory via {@link Misc#free}). Called on the successful-
-     * completion paths only -- error/cancel paths continue to free the factory via
-     * the normal state cleanup, so a cursor that threw never seeds the cache with
-     * a poisoned factory.
-     */
-    private void cacheStreamingFactoryIfAvailable(QwpEgressProcessorState state) {
-        if (!state.isStreamingFactoryCacheable()) {
-            return;
-        }
-        RecordCursorFactory factory = state.detachStreamingFactory();
-        if (factory == null) {
-            return;
-        }
-        CharSequence sqlText = state.getStreamingSqlText();
-        if (sqlText == null) {
-            // Factory was detached but we have no SQL key to cache against.
-            // Shouldn't happen in the normal flow; belt-and-braces free.
-            Misc.free(factory);
-            return;
-        }
-        selectCache.put(sqlText, factory);
-    }
-
     private void dispatchEgressMessage(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -1021,6 +991,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * bounded await is pointless). Throws so the caller's catch maps it to a
      * {@code QUERY_ERROR}.
      */
+    /**
+     * Ends streaming and puts a cacheable SELECT factory into this processor's
+     * compile cache, keyed by the query's SQL text, once the state has closed the
+     * cursor and ended the execution owner. EXPLAIN and PSEUDO_SELECT factories
+     * deliberately stay uncached and endStreaming() frees them; a later cache hit
+     * cannot then lose their statement type by being classified as SELECT. Called
+     * on the successful-completion paths only -- error/cancel/disconnect paths call
+     * endStreaming() without a cache, so a cursor that threw never seeds the cache
+     * with a poisoned factory, and a connection that outlives this processor never
+     * puts its factory into this processor's closed cache.
+     */
+    private void endStreamingAndCacheFactory(QwpEgressProcessorState state) {
+        state.endStreaming(selectCache);
+    }
+
     private void executeNonSelect(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -1967,7 +1952,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             batchBuffer.advanceStartRow(rowsThisBatch);
             metrics.markBatchSent(qwp1Size, rowsThisBatch);
             rawSocket.send(frame1Size);
-            state.endStreaming();
+            endStreamingAndCacheFactory(state);
             sendResultEnd(context, state, requestId, batchSeq, totalRows);
             return;
         }
@@ -1997,7 +1982,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // Release cursor/factory BEFORE the kernel gets the bytes. Otherwise the
         // client can observe RESULT_END and issue a DROP TABLE while we still
         // hold the TableReader. See the matching notes on the two-send paths.
-        state.endStreaming();
+        endStreamingAndCacheFactory(state);
         batchBuffer.advanceStartRow(rowsThisBatch);
         metrics.markBatchSent(qwp1Size, rowsThisBatch);
         rawSocket.send(frame1Size + ws2HeaderSize + qwp2Size);
@@ -2185,13 +2170,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (rowsBuffered == 0 && state.getStreamingBatchSeq() > 0) {
                 long finalSeq = state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
-                // Detach factory + SQL text BEFORE endStreaming so endStreaming
-                // doesn't free the factory -- we put it back into the compile
-                // cache for reuse instead. Cache-before-send so PeerIsSlowToReadException
-                // (framework parks and resumes) doesn't strand the factory outside
-                // the cache, and connection drops still drain via selectCache.close().
-                cacheStreamingFactoryIfAvailable(state);
-                state.endStreaming();
+                endStreamingAndCacheFactory(state);
                 sendResultEnd(context, state, requestId, finalSeq, totalRows);
                 return;
             }
@@ -2252,11 +2231,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // Partial-emit iterations cannot take this shortcut because
                 // the suffix still has to ship in a later iteration.
                 long totalRows = state.getStreamingRowsEmitted();
-                // Cache the factory for the next query with this SQL text. Must
-                // happen before sendResultBatchAndEnd because that method calls
-                // state.endStreaming() internally; after it runs, state no longer
-                // has the factory reference.
-                cacheStreamingFactoryIfAvailable(state);
+                // sendResultBatchAndEnd ends streaming and caches the factory for the
+                // next query with this SQL text.
                 sendResultBatchAndEnd(context, state, requestId, currentSeq,
                         batchBuffer, isFirstBatch, totalRows, rowsToShip);
                 return;
