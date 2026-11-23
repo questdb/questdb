@@ -1599,6 +1599,58 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeKeyCountSparseFirstKeyZeroesOldEntries() throws Exception {
+        // A negative key count covers no entry, so a first new key above 0 skips the entries from the end of the header
+        // on. A corrupt or tampered file can hold old entries there: add() zeroes them before the key count makes them
+        // keys, or keys 0 to 39 would carry their old values. The header keeps its signature, block value count, max
+        // value and sequence pair.
+        assertMemoryLeak(() -> {
+            final LongList values = new LongList();
+            for (int keyCount : new int[]{-1, -2, Integer.MIN_VALUE}) {
+                for (boolean isOpenByFd : new boolean[]{false, true}) {
+                    removeIndexFiles();
+                    // 100 old entries, key k holding the value 1_000 + k, under a negative key count
+                    writeStaleKeysAboveZeroKeyCount(64);
+                    writeKeyFileInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
+
+                    BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                        openIndexWriter(writer, isOpenByFd);
+                        Assert.assertEquals(keyCount, writer.getKeyCount());
+                        // the first add: key 40 skips the old entries of keys 0 to 39, [64, 1_344)
+                        writer.add(40, 6);
+                        Assert.assertEquals(1_280, BitmapIndexWriter.testZeroedKeyBytes.get());
+                        Assert.assertEquals(41, writer.getKeyCount());
+                        assertAllZero(readKeyFile(BitmapIndexUtils.KEY_FILE_RESERVED, 1_344));
+
+                        final ByteBuffer header = ByteBuffer.wrap(readKeyFile(0, BitmapIndexUtils.KEY_FILE_RESERVED)).order(ByteOrder.nativeOrder());
+                        Assert.assertEquals(BitmapIndexUtils.SIGNATURE, header.get(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE));
+                        Assert.assertEquals(64, header.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT));
+                        Assert.assertEquals(41, header.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT));
+                        Assert.assertEquals(1_099, header.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE));
+                        Assert.assertEquals(
+                                header.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE),
+                                header.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK)
+                        );
+                        for (int key = 0; key < 40; key++) {
+                            assertThat("[]", writer.getCursor(key), values);
+                        }
+                        assertThat("[6]", writer.getCursor(40), values);
+                    }
+                    // a reader opens the file once add() has published a key count that covers the entries
+                    try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        Assert.assertEquals(41, reader.getKeyCount());
+                        for (int key = 0; key < 40; key++) {
+                            assertThat("[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+                        }
+                        assertThat("[6]", reader.getCursor(40, 0, Long.MAX_VALUE), values);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNewKeyAfterCleanReopenWritesNoSkippedKeys() throws Exception {
         // A writer that closes cleanly cuts the key file after the page that holds the last entry, and zeroes the rest
         // of that page. The next writer open writes nothing, and a new key finds zeros in the entries it skips, dense,
