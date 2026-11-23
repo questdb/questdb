@@ -630,6 +630,10 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         } finally {
             Misc.free(pfc);
             Misc.free(cursor);
+            // The decoded Parquet frames charge the export's memory tracker, which the job
+            // recycles once the export ends: free them now rather than on the next export.
+            // A failed export's writer still points at them, but only to drop its frames.
+            streamBuffers.clear();
         }
     }
 

@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -39,6 +40,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -807,6 +809,49 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
                     // calls above already cover every row_group_size, so fewer rounds suffice.
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, Os.isLinux() ? 10 : 3, 10091);
+                });
+    }
+
+    @Test
+    public void testOnParquetPartitionColumnSubsetsAndComputedColumns() throws Exception {
+        // A Parquet partition keeps the columns its table had at the conversion, in their order
+        // then. The zero-copy export modes read each exported column from the file column that
+        // holds it, whatever the projection, its order, or the columns dropped and added since.
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE pp (x INT, d DOUBLE, s SYMBOL, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    engine.execute("""
+                            INSERT INTO pp SELECT x::INT, x / 4.0, 's' || (x % 7), 'value_' || x, timestamp_sequence('2020-01-01', 60_000_000)
+                            FROM long_sequence(7_200)""");
+                    drainWalQueue(engine);
+                    engine.execute("ALTER TABLE pp CONVERT PARTITION TO PARQUET LIST '2020-01-01', '2020-01-02', '2020-01-04'");
+                    drainWalQueue(engine);
+                    engine.execute("ALTER TABLE pp DROP COLUMN d");
+                    drainWalQueue(engine);
+                    engine.execute("ALTER TABLE pp ADD COLUMN y INT");
+                    drainWalQueue(engine);
+                    engine.execute("""
+                            INSERT INTO pp SELECT x::INT, 's1', 'added_' || x, timestamp_sequence('2020-01-05T12:00', 60_000_000), x::INT
+                            FROM long_sequence(100)""");
+                    drainWalQueue(engine);
+
+                    final String[] directQueries = {
+                            "SELECT v, x, ts FROM pp",
+                            "SELECT y, s FROM pp",
+                            "SELECT * FROM pp"
+                    };
+                    for (String query : directQueries) {
+                        assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.DIRECT_PAGE_FRAME);
+                        assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{query}, 2, 3000);
+                    }
+                    final String[] computedQueries = {
+                            "SELECT x + 1 x1, v, s, ts FROM pp",
+                            "SELECT concat(v, s) vs, y * 2 y2 FROM pp"
+                    };
+                    for (String query : computedQueries) {
+                        assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.PAGE_FRAME_BACKED);
+                        assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{query}, 2, 3000);
+                    }
                 });
     }
 
@@ -2655,6 +2700,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             Assert.assertEquals(2, requestCompileCount.get());
         } finally {
             engine.getSqlCompilerPool().setPoolListener(null);
+        }
+    }
+
+    private static void assertParquetExportMode(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            ParquetExportMode expectedMode
+    ) throws Exception {
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            Assert.assertEquals(query, expectedMode, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
         }
     }
 

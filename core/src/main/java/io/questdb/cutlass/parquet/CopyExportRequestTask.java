@@ -504,6 +504,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
         // Buffer header size: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
+        private final ParquetExportColumnResolver parquetColumnResolver = new ParquetExportColumnResolver();
         private DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
@@ -515,6 +516,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         private DirectIntList decodeColumns = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private RowGroupBuffers decodeRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private boolean exportFinished = false;
+        // Reused per Parquet frame: the file column of each exported column, see ParquetExportColumnResolver.
+        private DirectIntList parquetColumns = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         // Cumulative count of rows written to Parquet row groups by Rust.
         // Used to determine when partition memory can be safely released.
         private long rowsWrittenToRowGroups = 0;
@@ -533,6 +536,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnMetadata);
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, bloomFilterColumnIndexes);
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeColumns);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, parquetColumns);
             try {
                 closeWriter();
             } catch (Throwable th) {
@@ -571,6 +575,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             final DirectIntList decodeColumns = this.decodeColumns;
             this.decodeColumns = null;
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeColumns);
+            final DirectIntList parquetColumns = this.parquetColumns;
+            this.parquetColumns = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, parquetColumns);
             final RowGroupBuffers decodeRowGroupBuffers = this.decodeRowGroupBuffers;
             this.decodeRowGroupBuffers = null;
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeRowGroupBuffers);
@@ -886,6 +893,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                 final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
                 final ParquetDecoder parquetDecoder = frame.getParquetDecoder();
+                // The file keeps its own columns in its own order; read each exported column
+                // from the file column that holds it.
+                parquetColumns.reopen();
+                parquetColumns.clear();
+                parquetColumnResolver.resolve(frameCursor.getColumnMapping(), metadata, parquetDecoder, parquetColumns);
+                final int parquetColumnCount = (int) parquetColumns.size();
                 if (parquetDecoder.getFileAddr() != 0) {
                     // The parquet file is mapped locally, so fast-copy the row group bytes
                     // straight from the mmap.
@@ -895,6 +908,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                             columnData.getAddress(),
                             parquetDecoder.getFileAddr(),
                             parquetDecoder.getFileSize(),
+                            parquetColumns.getAddress(),
+                            parquetColumnCount,
                             frame.getParquetRowGroup(),
                             frame.getParquetRowGroupLo(),
                             frame.getParquetRowGroupHi()
@@ -907,6 +922,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         buffer = writeStreamingParquetChunkFromRowGroup(
                                 streamWriter,
                                 allocator,
+                                0,
+                                0,
                                 0,
                                 0,
                                 0,
@@ -927,11 +944,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     if (rowCount > 0) {
                         decodeColumns.reopen();
                         decodeColumns.clear();
-                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                            // Materialized column types only (never VARCHAR_SLICE) so the decoded
-                            // buffers are self-owned and survive the decode-resource release below.
-                            decodeColumns.add(i);
-                            decodeColumns.add(metadata.getColumnType(i));
+                        for (int i = 0; i < parquetColumnCount; i++) {
+                            final int parquetColumn = parquetColumns.get(i);
+                            if (parquetColumn != ParquetExportColumnResolver.ABSENT) {
+                                // Materialized column types only (never VARCHAR_SLICE) so the decoded
+                                // buffers are self-owned and survive the decode-resource release below.
+                                decodeColumns.add(parquetColumn);
+                                decodeColumns.add(metadata.getColumnType(i));
+                            }
                         }
                         decodeRowGroupBuffers.reopen();
                         parquetDecoder.decodeRowGroup(decodeRowGroupBuffers, decodeColumns, frame.getParquetRowGroup(), rowLo, rowHi);
@@ -942,6 +962,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                                     allocator,
                                     columnData.getAddress(),
                                     decodeRowGroupBuffers.ptr(),
+                                    parquetColumns.getAddress(),
+                                    parquetColumnCount,
                                     rowCount
                             );
                             while (buffer != 0) {
@@ -952,6 +974,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                                 buffer = writeStreamingParquetChunkFromRowGroupBuffers(
                                         streamWriter,
                                         allocator,
+                                        0,
+                                        0,
                                         0,
                                         0,
                                         0

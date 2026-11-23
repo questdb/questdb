@@ -1832,6 +1832,51 @@ fn checked_row_group_buffers_ptr(
     Ok(row_group_buffers_ptr as *const crate::parquet_read::RowGroupBuffers)
 }
 
+/// A `parquet_columns` entry for an encoder column that the source parquet file does not hold,
+/// such as a column added after the file was written. The column exports as NULL.
+const ABSENT_PARQUET_COLUMN: i32 = -1;
+
+/// Reads the source parquet column of each encoder column: one entry per encoder column, either
+/// a column index of the source parquet file or `ABSENT_PARQUET_COLUMN`. The caller resolves the
+/// entries by column id, since the file keeps its own column set and order, which differs from
+/// the exported query's after a projection or DROP COLUMN.
+fn checked_parquet_columns<'a>(
+    parquet_columns_ptr: jlong,
+    parquet_column_count: jint,
+    encoder_column_count: usize,
+) -> ParquetResult<&'a [i32]> {
+    let parquet_column_count =
+        checked_non_negative_usize(i64::from(parquet_column_count), "parquet column count")?;
+    if parquet_column_count != encoder_column_count {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "parquet column count {} does not match encoder column count {}",
+            parquet_column_count,
+            encoder_column_count
+        ));
+    }
+    if parquet_columns_ptr == 0 {
+        return Err(fmt_err!(InvalidType, "parquet columns pointer is null"));
+    }
+    // SAFETY: Java passes the address of a list of `parquet_column_count` ints, which stays
+    // valid for the JNI call duration.
+    let parquet_columns =
+        unsafe { slice::from_raw_parts(parquet_columns_ptr as *const i32, parquet_column_count) };
+    if let Some((i, &parquet_column)) = parquet_columns
+        .iter()
+        .enumerate()
+        .find(|(_, &parquet_column)| parquet_column < ABSENT_PARQUET_COLUMN)
+    {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "invalid parquet column index {}, column index: {}",
+            parquet_column,
+            i
+        ));
+    }
+    Ok(parquet_columns)
+}
+
 fn checked_row_group_args(
     row_group_index: jint,
     row_group_lo: jint,
@@ -1889,6 +1934,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     symbol_data_ptr: jlong,
     source_parquet_addr: jlong,
     source_parquet_size: jlong,
+    parquet_columns_ptr: jlong,
+    parquet_column_count: jint,
     row_group_index: jint,
     row_group_lo: jint,
     row_group_hi: jint,
@@ -1908,6 +1955,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let (row_group_index, row_group_lo, row_group_hi, row_count) =
             checked_row_group_args(row_group_index, row_group_lo, row_group_hi)?;
         if row_count > 0 {
+            let parquet_columns = checked_parquet_columns(
+                parquet_columns_ptr,
+                parquet_column_count,
+                encoder.partition.columns.len(),
+            )?;
             let source_parquet_size =
                 checked_slice_len::<u8>(source_parquet_size, "source parquet size")?;
             if source_parquet_addr == 0 {
@@ -1942,12 +1994,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )?;
             let mut row_group_bufs = RowGroupBuffers::new(allocator);
             let mut ctx = DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size);
+            // Decode only the file columns the export reads, in encoder column order;
+            // convert_row_group_buffers_to_partition() maps them back to encoder columns.
             let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
                 .partition
                 .columns
                 .iter()
-                .enumerate()
-                .map(|(i, col)| (i as i32, col.data_type))
+                .zip(parquet_columns)
+                .filter(|(_, &parquet_column)| parquet_column != ABSENT_PARQUET_COLUMN)
+                .map(|(col, &parquet_column)| (parquet_column, col.data_type))
                 .collect();
 
             decoder.decode_row_group(
@@ -1962,6 +2017,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let partition = convert_row_group_buffers_to_partition(
                 &encoder.partition,
                 row_group_bufs.column_buffers(),
+                parquet_columns,
                 row_count,
                 symbol_data_ptr,
             )?;
@@ -1987,7 +2043,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 /// then hands those buffers here. We copy them into encoder-owned storage so the pending
 /// partition no longer references the caller's pinned buffers, letting the caller release the
 /// decode resource as soon as this returns. Symbol values come from `symbol_data_ptr`,
-/// identical to the mmap path.
+/// identical to the mmap path. The caller decodes the file columns of the `parquet_columns`
+/// entries other than `ABSENT_PARQUET_COLUMN`, in encoder column order.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkFromRowGroupBuffers(
     mut env: JNIEnv,
@@ -1996,6 +2053,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     allocator_ptr: *const QdbAllocator,
     symbol_data_ptr: jlong,
     row_group_buffers_ptr: jlong,
+    parquet_columns_ptr: jlong,
+    parquet_column_count: jint,
     row_count: jint,
 ) -> *const u8 {
     let env = &mut env;
@@ -2012,17 +2071,26 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     let mut write_chunk = || -> ParquetResult<*const u8> {
         let row_count = checked_streaming_buffer_row_count(row_count)?;
         if row_count > 0 {
+            let parquet_columns = checked_parquet_columns(
+                parquet_columns_ptr,
+                parquet_column_count,
+                encoder.partition.columns.len(),
+            )?;
             let row_group_buffers_ptr = checked_row_group_buffers_ptr(row_group_buffers_ptr)?;
             // SAFETY: Java passes the live pointer of a RowGroupBuffers it just decoded into;
             // it stays valid for this call and we only read from it.
             let source_bufs = unsafe { &*row_group_buffers_ptr };
             // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
             let allocator = unsafe { &*allocator_ptr }.clone();
-            let owned_bufs =
-                source_bufs.copy_first_n_columns(encoder.partition.columns.len(), allocator)?;
+            let decoded_column_count = parquet_columns
+                .iter()
+                .filter(|&&parquet_column| parquet_column != ABSENT_PARQUET_COLUMN)
+                .count();
+            let owned_bufs = source_bufs.copy_first_n_columns(decoded_column_count, allocator)?;
             let partition = convert_row_group_buffers_to_partition(
                 &encoder.partition,
                 owned_bufs.column_buffers(),
+                parquet_columns,
                 row_count,
                 symbol_data_ptr,
             )?;
@@ -2042,9 +2110,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
+/// Builds the partition of one decoded row group. `column_bufs` holds the decoded file columns
+/// of the `parquet_columns` entries other than `ABSENT_PARQUET_COLUMN`, in encoder column order;
+/// an absent encoder column becomes a column top over the whole row group, i.e. all NULL.
 fn convert_row_group_buffers_to_partition(
     partition_template: &Partition,
     column_bufs: &[crate::parquet_read::ColumnChunkBuffers],
+    parquet_columns: &[i32],
     row_count: usize,
     symbol_data_ptr: jlong,
 ) -> ParquetResult<Partition> {
@@ -2073,53 +2145,84 @@ fn convert_row_group_buffers_to_partition(
         &[]
     };
 
-    let mut symbol_data_idx = 0;
+    if parquet_columns.len() != partition_template.columns.len() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "parquet column count {} does not match encoder column count {}",
+            parquet_columns.len(),
+            partition_template.columns.len()
+        ));
+    }
 
-    for (i, column_template) in partition_template.columns.iter().enumerate() {
-        let col_buf = column_bufs.get(i).ok_or_else(|| {
-            fmt_err!(
-                InvalidLayout,
-                "decoded column index {} out of range [0,{})",
-                i,
-                column_bufs.len()
-            )
-        })?;
-        if let Some(&[_, top_rows_hi]) = col_buf.top_rows().last() {
-            if top_rows_hi > row_count as u64 {
-                return Err(fmt_err!(
+    let mut symbol_data_idx = 0;
+    let mut decoded_column_idx = 0;
+
+    for (i, (column_template, &parquet_column)) in partition_template
+        .columns
+        .iter()
+        .zip(parquet_columns)
+        .enumerate()
+    {
+        let col_buf = if parquet_column == ABSENT_PARQUET_COLUMN {
+            None
+        } else {
+            let col_buf = column_bufs.get(decoded_column_idx).ok_or_else(|| {
+                fmt_err!(
                     InvalidLayout,
-                    "decoded column top rows end {} past row count {}, column index: {}",
-                    top_rows_hi,
-                    row_count,
-                    i
-                ));
+                    "decoded column index {} out of range [0,{})",
+                    decoded_column_idx,
+                    column_bufs.len()
+                )
+            })?;
+            decoded_column_idx += 1;
+            if let Some(&[_, top_rows_hi]) = col_buf.top_rows().last() {
+                if top_rows_hi > row_count as u64 {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "decoded column top rows end {} past row count {}, column index: {}",
+                        top_rows_hi,
+                        row_count,
+                        i
+                    ));
+                }
             }
-        }
+            Some(col_buf)
+        };
+        // An absent column has the empty layout of an all-null decoded chunk.
+        let (data_ptr, data_size, aux_ptr, aux_size) =
+            col_buf.map_or((std::ptr::null(), 0, std::ptr::null(), 0), |col_buf| {
+                (
+                    col_buf.data_ptr as *const u8,
+                    col_buf.data_size,
+                    col_buf.aux_ptr as *const u8,
+                    col_buf.aux_size,
+                )
+            });
         let mut column = *column_template;
         column.row_count = row_count;
         // A _pm-backed decoder may elide a known all-null chunk entirely. Materialized
         // buffers already contain their column-top null rows, so only the empty layout
         // becomes a writer column top; forwarding the decode annotation unconditionally
         // would apply those rows twice.
-        column.column_top = if col_buf.data_size != 0 || col_buf.aux_size != 0 {
+        column.column_top = if data_size != 0 || aux_size != 0 {
             0
         } else {
             row_count
         };
-        column.primary_data = if col_buf.data_size == 0 {
+        column.primary_data = if data_size == 0 {
             &[]
         } else {
-            if col_buf.data_ptr.is_null() {
+            if data_ptr.is_null() {
                 return Err(fmt_err!(
                     InvalidLayout,
                     "decoded primary data pointer is null with non-zero size {}, column index: {}",
-                    col_buf.data_size,
+                    data_size,
                     i
                 ));
             }
-            // SAFETY: `col_buf.data_ptr` points to decoded row group data owned by
+            // SAFETY: `data_ptr` points to decoded row group data owned by
             // `row_group_bufs`, which remains alive as long as the partition references it.
-            unsafe { slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) }
+            unsafe { slice::from_raw_parts(data_ptr, data_size) }
         };
 
         if column.data_type.tag() == ColumnTypeTag::Symbol {
@@ -2153,20 +2256,20 @@ fn convert_row_group_buffers_to_partition(
                 column.symbol_offsets = &[];
             }
         } else {
-            column.secondary_data = if col_buf.aux_size == 0 {
+            column.secondary_data = if aux_size == 0 {
                 &[]
             } else {
-                if col_buf.aux_ptr.is_null() {
+                if aux_ptr.is_null() {
                     return Err(fmt_err!(
                         InvalidLayout,
                         "decoded auxiliary data pointer is null with non-zero size {}, column index: {}",
-                        col_buf.aux_size,
+                        aux_size,
                         i
                     ));
                 }
-                // SAFETY: `col_buf.aux_ptr` points to decoded row group auxiliary data owned by
+                // SAFETY: `aux_ptr` points to decoded row group auxiliary data owned by
                 // `row_group_bufs`, which remains alive as long as the partition references it.
-                unsafe { slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size) }
+                unsafe { slice::from_raw_parts(aux_ptr, aux_size) }
             };
             column.symbol_offsets = &[];
         }
@@ -2211,6 +2314,189 @@ mod validation_tests {
         }
     }
 
+    fn partition_of(data_types: &[ColumnType]) -> Partition {
+        let template = one_column_partition(ColumnTypeTag::Int.into_type()).columns[0];
+        Partition {
+            table: String::new(),
+            columns: data_types
+                .iter()
+                .enumerate()
+                .map(|(i, &data_type)| Column { id: i as i32, data_type, ..template })
+                .collect(),
+        }
+    }
+
+    fn int_column_bufs(allocator_state: &TestAllocatorState, values: &[i32]) -> ColumnChunkBuffers {
+        let mut column_bufs = ColumnChunkBuffers::new(allocator_state.allocator());
+        for value in values {
+            column_bufs
+                .data_vec
+                .extend_from_slice(&value.to_ne_bytes())
+                .unwrap();
+        }
+        column_bufs.refresh_ptrs().unwrap();
+        column_bufs
+    }
+
+    #[test]
+    fn parquet_columns_are_validated() {
+        let parquet_columns = [3i32, ABSENT_PARQUET_COLUMN, 0];
+        let ptr = parquet_columns.as_ptr() as jlong;
+        assert_eq!(
+            checked_parquet_columns(ptr, 3, 3).unwrap(),
+            &[3, ABSENT_PARQUET_COLUMN, 0]
+        );
+        assert_error_contains(
+            checked_parquet_columns(ptr, 2, 3),
+            "parquet column count 2 does not match encoder column count 3",
+        );
+        assert_error_contains(
+            checked_parquet_columns(ptr, -1, 3),
+            "parquet column count must not be negative: -1",
+        );
+        assert_error_contains(
+            checked_parquet_columns(0, 3, 3),
+            "parquet columns pointer is null",
+        );
+        let invalid = [0i32, -2];
+        assert_error_contains(
+            checked_parquet_columns(invalid.as_ptr() as jlong, 2, 2),
+            "invalid parquet column index -2, column index: 1",
+        );
+        let invalid = [i32::MIN];
+        assert_error_contains(
+            checked_parquet_columns(invalid.as_ptr() as jlong, 1, 1),
+            "invalid parquet column index -2147483648, column index: 0",
+        );
+    }
+
+    #[test]
+    fn decoded_partition_maps_decoded_columns_to_encoder_columns() {
+        // The file holds the decoded columns of encoder columns 0 and 2, in that order;
+        // encoder column 1 is absent from it.
+        let allocator_state = TestAllocatorState::new();
+        let column_bufs = vec![
+            int_column_bufs(&allocator_state, &[10, 11, 12]),
+            int_column_bufs(&allocator_state, &[20, 21, 22]),
+        ];
+        let int_type = ColumnTypeTag::Int.into_type();
+        let partition = partition_of(&[int_type, int_type, int_type]);
+
+        let converted = convert_row_group_buffers_to_partition(
+            &partition,
+            &column_bufs,
+            &[7, ABSENT_PARQUET_COLUMN, 4],
+            3,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(converted.columns.len(), 3);
+        let expected_first: Vec<u8> = [10i32, 11, 12]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let expected_last: Vec<u8> = [20i32, 21, 22]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        assert_eq!(converted.columns[0].primary_data, expected_first.as_slice());
+        assert_eq!(converted.columns[0].column_top, 0);
+        assert_eq!(converted.columns[1].column_top, 3);
+        assert!(converted.columns[1].primary_data.is_empty());
+        assert!(converted.columns[1].secondary_data.is_empty());
+        assert_eq!(converted.columns[2].primary_data, expected_last.as_slice());
+        assert_eq!(converted.columns[2].column_top, 0);
+        for (i, column) in converted.columns.iter().enumerate() {
+            assert_eq!(column.id, i as i32);
+            assert_eq!(column.row_count, 3);
+        }
+
+        // Every encoder column absent: nothing decoded, all of them NULL.
+        let converted = convert_row_group_buffers_to_partition(
+            &partition,
+            &[],
+            &[ABSENT_PARQUET_COLUMN; 3],
+            3,
+            0,
+        )
+        .unwrap();
+        assert!(converted
+            .columns
+            .iter()
+            .all(|column| column.column_top == 3 && column.primary_data.is_empty()));
+    }
+
+    #[test]
+    fn decoded_partition_rejects_too_few_decoded_columns() {
+        let allocator_state = TestAllocatorState::new();
+        let column_bufs = vec![int_column_bufs(&allocator_state, &[1])];
+        let int_type = ColumnTypeTag::Int.into_type();
+        let partition = partition_of(&[int_type, int_type]);
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0, 1], 1, 0),
+            "decoded column index 1 out of range [0,1)",
+        );
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0),
+            "parquet column count 1 does not match encoder column count 2",
+        );
+    }
+
+    #[test]
+    fn decoded_partition_keeps_symbol_metadata_of_absent_symbol_columns() {
+        // Symbol metadata has an entry per SYMBOL encoder column, absent ones included, so
+        // the decoded SYMBOL column after an absent one takes the second entry.
+        let allocator_state = TestAllocatorState::new();
+        let column_bufs = vec![int_column_bufs(&allocator_state, &[0, 1])];
+        let symbol_type = ColumnTypeTag::Symbol.into_type();
+        let partition = partition_of(&[symbol_type, symbol_type]);
+        let first_values = [1u8, 2];
+        let first_offsets = [0u64];
+        let second_values = [3u8, 4, 5];
+        let second_offsets = [0u64, 1];
+        let metadata = [
+            first_values.as_ptr() as i64,
+            first_values.len() as i64,
+            first_offsets.as_ptr() as i64,
+            first_offsets.len() as i64,
+            second_values.as_ptr() as i64,
+            second_values.len() as i64,
+            second_offsets.as_ptr() as i64,
+            second_offsets.len() as i64,
+        ];
+
+        let converted = convert_row_group_buffers_to_partition(
+            &partition,
+            &column_bufs,
+            &[ABSENT_PARQUET_COLUMN, 0],
+            2,
+            metadata.as_ptr() as jlong,
+        )
+        .unwrap();
+
+        assert_eq!(converted.columns[0].column_top, 2);
+        assert!(converted.columns[0].primary_data.is_empty());
+        assert_eq!(converted.columns[0].secondary_data, &first_values);
+        assert_eq!(converted.columns[0].symbol_offsets, &first_offsets);
+        assert_eq!(converted.columns[1].column_top, 0);
+        assert_eq!(converted.columns[1].primary_data.len(), 8);
+        assert_eq!(converted.columns[1].secondary_data, &second_values);
+        assert_eq!(converted.columns[1].symbol_offsets, &second_offsets);
+    }
+
+    #[test]
+    fn decoded_partition_rejects_missing_symbol_metadata_of_absent_column() {
+        let symbol_type = ColumnTypeTag::Symbol.into_type();
+        let partition = partition_of(&[symbol_type]);
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &[], &[ABSENT_PARQUET_COLUMN], 1, 0),
+            "symbol metadata is missing, column index: 0",
+        );
+    }
+
     #[test]
     fn decoded_symbol_metadata_rejects_negative_lengths() {
         let allocator_state = TestAllocatorState::new();
@@ -2224,6 +2510,7 @@ mod validation_tests {
             let result = convert_row_group_buffers_to_partition(
                 &partition,
                 &column_bufs,
+                &[0],
                 1,
                 metadata.as_ptr() as jlong,
             );
@@ -2237,7 +2524,7 @@ mod validation_tests {
         let partition = one_column_partition(ColumnTypeTag::Int.into_type());
 
         assert_error_contains(
-            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0),
             "decoded column index 0 out of range [0,0)",
         );
     }
@@ -2250,14 +2537,16 @@ mod validation_tests {
         let partition = one_column_partition(ColumnTypeTag::Int.into_type());
 
         assert_error_contains(
-            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0),
             "decoded column top rows end 2 past row count 1, column index: 0",
         );
 
         // top rows up to the row count are of the decoded rows
         column_bufs[0].reset();
         column_bufs[0].add_top_rows(0, 1).unwrap();
-        assert!(convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0).is_ok());
+        assert!(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0).is_ok()
+        );
     }
 
     #[test]
@@ -2267,7 +2556,7 @@ mod validation_tests {
         let partition = one_column_partition(ColumnTypeTag::Symbol.into_type());
 
         assert_error_contains(
-            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0),
             "symbol metadata is missing, column index: 0",
         );
     }
@@ -2280,7 +2569,7 @@ mod validation_tests {
         let partition = one_column_partition(ColumnTypeTag::String.into_type());
 
         assert_error_contains(
-            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0),
             "decoded auxiliary data pointer is null with non-zero size 1, column index: 0",
         );
     }
@@ -2293,7 +2582,7 @@ mod validation_tests {
         let partition = one_column_partition(ColumnTypeTag::Int.into_type());
 
         assert_error_contains(
-            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, &[0], 1, 0),
             "decoded primary data pointer is null with non-zero size 1, column index: 0",
         );
     }

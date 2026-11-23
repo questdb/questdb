@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
@@ -72,6 +74,10 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     @Override
     public DirectLongList getAuxPageAddresses() {
         return auxPageAddresses;
+    }
+
+    public long getAuxPageSize(int columnIndex) {
+        return auxPageSizes.get(columnIndex);
     }
 
     @Override
@@ -161,6 +167,49 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
             pageSizes.add(frame.getPageSize(col));
             auxPageAddresses.add(frame.getAuxPageAddress(col));
             auxPageSizes.add(frame.getAuxPageSize(col));
+            if (addr == 0) {
+                hasColumnTops = true;
+            }
+        }
+    }
+
+    /**
+     * Points at a row group decoded into {@code buffers} in the native column layout.
+     *
+     * @param buffers        the decoded file columns, one per {@code parquetColumns} entry other
+     *                       than {@link ParquetExportColumnResolver#ABSENT}, in column order
+     * @param parquetColumns the file column of each column of the frame
+     * @param rowIdOffset    the frame's first row
+     */
+    public void of(RowGroupBuffers buffers, DirectIntList parquetColumns, long rowIdOffset) {
+        this.columnCount = (int) parquetColumns.size();
+        this.rowIdOffset = rowIdOffset;
+
+        pageAddresses.clear();
+        auxPageAddresses.clear();
+        pageSizes.clear();
+        auxPageSizes.clear();
+
+        hasColumnTops = false;
+        int slot = 0;
+        for (int col = 0; col < columnCount; col++) {
+            long addr = 0;
+            long size = 0;
+            long auxAddr = 0;
+            long auxSize = 0;
+            if (parquetColumns.get(col) != ParquetExportColumnResolver.ABSENT) {
+                // An empty chunk is all NULL: a decoder may elide such a chunk, and a native
+                // frame reports it as a column top, with no addresses.
+                size = buffers.getChunkDataSize(slot);
+                auxSize = buffers.getChunkAuxSize(slot);
+                addr = size > 0 ? buffers.getChunkDataPtr(slot) : 0;
+                auxAddr = auxSize > 0 ? buffers.getChunkAuxPtr(slot) : 0;
+                slot++;
+            }
+            pageAddresses.add(addr);
+            pageSizes.add(size);
+            auxPageAddresses.add(auxAddr);
+            auxPageSizes.add(auxSize);
             if (addr == 0) {
                 hasColumnTops = true;
             }
