@@ -5644,82 +5644,64 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testOrphanPurgeKeepsReusedGenerationOfOpenReader() throws Exception {
-        // A failed reseal queues the purge of the generation it staged at sealTxn S, with a reader window that ends
-        // there. Before the purge job runs, the next writer reseals at S again, the generation counter of the chain
-        // having not moved, and an out-of-order append supersedes that reused generation while a reader of it is
-        // open. The orphan purge must leave the files of that reader alone: the supersession queued their purge with
-        // its own reader window, which removes them once the reader closes.
-        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
-        ff = pcSync;
+        // A reseal that fails after it staged its generation at sealTxn S queues the purge of the staged files, with a
+        // reader window that ends there. Before the purge job runs, the next reseal takes S again, the generation
+        // counter of the chain having not moved, and an out-of-order append supersedes that reused generation while a
+        // reader of it is open. The purge must leave the files of that reader alone: the supersession queued their
+        // purge with its own reader window, which removes them once the reader closes. The first reseal fails at each
+        // call on the files of the index in turn; see sweepRecoveryPartitionSwitch().
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        assertMemoryLeak(ff, () -> {
-            createPostingRecoveryTable();
-            final long stagedSealTxn = headSealTxnOfRecoveryPartition() + 1;
-            final Throwable failure = failRecoveryPartitionSwitch(pcSync, true);
-            Assert.assertNotNull("the reseal must fail", failure);
-            TestUtils.assertContains(failure.getMessage(), "[test] staged .pc sync failed");
-            Assert.assertTrue(isRecoveryValueFilePresent(stagedSealTxn));
-
-            // no purge job runs yet, and the next reseal of 2022-02-25 takes the staged sealTxn again
-            execute(insertPostingRowsSql(35, 40));
-            execute("INSERT INTO posting_o3_recovery VALUES ('2022-02-26T00:00:00.000000Z', 'next', 'S', 200)");
-            Assert.assertEquals(stagedSealTxn, headSealTxnOfRecoveryPartition());
+        final int[] reuseCount = {0};
+        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39 40 41 42 43 44", (liveSealTxnBefore, where) -> {
+            // no purge job runs yet
+            final long stagedSealTxn = liveSealTxnBefore + 1;
+            final boolean isStagedLeft = headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(stagedSealTxn);
+            resealRecoveryPartitionAfterFailedSwitch();
+            final long readerSealTxn = headSealTxnOfRecoveryPartition();
+            if (isStagedLeft && readerSealTxn == stagedSealTxn) {
+                reuseCount[0]++;
+            }
             try (TableReader reader = getReader("posting_o3_recovery")) {
                 Assert.assertEquals("34 35 36 37 38 39", indexRowIdsOfRecoveryPartition(reader, "XPHI"));
-                // an out-of-order append to 2022-02-25 supersedes the reused generation
+                // an out-of-order append to 2022-02-25 supersedes the generation of the reader
                 execute(insertPostingRowsSql(40, 45));
-                Assert.assertEquals(stagedSealTxn + 1, headSealTxnOfRecoveryPartition());
+                Assert.assertEquals(readerSealTxn + 1, headSealTxnOfRecoveryPartition());
                 try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                     runPostingSealPurgeJob(purgeJob);
                 }
-                Assert.assertTrue(isRecoveryValueFilePresent(stagedSealTxn));
+                Assert.assertTrue("the purge removed the generation of an open reader", isRecoveryValueFilePresent(readerSealTxn));
                 Assert.assertEquals("34 35 36 37 38 39", indexRowIdsOfRecoveryPartition(reader, "XPHI"));
             }
-
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-            Assert.assertFalse(isRecoveryValueFilePresent(stagedSealTxn));
-            Assert.assertTrue(isRecoveryValueFilePresent(stagedSealTxn + 1));
-            assertRecoveryTableIndexRows("34 35 36 37 38 39 40 41 42 43 44");
         });
+        Assert.assertTrue("no failed reseal left a staged generation that the next reseal took again", reuseCount[0] > 0);
     }
 
     @Test
     public void testOrphanPurgeOfUnreadableChainRemovesStagedGeneration() throws Exception {
         // When the purge cannot read the chain of the .pk, nothing proves that a reader above the window of an orphan
         // purge can see its generation, as nothing proves the head of the chain live: the purge goes on, and the
-        // staged generation goes.
-        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
-        ff = pcSync;
+        // staged generation goes. The reseal fails at each call on the files of the index in turn; see
+        // sweepRecoveryPartitionSwitch().
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        assertMemoryLeak(ff, () -> {
-            createPostingRecoveryTable();
-            final long stagedSealTxn = headSealTxnOfRecoveryPartition() + 1;
-            Assert.assertNotNull("the reseal must fail", failRecoveryPartitionSwitch(pcSync, true));
-            Assert.assertTrue(isRecoveryValueFilePresent(stagedSealTxn));
-            // a publish in flight on both header pages of the .pk: odd sequences that never settle
-            try (Path path = new Path()) {
-                final FilesFacade filesFacade = configuration.getFilesFacade();
-                final LPSZ keyFile = PostingIndexUtils.keyFileName(recoveryPartitionPath(path), "new_col_11", recoveryPostingColumnNameTxn());
-                final long fd = filesFacade.openRW(keyFile, CairoConfiguration.O_NONE);
-                Assert.assertTrue(fd > -1);
-                final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    Unsafe.putLong(buf, 3L);
-                    for (long page : new long[]{PostingIndexUtils.PAGE_A_OFFSET, PostingIndexUtils.PAGE_B_OFFSET}) {
-                        Assert.assertEquals(Long.BYTES, filesFacade.write(fd, buf, Long.BYTES, page + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START));
-                    }
-                } finally {
-                    Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                    filesFacade.close(fd);
+        final int[] stagedCount = {0};
+        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39", (liveSealTxnBefore, where) -> {
+            final long stagedSealTxn = liveSealTxnBefore + 1;
+            if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore) {
+                if (isRecoveryValueFilePresent(stagedSealTxn)) {
+                    stagedCount[0]++;
                 }
+                // a publish in flight on both header pages of the .pk: odd sequences that never settle
+                final long[] sequences = putRecoveryKeyHeaderSequences(new long[]{3L, 3L});
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                Assert.assertFalse("the purge kept the staged generation", isRecoveryValueFilePresent(stagedSealTxn));
+                Assert.assertTrue("the purge removed the live generation", isRecoveryValueFilePresent(liveSealTxnBefore));
+                putRecoveryKeyHeaderSequences(sequences);
             }
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-            Assert.assertFalse(isRecoveryValueFilePresent(stagedSealTxn));
+            resealRecoveryPartitionAfterFailedSwitch();
         });
+        Assert.assertTrue("no failed reseal left a staged generation", stagedCount[0] > 0);
     }
 
     @Test
@@ -6412,6 +6394,62 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPurgeKeepsGenerationVisibleAboveWindow() throws Exception {
+        // A purge deletes a generation only when no reader at or above the end of the window its scoreboard check
+        // covers can see it. A superseded generation is visible from its txnAtSeal up to the txnAtSeal of the
+        // generation that superseded it: a purge whose window ends below that span or inside it keeps the files of
+        // the generation, and a purge whose window covers it deletes them. The reseal before the supersession fails
+        // at each call on the files of the index in turn (see sweepRecoveryPartitionSwitch()), so that the superseded
+        // generation is, after some of the failures, the reused generation of a failed reseal, which an orphan purge
+        // targets too.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        final int[] reuseCount = {0};
+        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39 40 41 42 43 44", (liveSealTxnBefore, where) -> {
+            final long stagedSealTxn = liveSealTxnBefore + 1;
+            final boolean isStagedLeft = headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(stagedSealTxn);
+            resealRecoveryPartitionAfterFailedSwitch();
+            // an out-of-order append supersedes the generation of the reseal
+            execute(insertPostingRowsSql(40, 45));
+            final LongList sealTxns = new LongList();
+            final LongList txnAtSeals = new LongList();
+            try (Path path = new Path()) {
+                readPostingChainEntries(recoveryPartitionPath(path), "new_col_11", recoveryPostingColumnNameTxn(), sealTxns, txnAtSeals);
+            }
+            final long sealTxn = sealTxns.getQuick(1);
+            final long supersedingTxnAtSeal = txnAtSeals.getQuick(0);
+            final long txnAtSeal = txnAtSeals.getQuick(1);
+            Assert.assertTrue(sealTxn < sealTxns.getQuick(0));
+            Assert.assertTrue(txnAtSeal < supersedingTxnAtSeal);
+            if (isStagedLeft && sealTxn == stagedSealTxn) {
+                reuseCount[0]++;
+            }
+
+            final long partitionTs = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+            final TableToken token;
+            final long partitionNameTxn;
+            try (TableReader reader = getReader("posting_o3_recovery")) {
+                token = reader.getTableToken();
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(reader.getPartitionIndexByTimestamp(partitionTs));
+            }
+            final long postingColumnNameTxn = recoveryPostingColumnNameTxn();
+            engine.releaseAllReaders();
+            final PostingSealPurgeTask task = new PostingSealPurgeTask();
+            try (PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
+                for (long toTxn : new long[]{txnAtSeal - 1, txnAtSeal, supersedingTxnAtSeal - 1}) {
+                    task.of(token, "new_col_11", postingColumnNameTxn, sealTxn, partitionTs, partitionNameTxn, PartitionBy.DAY, ColumnType.TIMESTAMP, 0, toTxn);
+                    Assert.assertTrue(operator.purge(task, false));
+                    Assert.assertTrue("window ending at " + toTxn, isRecoveryValueFilePresent(sealTxn));
+                }
+                task.of(token, "new_col_11", postingColumnNameTxn, sealTxn, partitionTs, partitionNameTxn, PartitionBy.DAY, ColumnType.TIMESTAMP, 0, supersedingTxnAtSeal);
+                Assert.assertTrue(operator.purge(task, false));
+                Assert.assertFalse(isRecoveryValueFilePresent(sealTxn));
+            }
+            Assert.assertTrue(isRecoveryValueFilePresent(sealTxns.getQuick(0)));
+        });
+        Assert.assertTrue("no failed reseal left a staged generation that the next reseal took again", reuseCount[0] > 0);
+    }
+
     /**
      * Reader must clamp returned rowids by the picked chain entry's
      * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
@@ -6440,59 +6478,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * {@code indexMaxValue = min(callerMax, entryMaxValue) = 49} and
      * the cursor stops emitting values above 49.
      */
-    @Test
-    public void testPurgeKeepsGenerationVisibleAboveWindow() throws Exception {
-        // A purge deletes a generation only when no reader at or above the end of the window its scoreboard check
-        // covers can see it. The reused generation of a failed reseal, superseded since, is visible from its
-        // txnAtSeal up to the txnAtSeal of the generation that superseded it: a purge whose window ends below that
-        // span or inside it keeps the files of the generation, and a purge whose window covers it deletes them.
-        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
-        ff = pcSync;
-        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        assertMemoryLeak(ff, () -> {
-            createPostingRecoveryTable();
-            final long sealTxn = headSealTxnOfRecoveryPartition() + 1;
-            Assert.assertNotNull("the reseal must fail", failRecoveryPartitionSwitch(pcSync, true));
-            // the next reseal of 2022-02-25 takes sealTxn again, and an out-of-order append supersedes it
-            execute(insertPostingRowsSql(35, 40));
-            execute("INSERT INTO posting_o3_recovery VALUES ('2022-02-26T00:00:00.000000Z', 'next', 'S', 200)");
-            execute(insertPostingRowsSql(40, 45));
-            Assert.assertEquals(sealTxn + 1, headSealTxnOfRecoveryPartition());
-            // the purges of the failure and of the supersession go unrun
-            drainPostingSealPurgeQueue();
-            final LongList txnAtSeals = new LongList();
-            try (Path path = new Path()) {
-                readPostingChainTags(recoveryPartitionPath(path), "new_col_11", recoveryPostingColumnNameTxn(), txnAtSeals);
-            }
-            final long supersedingTxnAtSeal = txnAtSeals.getQuick(0);
-            final long txnAtSeal = txnAtSeals.getQuick(1);
-            Assert.assertTrue(txnAtSeal < supersedingTxnAtSeal);
-
-            final long partitionTs = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
-            final TableToken token;
-            final long partitionNameTxn;
-            try (TableReader reader = getReader("posting_o3_recovery")) {
-                token = reader.getTableToken();
-                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(reader.getPartitionIndexByTimestamp(partitionTs));
-            }
-            final long postingColumnNameTxn = recoveryPostingColumnNameTxn();
-            engine.releaseAllReaders();
-            final PostingSealPurgeTask task = new PostingSealPurgeTask();
-            try (PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
-                for (long toTxn : new long[]{txnAtSeal - 1, txnAtSeal, supersedingTxnAtSeal - 1}) {
-                    task.of(token, "new_col_11", postingColumnNameTxn, sealTxn, partitionTs, partitionNameTxn, PartitionBy.DAY, ColumnType.TIMESTAMP, 0, toTxn);
-                    Assert.assertTrue(operator.purge(task, false));
-                    Assert.assertTrue("window ending at " + toTxn, isRecoveryValueFilePresent(sealTxn));
-                }
-                task.of(token, "new_col_11", postingColumnNameTxn, sealTxn, partitionTs, partitionNameTxn, PartitionBy.DAY, ColumnType.TIMESTAMP, 0, supersedingTxnAtSeal);
-                Assert.assertTrue(operator.purge(task, false));
-                Assert.assertFalse(isRecoveryValueFilePresent(sealTxn));
-            }
-            Assert.assertTrue(isRecoveryValueFilePresent(sealTxn + 1));
-            assertRecoveryTableIndexRows("34 35 36 37 38 39 40 41 42 43 44");
-        });
-    }
-
     @Test
     public void testReaderClampsCursorToChainEntryMaxValue() throws Exception {
         assertMemoryLeak(() -> {
@@ -11967,92 +11952,28 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSwitchPartitionResealDataSyncFailureUnderSyncReusesGenerationAfterRestart() throws Exception {
-        // Under SYNC a failed flush of a sidecar that the reseal of a partition switch staged stops the engine, and
-        // no purge of the staged generation outlives the process. After the restart the generation counter of the
-        // chain has not moved, so the next reseal takes the sealTxn of the staged generation again and replaces its
-        // files, and the index serves every row.
+    public void testSwitchPartitionResealFailureAtEveryIndexFileCallUnderSyncRecoversAfterRestart() throws Exception {
+        // Under SYNC a failed flush of the reseal of a partition switch stops the engine, and no purge outlives the
+        // process. After the restart the generation counter of the chain has not moved when the reseal did not
+        // publish, so the next reseal takes the sealTxn of the staged generation again and replaces its files, and
+        // the index serves every row. The reseal fails at each call on the files of the index in turn; see
+        // sweepRecoveryPartitionSwitch().
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
-        ff = pcSync;
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        assertMemoryLeak(ff, () -> {
-            createPostingRecoveryTable();
-            final long headSealTxn = headSealTxnOfRecoveryPartition();
-            pcSync.failWithDataSyncFailure();
-            final Throwable failure = failRecoveryPartitionSwitch(pcSync, true);
-            Assert.assertNotNull("the partition switch must fail", failure);
-            TestUtils.assertContains(failure.getMessage(), "[test] could not msync");
-            if (Files.isPathLookupSupported()) {
-                TestUtils.assertContains(failure.getMessage(), "new_col_11.pc0.1." + (headSealTxn + 1));
-            }
-            Assert.assertTrue(engine.isDurabilityFailed());
-            Assert.assertEquals(1, pcSync.failureCount());
-            Assert.assertTrue(isRecoveryValueFilePresent(headSealTxn + 1));
-
-            restartAfterFailedFlush();
-            Assert.assertEquals(headSealTxn, headSealTxnOfRecoveryPartition());
-            try (TableReader reader = getReader("posting_o3_recovery")) {
-                Assert.assertEquals("34", indexRowIdsOfRecoveryPartition(reader, "XPHI"));
-            }
-
-            execute(insertPostingRowsSql(35, 40));
-            execute("INSERT INTO posting_o3_recovery VALUES ('2022-02-26T00:00:00.000000Z', 'next', 'S', 200)");
-            Assert.assertEquals(headSealTxn + 1, headSealTxnOfRecoveryPartition());
-            engine.releaseAllReaders();
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-            Assert.assertFalse(isRecoveryValueFilePresent(headSealTxn));
-            Assert.assertTrue(isRecoveryValueFilePresent(headSealTxn + 1));
-            assertRecoveryTableIndexRows("34 35 36 37 38 39");
-        });
+        sweepRecoveryPartitionSwitch(true, "34 35 36 37 38 39", (liveSealTxnBefore, where) -> resealRecoveryPartitionAfterFailedSwitch());
     }
 
     @Test
-    public void testSwitchPartitionResealPostSwitchFailurePublishesStagedOrphanPurge() throws Exception {
-        // M1: switchPartition()'s native reseal (commit() + sealIfMultiGen()) on a
-        // post-switch .pc sync failure poisons the writer and stages the failed
-        // sealTxn's orphan purge. deferPendingPostingSealPurges must run in a
-        // finally so the propagating distress does not drop the unpublished outbox
-        // and leak the staged .pv/.pc. Pre-fix the orphan is never published
-        // (no deferred-purge-log row); with the fix it is published.
-        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
-        ff = pcSync;
+    public void testSwitchPartitionResealFailureAtEveryIndexFileCallKeepsIndexIntact() throws Exception {
+        // switchPartition()'s reseal (commit() + sealIfMultiGen()) fails at each call on the files of the index in
+        // turn, in the commit mode of the suite; see sweepRecoveryPartitionSwitch(). A failure after the switch to
+        // the new value file poisons the index writer and stages the purge of the staged files, and the distress
+        // propagates: deferPendingPostingSealPurges() must publish that purge in a finally, or the staged files leak.
+        if (configuration.disableColumnPurgeJob()) {
+            return;
+        }
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        assertMemoryLeak(ff, () -> {
-            if (configuration.disableColumnPurgeJob()) {
-                return;
-            }
-            final String tableName = "posting_o3_recovery";
-            final String indexColumnName = "new_col_11";
-            createPostingRecoveryTable();
-            final long partitionTs = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
-            final int baselineValueFiles = countPostingValueFiles(tableName, indexColumnName, partitionTs);
-            Assert.assertTrue("setup must leave the live .pv on disk", baselineValueFiles >= 1);
-
-            Assert.assertNotNull(
-                    "the partition-switch reseal must fail post-switch and distress the writer",
-                    failRecoveryPartitionSwitch(pcSync, true)
-            );
-
-            // The failed reseal staged its new sealTxn's .pv before the .pc sync
-            // failed, leaving it on disk pending purge.
-            Assert.assertTrue("the failed reseal must leave a staged orphan .pv on disk",
-                    countPostingValueFiles(tableName, indexColumnName, partitionTs) > baselineValueFiles);
-
-            // The fix: deferPendingPostingSealPurges ran in the switchPartition
-            // finally, publishing the staged orphan to the purge queue despite the
-            // propagating distress, so the purge job reclaims it. Pre-fix the
-            // distress close drops the unpublished outbox and the orphan .pv leaks
-            // permanently (this final count would stay at baseline + 1).
-            engine.releaseAllReaders();
-            try (PostingSealPurgeJob reclaimJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(reclaimJob);
-            }
-            Assert.assertEquals("the staged orphan .pv must be published and reclaimed, not leaked",
-                    baselineValueFiles, countPostingValueFiles(tableName, indexColumnName, partitionTs));
-        });
+        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39", (liveSealTxnBefore, where) -> resealRecoveryPartitionAfterFailedSwitch());
     }
 
     /**
@@ -13193,6 +13114,33 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Asserts that the index of new_col_11 in 2022-02-25 of posting_o3_recovery holds the value and cover files of
+     * its live generation, and of {@code keptSealTxn}, a generation the chain on disk may still name, and of no
+     * other generation.
+     */
+    private void assertRecoveryPartitionFilesOfLiveGeneration(long keptSealTxn, String where) throws NumericException {
+        final long liveSealTxn = headSealTxnOfRecoveryPartition();
+        Assert.assertTrue("the value file of the live generation is gone" + where, isRecoveryValueFilePresent(liveSealTxn));
+        final StringSink fileName = new StringSink();
+        final ObjList<String> deadFiles = new ObjList<>();
+        try (Path path = new Path()) {
+            configuration.getFilesFacade().iterateDir(recoveryPartitionPath(path).$(), (pUtf8NameZ, type) -> {
+                fileName.clear();
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+                // new_col_11.pv[.<column name txn>].<sealTxn>, new_col_11.pc<i>.<host txn>[.<cover txn>].<sealTxn>
+                if (Chars.startsWith(fileName, "new_col_11.pv.") || Chars.startsWith(fileName, "new_col_11.pc") && !Chars.startsWith(fileName, "new_col_11.pci")) {
+                    final String file = fileName.toString();
+                    final long sealTxn = Long.parseLong(file.substring(file.lastIndexOf('.') + 1));
+                    if (sealTxn != liveSealTxn && sealTxn != keptSealTxn) {
+                        deadFiles.add(file);
+                    }
+                }
+            });
+        }
+        Assert.assertEquals("files of dead generations outlived the purge " + deadFiles + " [liveSealTxn=" + liveSealTxn + ']' + where, 0, deadFiles.size());
+    }
+
     // Asserts the row ids of XPHI in 2022-02-25 that the posting index of posting_o3_recovery serves, and that an
     // indexed lookup of A and XPHI returns what a scan of the table returns
     private void assertRecoveryTableIndexRows(String expectedXphiRowIds) throws Exception {
@@ -13373,6 +13321,42 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return failure;
     }
 
+    // failRecoveryPartitionSwitch(), with the failAt-th call on the files of the index failing
+    private Throwable switchRecoveryPartitionFailingAt(IndexFileCallFailingFacade sweepFf, int failAt) throws NumericException {
+        Throwable failure = null;
+        final TableWriter writer = TestUtils.getWriter(engine, "posting_o3_recovery");
+        try {
+            for (int i = 35; i < 40; i++) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestampAtMinute(i)));
+                row.putSym(1, "XPHI");
+                row.putSym(2, "S");
+                row.putLong(3, i);
+                row.append();
+            }
+            sweepFf.arm(failAt);
+            try {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z"));
+                row.putSym(1, "next");
+                row.putSym(2, "S");
+                row.putLong(3, 200);
+                row.append();
+                writer.commit();
+            } catch (Throwable th) {
+                failure = th;
+            } finally {
+                sweepFf.disarm();
+            }
+        } finally {
+            try {
+                writer.close();
+            } catch (Throwable ignore) {
+                // a distressed writer may throw on close
+            }
+            engine.releaseAllWriters();
+        }
+        return failure;
+    }
+
     private void fillPostingSealPurgeQueue(TableToken liveToken) {
         MessageBus bus = engine.getMessageBus();
         MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
@@ -13522,6 +13506,60 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * {@code prevEntryOffset} to the end of the chain. {@code path} is left trimmed to its
      * size on entry.
      */
+    /**
+     * Writes {@code sequences} to the sequence fields of the two header pages of the .pk of the index of new_col_11
+     * in 2022-02-25 of posting_o3_recovery, and returns the values they held.
+     */
+    private long[] putRecoveryKeyHeaderSequences(long[] sequences) throws NumericException {
+        final long[] previous = new long[2];
+        final long[] pages = {PostingIndexUtils.PAGE_A_OFFSET, PostingIndexUtils.PAGE_B_OFFSET};
+        try (Path path = new Path()) {
+            final FilesFacade filesFacade = configuration.getFilesFacade();
+            final LPSZ keyFile = PostingIndexUtils.keyFileName(recoveryPartitionPath(path), "new_col_11", recoveryPostingColumnNameTxn());
+            final long fd = filesFacade.openRW(keyFile, CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < pages.length; i++) {
+                    final long offset = pages[i] + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START;
+                    Assert.assertEquals(Long.BYTES, filesFacade.read(fd, buf, Long.BYTES, offset));
+                    previous[i] = Unsafe.getLong(buf);
+                    Unsafe.putLong(buf, sequences[i]);
+                    Assert.assertEquals(Long.BYTES, filesFacade.write(fd, buf, Long.BYTES, offset));
+                }
+            } finally {
+                Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                filesFacade.close(fd);
+            }
+        }
+        return previous;
+    }
+
+    // Collects the sealTxn and the txnAtSeal of every entry of the .pk chain of (name, columnNameTxn), head first
+    private void readPostingChainEntries(Path path, CharSequence name, long columnNameTxn, LongList sealTxns, LongList txnAtSeals) {
+        sealTxns.clear();
+        txnAtSeals.clear();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int plen = path.size();
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
+        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(), ff.length(keyFile), MemoryTag.MMAP_DEFAULT, 0)) {
+            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            chain.openExisting(pk);
+            Assert.assertTrue("chain must have a head", chain.hasHead());
+            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+            long offset = chain.getHeadEntryOffset();
+            for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
+                Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
+                PostingIndexChainEntry.read(pk, offset, entry);
+                sealTxns.add(entry.sealTxn);
+                txnAtSeals.add(entry.txnAtSeal);
+                offset = entry.prevEntryOffset;
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     // The sealTxn the chain head of the .pk of the index names
     private long readPostingSealTxn(Path path, int plen, String name) {
         try {
@@ -13697,6 +13735,37 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    private String debugRecoveryFiles() throws NumericException {
+        final StringSink fileName = new StringSink();
+        final ObjList<String> files = new ObjList<>();
+        try (Path path = new Path()) {
+            configuration.getFilesFacade().iterateDir(recoveryPartitionPath(path).$(), (pUtf8NameZ, type) -> {
+                fileName.clear();
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+                if (Chars.startsWith(fileName, "new_col_11.p")) {
+                    files.add(fileName.toString());
+                }
+            });
+        }
+        files.sort(String::compareTo);
+        return files.toString();
+    }
+
+    // Whether the commit that crosses from 2022-02-25 into 2022-02-26 is in posting_o3_recovery
+    private boolean isRecoveryPartitionSwitchCommitted() {
+        try (TableReader reader = getReader("posting_o3_recovery")) {
+            return reader.size() > 120;
+        }
+    }
+
+    // The next partition switch reseals 2022-02-25, when the failed one did not commit
+    private void resealRecoveryPartitionAfterFailedSwitch() throws SqlException {
+        if (!isRecoveryPartitionSwitchCommitted()) {
+            execute(insertPostingRowsSql(35, 40));
+            execute("INSERT INTO posting_o3_recovery VALUES ('2022-02-26T00:00:00.000000Z', 'next', 'S', 200)");
+        }
+    }
+
     // What a restart after a failed flush leaves: no purge queue of the stopped process, and an engine that runs
     private void restartAfterFailedFlush() {
         engine.releaseAllReaders();
@@ -13860,6 +13929,76 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     // Writes a deliberately corrupt posting seal-purge pending file, truncated to
     // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
     // intended short/overrunning layout rather than a page-padded file.
+    /**
+     * Fails each call on the files of the posting index of posting_o3_recovery in turn, during the commit that
+     * crosses from 2022-02-25 into 2022-02-26 and reseals the index of 2022-02-25, rows 35 to 39 appended to
+     * 2022-02-25 first. After each failure it restarts, as a stopped process would, when the failure stopped the
+     * engine, runs {@code afterFailure}, and asserts what the requirement asks of a failed reseal:
+     * <ul>
+     *     <li>under SYNC a failed flush stops the engine;</li>
+     *     <li>once the purge job ran with no reader open, the index of 2022-02-25 holds the files of its live
+     *     generation only, and of the generation live before the switch when a flush of the .pk failed after the
+     *     switch moved the chain head (the chain on disk may still name it);</li>
+     *     <li>the index of 2022-02-25 serves {@code expectedXphiRowIds} for XPHI, and an indexed lookup returns
+     *     what a scan returns.</li>
+     * </ul>
+     * {@code afterFailure}, given the sealTxn of the chain head before the switch, must leave rows 35 to 39 and
+     * the 2022-02-26 row committed. It also runs after the last switch, the one that made fewer calls than the
+     * armed one. Returns the number of failures.
+     */
+    private int sweepRecoveryPartitionSwitch(boolean isSync, String expectedXphiRowIds, RecoverySweepStep afterFailure) throws Exception {
+        final IndexFileCallFailingFacade sweepFf = new IndexFileCallFailingFacade(Files.SEPARATOR + "new_col_11.p");
+        final int[] failureCount = {0};
+        ff = sweepFf;
+        assertMemoryLeak(ff, () -> {
+            for (int failAt = 1; ; failAt++) {
+                createPostingRecoveryTable();
+                final long liveSealTxnBefore = headSealTxnOfRecoveryPartition();
+                final Throwable failure = switchRecoveryPartitionFailingAt(sweepFf, failAt);
+                final String failedCall = sweepFf.failedCall();
+                String where = " [call=" + failAt + ']';
+                long keptSealTxn = -1;
+                if (failedCall == null) {
+                    if (failure != null) {
+                        throw new AssertionError("the partition switch failed with no injected failure", failure);
+                    }
+                } else {
+                    failureCount[0]++;
+                    where = " [failed=" + failedCall + ']';
+                    if (isSync && sweepFf.isFailedFlush()) {
+                        Assert.assertTrue("a failed flush must stop the engine under SYNC" + where, engine.isDurabilityFailed());
+                    }
+                    if (sweepFf.isFailedKeyFileFlush() && headSealTxnOfRecoveryPartition() != liveSealTxnBefore) {
+                        keptSealTxn = liveSealTxnBefore;
+                    }
+                    if (engine.isDurabilityFailed()) {
+                        restartAfterFailedFlush();
+                    }
+                }
+                where += " DEBUG after failure: head=" + headSealTxnOfRecoveryPartition() + " files=" + debugRecoveryFiles() + " rows=" + isRecoveryPartitionSwitchCommitted();
+                try {
+                    afterFailure.run(liveSealTxnBefore, where);
+                    where += " DEBUG after continuation: head=" + headSealTxnOfRecoveryPartition() + " files=" + debugRecoveryFiles();
+                    engine.releaseAllReaders();
+                    try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                        runPostingSealPurgeJob(purgeJob);
+                    }
+                    assertRecoveryPartitionFilesOfLiveGeneration(keptSealTxn, where);
+                    assertRecoveryTableIndexRows(expectedXphiRowIds);
+                } catch (AssertionError e) {
+                    throw new AssertionError(e.getMessage() + where, e);
+                }
+                engine.releaseAllReaders();
+                execute("DROP TABLE posting_o3_recovery");
+                if (failedCall == null) {
+                    break;
+                }
+            }
+        });
+        LOG.info().$("posting index partition switch sweep done [failures=").$(failureCount[0]).I$();
+        return failureCount[0];
+    }
+
     /**
      * Fails each file call that {@code op} makes on the files of a posting index in turn, in every commit mode the
      * index flushes differently in, and asserts what a failed operation on the index must leave behind:
@@ -14074,6 +14213,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         void run(PostingIndexWriter writer, long coverAddr);
     }
 
+    @FunctionalInterface
+    private interface RecoverySweepStep {
+        void run(long liveSealTxnBefore, String where) throws Exception;
+    }
+
     private static class FailAppendPositionLengthFacade extends TestFilesFacadeImpl {
         private boolean armed;
         private int failureCount;
@@ -14241,6 +14385,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         private volatile long errnoThreadId = -1;
         private volatile int failAt = -1;
         private volatile String failedCall;
+        private volatile boolean isFailedFlush;
         private volatile boolean isFailedKeyFileFlush;
         private volatile boolean isPerFileFlush;
 
@@ -14452,6 +14597,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             return failedCall;
         }
 
+        // Whether the call that failed since arm() was a flush
+        boolean isFailedFlush() {
+            return failedCall != null && isFailedFlush;
+        }
+
         // Whether the call that failed since arm() was a flush of a .pk file
         boolean isFailedKeyFileFlush() {
             return failedCall != null && isFailedKeyFileFlush;
@@ -14477,10 +14627,12 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 return false;
             }
             failedCall = call + ' ' + fileName;
-            isFailedKeyFileFlush = fileName.endsWith(".pk") && switch (call) {
+            isFailedFlush = switch (call) {
                 case "fdatasync", "fsync", "msync", "msync async", "sync_file_range", "syncfs" -> true;
                 default -> false;
             };
+            // name.pk or name.pk.<column name txn>
+            isFailedKeyFileFlush = isFailedFlush && fileName.lastIndexOf(".pk") > fileName.lastIndexOf(Files.SEPARATOR);
             errnoThreadId = Thread.currentThread().threadId();
             return true;
         }
