@@ -368,7 +368,11 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 "SELECT t.ts, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) RANGE FROM 0s TO 199s STEP 1s AS h WHERE t.price > 29",
         };
         final int threadCount = 6;
-        final int iterationCount = 20;
+        // CI's coverage job runs this test over 100x slower than a plain run, and a small
+        // page.frame.max.rows draw slows the unkeyed and two-table shapes several times more.
+        // With 20 iterations such a draw ran past the 20-minute test timeout there; 8 keep it
+        // well inside. Raise the property for longer local runs.
+        final int iterationCount = Integer.getInteger("questdb.fuzz.horizon.projection.iterations", 8);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
