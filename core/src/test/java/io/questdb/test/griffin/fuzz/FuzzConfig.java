@@ -61,6 +61,10 @@ public final class FuzzConfig {
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
+    // Queries of the concurrent run of equi-joins, see forConcurrentEquiJoins(): four in five are
+    // equi-joins, so that the owners between them compare enough runs of the parallel hash join with
+    // the ordinary plan to hold the planner to its shares.
+    private static final int CONCURRENT_EQUI_JOIN_NUM_QUERIES = 400;
     private static final int CONCURRENT_NUM_QUERIES = 50;
     // Queries per run when nothing overrides it, i.e. what CI executes. Sized so that every query
     // shape the run can draw clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzDriver) and the
@@ -277,6 +281,15 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
         // SIMPLE.
         this.isLatestOnEnabled = Boolean.parseBoolean(System.getProperty(LATEST_ON_PROP, "true"));
+    }
+
+    /**
+     * The config of the concurrent run of equi-joins: tables of the default run's size, 60 to 150
+     * rows, which EquiJoinClause sizes its stars for, where {@link #forConcurrency(Rnd)} draws
+     * tables whose stars return hundreds of thousands of rows.
+     */
+    public static FuzzConfig forConcurrentEquiJoins(Rnd rnd) {
+        return new FuzzConfig(rnd, 60, 90, 30L * 60L * 1_000_000L, CONCURRENT_EQUI_JOIN_NUM_QUERIES);
     }
 
     public static FuzzConfig forConcurrency(Rnd rnd) {

@@ -61,8 +61,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * asserts. Once the consumer takes a frame, the join dispatches the frames after it up to the
  * window, so the workers join them while the consumer reads, rather than once the consumer drained
  * the window. The window ramps up: the first frame goes out alone, and each frame that the
- * consumer takes doubles the frames in flight, up to the ring's window. Every query compares with
- * the ordinary plan, in order.
+ * consumer takes doubles the frames in flight, up to the ring's window. Two joins that one query
+ * reads in lock-step, the master and the slave of an ASOF or LT join, keep frames in flight on one
+ * reduce queue at once. Every query compares with the ordinary plan, in order.
  * <p>
  * Most tests wait, before the consumer reads the first row of a frame, until the workers joined
  * every frame dispatched so far: the consumer then finds each frame ready, as when the workers keep
@@ -251,6 +252,16 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     @Test
     public void testMemoryLimitsWithFramesAheadOnThreadWorkers() throws Exception {
         assertMemoryLimitsWithFramesAhead(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testTwoJoinsReadInLockStepOnFiberWorkers() throws Exception {
+        assertTwoJoinsReadInLockStep(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testTwoJoinsReadInLockStepOnThreadWorkers() throws Exception {
+        assertTwoJoinsReadInLockStep(WorkerPoolMode.LEGACY);
     }
 
     @Test
@@ -607,6 +618,73 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                         }
                 );
                 Assert.assertTrue(failures > 0);
+            }
+        });
+    }
+
+    // An ASOF or LT join whose master and slave are both parallel hash joins reads the two in
+    // lock-step: for each row of the master, it reads the slave on to the master's timestamp. Both
+    // joins then have frames in flight at once, on the one shard of four slots that the test leaves
+    // them, fewer than the two windows of three frames ask for, so that each join's dispatch meets
+    // a queue that the other's frames fill, and the owner, as it waits for a frame of one join,
+    // meets the tasks of the other.
+    private static void assertTwoJoinsReadInLockStep(WorkerPoolMode mode) throws Exception {
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        withEightFrames(mode, (db, context) -> {
+            // u8's rows come half a minute after t8's, so the slave's frame f ends where the master's
+            // frame f + 1 begins.
+            db.execute("""
+                    CREATE TABLE u8 AS (
+                        SELECT (x % 4)::INT k, x * 3 uv, timestamp_sequence('2024-01-01T00:00:30', 60_000_000) ts
+                        FROM long_sequence(64)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            final String master = "(SELECT t8.ts, t8.k, t8.v, d3.w FROM t8 LEFT JOIN d3 ON t8.k = d3.k) a";
+            final String slave = "((SELECT u8.ts, u8.k, u8.uv, d3.w uw FROM u8 LEFT JOIN d3 ON u8.k = d3.k) TIMESTAMP(ts)) b";
+            final String asOf = "SELECT a.ts, a.v, a.w, b.uv, b.uw FROM " + master + " ASOF JOIN " + slave;
+            for (String sql : new String[]{
+                    asOf,
+                    asOf + " ON (k)",
+                    "SELECT a.ts, a.v, a.w, b.uv, b.uw FROM " + master + " LT JOIN " + slave + " ON (k)",
+                    // The LIMIT reaches the master, whose first window it narrows, and closes both
+                    // joins with frames in flight; a negative one counts both first.
+                    asOf + " LIMIT 5",
+                    asOf + " LIMIT -5",
+            }) {
+                // The plan runs both joins on the operator.
+                final String plan = assertParallelHashJoin(sql, context);
+                final String operator = "Async Hash Join workers:";
+                Assert.assertTrue(plan, plan.indexOf(operator, plan.indexOf(operator) + 1) > -1);
+            }
+            final String expected = ordinaryRows(db, asOf, context);
+            try (RecordCursorFactory factory = db.select(asOf, context)) {
+                final ObjList<AsyncHashJoinRecordCursorFactory> joins = findAll(factory, context);
+                Assert.assertEquals(2, joins.size());
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    // The first row of the master's frame 4, half way through both joins.
+                    boolean isHalfWay = false;
+                    while (!isHalfWay && cursor.hasNext()) {
+                        isHalfWay = record.getLong(1) == 33;
+                    }
+                    Assert.assertTrue(isHalfWay);
+                    // Each join read some of its frames, with a window of three, and has others to
+                    // go: the cursor closes here, with frames of both in flight or not yet out.
+                    for (int i = 0, n = joins.size(); i < n; i++) {
+                        final int dispatched = joins.getQuick(i).getDispatchedFrameCount();
+                        Assert.assertTrue("join " + i + " dispatched " + dispatched, dispatched > 3 && dispatched < 8);
+                    }
+                }
+                for (int i = 0, n = joins.size(); i < n; i++) {
+                    final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
+                    Assert.assertFalse(join.isExecutionActive());
+                    Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                }
+                Assert.assertEquals(0, db.getBusyReaderCount());
+                // The factory reads every row again, after the close that left both joins half way.
+                Assert.assertEquals(expected, printRows(factory, context));
             }
         });
     }

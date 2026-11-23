@@ -36,10 +36,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
@@ -197,6 +199,12 @@ public final class QueryRunner {
     // reconcilePair only consults the masks when both sides succeeded, so this
     // is never read; it keeps the record's accessor total.
     private static final boolean[] EMPTY_FP_MASK = new boolean[0];
+    // The CANCEL fault cancels a query at one of the first 1,023 checks of its circuit breaker, two
+    // to this power less one. The checks that pass before it spread evenly over the powers of two
+    // below that, so that the cancellation lands on a query's first checks, at its open and in its
+    // builds, as often as on the checks of its tasks and of the rows it returns: a fuzz query makes
+    // some thirty checks at the median, and a join that walks a key's matches makes one per row.
+    private static final int FAULT_CANCEL_MAX_CHECKS_LOG2 = 10;
     // Fault-injection tuning. The malloc fault arms the RSS limit at the
     // post-compile usage plus a small random slack so the next native heap
     // allocation in the cursor-construction/iteration phase trips the real
@@ -253,6 +261,9 @@ public final class QueryRunner {
     // Successful runs, on any axis, whose plan picks the build of an INNER fused hash join GROUP BY
     // per execution. It shows that the generator's interval conjuncts reach that plan.
     private int buildChoiceRuns;
+    // The context whose circuit breaker the CANCEL fault replaces for the query it cancels; null
+    // when the context does not take one, which leaves the runner without the fault.
+    private final SqlExecutionContextImpl cancelContext;
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
@@ -319,6 +330,10 @@ public final class QueryRunner {
     // Executions of the parallel hash join, on any axis, whose window ended narrower than it was when
     // the cursor returned its first row.
     private int parallelJoinNarrowedWindowRuns;
+    // Factories of a parallel hash join that checkParallelJoinReexecution executed again, in all,
+    // and those whose second execution closed with rows unread.
+    private int parallelJoinReexecutionAbandoned;
+    private int parallelJoinReexecutionChecks;
     // Partial reads of a parallel hash join's cursor (see checkParallelJoinPartialReads), in all,
     // and those of a stacked operator, of a swapped execution, of an execution that joined frames in
     // continuations, and of those of them whose join compiled with a first task of fewer rows than
@@ -413,6 +428,7 @@ public final class QueryRunner {
         this.verifyCursor = verifyCursor;
         this.queryWorkerNamePrefix = queryWorkerNamePrefix;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
+        this.cancelContext = executionContext instanceof SqlExecutionContextImpl context ? context : null;
         this.storageTables = tables;
         this.storagePatterns = new Pattern[tables.size()];
         this.lateJoinKeyPatterns = new Pattern[tables.size()];
@@ -471,7 +487,9 @@ public final class QueryRunner {
      * Picks a fault kind for an injected query, uniformly among the kinds available
      * this run (see {@link #faultTypes}). Called before query generation so a
      * {@link FaultType#FUNCTION} pick can ask the generator to emit the fault
-     * function; draws once from {@code rnd} so replay reproduces the choice.
+     * function; draws once from {@code rnd} so replay reproduces the choice. Never draws
+     * {@link FaultType#CANCEL}, which a query takes next to the fault drawn here, or to no fault;
+     * see {@link #runCancelFault}.
      */
     public FaultType chooseFaultType(Rnd rnd) {
         return faultTypes[rnd.nextInt(faultTypes.length)];
@@ -699,6 +717,22 @@ public final class QueryRunner {
     }
 
     /**
+     * Factories of a parallel hash join whose second execution, see
+     * {@link #checkParallelJoinReexecution}, closed its cursor with rows unread.
+     */
+    public int getParallelJoinReexecutionAbandoned() {
+        return parallelJoinReexecutionAbandoned;
+    }
+
+    /**
+     * Factories of a parallel hash join that {@link #checkParallelJoinReexecution} executed again
+     * after the first pass's cursor closed.
+     */
+    public int getParallelJoinReexecutionChecks() {
+        return parallelJoinReexecutionChecks;
+    }
+
+    /**
      * Queries whose parallel hash join's last execution ran the stages' hidden stepper copies, see
      * {@link #stepperWarmUpRows(String)}.
      */
@@ -783,9 +817,13 @@ public final class QueryRunner {
      * Reports whether {@code type} can be armed at all this run. FILE needs the engine's FilesFacade
      * to be a {@link FailureFileFacade}; without it the constructor drops FILE from {@link #faultTypes}
      * and the fuzzer never arms one. That disarm reads as "armed 0, fired 0", so no fire-count floor
-     * can see it - only this check can.
+     * can see it - only this check can. CANCEL needs an execution context that takes a circuit
+     * breaker; {@link #chooseFaultType(Rnd)} never draws it, see {@link #runCancelFault}.
      */
     public boolean isFaultTypeAvailable(FaultType type) {
+        if (type == FaultType.CANCEL) {
+            return cancelContext != null;
+        }
         for (int i = 0, n = faultTypes.length; i < n; i++) {
             if (faultTypes[i] == type) {
                 return true;
@@ -813,6 +851,23 @@ public final class QueryRunner {
     }
 
     /**
+     * Runs the query under the {@link FaultType#CANCEL} fault, see {@link #runFault}, with a trigger
+     * point drawn from a generator of its own, which the query's text seeds: the driver runs the
+     * fault next to the fault that {@link #chooseFaultType(Rnd)} drew for the query, or to none, so
+     * that it takes no draw from the run's generator, and every query of a seed stays what it was
+     * before the fault existed.
+     */
+    public Result runCancelFault(GeneratedQuery query, boolean parallel) {
+        final long hash = query.sql().hashCode();
+        final Rnd rnd = new Rnd(hash * 0x9E3779B97F4A7C15L + 1, hash ^ 0xC2B2AE3D27D4EB4FL);
+        // The generator's first draws follow its seeds closely.
+        for (int i = 0; i < 4; i++) {
+            rnd.nextLong();
+        }
+        return runFault(query, FaultType.CANCEL, rnd, parallel);
+    }
+
+    /**
      * Runs one query with a fault injected, applying a crash-and-recover oracle
      * instead of the differential one (a faulting query is not comparable). The
      * fault is armed at a random trigger point, the query runs once, and then:
@@ -827,6 +882,13 @@ public final class QueryRunner {
      * A query that throws without the fault firing is a benign skip when the error
      * is user-facing, or a failure otherwise. {@code rnd} supplies the trigger
      * point so replay reproduces the run.
+     * <p>
+     * A CANCEL fault cancels the query at one of the checks of its circuit breaker, on whichever
+     * thread makes it. The query then throws the cancellation, which counts as the fault firing, or
+     * returns its rows: a cancellation that comes after the query's last check, or that its last
+     * rows outrun, leaves the result whole, so the rows must be those of the clean run that
+     * follows. A cancelled query that returns some of its rows as if they were all is what the
+     * fault is there to catch.
      * <p>
      * {@code parallel} reports whether the query runs with parallel SQL execution
      * enabled (all fault types do when the parallel-fault knob is on). For a FILE
@@ -853,6 +915,7 @@ public final class QueryRunner {
      * {@link #factoryHasBlockingAggregation}).
      */
     public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd, boolean parallel) {
+        assert isFaultTypeAvailable(type) : type;
         String sql = query.sql();
         faultsArmedByType[type.ordinal()]++;
         // Drain pooled readers/writers so the post-fault delta reflects this query
@@ -874,7 +937,14 @@ public final class QueryRunner {
         // spread evenly over the powers of two, so that the limit lands on the first tracked
         // allocations of a query as often as on its later ones.
         long queryMemoryLimit = 0;
+        CancelAfterChecksCircuitBreaker cancelBreaker = null;
         switch (type) {
+            // One rnd draw, which picks the power of two and the checks past it.
+            case CANCEL -> {
+                final int draw = rnd.nextInt(Integer.MAX_VALUE);
+                final int log2 = draw % FAULT_CANCEL_MAX_CHECKS_LOG2;
+                cancelBreaker = new CancelAfterChecksCircuitBreaker(engine, (1L << log2) - 1 + (draw >>> 8) % (1 << log2));
+            }
             // One rnd draw whether serial or parallel, keeping the seeded stream
             // replay-stable. Parallel scopes the fault to the query execution so it
             // can also fire on a reduce worker; serial keeps the single-thread scope.
@@ -899,13 +969,20 @@ public final class QueryRunner {
         int fileFiredAfter = fileFailBaseline;
         String contaminatingThread = null;
         try {
-            outcome = type == FaultType.MALLOC ? runRawMallocFault(sql, rowsA, mallocSlack) : runRaw(sql, rowsA);
+            outcome = switch (type) {
+                case CANCEL -> runRawUnderBreaker(sql, rowsA, cancelBreaker);
+                case MALLOC -> runRawMallocFault(sql, rowsA, mallocSlack);
+                default -> runRaw(sql, rowsA);
+            };
             if (failureFf != null) {
                 fileFiredAfter = failureFf.failureGenerated();
                 contaminatingThread = failureFf.contaminatingThreadName();
             }
         } finally {
             switch (type) {
+                // The run took the breaker off the context as its cursor closed.
+                case CANCEL -> {
+                }
                 case FILE -> failureFf.clearFailures();
                 case MALLOC -> Unsafe.setRssMemLimit(savedRssLimit);
                 case FUNCTION -> TestFaultFunctionFactory.disarm();
@@ -914,6 +991,10 @@ public final class QueryRunner {
             }
         }
         boolean faultFired = switch (type) {
+            // The breaker cancelled the query, which reported it. A cancellation that the breaker
+            // never made does not count, and fails the query below.
+            case CANCEL -> cancelBreaker.isTripped() && outcome.failure instanceof CairoException ce
+                    && (ce.isCancellation() || ce.isInterruption());
             case FILE -> fileFiredAfter > fileFailBaseline;
             case MALLOC -> outcome.failure instanceof CairoException ce && ce.isOutOfMemory();
             case FUNCTION -> TestFaultFunctionFactory.faultsTriggered() > 0;
@@ -991,11 +1072,23 @@ public final class QueryRunner {
                     "fault " + type + " leaked " + fdLeak + " file descriptor(s): " + sql));
         }
         // Oracle 3: with the fault removed, the same query must run cleanly.
-        Outcome recovery = runRaw(sql, rowsB);
+        Outcome recovery = type == FaultType.CANCEL ? runRawUnderBreaker(sql, rowsB, null) : runRaw(sql, rowsB);
         if (recovery.failure != null && !isAcceptedSkip(recovery.failure)) {
             return Result.failed(sql, new AssertionError(
                     "query did not recover after " + type + " fault: "
                             + recovery.exceptionClass + ": " + recovery.exceptionMessage, recovery.failure));
+        }
+        // Oracle 1 for a cancellation: a query that returned a result under the breaker returned
+        // every row, whether the breaker cancelled it too late or never.
+        if (type == FaultType.CANCEL && outcome.failure == null && recovery.failure == null) {
+            final Result whole = reconcilePair(sql, outcome, recovery, rowsA, rowsB, query.deterministic(),
+                    cancelBreaker.isTripped()
+                            ? "cancelled run returned a result that differs from the clean run's"
+                            : "run under a breaker that never cancelled differs from the clean run",
+                    "breaker", "clean  ");
+            if (whole.isFailed()) {
+                return whole;
+            }
         }
         return Result.ok();
     }
@@ -1908,6 +2001,75 @@ public final class QueryRunner {
     }
 
     /**
+     * Executes the factory of a query that runs a parallel hash join twice more, once the first
+     * pass's cursor closed, as a query cache hands one compiled query to request after request:
+     * every other check reads the cursor of the factory's first execution. The first of the two
+     * reads as many rows as the SQL text picks, so that a replayed seed reads as many, and closes
+     * its cursor, with rows unread and, for a join that streams them, frames in flight. The second
+     * opens under other first rows of a client than the first pass opened under, so that the two
+     * cut their first windows differently, and reads every row: the first pass's rows, in its
+     * order, or as many of them when the query is not deterministic. An execution takes its
+     * builds, its orientation, its frames, its window and its SYMBOL key translation from what
+     * it finds, and must take none of them from the execution before it. A violation is a real
+     * bug and throws {@link CursorCheckException}; a per-row runtime error that the first pass did
+     * not raise is tolerated, as the other cursor checks tolerate it.
+     */
+    private void checkParallelJoinReexecution(String sql, RecordCursorFactory factory, StringSink firstPass, int firstRowsRead,
+                                              boolean deterministic, long firstReadRows) {
+        final RecordMetadata metadata = factory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+        final long hash = sql.hashCode() & 0x7fff_ffffL;
+        final int abandonedAfter = (int) ((hash * 17 + 5) % (firstRowsRead + 1));
+        final int secondRowsRead;
+        try {
+            executionContext.setFirstReadRows(firstReadRows);
+            final RecordCursor abandoned;
+            try {
+                abandoned = factory.getCursor(executionContext);
+            } finally {
+                executionContext.setFirstReadRows(Long.MAX_VALUE);
+            }
+            try (RecordCursor cursor = abandoned) {
+                for (int i = 0; i < abandonedAfter; i++) {
+                    if (!cursor.hasNext()) {
+                        throw new CursorCheckException(cursorFailureMessage(
+                                "hasNext() returned false at row " + i + " of a second execution read up to row " + abandonedAfter,
+                                sql, firstPass, firstRowsRead, null, -1), null);
+                    }
+                }
+            }
+            executionContext.setFirstReadRows(firstReadRows == Long.MAX_VALUE ? 1 + hash % 7 : Long.MAX_VALUE);
+            final RecordCursor reread;
+            try {
+                reread = factory.getCursor(executionContext);
+            } finally {
+                executionContext.setFirstReadRows(Long.MAX_VALUE);
+            }
+            rowsToTop.clear();
+            try (RecordCursor cursor = reread) {
+                secondRowsRead = materialize(cursor, metadata, columnCount, rowsToTop);
+            }
+        } catch (CursorCheckException e) {
+            throw e;
+        } catch (Exception e) {
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("an execution after the first surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("an execution after the first threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (deterministic ? !Chars.equals(firstPass, rowsToTop) : secondRowsRead != firstRowsRead) {
+            throw new CursorCheckException(cursorFailureMessage(
+                    "an execution after one that read " + abandonedAfter + " rows differs from the first pass, in order",
+                    sql, firstPass, firstRowsRead, rowsToTop, secondRowsRead), null);
+        }
+        parallelJoinReexecutionChecks++;
+        if (abandonedAfter < firstRowsRead) {
+            parallelJoinReexecutionAbandoned++;
+        }
+    }
+
+    /**
      * Reads a parallel hash join's cursor, which the first pass exhausted, part of the way, in three
      * pairs of positions that the SQL text picks, so that a replayed seed reads the same ones:
      * {@code calculateSize()} after k rows must count the rows the first pass read after them and
@@ -2754,14 +2916,23 @@ public final class QueryRunner {
             final int parallelHashJoinStages = isParallelHashJoinPlan(plan) ? Math.max(1, parallelHashJoinStages(plan)) : 0;
             // The last execution's orientation outlives its cursor, until the next one opens.
             final AsyncHashJoinRecordCursorFactory parallelHashJoin = parallelHashJoinStages > 0 ? ParallelHashJoinTestUtils.find(factory) : null;
+            final boolean isParallelHashJoinSwapped = parallelHashJoin != null && parallelHashJoin.getAtom().isSwapped();
+            final boolean hasIndex = planUsesIndex(plan);
+            final boolean hasFusedHashJoin = isFusedHashJoinPlan(plan);
+            final boolean isParallelHashJoinSwapCandidate = Chars.indexOf(plan, 0, plan.length(), "inputSwap:") >= 0;
+            // The checks above read one execution's cursor; a factory with a parallel hash join
+            // also runs again, as a cached query does, once everything they counted is read.
+            if (verifyCursor && compiledJoin != null) {
+                checkParallelJoinReexecution(sql, factory, rows, rowsRead, deterministic, firstReadRows);
+            }
             return Outcome.ok(
                     rowsRead,
-                    planUsesIndex(plan),
+                    hasIndex,
                     usesParquet,
-                    isFusedHashJoinPlan(plan),
+                    hasFusedHashJoin,
                     parallelHashJoinStages,
-                    Chars.indexOf(plan, 0, plan.length(), "inputSwap:") >= 0,
-                    parallelHashJoin != null && parallelHashJoin.getAtom().isSwapped(),
+                    isParallelHashJoinSwapCandidate,
+                    isParallelHashJoinSwapped,
                     fpColumnMask
             );
         } catch (CursorCheckException e) {
@@ -2919,6 +3090,44 @@ public final class QueryRunner {
                 rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
             }
             return Outcome.ok(rowsRead, false, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, false);
+        } catch (SqlException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (ImplicitCastException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (NumericException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (Exception t) {
+            String msg = t.getMessage();
+            return Outcome.error(t, msg == null ? "" : msg, false);
+        }
+    }
+
+    /**
+     * Compiles the query and materializes it as {@link #runRaw} does, with the given circuit
+     * breaker on the execution context from the moment the factory opens its cursor until the
+     * cursor closes: the compile runs under the context's own breaker, as a MALLOC fault arms
+     * after it. Null leaves the context's breaker in place, for the clean run that a run under a
+     * breaker compares with. The outcome carries the projection's FLOAT and DOUBLE columns, so
+     * that the comparison tolerates the order in which a parallel aggregation sums them.
+     */
+    private Outcome runRawUnderBreaker(String sql, StringSink rows, @Nullable CancelAfterChecksCircuitBreaker breaker) {
+        rows.clear();
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            final SqlExecutionCircuitBreaker contextBreaker = executionContext.getCircuitBreaker();
+            if (breaker != null) {
+                cancelContext.with(breaker);
+            }
+            final int rowsRead;
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                rowsRead = materialize(cursor, metadata, columnCount, rows);
+            } finally {
+                if (breaker != null) {
+                    cancelContext.with(contextBreaker);
+                }
+            }
+            return Outcome.ok(rowsRead, false, false, false, 0, false, false, buildFpColumnMask(metadata, columnCount));
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString(), false);
         } catch (ImplicitCastException e) {

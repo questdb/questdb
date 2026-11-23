@@ -192,6 +192,8 @@ public final class QueryFuzzDriver {
         int budget = phase == Phase.FAULTS
                 ? Math.max(1, config.getNumQueries() * config.getFaultProbabilityPct() / 100)
                 : config.getNumQueries();
+        // True when the run injects faults at all.
+        final boolean isFaultPhase = phase == Phase.FAULTS || (phase == Phase.MIXED && config.isFaultInjectionEnabled());
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < budget; q++) {
                 querySetup.accept(rnd);
@@ -234,6 +236,16 @@ public final class QueryFuzzDriver {
                     applyParallelJoinPressure(sqlExecutionContext, config, isPressured);
                     try {
                         result = runner.runFault(query, faultType, rnd, runFaultParallel);
+                        // A query that its own fault left whole also runs under a cancellation,
+                        // which draws nothing from the run's generator. A cancelled query that
+                        // fails the fault's oracle fails the run; any other outcome leaves the
+                        // result of the query's own fault as it is.
+                        if (!result.isFailed() && !result.isSkipped() && runner.isFaultTypeAvailable(FaultType.CANCEL)) {
+                            final QueryRunner.Result cancelResult = runner.runCancelFault(query, runFaultParallel);
+                            if (cancelResult.isFailed()) {
+                                result = cancelResult;
+                            }
+                        }
                     } finally {
                         if (isPressured) {
                             applyParallelJoinPressure(sqlExecutionContext, config, false);
@@ -296,6 +308,20 @@ public final class QueryFuzzDriver {
                     applyParallelJoinPressure(sqlExecutionContext, config, isPressured);
                     try {
                         result = runner.run(query);
+                        // Every equi-join query that the axes found whole also runs under a
+                        // cancellation, so that the run cancels the parallel hash join far more
+                        // often than the fault queries, one in twenty of which is an equi-join,
+                        // would: in its builds, its probe tasks, its continuations and its
+                        // counts, alone, stacked and swapped. A cancelled query that fails the
+                        // fault's oracle fails the run; any other outcome leaves the result of the
+                        // comparisons as it is.
+                        if (isPressured && isFaultPhase && !result.isFailed() && !result.isSkipped()
+                                && runner.isFaultTypeAvailable(FaultType.CANCEL)) {
+                            final QueryRunner.Result cancelResult = runner.runCancelFault(query, !disableParallel);
+                            if (cancelResult.isFailed()) {
+                                result = cancelResult;
+                            }
+                        }
                     } finally {
                         if (isPressured) {
                             applyParallelJoinPressure(sqlExecutionContext, config, false);
@@ -332,13 +358,14 @@ public final class QueryFuzzDriver {
         }
         LOG.info().$("fuzz done: ").$(budget).$(" queries, ")
                 .$(serial).$(" serial, ")
-                .$(faultGen).$(" with fault injection (").$(runner.getFaultsFired()).$(" fired), ")
+                .$(faultGen).$(" with fault injection (").$(runner.getFaultsFired() - runner.getFaultsFired(FaultType.CANCEL)).$(" fired), ")
                 .$(bindGen).$(" with bind variant, ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
                 .$();
         LOG.info().$("fuzz faults by type: ")
-                .$("FILE ").$(runner.getFaultsFired(FaultType.FILE)).$('/').$(runner.getFaultsArmed(FaultType.FILE))
+                .$("CANCEL ").$(runner.getFaultsFired(FaultType.CANCEL)).$('/').$(runner.getFaultsArmed(FaultType.CANCEL))
+                .$(", FILE ").$(runner.getFaultsFired(FaultType.FILE)).$('/').$(runner.getFaultsArmed(FaultType.FILE))
                 .$(", MALLOC ").$(runner.getFaultsFired(FaultType.MALLOC)).$('/').$(runner.getFaultsArmed(FaultType.MALLOC))
                 .$(", FUNCTION ").$(runner.getFaultsFired(FaultType.FUNCTION)).$('/').$(runner.getFaultsArmed(FaultType.FUNCTION))
                 .$(", QUERY_MEMORY_LIMIT ").$(runner.getFaultsFired(FaultType.QUERY_MEMORY_LIMIT)).$('/').$(runner.getFaultsArmed(FaultType.QUERY_MEMORY_LIMIT))
@@ -374,6 +401,8 @@ public final class QueryFuzzDriver {
                 .$(runner.getParallelJoinPartialReadStacked()).$(" stacked, ")
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
                 .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
+                .$(runner.getParallelJoinReexecutionChecks()).$(" factories executed again (")
+                .$(runner.getParallelJoinReexecutionAbandoned()).$(" after an execution left part of the way); ")
                 .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first, ")
                 .$(runner.getParallelJoinFirstReadFormRuns()).$(" of which reached the join through an operator over it, ")
                 .$(runner.getParallelJoinLimitFormRuns()).$(" whose LIMIT reached the join from outside its own query; ")
@@ -541,9 +570,11 @@ public final class QueryFuzzDriver {
             );
         }
         if (faultGen >= MIN_FAULT_QUERIES_FOR_FIRE_FLOOR) {
+            // The cancellations, which run next to the fault that each of these queries drew, do
+            // not stand in for it.
             Assert.assertTrue(
                     "fault injection ran on " + faultGen + " queries but no fault fired; the injector looks disarmed",
-                    runner.getFaultsFired() > 0
+                    runner.getFaultsFired() - runner.getFaultsFired(FaultType.CANCEL) > 0
             );
         }
         // The aggregate floor above cannot tell a live FUNCTION injector from a dead FILE one: a single
