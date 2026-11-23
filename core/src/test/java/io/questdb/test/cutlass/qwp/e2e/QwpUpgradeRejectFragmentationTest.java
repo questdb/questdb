@@ -209,7 +209,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
 
     @Test
     public void testEgress400OriginRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
-        // Egress (/read/v1) shares QwpWebSocketHttpProcessor.validateHandshake
+        // Egress (/read/v1) shares QwpIngressHttpProcessor.validateHandshake
         // with ingress, so the same Origin-header rejection path applies. The
         // egress upgrade processor's reject branch still synchronously calls
         // rawSocket.send inside onHeadersReady and catches PISR -- the

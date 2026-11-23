@@ -1102,12 +1102,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         return result;
     }
 
-    // Reference-identity switch on the singleton ERROR_ String constants
-    // returned by QwpWebSocketHttpProcessor.validateHandshake, and on
-    // ERROR_INVALID_OWNED_BY of negotiateOwnedBy. Returns the
-    // pre-built 400 response for known errors, null for arbitrary text. The
-    // returned byte[] is shared and read-only -- copy bytes into the response
-    // buffer, do not mutate.
+    // Returns the pre-built 400 response for an ERROR_ constant that
+    // QwpIngressHttpProcessor.validateHandshake returns, or for
+    // ERROR_INVALID_OWNED_BY of negotiateOwnedBy, and null for any other text.
+    // The switch matches by String equality, not by reference. The returned
+    // byte[] is shared and read-only -- copy bytes into the response buffer,
+    // do not mutate.
     private static byte[] precomputedBadRequestResponse(String validationError) {
         if (validationError == null) {
             return null;
