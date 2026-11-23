@@ -400,6 +400,19 @@ public class LateralJoinOuterJoinReductionTest extends AbstractCairoTest {
                     {"r.id > 0", ALL_ROWS},
                     {"t.id = o.k", order3NullExtended},
                     {"s > 0", TRADE_10},
+                    // the SHORT column s holds 0 in a NULL-extended row
+                    {"t.s = 0 OR t.id = 10", """
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\tnull\t102
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t102
+                            3\tnull\t100
+                            3\tnull\t101
+                            3\tnull\t102
+                            """},
+                    {"coalesce(t.id, t.c, 0) >= 0", ALL_ROWS},
             };
             for (String[] c : cases) {
                 assertQuery(lateral(BODY + " WHERE " + c[0]))
@@ -624,6 +637,19 @@ public class LateralJoinOuterJoinReductionTest extends AbstractCairoTest {
             keptCases.add(BindVarTuple.ok("ten", BOTH_TRADES, service -> service.setInt(0, 10)));
             keptCases.add(BindVarTuple.ok("NULL again", NULL_EXTENDED_ROWS, service -> service.setInt(0, Numbers.INT_NULL)));
             assertQuery(keptSql).noLeakCheck().expectSize().assertBinds(keptCases);
+
+            // t.id + t.c is NULL in a NULL-extended row, and > is false for it whatever $1 holds
+            final String sumSql = lateral(BODY + " WHERE t.id + t.c > $1");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 0);
+            assertQuery(sumSql)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining(OUTER_JOINS);
+            final ObjList<BindVarTuple> sumCases = new ObjList<>();
+            sumCases.add(BindVarTuple.ok("ten", TRADE_10, service -> service.setInt(0, 10)));
+            sumCases.add(BindVarTuple.ok("NULL", NO_ROWS, service -> service.setInt(0, Numbers.INT_NULL)));
+            sumCases.add(BindVarTuple.ok("zero", BOTH_TRADES, service -> service.setInt(0, 0)));
+            assertQuery(sumSql).noLeakCheck().expectSize().assertBinds(sumCases);
         });
     }
 
@@ -662,6 +688,13 @@ public class LateralJoinOuterJoinReductionTest extends AbstractCairoTest {
                     {"t.x = 1", TRADE_10},
                     {"t.x = 1 AND t.id > 0", TRADE_10},
                     {"1 < 2 AND t.id > 0", BOTH_TRADES},
+                    // conjuncts of several columns of trades, false when all of them are NULL, and NULL + 0
+                    // is NULL for the SHORT column s
+                    {"t.id + t.c > 10", TRADE_10},
+                    {"t.id - t.x = 9", BOTH_TRADES},
+                    {"t.c + t.s > 0", TRADE_10},
+                    {"t.id = 10 OR t.c = -3", BOTH_TRADES},
+                    {"t.id * t.c BETWEEN -40 AND 0", TRADE_11},
             };
             for (String[] c : cases) {
                 assertQuery(lateral(BODY + " WHERE " + c[0]))

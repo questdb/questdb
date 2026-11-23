@@ -900,9 +900,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAliasTopJoinTable() throws SqlException {
+        // a = 1 or b = 2 is false on the NULL row of tx, whose a and b are both NULL, so a copy also
+        // filters tx before the RIGHT/FULL join
         assertQueryWithOuterJoinType(
                 "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx #OUTER_JOIN_TYPE join select [yid] from y ty on yid = xid where a = 1 or b = 2) tx",
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx #OUTER_JOIN_TYPE join select [yid] from y ty on yid = xid post-join-where tx.a = 1 or tx.b = 2) tx",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx #OUTER_JOIN_TYPE join select [yid] from y ty on yid = xid post-join-where tx.a = 1 or tx.b = 2 where a = 1 or b = 2) tx",
                 "select tx.a, tx.b from x as tx #OUTER_JOIN_TYPE join y as ty on xid = yid where tx.a = 1 or tx.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)

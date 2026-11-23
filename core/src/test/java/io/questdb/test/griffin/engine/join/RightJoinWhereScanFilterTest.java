@@ -171,6 +171,27 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanColumnsNamedAsOperators() throws Exception {
+        // A BOOLEAN column named "between" or "in" reads as a column, not as the operator. The NULL row of tb
+        // holds false, so a copy of the column filters the scan. t2 row 0 matches the true row of tb three
+        // times over t1; the false row, and the NULL rows of t2 rows 2 and 9, fail it, and pass NOT. NOT
+        // holds on the NULL row, so only tb.k < 1, which does not, takes it along to the scan: the false row
+        // has k 1, so no row remains.
+        assertMemoryLeak(() -> {
+            createJoinedTables();
+            execute("CREATE TABLE tb (k INT, \"between\" BOOLEAN, \"in\" BOOLEAN)");
+            execute("INSERT INTO tb VALUES (0, true, true), (1, false, false)");
+            for (String column : new String[]{"\"between\"", "tb.\"between\"", "\"in\"", "tb.\"in\""}) {
+                assertCount("SELECT count(*) FROM tb WHERE " + column, 1);
+                assertCount("SELECT count(*) FROM tb WHERE NOT " + column, 1);
+                assertScanFilteredCount("SELECT count(*) FROM tb CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = tb.k WHERE " + column, 3, true);
+                assertScanFilteredCount("SELECT count(*) FROM tb CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = tb.k WHERE NOT " + column, 5, false);
+                assertScanFilteredCount("SELECT count(*) FROM tb CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = tb.k WHERE NOT " + column + " AND tb.k < 1", 0, true);
+            }
+        });
+    }
+
+    @Test
     public void testColumnAddedAfterData() throws Exception {
         // the rows written before ADD COLUMN read NULL in c
         assertMemoryLeak(() -> {
@@ -335,11 +356,11 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
             assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE -1 < t0.c", 6, true);
             // a function of the column with more arguments: a day after r1, r2 and r3 is past 02:30
             assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE dateadd('d', 1, t0.ts) > '2024-01-05T02:30'", 9, true);
-            // a conjunct that reads two columns and is not < or > is not checked: r1 three times
-            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, t0.k, 5) = 1", 3, false);
-            // a conjunct that reads two columns and is not < or > is not checked: r1 (1 - 0) and r2
-            // (2 - 1) three times each
-            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c - t0.k = 1", 6, false);
+            // a conjunct that reads two columns is false on the NULL row, where both are NULL: r1 three
+            // times, and coalesce(NULL, NULL, 5) is not 1
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, t0.k, 5) = 1", 3, true);
+            // r1 (1 - 0) and r2 (2 - 1) three times each, and NULL - NULL is not 1
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c - t0.k = 1", 6, true);
             // a sub-query is evaluated once more per scan, so it gets no copy
             assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.s IN (SELECT 'a'::varchar FROM long_sequence(1))", 3, false);
             assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c = (SELECT 1 FROM long_sequence(1))", 3, false);
@@ -797,7 +818,13 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
                     "t0.c = 1", "t0.c != 1", "t0.c IS NULL", "t0.c IS NOT NULL", "t0.c IN (1, 2)", "t0.c BETWEEN 1 AND 2",
                     "t0.ts IN '2024-01-05'", "t0.ts > '2024-01-05T01:30'", "t0.s = 'a'", "t0.s != 'a'", "t0.s IN ('a', 'b')",
                     "t0.s NOT IN ('a')", "t0.s LIKE 'a%'", "t0.s ~ 'b'", "t0.c != 1 AND t0.ts < '2024-01-06'",
-                    "coalesce(t0.c, 1) = 1 AND t0.ts IN '2024-01-05'", "t0.c > t0.k", "t0.c = 1 OR t0.s = 'b'", "t0.c > 0"
+                    "coalesce(t0.c, 1) = 1 AND t0.ts IN '2024-01-05'", "t0.c > t0.k", "t0.c = 1 OR t0.s = 'b'", "t0.c > 0",
+                    // conjuncts of several columns, false or true on the NULL row of t0
+                    "t0.c - t0.k = 1", "t0.c + t0.k > 2", "t0.c != t0.k", "t0.c = t0.k", "t0.c >= t0.k",
+                    "coalesce(t0.c, t0.k, 5) = 1", "coalesce(t0.c, t0.k, 1) = 1", "t0.c IS NULL OR t0.k = 1",
+                    "length(t0.s) + t0.c = 2", "dateadd('d', t0.c, t0.ts) > '2024-01-06T01:30'",
+                    "t0.c + t0.k BETWEEN 1 AND 3", "coalesce(t0.c, 5) + t0.k > 6", "t0.c + t0.k > 0 AND t0.s != 'a'",
+                    "NOT (t0.c - t0.k = 1)"
             };
             for (String joins : new String[]{
                     X_JOINS,
@@ -1301,6 +1328,64 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOperandNullOnNullRowWithBindVariables() throws Exception {
+        // < > and BETWEEN are false for a NULL operand whatever the bind variables hold, so an operand that
+        // reads several columns of t0 and is NULL on its NULL row rejects that row in every execution of the
+        // plan, as a bare column does. Over shape Y: r1 is (1, 0), r2 (2, 1) and r3 (NULL, 2).
+        assertMemoryLeak(() -> {
+            createTables();
+            // c + k is 1 for r1 and 3 for r2: r2 three times for 2, r1 and r2 for 0, nothing for NULL
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE t0.c + t0.k > $1", true,
+                    BindVarTuple.ok("2", "count\n3\n", s -> s.setInt(0, 2)),
+                    BindVarTuple.ok("NULL", "count\n0\n", s -> s.setInt(0, Numbers.INT_NULL)),
+                    BindVarTuple.ok("0", "count\n6\n", s -> s.setInt(0, 0))
+            );
+            // the operand on the right of <: c - k is 1 for r1 and r2
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE $1 < t0.c - t0.k", true,
+                    BindVarTuple.ok("0", "count\n6\n", s -> s.setInt(0, 0)),
+                    BindVarTuple.ok("NULL", "count\n0\n", s -> s.setInt(0, Numbers.INT_NULL))
+            );
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE t0.c + t0.k BETWEEN $1 AND $2", true,
+                    BindVarTuple.ok("1 and 3", "count\n6\n", s -> {
+                        s.setInt(0, 1);
+                        s.setInt(1, 3);
+                    }),
+                    BindVarTuple.ok("NULL and 3", "count\n0\n", s -> {
+                        s.setInt(0, Numbers.INT_NULL);
+                        s.setInt(1, 3);
+                    })
+            );
+            // coalesce(NULL, NULL) is NULL: r2 (2) and r3 (2) three times each
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, t0.k) > $1", true,
+                    BindVarTuple.ok("1", "count\n6\n", s -> s.setInt(0, 1)),
+                    BindVarTuple.ok("NULL", "count\n0\n", s -> s.setInt(0, Numbers.INT_NULL))
+            );
+            // coalesce(NULL, 5) is 5 on the NULL row, which 5 > 4 keeps: r3 three times and the NULL row
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, 5) > $1", false,
+                    BindVarTuple.ok("4", "count\n4\n", s -> s.setInt(0, 4))
+            );
+            // an interval IN is no operand rule, and its bind variable does not fold, so it gets no copy: r1, r2
+            // and r3 three times each
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE t0.ts IN $1", false,
+                    BindVarTuple.ok("day", "count\n9\n", s -> s.setStr(0, "2024-01-05"))
+            );
+            // = holds for NULL = NULL, so a NULL value keeps the NULL row: r3 three times and the NULL row
+            assertBindCounts("SELECT count(*) " + Y_JOINS + " WHERE t0.c - t0.k = $1", false,
+                    BindVarTuple.ok("1", "count\n6\n", s -> s.setInt(0, 1)),
+                    BindVarTuple.ok("NULL", "count\n4\n", s -> s.setInt(0, Numbers.INT_NULL))
+            );
+            // The SHORT column u of a holds 0 on its NULL row: 0 * 2 is 0, not NULL, so the operand rejects
+            // nothing. r rows 1 and 2 match a rows 1 (u 7) and 2 (u 8), each twice over b, and r row 9
+            // turns into a NULL row, which 0 > -1 keeps.
+            createSubQueryJoinTables("INT", "1", "2");
+            assertBindCounts("SELECT count(*) FROM a CROSS JOIN b RIGHT JOIN r ON r.k = a.id WHERE a.u * 2 > $1", false,
+                    BindVarTuple.ok("-1", "count\n5\n", s -> s.setInt(0, -1)),
+                    BindVarTuple.ok("15", "count\n2\n", s -> s.setInt(0, 15))
+            );
+        });
+    }
+
+    @Test
     public void testOtherPrefixTables() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1375,6 +1460,68 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .withPlanContaining("Interval forward scan on: t0")
                     .returns("k\n1\n");
+        });
+    }
+
+    @Test
+    public void testSeveralColumns() throws Exception {
+        // A conjunct that reads several columns of t0 evaluates on the NULL row of t0, where all of them are
+        // NULL. Over shape Y, r1 (c 1, k 0, s 'a'), r2 (2, 1, 'b') and r3 (NULL, 2, NULL) match three times
+        // each, and t2 row 9 adds the NULL row. The LIMIT-fenced reference of
+        // testMatchesLimitFencedReference() returns the same counts.
+        assertMemoryLeak(() -> {
+            createTables();
+            // false on the NULL row: NULL + NULL > 2 does not hold, so the scan carries a copy
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c + t0.k > 2", 3, true);
+            // NULL != NULL does not hold either, while NULL != 2 does: r1, r2 and r3
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c != t0.k", 9, true);
+            // a SYMBOL and an INT column: r1 and r2
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.s = 'a' OR t0.c = 2", 6, true);
+            // one column read twice, in either case: r1 and r2
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE T0.C * t0.c > 0", 6, true);
+            // length(NULL) is -1, and -1 + NULL is NULL: r1
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE length(t0.s) + t0.c = 2", 3, true);
+            // a TIMESTAMP and an INT column: r2 two days on
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE dateadd('d', t0.c, t0.ts) > '2024-01-06T01:30'", 3, true);
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c + t0.k BETWEEN 1 AND 3", 6, true);
+            // coalesce(NULL, NULL) is NULL: r2 and r3 (2)
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, t0.k) > 1", 6, true);
+            // 5 + NULL is NULL on the NULL row: r3 (5 + 2)
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, 5) + t0.k > 6", 3, true);
+            // the conjunct of two columns takes the other conjunct of t0 along, which is true on the NULL
+            // row on its own: r2
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c + t0.k > 0 AND t0.s != 'a'", 3, true);
+            assertQuery("SELECT count(*) " + Y_JOINS + " WHERE t0.c + t0.k > 0 AND t0.s != 'a'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: (0<c+k and s!='a')");
+            // true on the NULL row, so the scan carries no copy: NULL = NULL holds, r3 fails it
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c = t0.k", 1, false);
+            // NULL >= NULL holds: r1, r2 and the NULL row
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c >= t0.k", 7, false);
+            // coalesce(NULL, NULL, 1) is 1: r1 and the NULL row
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE coalesce(t0.c, t0.k, 1) = 1", 4, false);
+            // r2, r3 and the NULL row
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE t0.c IS NULL OR t0.k = 1", 7, false);
+            // the optimiser plans NOT (x = 1) as x != 1, and NULL != 1 holds: r3 and the NULL row
+            assertScanFilteredCount("SELECT count(*) " + Y_JOINS + " WHERE NOT (t0.c - t0.k = 1)", 4, false);
+            // over a FULL join, which NULL-extends t0 for t2 rows 2 and 9: r1 and r2 with each t1 row
+            assertScanFilteredCount("SELECT count(*) " + X_FULL_JOINS + " WHERE t0.c - t0.k = 1", 6, true);
+            assertScanFilteredCount("SELECT count(*) " + X_FULL_JOINS + " WHERE t0.c = t0.k", 2, false);
+            // the WHERE of a sub-query moves into the join level, see moveWhereInsideSubQueries()
+            assertScanFilteredCount("SELECT count(*) FROM (SELECT t0.c, t0.k " + Y_JOINS + ") WHERE c - k = 1", 6, true);
+            assertScanFilteredCount("SELECT count(*) FROM (SELECT t0.c, t0.k " + Y_JOINS + ") WHERE c = k", 1, false);
+
+            // The SHORT column u of a has no NULL and holds 0 on the NULL row of a, next to the NULL of the
+            // INT columns v and id. r rows 1 and 2 match a rows 1 (v 100, u 7) and 2 (v 200, u 8), each
+            // twice over b, and r row 9 turns into the NULL row.
+            createSubQueryJoinTables("INT", "1", "2");
+            final String abJoins = "FROM a CROSS JOIN b RIGHT JOIN r ON r.k = a.id";
+            // 0 + NULL is NULL: a row 2
+            assertScanFilteredCount("SELECT count(*) " + abJoins + " WHERE a.u + a.v > 150", 2, true);
+            // 0 * NULL is NULL: a row 2
+            assertScanFilteredCount("SELECT count(*) " + abJoins + " WHERE a.u * a.id = 16", 2, true);
+            // u = 0 holds on the NULL row: a row 2 and the NULL row
+            assertScanFilteredCount("SELECT count(*) " + abJoins + " WHERE a.u = 0 OR a.v > 150", 3, false);
         });
     }
 

@@ -15278,6 +15278,14 @@ public class JoinTest extends AbstractCairoTest {
                     "a0.x IN ($1, $2)",
                     "a0.x >= $1",
                     "a0.x NOT IN (a2.x)",
+                    // conjuncts of two columns of a0, which are both NULL on the rows that the RIGHT JOIN
+                    // NULL-extends: NULL = NULL, coalesce(NULL, NULL, 0) >= 0 and NULL IS NULL hold, and
+                    // NULL - NULL = $1 and NULL + NULL >= $1 hold when $1 is NULL
+                    "a0.x = a0.k",
+                    "coalesce(a0.x, a0.k, 0) >= 0",
+                    "a0.x IS NULL OR a0.k = 1",
+                    "a0.x - a0.k = $1",
+                    "a0.x + a0.k >= $1",
             };
             for (String conjunct : conjuncts) {
                 assertQuery("SELECT a0.id i0, a1.id i1, a2.id i2 FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k"
@@ -15378,6 +15386,8 @@ public class JoinTest extends AbstractCairoTest {
                     {"a.x > 0 AND a.x IN (1, 2, 4, 5, 6)", "0"},
                     {"a.x IN (1, 2, 4, 5, 6)", "1"},
                     {"a.x = 2", "1"},
+                    // a conjunct of two columns takes one check too
+                    {"a.x + a.w > 0", "1"},
             };
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (String[] testCase : cases) {
@@ -15460,12 +15470,13 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoinForInListAndBetween() throws Exception {
-        // The query of testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoin with an IN list
-        // and with BETWEEN in place of a.x > 0. They keep the same a rows and are false when a.x is NULL, so
-        // they drop the rows that RIGHT JOIN d NULL-extends, and b hashes on the key a.w = b.k there too.
+        // The query of testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoin with an IN list,
+        // with BETWEEN, and with conjuncts that read both columns of a in place of a.x > 0. They keep the same
+        // a rows and are false when a.x and a.w are NULL, so they drop the rows that RIGHT JOIN d
+        // NULL-extends, and b hashes on the key a.w = b.k there too. DuckDB returns the same rows.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinInnerDerivedKeyNullRejection();
-            for (String conjunct : new String[]{"a.x IN (1, 2, 4, 5, 6)", "a.x BETWEEN 1 AND 6"}) {
+            for (String conjunct : new String[]{"a.x IN (1, 2, 4, 5, 6)", "a.x BETWEEN 1 AND 6", "a.x + a.w > 2", "a.x * a.w BETWEEN 2 AND 4"}) {
                 assertQuery("""
                         SELECT a.x ax, a.w aw, b.x bx, b.k bk, d.y dy, c.k ck
                         FROM a
@@ -15937,6 +15948,20 @@ public class JoinTest extends AbstractCairoTest {
                             i0\ti1\ti2
                             2\t11\t21
                             """);
+            // a0.x + a0.k is NULL when a0 is, and > is false for a NULL operand whatever $1 holds
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 3);
+            assertQuery(query.formatted("a0.x + a0.k > $1"))
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: a1.k=a0.k")
+                    .returns("""
+                            i0\ti1\ti2
+                            3\t12\t23
+                            """);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertQuery(query.formatted("a0.x + a0.k > $1"))
+                    .noLeakCheck()
+                    .returns("i0\ti1\ti2\n");
         });
     }
 
@@ -16010,6 +16035,18 @@ public class JoinTest extends AbstractCairoTest {
                     {"a0.x IN (1, 2) AND now() > 0", """
                             1\t10\t20
                             2\t11\t21
+                            """},
+                    // conjuncts of two columns of a0, false when both are NULL
+                    {"a0.x + a0.k > 3", "3\t12\t23\n"},
+                    {"a0.x - a0.k = 1", "1\t10\t20\n"},
+                    {"coalesce(a0.x, a0.k) > 2", """
+                            3\t12\t23
+                            4\t13\t22
+                            """},
+                    {"a0.x * a0.k BETWEEN 2 AND 9", """
+                            1\t10\t20
+                            2\t11\t21
+                            3\t12\t23
                             """},
             };
             final String query = "SELECT a0.id i0, a1.id i1, a2.id i2 FROM s0 a0 RIGHT JOIN s1 a1 ON a0.j = a1.k"

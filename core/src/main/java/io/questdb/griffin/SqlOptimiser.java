@@ -335,6 +335,12 @@ public class SqlOptimiser implements Mutable {
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
     // Model indexes of the master-nulling joins of a level that addNullExtensionFilters() considered.
     private final IntHashSet nullExtensionCheckedJoins = new IntHashSet();
+    // The names of the probe columns of isFalseOnNullRow(), by index, kept for the next call. The scratch
+    // of a call: the token of each distinct literal of the conjunct and the type of the column it names,
+    // by the index of its probe column.
+    private final ObjList<String> nullProbeColumnNames = new ObjList<>();
+    private final ObjList<CharSequence> nullProbeColumnTokens = new ObjList<>();
+    private final IntList nullProbeColumnTypes = new IntList();
     // Model indexes of the ASOF and LT joins whose unmatched master rows a WHERE conjunct drops, see
     // collectNullRejectedJoins().
     private final IntHashSet nullRejectedJoinIndexes = new IntHashSet();
@@ -417,6 +423,7 @@ public class SqlOptimiser implements Mutable {
     // takes over.
     private final ObjList<IQueryModel> tableFactoryModelsInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
+    private final TableNullRowColumnTypes tableNullRowColumnTypes = new TableNullRowColumnTypes();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> tempAliasRewriteMap = new LowerCaseCharSequenceObjHashMap<>();
     private final BoolList tempBoolList = new BoolList();
@@ -663,6 +670,8 @@ public class SqlOptimiser implements Mutable {
         nullingAnchorByModelPos.clear();
         nullingExecPosByModel.clear();
         nullingPrefixBoundaries.clear();
+        nullProbeColumnTokens.clear();
+        nullProbeColumnTypes.clear();
         nullRejectedKeyedOuterJoins.clear();
         nullRejectionCandidateModels.clear();
         nullRejectionCandidateStates.clear();
@@ -914,20 +923,6 @@ public class SqlOptimiser implements Mutable {
         } else {
             terms.add(node);
         }
-    }
-
-    static ExpressionNode findFirstLiteral(ExpressionNode node) {
-        if (node == null || node.type == LITERAL) {
-            return node;
-        }
-        ExpressionNode literal = findFirstLiteral(node.lhs);
-        if (literal == null) {
-            literal = findFirstLiteral(node.rhs);
-        }
-        for (int i = 0, n = node.args.size(); i < n && literal == null; i++) {
-            literal = findFirstLiteral(node.args.getQuick(i));
-        }
-        return literal;
     }
 
     // A SHOW that names an object reads it through the view the context reads table-name functions
@@ -1833,20 +1828,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return readsSharedCursor(model.getNestedModel()) || readsSharedCursor(model.getUnionModel());
-    }
-
-    private static void renameLiterals(ExpressionNode node, CharSequence name) {
-        if (node == null) {
-            return;
-        }
-        if (node.type == LITERAL) {
-            node.token = name;
-        }
-        renameLiterals(node.lhs, name);
-        renameLiterals(node.rhs, name);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            renameLiterals(node.args.getQuick(i), name);
-        }
     }
 
     // Returns the column a grouping set key names: the column behind a SELECT alias, as in
@@ -4295,6 +4276,44 @@ public class SqlOptimiser implements Mutable {
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
         }
+    }
+
+    // Gives each distinct literal of the node a probe column of isFalseOnNullRow(), of the type of the
+    // column that the literal names. Returns false when a literal names no column that columnTypes knows,
+    // or when a largest part of the node that reads no column does not fold to a constant.
+    private boolean collectNullProbeColumns(
+            ExpressionNode node,
+            NullRowColumnTypes columnTypes,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (node == null || node.type == CONSTANT) {
+            return true;
+        }
+        if (node.type == LITERAL) {
+            if (nullProbeColumnIndex(node.token) > -1) {
+                return true;
+            }
+            final int columnType = columnTypes.getColumnType(node);
+            if (columnType < 0) {
+                return false;
+            }
+            nullProbeColumnTokens.add(node.token);
+            nullProbeColumnTypes.add(columnType);
+            return true;
+        }
+        if (!hasNodeOfType(node, LITERAL)) {
+            return isFoldableConstantExpression(node, sqlExecutionContext);
+        }
+        if (!collectNullProbeColumns(node.lhs, columnTypes, sqlExecutionContext)
+                || !collectNullProbeColumns(node.rhs, columnTypes, sqlExecutionContext)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!collectNullProbeColumns(node.args.getQuick(i), columnTypes, sqlExecutionContext)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Collects the ASOF and LT joins whose unmatched master rows a top-level WHERE conjunct drops: the
@@ -7970,10 +7989,33 @@ public class SqlOptimiser implements Mutable {
         if (node.type == OPERATION && node.paramCount == 2 && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
             return isNullableColumn(tableModel, node.lhs) || isNullableColumn(tableModel, node.rhs);
         }
-        if (SqlKeywords.isBetweenKeyword(node.token)) {
-            // the parser rejects BETWEEN without its value and both bounds
+        // a BOOLEAN column named "between" is a LITERAL
+        if (node.type == SET_OPERATION && SqlKeywords.isBetweenKeyword(node.token)) {
+            // the parser gives BETWEEN its value and both bounds
             assert node.paramCount == 3;
             return isNullableColumn(tableModel, node.args.getLast());
+        }
+        return false;
+    }
+
+    // Returns true when the conjunct is < or > with an operand, or BETWEEN with a value, that is NULL on the
+    // NULL row, see isNullOnNullRow(): < > and BETWEEN are false for a NULL operand, whatever the other
+    // operands hold, bind variables included. It extends the rule of hasNullRejectingOperand() from a bare
+    // column to an expression of the columns of the NULL row, such as a.x + a.y > $1, at the cost of a
+    // function parse.
+    boolean hasNullOnNullRowOperand(
+            ExpressionNode node,
+            NullRowColumnTypes columnTypes,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (node.type == OPERATION && node.paramCount == 2 && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
+            return isNullOnNullRow(node.lhs, columnTypes, sqlExecutionContext)
+                    || isNullOnNullRow(node.rhs, columnTypes, sqlExecutionContext);
+        }
+        if (node.type == SET_OPERATION && SqlKeywords.isBetweenKeyword(node.token)) {
+            // the parser gives BETWEEN its value and both bounds
+            assert node.paramCount == 3;
+            return isNullOnNullRow(node.args.getLast(), columnTypes, sqlExecutionContext);
         }
         return false;
     }
@@ -8432,23 +8474,28 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    // Returns true when every literal of the conjunct names the column, every largest part of the conjunct
-    // that reads no column folds to a constant, and the conjunct is false on the NULL record of the column
-    // type, see isFalseOnNullRecord(). A bind variable or a function that varies between executions does
+    // Returns true when the conjunct reads a column, every literal of it names a column that the NULL row
+    // holds NULL in, of a type that columnTypes knows, every largest part of the conjunct that reads no
+    // column folds to a constant, and the conjunct is false on the NULL row: on the NULL record of the
+    // types of the columns that it reads, see isFalseOnNullRecord(). Every column of the NULL row reads
+    // NULL, so a conjunct of several columns, such as a.x + a.y > 5, qualifies as one of a single column
+    // does. Each distinct literal reads a probe column of its own type, so the probe parses to the
+    // functions that the conjunct does. A bind variable or a function that varies between executions does
     // not fold, so the answer holds for every execution of the plan. LateralJoinRewriter asks it about the
     // columns of the tables of a LATERAL body.
-    boolean isFalseOnNullRecordOverColumn(
+    boolean isFalseOnNullRow(
             ExpressionNode conjunct,
-            CharSequence columnName,
-            int columnType,
+            NullRowColumnTypes columnTypes,
             SqlExecutionContext sqlExecutionContext
     ) {
-        if (!isFoldableOverColumn(conjunct, columnName, sqlExecutionContext)) {
+        nullProbeColumnTokens.clear();
+        nullProbeColumnTypes.clear();
+        if (!collectNullProbeColumns(conjunct, columnTypes, sqlExecutionContext) || nullProbeColumnTypes.size() == 0) {
             return false;
         }
         final ExpressionNode probe = ExpressionNode.deepClone(expressionNodePool, conjunct);
-        renameLiterals(probe, NULL_REJECTING_PROBE_COLUMN);
-        return isFalseOnNullRecord(functionParser, probe, columnType, sqlExecutionContext);
+        renameNullProbeLiterals(probe);
+        return isFalseOnNullRecord(functionParser, probe, nullProbeColumnsMetadata(), sqlExecutionContext);
     }
 
     // Returns true when the filter a = b on two columns of the model keeps exactly the rows whose a and b
@@ -8471,29 +8518,6 @@ public class SqlOptimiser implements Mutable {
                  ColumnType.VARCHAR, ColumnType.UUID, ColumnType.IPv4 -> true;
             default -> false;
         };
-    }
-
-    // Returns true when every literal of the expression names the column, and every largest part of it
-    // that reads no column folds to a constant
-    private boolean isFoldableOverColumn(ExpressionNode node, CharSequence columnName, SqlExecutionContext sqlExecutionContext) {
-        if (node == null || node.type == CONSTANT) {
-            return true;
-        }
-        if (node.type == LITERAL) {
-            return Chars.equalsIgnoreCase(node.token, columnName);
-        }
-        if (!hasNodeOfType(node, LITERAL)) {
-            return isFoldableConstantExpression(node, sqlExecutionContext);
-        }
-        if (!isFoldableOverColumn(node.lhs, columnName, sqlExecutionContext) || !isFoldableOverColumn(node.rhs, columnName, sqlExecutionContext)) {
-            return false;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (!isFoldableOverColumn(node.args.getQuick(i), columnName, sqlExecutionContext)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private boolean isFoldableConstantExpression(ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
@@ -8947,6 +8971,28 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // Returns true when the expression reads a column, every literal of it names a column of the NULL row, of
+    // a type that columnTypes knows, every largest part of it that reads no column folds to a constant, and
+    // the expression is NULL on the NULL row: "expression IS NOT NULL" is false on the NULL record of the
+    // types of its columns, see isFalseOnNullRecord(). The parser reads IS NOT NULL as != NULL.
+    private boolean isNullOnNullRow(
+            ExpressionNode node,
+            NullRowColumnTypes columnTypes,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        nullProbeColumnTokens.clear();
+        nullProbeColumnTypes.clear();
+        if (!collectNullProbeColumns(node, columnTypes, sqlExecutionContext) || nullProbeColumnTypes.size() == 0) {
+            return false;
+        }
+        final ExpressionNode probe = expressionNodePool.next().of(OPERATION, "!=", 0, node.position);
+        probe.paramCount = 2;
+        probe.lhs = ExpressionNode.deepClone(expressionNodePool, node);
+        probe.rhs = expressionNodePool.next().of(CONSTANT, "null", 0, node.position);
+        renameNullProbeLiterals(probe.lhs);
+        return isFalseOnNullRecord(functionParser, probe, nullProbeColumnsMetadata(), sqlExecutionContext);
+    }
+
     // Returns true when a conjunct from collectNullRejectionConjuncts() filters after the join at position
     // and rejects the NULL row of a model from loIndex to hiIndex, see isNullRejectingColumnPredicate(). The
     // conjuncts already known to reject go first, so the NULL check, a function parse, runs only when none of
@@ -8994,22 +9040,19 @@ public class SqlOptimiser implements Mutable {
     // table, whatever the values of its bind variables and in every execution. That holds for < and > with a
     // bare column of the table on one side, and for BETWEEN with a bare column as its value, when the column
     // type has NULL: they are false for a NULL operand, whatever the other operands hold, while = <= and >=
-    // hold when both operands are NULL. It also holds for a conjunct that reads one column of the table, of a
-    // known type, whose other parts fold to constants, when the conjunct evaluates to false on the NULL
-    // record of the column type. A part that varies between rows or executions does not fold.
+    // hold when both operands are NULL. It also holds for a conjunct that reads one or more columns of the
+    // table, of known types, whose other parts fold to constants, when the conjunct evaluates to false on
+    // the NULL row of the table, see isFalseOnNullRow(), and for < > and BETWEEN with an operand of such
+    // columns that is NULL on the NULL row, see hasNullOnNullRowOperand(). A part that varies between rows
+    // or executions does not fold.
     private boolean isNullRejectingColumnPredicate(
             IQueryModel tableModel,
             ExpressionNode node,
             SqlExecutionContext sqlExecutionContext
     ) {
-        if (hasNullRejectingOperand(tableModel, node)) {
-            return true;
-        }
-        final ExpressionNode column = findFirstLiteral(node);
-        // the callers pass a conjunct that reads a column of the table
-        assert column != null;
-        final int columnType = getQueryColumnType(tableModel, getModelColumn(tableModel, column.token));
-        return columnType >= 0 && isFalseOnNullRecordOverColumn(node, column.token, columnType, sqlExecutionContext);
+        return hasNullRejectingOperand(tableModel, node)
+                || isFalseOnNullRow(node, tableNullRowColumnTypes.of(tableModel), sqlExecutionContext)
+                || hasNullOnNullRowOperand(node, tableNullRowColumnTypes.of(tableModel), sqlExecutionContext);
     }
 
     // Returns true when the comparison of the column with the compile-time constant, in the given operand
@@ -9046,7 +9089,7 @@ public class SqlOptimiser implements Mutable {
         comparisonNode.lhs = isColumnLhs ? columnNode : constCopy;
         comparisonNode.rhs = isColumnLhs ? constCopy : columnNode;
         comparisonNode.paramCount = 2;
-        return isFalseOnNullRecord(functionParser, comparisonNode, columnType, sqlExecutionContext);
+        return isFalseOnNullRecord(functionParser, comparisonNode, nullProbeMetadata(columnType), sqlExecutionContext);
     }
 
     private boolean isNullRejectingJoinConstant(
@@ -10483,6 +10526,41 @@ public class SqlOptimiser implements Mutable {
 
         ac.setRowsLo(rowsLo);
         ac.setRowsHi(rowsHi);
+    }
+
+    // Returns the index of the probe column of isFalseOnNullRow() that the literal reads, or -1 while the
+    // literal has none
+    private int nullProbeColumnIndex(CharSequence token) {
+        for (int i = 0, n = nullProbeColumnTokens.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(nullProbeColumnTokens.getQuick(i), token)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private String nullProbeColumnName(int index) {
+        for (int i = nullProbeColumnNames.size(); i <= index; i++) {
+            nullProbeColumnNames.add(NULL_REJECTING_PROBE_COLUMN + i);
+        }
+        return nullProbeColumnNames.getQuick(index);
+    }
+
+    // Returns the metadata of the probe columns of isFalseOnNullRow(), each of the type of the column that
+    // its literals name
+    private GenericRecordMetadata nullProbeColumnsMetadata() {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0, n = nullProbeColumnTypes.size(); i < n; i++) {
+            metadata.add(new TableColumnMetadata(
+                    nullProbeColumnName(i),
+                    nullProbeColumnTypes.getQuick(i),
+                    IndexType.NONE,
+                    0,
+                    false,
+                    null
+            ));
+        }
+        return metadata;
     }
 
     private void openReaderAndEnumerateColumns(
@@ -12435,6 +12513,25 @@ public class SqlOptimiser implements Mutable {
                     throw SqlException.$(name != null ? name.position : missing.getModelPosition(), "could not determine join order for this table");
                 }
             }
+        }
+    }
+
+    // Renames each literal of the probe of isFalseOnNullRow() to the name of its probe column
+    private void renameNullProbeLiterals(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == LITERAL) {
+            final int index = nullProbeColumnIndex(node.token);
+            // collectNullProbeColumns() gave every literal of the conjunct a probe column
+            assert index > -1;
+            node.token = nullProbeColumnName(index);
+            return;
+        }
+        renameNullProbeLiterals(node.lhs);
+        renameNullProbeLiterals(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            renameNullProbeLiterals(node.args.getQuick(i));
         }
     }
 
@@ -19682,18 +19779,17 @@ public class SqlOptimiser implements Mutable {
         return column;
     }
 
-    // Returns true when the predicate, whose only column is NULL_REJECTING_PROBE_COLUMN of the type, is
-    // false on the NULL record of the type, which an outer join puts in the rows that it NULL-extends.
-    // Evaluating the predicate keeps the NULL semantics of the type: a BOOLEAN, BYTE or SHORT column
-    // holds false or 0, and a constant such as 'NaN' or NULL::int may read as NULL. Any failure to
-    // parse or evaluate the predicate returns false.
+    // Returns true when the predicate, whose columns are the probe columns of the metadata, is false on the
+    // NULL record of their types, which an outer join puts in the rows that it NULL-extends. Evaluating the
+    // predicate keeps the NULL semantics of each type: a BOOLEAN, BYTE or SHORT column holds false or 0, and
+    // a constant such as 'NaN' or NULL::int may read as NULL. Any failure to parse or evaluate the predicate
+    // returns false.
     private static boolean isFalseOnNullRecord(
             FunctionParser functionParser,
             ExpressionNode predicate,
-            int columnType,
+            GenericRecordMetadata metadata,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final GenericRecordMetadata metadata = nullProbeMetadata(columnType);
         Function function = null;
         Record nullRecord = null;
         try {
@@ -20189,6 +20285,13 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // The columns of the NULL row that isFalseOnNullRow() evaluates a conjunct on, which all read NULL
+    interface NullRowColumnTypes {
+        // Returns the type of the column that the literal names when the column is one of the NULL row,
+        // and -1 otherwise
+        int getColumnType(ExpressionNode literal);
+    }
+
     // Collects the join models that the literals of an expression read. isResolved turns false when a
     // literal does not resolve to exactly one join model.
     private static class JoinModelReferenceCollector implements PostOrderTreeTraversalAlgo.Visitor {
@@ -20515,6 +20618,22 @@ public class SqlOptimiser implements Mutable {
         PostOrderTreeTraversalAlgo.Visitor of(IQueryModel parent, int joinIndex) {
             this.parent = parent;
             this.joinIndex = joinIndex;
+            return this;
+        }
+    }
+
+    // The columns of the NULL row of a table, for a conjunct that reads only columns of the table, see
+    // isNullRejectingColumnPredicate()
+    private class TableNullRowColumnTypes implements NullRowColumnTypes {
+        private IQueryModel tableModel;
+
+        @Override
+        public int getColumnType(ExpressionNode literal) {
+            return getQueryColumnType(tableModel, getModelColumn(tableModel, literal.token));
+        }
+
+        NullRowColumnTypes of(IQueryModel tableModel) {
+            this.tableModel = tableModel;
             return this;
         }
     }

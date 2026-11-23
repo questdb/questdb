@@ -122,6 +122,37 @@ public class PGRightJoinWhereScanFilterTest extends BasePGTest {
     }
 
     @Test
+    public void testGreaterThanBindVariableOverTwoColumns() throws Exception {
+        // c + k is NULL on the NULL row, and > is false for a NULL operand whatever ? holds, so a copy filters the
+        // scan in every execution. c + k is 1 for r1 and 3 for r2: r2 three times for 2, nothing for NULL, and r1
+        // and r2 three times each for 0.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            createTables(connection);
+            try (Statement statement = connection.createStatement();
+                 ResultSet plan = statement.executeQuery("EXPLAIN SELECT count(*) FROM t0 CROSS JOIN t1"
+                         + " RIGHT JOIN t2 ON t2.k = t0.k WHERE t0.c + t0.k > 2")) {
+                sink.clear();
+                while (plan.next()) {
+                    sink.put(plan.getString(1)).put('\n');
+                }
+                TestUtils.assertContains(sink, "filter: 2<c+k");
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT count(*) FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t0.k WHERE t0.c + t0.k > ?"
+            )) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 2);
+                    assertCount(statement, 3);
+                    statement.setNull(1, Types.INTEGER);
+                    assertCount(statement, 0);
+                    statement.setInt(1, 0);
+                    assertCount(statement, 6);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHalfOpenRangeBindVariables() throws Exception {
         // ts < ? is false on a NULL ts, and takes ts >= ? along: r1, r2 and r3 twice each for the day,
         // r2 and r3 twice each from 01:30, and nothing when ts >= NULL fails every real row

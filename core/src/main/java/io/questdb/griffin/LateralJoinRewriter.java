@@ -127,6 +127,7 @@ class LateralJoinRewriter implements Mutable {
     // outer-ref column -> the column that WHERE equates it with in a layer above the data source
     // layer, see tryEliminateOuterRefInBranch()
     private final LowerCaseCharSequenceObjHashMap<CharSequence> layerEqualities = new LowerCaseCharSequenceObjHashMap<>();
+    private final LayerNullRowColumnTypes layerNullRowColumnTypes = new LayerNullRowColumnTypes();
     // the lateral joins whose criteria hold binding placeholders, see bindLiftedJoinCriteria()
     private final ObjList<IQueryModel> liftBindingJoinModels = new ObjList<>();
     // per binding placeholder, see liftBindingToken(): the FROM clause that the lifted column reads and
@@ -534,7 +535,7 @@ class LateralJoinRewriter implements Mutable {
     // knows. Before rewriteSelectClause(), a table of a layer holds the columns of its metadata, with their
     // types, and the SELECT list of the layer sits in a model above it.
     private static int getTableColumnType(IQueryModel layer, ExpressionNode node, int lo, int hi) {
-        // the callers pass an operand of a comparison or BETWEEN, or the first literal of a conjunct
+        // the callers pass an operand of a comparison or BETWEEN, or a literal of a conjunct
         assert node != null;
         if (node.type != ExpressionNode.LITERAL || node.lateralDepth != 0) {
             return -1;
@@ -3542,9 +3543,10 @@ class LateralJoinRewriter implements Mutable {
     // by the rules of SqlOptimiser.isNullRejectingColumnPredicate(), on a column of a table of those models, see
     // getTableColumnType(): < and > with the bare column on one side, whatever the other side reads, as they are
     // false for a NULL operand, and BETWEEN with the bare column as its value, when the column type has NULL;
-    // and a conjunct that reads that column alone, folds otherwise, and is false on the NULL record of the
-    // column type, see SqlOptimiser.isFalseOnNullRecordOverColumn(). = <= and >= hold when both operands are
-    // NULL, so they qualify only through the NULL record, with a constant other side.
+    // and a conjunct that reads only columns of tables of those models, folds otherwise, and is false on the
+    // NULL record of the column types, see SqlOptimiser.isFalseOnNullRow(), or that is < > or BETWEEN with an
+    // operand of such columns that is NULL there, see SqlOptimiser.hasNullOnNullRowOperand(). = <= and >= hold
+    // when both operands are NULL, so they qualify only through the NULL record, with a constant other side.
     private boolean isNullRejectingConjunct(
             IQueryModel layer,
             ExpressionNode node,
@@ -3564,12 +3566,8 @@ class LateralJoinRewriter implements Mutable {
                 return true;
             }
         }
-        final ExpressionNode column = findFirstLiteral(node);
-        if (column == null) {
-            return false;
-        }
-        final int columnType = getTableColumnType(layer, column, lo, hi);
-        return columnType >= 0 && optimiser.isFalseOnNullRecordOverColumn(node, column.token, columnType, sqlExecutionContext);
+        return optimiser.isFalseOnNullRow(node, layerNullRowColumnTypes.of(layer, lo, hi), sqlExecutionContext)
+                || optimiser.hasNullOnNullRowOperand(node, layerNullRowColumnTypes.of(layer, lo, hi), sqlExecutionContext);
     }
 
     private boolean isOuterRefCopyWrapper(IQueryModel joinModel) {
@@ -6792,4 +6790,23 @@ class LateralJoinRewriter implements Mutable {
         liftBindingJoinModels.clear();
     }
 
+    // The columns of the NULL row of the tables of the layer from lo to hi, which a join NULL-extends
+    // together, see isNullRejectingConjunct() and getTableColumnType()
+    private static class LayerNullRowColumnTypes implements SqlOptimiser.NullRowColumnTypes {
+        private int hi;
+        private IQueryModel layer;
+        private int lo;
+
+        @Override
+        public int getColumnType(ExpressionNode literal) {
+            return getTableColumnType(layer, literal, lo, hi);
+        }
+
+        SqlOptimiser.NullRowColumnTypes of(IQueryModel layer, int lo, int hi) {
+            this.layer = layer;
+            this.lo = lo;
+            this.hi = hi;
+            return this;
+        }
+    }
 }

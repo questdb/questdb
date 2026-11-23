@@ -130,6 +130,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     private static final Pattern WHERE_TABLE = Pattern.compile(" WHERE (coalesce\\()?[cs](\\d)[ ,]");
     private static final int WHERE_QUERY_COUNT = 300;
     // a WHERE predicate on a SYMBOL column
+    // a WHERE predicate that reads several columns of a table, see appendWherePredicate()
+    private static final Pattern WHERE_SEVERAL_COLUMN_PREDICATE = Pattern.compile(" WHERE .*(c(\\d) [-+] v\\2 |c(\\d) \\* length\\(s\\3\\)|coalesce\\(c(\\d), v\\4,)");
     private static final Pattern WHERE_SYMBOL_PREDICATE = Pattern.compile(" s\\d (LIKE|~|IN|NOT IN) ");
 
     @Test
@@ -335,8 +337,9 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     @Test
     public void testWhereQueriesCoverScanFilterShapes() {
         // The shapes where a copy of a WHERE conjunct could change the rows: LATEST ON on the table, symbol
-        // predicates that the NULL probe parses, bind variables whose value may be NULL, several conjuncts
-        // on one table, which a NULL-rejecting conjunct takes along, and a join that matches on the table
+        // predicates that the NULL probe parses, bind variables whose value may be NULL, predicates that read
+        // several columns of the table, several conjuncts on one table, which a NULL-rejecting conjunct takes
+        // along, and a join that matches on the table
         // after a RIGHT or FULL join, after which a copy also filters. A twentieth of the queries suffices
         // for the last: it needs a RIGHT or FULL join, a later ON clause and a WHERE that line up. The folded
         // predicate gates the joins below the WHERE, which may hold an outer join that a LEFT join without join
@@ -346,6 +349,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         int latestOnCount = 0;
         int symbolCount = 0;
         int bindCount = 0;
+        int severalColumnCount = 0;
         int conjunctPairCount = 0;
         int nullExtensionMatchCount = 0;
         int foldedCount = 0;
@@ -371,17 +375,22 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             if (flat.contains("$1")) {
                 bindCount++;
             }
+            if (WHERE_SEVERAL_COLUMN_PREDICATE.matcher(flat).find()) {
+                severalColumnCount++;
+            }
             if (WHERE_CONJUNCT_PAIR.matcher(flat).find()) {
                 conjunctPairCount++;
             }
         }
         final String counts = "latestOn=" + latestOnCount + ", symbol=" + symbolCount + ", bind=" + bindCount
+                + ", severalColumn=" + severalColumnCount
                 + ", conjunctPair=" + conjunctPairCount + ", nullExtensionMatch=" + nullExtensionMatchCount
                 + ", folded=" + foldedCount + ", foldedAfterKeylessLeftJoin=" + foldedAfterKeylessLeftJoinCount
                 + " of " + WHERE_CORPUS_SIZE;
         Assert.assertTrue(counts, latestOnCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, symbolCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, bindCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, severalColumnCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, conjunctPairCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, nullExtensionMatchCount * 20 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, foldedCount * 20 >= WHERE_CORPUS_SIZE);
@@ -448,12 +457,13 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
 
     // Appends a WHERE predicate on the table, of a kind that rnd picks: comparisons of the INT column with
     // constants and INT bind variables, IS [NOT] NULL, a function over it, predicates on the SYMBOL column,
-    // an equality with the INT column of another table of the query, and the folded predicate of
-    // appendFoldedPredicate().
+    // an equality with the INT column of another table of the query, predicates that read several columns
+    // of the table, and the folded predicate of appendFoldedPredicate().
     private static void appendWherePredicate(Rnd rnd, StringBuilder where, int table, int[] tables, int modelCount) {
         final String c = "c" + table;
         final String s = "s" + table;
-        switch (rnd.nextInt(17)) {
+        final String v = "v" + table;
+        switch (rnd.nextInt(22)) {
             case 0 -> where.append(c).append(" > 0");
             case 1 -> where.append(c).append(" IS NULL");
             case 2 -> where.append(c).append(" IS NOT NULL");
@@ -470,6 +480,13 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             case 13 -> where.append(c).append(" >= $1");
             case 14 -> where.append(c).append(" >= $1 AND ").append(c).append(" < $2");
             case 15 -> where.append(c).append(" = $1");
+            // several columns of the table: false on its NULL row, false there for every value of $1, true
+            // there, and true there when $1 is NULL
+            case 16 -> where.append(c).append(" + ").append(v).append(" > 1");
+            case 17 -> where.append(c).append(" * length(").append(s).append(") = 1");
+            case 18 -> where.append(c).append(" + ").append(v).append(" > $1");
+            case 19 -> where.append("coalesce(").append(c).append(", ").append(v).append(", 0) = 0");
+            case 20 -> where.append(c).append(" - ").append(v).append(" = $1");
             default -> appendFoldedPredicate(where, table);
         }
     }
@@ -777,7 +794,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         }
         final String table = whereMatcher.group(2);
         // the predicates of appendWherePredicate() that are false on NULL for every value of $1 and $2
-        final Pattern nullRejectingPredicate = Pattern.compile("[cs]" + table + " (> 0|IS NOT NULL|IN \\(|BETWEEN|LIKE|~|> \\$1|< \\$2)");
+        final Pattern nullRejectingPredicate = Pattern.compile("[cs]" + table
+                + " (> 0|IS NOT NULL|IN \\(|BETWEEN|LIKE|~|> \\$1|< \\$2|\\+ v" + table + " > |\\* length\\(s" + table + "\\) = 1)");
         if (!nullRejectingPredicate.matcher(flat).region(whereMatcher.start(), flat.length()).find()) {
             return false;
         }
