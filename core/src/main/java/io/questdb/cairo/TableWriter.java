@@ -1252,10 +1252,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
         prepareStaleParquetPartitionReindexes();
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
-        // The build seals every partition at the txn the meta commit below lands on: flush as this table commits
-        // (an ADAPTIVE build takes no flush, see IndexWriter.setCommittedTxnSource), not at the instance-wide mode.
+        // Flush as this table commits, not at the instance-wide mode. The build has no committed-txn source, so
+        // every build seal takes the ordered flush: after a power loss the restored _meta does not index the
+        // column, recovery leaves the files alone, and the replayed ADD INDEX accepts the files it finds.
         indexer.getWriter().setCommitMode(getFlushCommitMode());
-        indexer.getWriter().setCommittedTxnSource(this);
         boolean isTxnWriteStarted = false;
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
@@ -1268,6 +1268,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
             isTxnWriteStarted = true;
             clearTodoAndCommitMeta();
 
+            // From here on the indexer is the column's live indexer: its seals of a commit in progress may skip
+            // their flush, see IndexWriter.setCommittedTxnSource.
+            indexer.getWriter().setCommittedTxnSource(this);
             indexers.extendAndSet(columnIndex, indexer);
             populateDenseIndexerList();
         } catch (Throwable th) {
@@ -23263,12 +23266,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
                 }
             } finally {
                 path.trimTo(pathSize);
-            }
-            // The build changed the index files of partitions whose records it left alone. Where the save point
-            // flushes only its write set (no filesystem-wide syncfs, or a partition linked elsewhere), the next one
-            // must flush them: an ADAPTIVE build took no flush of its own.
-            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-                txWriter.markPartitionDirty(txWriter.getPartitionTimestampByIndex(i));
             }
         } catch (Throwable th) {
             Misc.free(indexer);

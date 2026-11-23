@@ -751,16 +751,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    /**
-     * Adds a partition whose files this writer changed without updating its record, as an index build does, to the
-     * write set of the next save point. No-op while tracking is disabled.
-     */
-    public void markPartitionDirty(long partitionTimestamp) {
-        if (dirtyPartitions != null) {
-            dirtyPartitions.add(partitionTimestamp);
-        }
-    }
-
     public void setDirtyPartitionTracking(boolean isEnabled) {
         if (!isEnabled) {
             dirtyPartitions = null;

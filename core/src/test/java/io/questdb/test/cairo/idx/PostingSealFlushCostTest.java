@@ -52,8 +52,9 @@ import java.util.regex.Pattern;
  * <p>
  * The expected counts come from what each mode promises, not from the code. ADAPTIVE recovers a WAL table to its last
  * save point and drops every chain entry stamped above it, so a seal of a commit in progress needs no flush; a seal
- * stamped with the committed txn (the generation cap, REINDEX), and every seal of a table that takes no save point (a
- * non-WAL table, a replica), takes the ordered flush. Every other mode
+ * stamped with the committed txn (the generation cap, REINDEX), every seal of the ADD INDEX build, whose files no
+ * recovery drops, and every seal of a table that takes no save point (a non-WAL table, a replica), takes the ordered
+ * flush. Every other mode
  * takes the ordered flush for every seal: NOSYNC and ASYNC may lose commits on a power loss, but must not leave an
  * index that names files the purge of the superseded generation deleted, or files that never reached the disk. The
  * ordered flush is two disk waits: one device flush for every new value and cover file, then the {@code .pk} flush.
@@ -127,7 +128,9 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         });
     }
 
-    // ALTER TABLE ADD INDEX builds and seals the index of every partition; the build commits at the next txn.
+    // ALTER TABLE ADD INDEX builds and seals the index of every partition. The seals take the ordered flush in every
+    // mode: after a power loss the restored _meta does not index the column, so recovery cannot drop a build seal, and
+    // the replayed ADD INDEX accepts the files it finds.
     @Test
     public void testIndexBuild() throws Exception {
         assertMemoryLeak(new CountingFacade(), () -> {
@@ -136,7 +139,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             resetCounts();
             execute("ALTER TABLE t ALTER COLUMN k ADD INDEX TYPE POSTING" + includeClause());
             drainWalQueue();
-            assertSealFlushes(true, "ADD INDEX");
+            assertSealFlushes(false, "ADD INDEX");
             assertIndexMatchesScan();
         });
     }
