@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -56,7 +57,8 @@ import org.junit.Test;
  * rows one at a time, last to first, through the forward path produces - with the
  * columnar kernels and with the per-row fallbacks, which a SYMBOL column takes when the
  * batch has no symbol tables to resolve keys with. Reading each frame ahead covers the
- * same bytes whether it reads the frame at once or asks for it in MADV_WILLNEED windows.
+ * frame's own bytes, each once, whether the stream asks for them in MADV_WILLNEED windows or
+ * reads the windows itself.
  */
 public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
 
@@ -159,7 +161,8 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                 def.of(metadata.getColumnName(i), metadata.getColumnType(i));
                 defs.add(def);
             }
-            final QwpBackwardReadAhead readFrame = new QwpBackwardReadAhead(new QwpBackwardReadAheadTest.RecordingFacade(false));
+            final QwpBackwardReadAheadTest.RecordingFacade read = new QwpBackwardReadAheadTest.RecordingFacade(false);
+            final QwpBackwardReadAhead readFrame = new QwpBackwardReadAhead(read);
             readFrame.of(metadata);
             final QwpBackwardReadAheadTest.RecordingFacade willNeed = new QwpBackwardReadAheadTest.RecordingFacade(true);
             final QwpBackwardReadAhead adviseFrame = new QwpBackwardReadAhead(willNeed);
@@ -188,24 +191,26 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                     assertBackwardFrame(context, frame, record, rows, defs, cursor, backward, backwardDict, oracle, oracleDict);
                     assertBackwardFrame(context, frame, record, rows, defs, null, backward, backwardTextDict, oracle, oracleTextDict);
 
-                    // the whole-frame read and the MADV_WILLNEED windows cover the same bytes,
-                    // each once and inside the frame's published extents; the read asks the OS
-                    // for nothing, so it counts none of them as read ahead
+                    // The MADV_WILLNEED windows and the windows the stream reads itself cover the
+                    // frame's own bytes, each once and inside the frame's published extents. The
+                    // reads ask the OS for nothing, so they count none of them as read ahead.
+                    read.clear();
                     readFrame.ofFrame(frame, rows);
-                    final long touchedBefore = readFrame.getTouchedBytes();
-                    Assert.assertEquals(context, 0, readFrame.advise(Math.max(0, rows - 1_024)));
-                    final long frameBytes = readFrame.getTouchedBytes() - touchedBefore;
                     willNeed.clear();
                     adviseFrame.ofFrame(frame, rows);
                     long advisedBytes = 0;
                     for (long emitted = 0; emitted < rows; ) {
                         final long slice = Math.min(1_024, rows - emitted);
                         advisedBytes += adviseFrame.advise(rows - emitted - slice);
+                        Assert.assertEquals(context, 0, readFrame.advise(rows - emitted - slice));
                         emitted += slice;
                     }
+                    final long frameBytes = frame.getFormat() == PartitionFormat.NATIVE ? frameBytes(frame, metadata) : 0;
                     Assert.assertEquals(context, frameBytes, advisedBytes);
                     Assert.assertEquals(context, frameBytes, willNeed.requestedBytes());
+                    Assert.assertEquals(context, frameBytes, read.requestedBytes());
                     willNeed.assertWithinExtents(context, frame);
+                    read.assertWithinExtents(context, frame);
                     if (frame.getFormat() == PartitionFormat.NATIVE) {
                         frameCounts[0]++;
                         Assert.assertTrue(context, frameBytes > 0);
@@ -222,6 +227,32 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                 addressCache.clear();
             }
         }
+    }
+
+    // The bytes of the frame's own rows, as the backward cursor publishes them: the page extent of
+    // a fixed-size column; for a var-size column its aux extent, and its data from where the
+    // frame's first row points to the end of the data extent. A column top publishes nothing.
+    private static long frameBytes(PageFrame frame, RecordMetadata metadata) {
+        long bytes = 0;
+        for (int ci = 0, n = metadata.getColumnCount(); ci < n; ci++) {
+            final int columnType = metadata.getColumnType(ci);
+            final long pageAddress = frame.getPageAddress(ci);
+            final long pageSize = frame.getPageSize(ci);
+            if (!ColumnType.isVarSize(columnType)) {
+                bytes += pageAddress != 0 ? pageSize : 0;
+                continue;
+            }
+            final long auxAddress = frame.getAuxPageAddress(ci);
+            final long auxSize = frame.getAuxPageSize(ci);
+            if (auxAddress == 0 || auxSize <= 0) {
+                continue;
+            }
+            bytes += auxSize;
+            if (pageAddress != 0) {
+                bytes += pageSize - ColumnType.getDriver(columnType).getDataVectorOffset(auxAddress, 0);
+            }
+        }
+        return bytes;
     }
 
     private void assertBackwardFrame(

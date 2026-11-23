@@ -42,7 +42,6 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -75,8 +74,9 @@ import java.util.function.LongUnaryOperator;
  * every column that is not in memory is asked for once, before the stream reads it. After
  * the first batch the stream checks whether a window is in memory, backs off checking while
  * windows are not, and trusts small frames after a streak in memory until its thread reads
- * from storage. Without MADV_WILLNEED the stream reads the whole frame once, before the
- * first slice, and asks the OS for nothing, so it counts none of those bytes as read ahead.
+ * from storage. Without MADV_WILLNEED the stream reads the same windows itself, each when the
+ * walk reaches it, checks nothing, and asks the OS for nothing, so it counts none of those
+ * bytes as read ahead.
  */
 public class QwpBackwardReadAheadTest {
     // frames a stream walks in a round of an allocation measurement, and before the first round
@@ -244,34 +244,36 @@ public class QwpBackwardReadAheadTest {
                     ColumnType.LONG, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE,
                     ColumnType.SYMBOL, ColumnType.UUID, ColumnType.LONG256
             };
-            try (TestFrame frame = new TestFrame(fixedTypes, true, lo, lo + rows)) {
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(frame.metadata());
-                readAhead.ofFrame(frame, rows);
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                try (TestFrame frame = new TestFrame(fixedTypes, true, lo, lo + rows)) {
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    readAhead.ofFrame(frame, rows);
 
-                final long top = rows - QwpBackwardReadAhead.INITIAL_WINDOW_ROWS;
-                Assert.assertEquals(frame.bytesOfRows(top, rows), readAhead.advise(rows - SLICE_ROWS));
-                // one request a column for the window's rows, values or aux entries, and one
-                // for the data of a var-size column that stores any; none for the column top
-                int requests = 0;
-                for (int ci = 0; ci < frame.getColumnCount(); ci++) {
-                    final long[] range = frame.rowRange(ci, top, rows);
-                    if (range[1] > range[0]) {
-                        Assert.assertTrue("column " + ci, ff.contains(range[0], range[1]));
-                        requests++;
-                    }
-                    if (frame.isVarSize(ci)) {
-                        final long[] dataRange = frame.dataRange(ci, top, rows);
-                        if (dataRange[1] > dataRange[0]) {
-                            Assert.assertTrue("data of column " + ci, ff.contains(dataRange[0], dataRange[1]));
+                    final long top = rows - QwpBackwardReadAhead.INITIAL_WINDOW_ROWS;
+                    Assert.assertEquals(frame.bytesOfRows(top, rows), advise(readAhead, ff, rows - SLICE_ROWS));
+                    // one range a column for the window's rows, values or aux entries, and one
+                    // for the data of a var-size column that stores any; none for the column top
+                    int requests = 0;
+                    for (int ci = 0; ci < frame.getColumnCount(); ci++) {
+                        final long[] range = frame.rowRange(ci, top, rows);
+                        if (range[1] > range[0]) {
+                            Assert.assertTrue("column " + ci, ff.contains(range[0], range[1]));
                             requests++;
                         }
+                        if (frame.isVarSize(ci)) {
+                            final long[] dataRange = frame.dataRange(ci, top, rows);
+                            if (dataRange[1] > dataRange[0]) {
+                                Assert.assertTrue("data of column " + ci, ff.contains(dataRange[0], dataRange[1]));
+                                requests++;
+                            }
+                        }
                     }
+                    // 7 fixed-size columns, STRING and VARCHAR aux and data, the inline VARCHAR's aux
+                    Assert.assertEquals(12, requests);
+                    Assert.assertEquals(requests, ff.requestCount());
                 }
-                // 7 fixed-size columns, STRING and VARCHAR aux and data, the inline VARCHAR's aux
-                Assert.assertEquals(12, requests);
-                Assert.assertEquals(requests, ff.requestCount());
             }
         });
     }
@@ -476,9 +478,8 @@ public class QwpBackwardReadAheadTest {
                     readAhead.ofFrame(frame, 3_000);
                     readAhead.clear();
                     Assert.assertEquals(0, readAhead.advise(3_000 - SLICE_ROWS));
+                    // the stream asked for none of the frames, nor read any itself
                     Assert.assertEquals(0, ff.requestCount());
-                    // nor did the stream read any of the frames itself
-                    Assert.assertEquals(0, readAhead.getTouchedBytes());
                 }
             }
         });
@@ -487,22 +488,24 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testOfFrameRestartsTheWindow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (
-                    TestFrame first = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 50_000);
-                    TestFrame second = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 40_000)
-            ) {
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(first.metadata());
-                readAhead.ofFrame(first, 50_000);
-                Assert.assertTrue(readAhead.advise(50_000 - SLICE_ROWS) > 0);
-                // the stream leaves the first frame part way and moves to the next
-                readAhead.ofFrame(second, 40_000);
-                ff.clear();
-                Assert.assertEquals(8L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, readAhead.advise(40_000 - SLICE_ROWS));
-                final long[] range = second.rowRange(0, 40_000 - QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, 40_000);
-                Assert.assertTrue(ff.contains(range[0], range[1]));
-                Assert.assertEquals(1, ff.requestCount());
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                try (
+                        TestFrame first = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 50_000);
+                        TestFrame second = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 40_000)
+                ) {
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(first.metadata());
+                    readAhead.ofFrame(first, 50_000);
+                    Assert.assertEquals(8L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, advise(readAhead, ff, 50_000 - SLICE_ROWS));
+                    // the stream leaves the first frame part way and moves to the next
+                    readAhead.ofFrame(second, 40_000);
+                    ff.clear();
+                    Assert.assertEquals(8L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, advise(readAhead, ff, 40_000 - SLICE_ROWS));
+                    final long[] range = second.rowRange(0, 40_000 - QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, 40_000);
+                    Assert.assertTrue(ff.contains(range[0], range[1]));
+                    Assert.assertEquals(1, ff.requestCount());
+                }
             }
         });
     }
@@ -541,14 +544,16 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testSmallFrameGoesInOneWindow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestFrame frame = new TestFrame(new int[]{ColumnType.INT, ColumnType.DOUBLE}, true, 300, 1_000)) {
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(frame.metadata());
-                readAhead.ofFrame(frame, 700);
-                Assert.assertEquals(frame.frameBytes(), readAhead.advise(0));
-                Assert.assertEquals(0, readAhead.advise(0));
-                assertEachColumnTiled(frame, ff);
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                try (TestFrame frame = new TestFrame(new int[]{ColumnType.INT, ColumnType.DOUBLE}, true, 300, 1_000)) {
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    readAhead.ofFrame(frame, 700);
+                    Assert.assertEquals(frame.frameBytes(), advise(readAhead, ff, 0));
+                    Assert.assertEquals(0, advise(readAhead, ff, 0));
+                    assertEachColumnTiled(frame, ff);
+                }
             }
         });
     }
@@ -589,8 +594,8 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testStreamAllocatesNothingPerFrame() throws Exception {
         // The read-ahead runs on the egress data path, frame after frame: once warm, it allocates
-        // nothing, whether it checks windows, trusts small frames or reads whole frames, on a
-        // worker thread, which binds as a carrier, and on a thread that does not.
+        // nothing, whether it checks windows, trusts small frames or reads its windows itself, on
+        // a worker thread, which binds as a carrier, and on a thread that does not.
         TestUtils.assertMemoryLeak(() -> {
             final ExecutorService carrier = newCarrier();
             try (
@@ -609,7 +614,7 @@ public class QwpBackwardReadAheadTest {
                 for (boolean isWillNeedSupported : new boolean[]{true, false}) {
                     for (TestFrame frame : new TestFrame[]{small, large}) {
                         for (boolean isCarrier : new boolean[]{false, true}) {
-                            final String context = (isWillNeedSupported ? "windows" : "whole frames")
+                            final String context = (isWillNeedSupported ? "advised windows" : "windows read")
                                     + ", rows=" + frame.rows + ", carrier=" + isCarrier;
                             final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeedSupported);
                             final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
@@ -636,10 +641,12 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
-    public void testTouchPathCountsNothing() throws Exception {
-        // Without MADV_WILLNEED the stream reads each frame at once, in memory or not: it has
-        // nothing to check or trust, and asks the OS for nothing, so it counts none of the
-        // bytes it reads as read ahead.
+    public void testTouchPathChecksNothing() throws Exception {
+        // Without MADV_WILLNEED the stream reads every frame, in memory or not: a read of a page
+        // in memory costs a load, so the stream checks nothing, trusts nothing and needs no
+        // fault counts. It asks the OS for nothing, so it counts none of the bytes it reads as
+        // read ahead, and it keeps the sums its reads return, which stop the JIT from dropping
+        // the loads.
         TestUtils.assertMemoryLeak(() -> {
             try (TestFrame frame = smallFrame()) {
                 for (boolean isResident : new boolean[]{true, false}) {
@@ -649,12 +656,14 @@ public class QwpBackwardReadAheadTest {
                     readAhead.of(frame.metadata());
                     for (int f = 1; f <= 50; f++) {
                         Assert.assertEquals(0, walk(readAhead, frame));
-                        // the stream still reads each frame once, whole
-                        Assert.assertEquals(f * frame.frameBytes(), readAhead.getTouchedBytes());
+                        // each frame once, its 3,000 rows in one window: a range a column
+                        Assert.assertEquals(f * frame.frameBytes(), ff.requestedBytes());
+                        Assert.assertEquals(2 * f, ff.requestCount());
                     }
+                    // the facade returns the length of each range it reads
+                    Assert.assertEquals(ff.requestedBytes(), readAhead.getTouchSink());
                     Assert.assertEquals(0, ff.residencyChecks);
                     Assert.assertEquals(0, ff.faultReads);
-                    Assert.assertEquals(0, ff.requestCount());
                 }
             }
         });
@@ -662,8 +671,9 @@ public class QwpBackwardReadAheadTest {
 
     @Test
     public void testTouchPathCoversTheFrameBytesOnly() throws Exception {
-        // Without MADV_WILLNEED the first slice reads the whole frame: exactly the frame's
-        // rows of every column, aux and data alike, and nothing of a column top.
+        // Without MADV_WILLNEED the first slice reads the first window, which holds the whole
+        // 500-row frame: exactly the frame's rows of every column, aux and data alike, and
+        // nothing of a column top, as MADV_WILLNEED asks for.
         TestUtils.assertMemoryLeak(() -> {
             final int rowCount = 1_000;
             final int lo = 200;
@@ -731,69 +741,52 @@ public class QwpBackwardReadAheadTest {
                 readAhead.ofFrame(frame, hi - lo);
                 // the read asks the OS for nothing, so it counts no byte as read ahead
                 Assert.assertEquals(0, readAhead.advise(hi - lo - SLICE_ROWS / 4));
-                Assert.assertEquals(frameBytes, readAhead.getTouchedBytes());
-                // once per frame, and without asking the OS
+                Assert.assertEquals(frameBytes, ff.requestedBytes());
+                ff.assertWithinExtents("read", frame);
+                // once per frame
                 Assert.assertEquals(0, readAhead.advise(0));
-                Assert.assertEquals(frameBytes, readAhead.getTouchedBytes());
-                Assert.assertEquals(0, ff.requestCount());
+                Assert.assertEquals(frameBytes, ff.requestedBytes());
 
-                // the same frame through MADV_WILLNEED asks for the same bytes, each once
+                // the same frame through MADV_WILLNEED asks for the same ranges, each once
                 final RecordingFacade willNeed = new RecordingFacade(true);
                 final QwpBackwardReadAhead windows = new QwpBackwardReadAhead(willNeed);
                 windows.of(metadata(types));
                 windows.ofFrame(frame, hi - lo);
                 Assert.assertEquals(frameBytes, windows.advise(hi - lo - SLICE_ROWS / 4));
                 Assert.assertEquals(frameBytes, willNeed.requestedBytes());
+                Assert.assertEquals(willNeed.requestCount(), ff.requestCount());
 
                 frame.format = PartitionFormat.PARQUET;
                 readAhead.ofFrame(frame, hi - lo);
                 Assert.assertEquals(0, readAhead.advise(0));
-                Assert.assertEquals(frameBytes, readAhead.getTouchedBytes());
+                Assert.assertEquals(frameBytes, ff.requestedBytes());
             }
         });
     }
 
     @Test
-    public void testTouchPathLoadsEveryOsPage() throws Exception {
-        // Without MADV_WILLNEED the read-ahead loads one byte of every OS page of the frame.
-        // Files.PAGE_SIZE is the OS page on POSIX, but on Windows it is the 64 KiB allocation
-        // granularity, sixteen 4 KiB pages: a read that steps by it loads one page in sixteen.
+    public void testTouchPathReadsEachWindowWhenTheWalkReachesIt() throws Exception {
+        // Without MADV_WILLNEED a read waits for storage, so the stream reads a window only when
+        // the slice it appends reaches below the rows it has read. It reads the windows that
+        // MADV_WILLNEED asks for: the first holds the first batch, the next ones double up to
+        // the byte cap. Down 200,000 rows of a LONG and a DOUBLE they hold 16,384, 32,768 and
+        // 65,536 rows, then the last 85,312, and down rows of 320 bytes the cap stops them at
+        // 52,428 rows.
         TestUtils.assertMemoryLeak(() -> {
-            final long osPageSize = Os.isWindows() ? 4_096 : Files.PAGE_SIZE;
-            final int pageCount = 20;
-            // pageCount + 1 pages from a page boundary, and the slack to find the boundary
-            final long allocSize = (pageCount + 2) * osPageSize;
-            final long alloc = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-            try {
-                final long base = (alloc + osPageSize - 1) & -osPageSize;
-                // every byte of page p holds p + 1, so the sum of the loads names the pages they hit
-                for (int p = 0; p <= pageCount; p++) {
-                    Vect.memset(base + p * osPageSize, osPageSize, p + 1);
+            final int[] wide = new int[40];
+            Arrays.fill(wide, ColumnType.LONG);
+            for (int[] types : new int[][]{{ColumnType.LONG, ColumnType.DOUBLE}, wide}) {
+                for (int batchRows : new int[]{(int) QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, 1_000, 7}) {
+                    try (SyntheticFrame frame = new SyntheticFrame(types, 200_000)) {
+                        final String context = types.length + " columns, batches of " + batchRows + " rows";
+                        final LongList windows = assertWindowsHoldEveryByte(context, frame, batchRows, false);
+                        Assert.assertEquals(
+                                context,
+                                types.length == 2 ? "[16384,32768,65536,85312]" : "[16384,32768,52428,52428,45992]",
+                                windows.toString()
+                        );
+                    }
                 }
-                final long size = pageCount * osPageSize;
-                final long rows = size / Long.BYTES;
-                final AddressedFrame frame = new AddressedFrame(2, rows);
-                // column 0 starts on a page boundary and covers pages [0, pageCount)
-                frame.set(0, base, size, 0, 0);
-                // column 1 starts mid-page and covers pages [0, pageCount]
-                frame.set(1, base + osPageSize / 2, size, 0, 0);
-                long expectedSink = 0;
-                for (int p = 0; p < pageCount; p++) {
-                    // the stride loads page p once in each column
-                    expectedSink += 2L * (p + 1);
-                }
-                // the read of the last byte loads page pageCount - 1 again in column 0, and
-                // page pageCount, which no stride reaches, in column 1
-                expectedSink += pageCount + (pageCount + 1);
-
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(new RecordingFacade(false));
-                readAhead.of(metadata(new int[]{ColumnType.LONG, ColumnType.LONG}));
-                readAhead.ofFrame(frame, rows);
-                Assert.assertEquals(0, readAhead.advise(rows - SLICE_ROWS));
-                Assert.assertEquals(2 * size, readAhead.getTouchedBytes());
-                Assert.assertEquals(expectedSink, readAhead.getTouchSink());
-            } finally {
-                Unsafe.free(alloc, allocSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -842,7 +835,10 @@ public class QwpBackwardReadAheadTest {
                 readAhead.ofFrame(frame, 100);
                 // only the aux entries of columns 0 and 1, none of them counted as read ahead
                 Assert.assertEquals(0, readAhead.advise(0));
-                Assert.assertEquals(16L * 100 + 8L * 5, readAhead.getTouchedBytes());
+                Assert.assertEquals(16L * 100 + 8L * 5, ff.requestedBytes());
+                Assert.assertEquals(2, ff.requestCount());
+                Assert.assertTrue(ff.contains(vcAux.addressOf(16L * 100), vcAux.addressOf(16L * 200)));
+                Assert.assertTrue(ff.contains(strAux.addressOf(8L * 5), strAux.addressOf(8L * 10)));
 
                 // MADV_WILLNEED asks for the same aux entries, and for no data: the varchar
                 // data extent is empty, and the string aux entries stop before the window's
@@ -855,6 +851,52 @@ public class QwpBackwardReadAheadTest {
                 Assert.assertEquals(2, willNeed.requestCount());
                 Assert.assertTrue(willNeed.contains(vcAux.addressOf(16L * 100), vcAux.addressOf(16L * 200)));
                 Assert.assertTrue(willNeed.contains(strAux.addressOf(8L * 5), strAux.addressOf(8L * 10)));
+            }
+        });
+    }
+
+    @Test
+    public void testTouchPathReadsTheFirstBatchOnly() throws Exception {
+        // Without MADV_WILLNEED a read waits for storage, so the first batch waits for its own
+        // rows only: the slices of the first batch of a 200,000-row frame read its top 16,384 rows
+        // of every column, values, aux entries and data, at the first slice, and the first slice
+        // of the next batch reads the next window, of 32,768 rows.
+        TestUtils.assertMemoryLeak(() -> {
+            final int rows = 200_000;
+            final long batchRows = QwpBackwardReadAhead.INITIAL_WINDOW_ROWS;
+            try (TestFrame frame = new TestFrame(new int[]{ColumnType.LONG, ColumnType.DOUBLE}, true, 0, rows)) {
+                final RecordingFacade ff = new RecordingFacade(false);
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                readAhead.ofFrame(frame, rows);
+                for (long emitted = 0; emitted < batchRows; emitted += SLICE_ROWS) {
+                    Assert.assertEquals(0, readAhead.advise(rows - emitted - SLICE_ROWS));
+                    Assert.assertEquals("after " + emitted + " rows", frame.bytesOfRows(rows - batchRows, rows), ff.requestedBytes());
+                }
+                // a range a column for the window's rows, values or aux entries, and one for the
+                // data of a var-size column that stores any; none for the column top
+                int ranges = 0;
+                for (int ci = 0; ci < frame.getColumnCount(); ci++) {
+                    final long[] range = frame.rowRange(ci, rows - batchRows, rows);
+                    if (range[1] > range[0]) {
+                        Assert.assertTrue("column " + ci, ff.contains(range[0], range[1]));
+                        ranges++;
+                    }
+                    if (frame.isVarSize(ci)) {
+                        final long[] dataRange = frame.dataRange(ci, rows - batchRows, rows);
+                        if (dataRange[1] > dataRange[0]) {
+                            Assert.assertTrue("data of column " + ci, ff.contains(dataRange[0], dataRange[1]));
+                            ranges++;
+                        }
+                    }
+                }
+                // LONG, DOUBLE, STRING and VARCHAR aux and data, the inline VARCHAR's aux
+                Assert.assertEquals(7, ranges);
+                Assert.assertEquals(ranges, ff.requestCount());
+
+                Assert.assertEquals(0, readAhead.advise(rows - batchRows - SLICE_ROWS));
+                Assert.assertEquals(frame.bytesOfRows(rows - 3 * batchRows, rows), ff.requestedBytes());
+                Assert.assertEquals(2 * ranges, ff.requestCount());
             }
         });
     }
@@ -1068,36 +1110,38 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testWindowFitStaysInsideHostileExtents() throws Exception {
         // Fitting windows to the byte cap reads aux entries that a damaged or hostile frame source
-        // can point anywhere. They cannot steer the windows out of the frame: the walk asks for
-        // nothing outside the published extents, and for every value and aux entry once.
+        // can point anywhere. They cannot steer the windows out of the frame: the walk asks for,
+        // or reads, nothing outside the published extents, and every value and aux entry once.
         TestUtils.assertMemoryLeak(() -> {
             final long rows = 30_000;
             final int array = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
             final int[] types = {ColumnType.LONG, ColumnType.VARCHAR, ColumnType.STRING, array, ColumnType.VARCHAR, ColumnType.BINARY};
-            try (SyntheticFrame frame = new SyntheticFrame(types, rows)) {
-                final long dataSize = rows * 3_000;
-                // every 1,000th entry points past the data extent
-                frame.offsets(1, dataSize, r -> r % 1_000 == 999 ? dataSize + 1_000_000 : r * 3_000);
-                // offsets that fall: each row's data would end before it starts
-                frame.offsets(2, dataSize, r -> (rows - r) * 3_000);
-                // offsets that jump back and forth
-                frame.offsets(3, dataSize, r -> (r * 7_919) % rows * 3_000);
-                // data without aux entries to tell its rows apart
-                frame.dataWithoutAux(4, dataSize, false);
-                frame.dataWithoutAux(5, dataSize, true);
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(frame.metadata());
-                readAhead.ofFrame(frame, rows);
-                for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
-                    readAhead.advise(Math.max(0, rows - emitted - SLICE_ROWS));
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                try (SyntheticFrame frame = new SyntheticFrame(types, rows)) {
+                    final long dataSize = rows * 3_000;
+                    // every 1,000th entry points past the data extent
+                    frame.offsets(1, dataSize, r -> r % 1_000 == 999 ? dataSize + 1_000_000 : r * 3_000);
+                    // offsets that fall: each row's data would end before it starts
+                    frame.offsets(2, dataSize, r -> (rows - r) * 3_000);
+                    // offsets that jump back and forth
+                    frame.offsets(3, dataSize, r -> (r * 7_919) % rows * 3_000);
+                    // data without aux entries to tell its rows apart
+                    frame.dataWithoutAux(4, dataSize, false);
+                    frame.dataWithoutAux(5, dataSize, true);
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    readAhead.ofFrame(frame, rows);
+                    for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
+                        advise(readAhead, ff, Math.max(0, rows - emitted - SLICE_ROWS));
+                    }
+                    ff.assertWithinExtents("hostile aux entries", frame);
+                    // values and aux entries: the data of these columns means nothing
+                    frame.assertTiled("hostile aux entries", ff);
+                    // data whose rows the frame does not tell apart is not asked for
+                    Assert.assertEquals(0, ff.coveredWithin(frame.getPageAddress(4), frame.getPageAddress(4) + dataSize));
+                    Assert.assertEquals(0, ff.coveredWithin(frame.getPageAddress(5), frame.getPageAddress(5) + dataSize));
                 }
-                ff.assertWithinExtents("hostile aux entries", frame);
-                // values and aux entries: the data of these columns means nothing
-                frame.assertTiled("hostile aux entries", ff);
-                // data whose rows the frame does not tell apart is not asked for
-                Assert.assertEquals(0, ff.coveredWithin(frame.getPageAddress(4), frame.getPageAddress(4) + dataSize));
-                Assert.assertEquals(0, ff.coveredWithin(frame.getPageAddress(5), frame.getPageAddress(5) + dataSize));
             }
         });
     }
@@ -1106,75 +1150,11 @@ public class QwpBackwardReadAheadTest {
     public void testWindowsAskForNothingOutsideThePublishedExtents() throws Exception {
         // A frame source that publishes fewer bytes than the frame's rows take, or aux entries
         // that point outside the data extent, cannot steer the windows out of bounds: down a
-        // 40,000-row frame they ask for the published bytes the rows cover and nothing else,
-        // and read no aux entry outside the published aux extent.
+        // 40,000-row frame they ask for, or read, the published bytes the rows cover and nothing
+        // else, and read no aux entry outside the published aux extent.
         TestUtils.assertMemoryLeak(() -> {
-            final int rows = 40_000;
-            final int[] types = {ColumnType.STRING, ColumnType.LONG, ColumnType.VARCHAR, ColumnType.STRING};
-            try (
-                    MemoryCARWImpl shortAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl shortData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl longs = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl vcAux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl vcData = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl strAux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl strData = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
-            ) {
-                StringTypeDriver.INSTANCE.configureAuxMemO3RSS(shortAux);
-                for (int r = 0; r < 10; r++) {
-                    StringTypeDriver.appendValue(shortAux, shortData, "s" + r);
-                }
-                longs.jumpTo(8 * 100);
-                StringTypeDriver.INSTANCE.configureAuxMemO3RSS(strAux);
-                for (int r = 0; r < rows; r++) {
-                    VarcharTypeDriver.appendValue(vcAux, vcData, new Utf8String("a varchar too long to inline " + r));
-                    StringTypeDriver.appendValue(strAux, strData, "string value " + r);
-                }
-                final AddressedFrame frame = new AddressedFrame(types.length, rows);
-                // aux entries of the first 10 rows only
-                frame.set(0, shortData.addressOf(0), shortData.getAppendOffset(), shortAux.addressOf(0), 8L * 10);
-                // values of the first 100 rows only
-                frame.set(1, longs.addressOf(0), 8L * 100, 0, 0);
-                // a data address with an empty data extent
-                frame.set(2, vcData.addressOf(0), 0, vcAux.addressOf(0), 16L * rows);
-                // aux entries that point past a 10-byte data extent
-                frame.set(3, strData.addressOf(0), 10, strAux.addressOf(0), 8L * rows);
-
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(metadata(types));
-                readAhead.ofFrame(frame, rows);
-                long bytes = 0;
-                for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
-                    bytes += readAhead.advise(Math.max(0, rows - emitted - SLICE_ROWS));
-                }
-                ff.assertWithinExtents("hostile frame", frame);
-                // the short aux extent and the short LONG extent, at the bottom of the frame,
-                // and every aux entry of the two columns that publish them all; no data
-                Assert.assertEquals(8L * 10 + 8L * 100 + 16L * rows + 8L * rows, bytes);
-                Assert.assertEquals(bytes, ff.requestedBytes());
-                ff.assertTiles("varchar aux", vcAux.addressOf(0), vcAux.addressOf(16L * rows));
-                ff.assertTiles("string aux", strAux.addressOf(0), strAux.addressOf(8L * rows));
-                Assert.assertTrue(ff.contains(shortAux.addressOf(0), shortAux.addressOf(8L * 10)));
-                Assert.assertTrue(ff.contains(longs.addressOf(0), longs.addressOf(8L * 100)));
-            }
-
-            // a frame whose only column publishes its first 100 rows: windows above them have
-            // nothing to ask for, and keep the window sizes they had
-            try (MemoryCARWImpl longs = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                longs.jumpTo(8 * 100);
-                final AddressedFrame frame = new AddressedFrame(1, rows);
-                frame.set(0, longs.addressOf(0), 8L * 100, 0, 0);
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(metadata(new int[]{ColumnType.LONG}));
-                readAhead.ofFrame(frame, rows);
-                long bytes = 0;
-                for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
-                    bytes += readAhead.advise(Math.max(0, rows - emitted - SLICE_ROWS));
-                }
-                Assert.assertEquals(8L * 100, bytes);
-                Assert.assertEquals(1, ff.requestCount());
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                assertWindowsStayInsideShortExtents(isWillNeed);
             }
         });
     }
@@ -1182,8 +1162,9 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testWindowsCoverEveryRowOnceAheadOfTheWalk() throws Exception {
         // Walk a frame down in slices as the egress does: before each slice, every row of it
-        // has been asked for; the first window holds the first batch, each next one is at
-        // most twice the last; and at the end every byte of every column was asked for once.
+        // has been asked for, or read; the first window holds the first batch, each next one is
+        // at most twice the last; and at the end every byte of every column was asked for, or
+        // read, once.
         TestUtils.assertMemoryLeak(() -> {
             final int rows = 200_000;
             final int[] fixedTypes = {
@@ -1192,53 +1173,58 @@ public class QwpBackwardReadAheadTest {
                     ColumnType.SYMBOL, ColumnType.UUID, ColumnType.LONG256, ColumnType.getGeoHashTypeWithBits(40),
                     ColumnType.getDecimalType(30, 6)
             };
-            try (TestFrame frame = new TestFrame(fixedTypes, true, 1_000, 1_000 + rows)) {
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(frame.metadata());
-                readAhead.ofFrame(frame, rows);
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                try (TestFrame frame = new TestFrame(fixedTypes, true, 1_000, 1_000 + rows)) {
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    readAhead.ofFrame(frame, rows);
 
-                // the LONG column, column 0, tells how far down the advice reaches
-                final long longColumn = frame.getPageAddress(0);
-                long advisedLo = rows;
-                long previousWindow = 0;
-                int windows = 0;
-                long firstBatchBytes = 0;
-                for (long emitted = 0; emitted < rows; ) {
-                    final long sliceRows = Math.min(SLICE_ROWS, rows - emitted);
-                    final long lo = rows - emitted - sliceRows;
-                    final long before = ff.requestedBytes();
-                    final long bytes = readAhead.advise(lo);
-                    Assert.assertEquals(ff.requestedBytes() - before, bytes);
-                    final long lowest = (ff.lowestWithin(longColumn, longColumn + 8L * rows) - longColumn) / 8;
-                    if (lowest < advisedLo) {
-                        final long window = advisedLo - lowest;
-                        if (windows == 0) {
-                            Assert.assertEquals(QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, window);
-                        } else if (lowest > 0) {
-                            // the last window may stop at the bottom of the frame
-                            Assert.assertTrue("window " + windows + ": " + window, window <= 2 * previousWindow);
+                    // the LONG column, column 0, tells how far down the advice reaches
+                    final long longColumn = frame.getPageAddress(0);
+                    long advisedLo = rows;
+                    long previousWindow = 0;
+                    int windows = 0;
+                    long firstBatchBytes = 0;
+                    for (long emitted = 0; emitted < rows; ) {
+                        final long sliceRows = Math.min(SLICE_ROWS, rows - emitted);
+                        final long lo = rows - emitted - sliceRows;
+                        final long before = ff.requestedBytes();
+                        final long bytes = readAhead.advise(lo);
+                        // only what the stream asks the OS for counts
+                        Assert.assertEquals(isWillNeed ? ff.requestedBytes() - before : 0, bytes);
+                        final long lowest = (ff.lowestWithin(longColumn, longColumn + 8L * rows) - longColumn) / 8;
+                        if (lowest < advisedLo) {
+                            final long window = advisedLo - lowest;
+                            if (windows == 0) {
+                                Assert.assertEquals(QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, window);
+                            } else if (lowest > 0) {
+                                // the last window may stop at the bottom of the frame
+                                Assert.assertTrue("window " + windows + ": " + window, window <= 2 * previousWindow);
+                            }
+                            previousWindow = window;
+                            advisedLo = lowest;
+                            windows++;
                         }
-                        previousWindow = window;
-                        advisedLo = lowest;
-                        windows++;
+                        // the slice about to be appended is advised
+                        Assert.assertTrue("lo=" + lo + " advisedLo=" + advisedLo, advisedLo <= lo);
+                        emitted += sliceRows;
+                        if (emitted == QwpBackwardReadAhead.INITIAL_WINDOW_ROWS) {
+                            firstBatchBytes = ff.requestedBytes();
+                        }
                     }
-                    // the slice about to be appended is advised
-                    Assert.assertTrue("lo=" + lo + " advisedLo=" + advisedLo, advisedLo <= lo);
-                    emitted += sliceRows;
-                    if (emitted == QwpBackwardReadAhead.INITIAL_WINDOW_ROWS) {
-                        firstBatchBytes = ff.requestedBytes();
-                    }
+                    Assert.assertEquals(0, advisedLo);
+                    // 16,384 rows, then doubling up to the 16 MiB cap: a handful of windows
+                    Assert.assertTrue("windows=" + windows, windows <= 10);
+                    // By the end of the first batch the stream has asked for its own rows and, from
+                    // the middle of them on, for the next window of twice as many: the top 49,152
+                    // rows, not the frame. A stream that reads its windows itself waits for each
+                    // read, so it has read the rows of the batch only.
+                    final long firstBatchRows = (isWillNeed ? 3 : 1) * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS;
+                    Assert.assertEquals(frame.bytesOfRows(rows - firstBatchRows, rows), firstBatchBytes);
+                    assertEachColumnTiled(frame, ff);
+                    Assert.assertEquals(frame.frameBytes(), ff.requestedBytes());
                 }
-                Assert.assertEquals(0, advisedLo);
-                // 16,384 rows, then doubling up to the 16 MiB cap: a handful of windows
-                Assert.assertTrue("windows=" + windows, windows <= 10);
-                // By the end of the first batch the stream has asked for its own rows and, from
-                // the middle of them on, for the next window of twice as many: the top 49,152
-                // rows, not the frame.
-                Assert.assertEquals(frame.bytesOfRows(rows - 3 * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, rows), firstBatchBytes);
-                assertEachColumnTiled(frame, ff);
-                Assert.assertEquals(frame.frameBytes(), ff.requestedBytes());
             }
         });
     }
@@ -1246,45 +1232,47 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testWindowsHoldEveryByteOfLongValues() throws Exception {
         // Down frames whose rows take more than the byte cap, in batches of the egress's size and
-        // of 7 rows, the stream asks for every byte of every column once, before the walk reads
-        // its row. A window takes at most the cap, unless it holds one slice of rows, and at most
-        // twice the rows of the window before it.
+        // of 7 rows, the stream asks for every byte of every column once, or reads it itself,
+        // before the walk reads its row. A window takes at most the cap, unless it holds one slice
+        // of rows, and at most twice the rows of the window before it.
         TestUtils.assertMemoryLeak(() -> {
             final int array = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-            for (int batchRows : new int[]{(int) QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, 7}) {
-                final String batch = ", batches of " + batchRows + " rows";
-                // the first batch holds 74 MB of 4,505-byte VARCHARs, from 1,000 bytes into the data
-                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR}, 20_000)) {
-                    frame.values(1, 1_000, r -> 4_505);
-                    assertWindowsHoldEveryByte("4,505-byte VARCHARs" + batch, frame, batchRows);
-                }
-                // one slice of 20,000-byte values takes more than the cap: windows of one slice
-                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.BINARY}, 5_000)) {
-                    frame.values(1, 0, r -> 20_000);
-                    assertWindowsHoldEveryByte("20,000-byte BINARYs" + batch, frame, batchRows);
-                }
-                // short values with a burst of long ones: the windows the burst falls in fit it
-                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.STRING}, 100_000)) {
-                    frame.values(1, 0, r -> r >= 40_000 && r < 43_000 ? 40_000 : 100);
-                    assertWindowsHoldEveryByte("a burst of 40,000-byte STRINGs" + batch, frame, batchRows);
-                }
-                // var-size columns that each fit the cap, but not all of them together
-                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.STRING, ColumnType.BINARY, ColumnType.VARCHAR, array}, 30_000)) {
-                    for (int ci = 1; ci < 5; ci++) {
-                        frame.values(ci, 0, r -> 900);
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                for (int batchRows : new int[]{(int) QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, 7}) {
+                    final String batch = ", batches of " + batchRows + " rows" + (isWillNeed ? ", advised" : ", read");
+                    // the first batch holds 74 MB of 4,505-byte VARCHARs, from 1,000 bytes into the data
+                    try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR}, 20_000)) {
+                        frame.values(1, 1_000, r -> 4_505);
+                        assertWindowsHoldEveryByte("4,505-byte VARCHARs" + batch, frame, batchRows, isWillNeed);
                     }
-                    assertWindowsHoldEveryByte("four columns of 900-byte values" + batch, frame, batchRows);
-                }
-                // a column top and a VARCHAR column stored inline next to long VARCHARs
-                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR, ColumnType.VARCHAR, ColumnType.VARCHAR}, 20_000)) {
-                    frame.values(2, 0, r -> r % 10);
-                    frame.values(3, 0, r -> 4_000);
-                    assertWindowsHoldEveryByte("a column top and inline VARCHARs" + batch, frame, batchRows);
-                }
-                // a frame of fewer rows than a slice whose values take more than the cap
-                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, array}, 500)) {
-                    frame.values(1, 0, r -> 40_000);
-                    assertWindowsHoldEveryByte("a 500-row frame of 40,000-byte arrays" + batch, frame, batchRows);
+                    // one slice of 20,000-byte values takes more than the cap: windows of one slice
+                    try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.BINARY}, 5_000)) {
+                        frame.values(1, 0, r -> 20_000);
+                        assertWindowsHoldEveryByte("20,000-byte BINARYs" + batch, frame, batchRows, isWillNeed);
+                    }
+                    // short values with a burst of long ones: the windows the burst falls in fit it
+                    try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.STRING}, 100_000)) {
+                        frame.values(1, 0, r -> r >= 40_000 && r < 43_000 ? 40_000 : 100);
+                        assertWindowsHoldEveryByte("a burst of 40,000-byte STRINGs" + batch, frame, batchRows, isWillNeed);
+                    }
+                    // var-size columns that each fit the cap, but not all of them together
+                    try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.STRING, ColumnType.BINARY, ColumnType.VARCHAR, array}, 30_000)) {
+                        for (int ci = 1; ci < 5; ci++) {
+                            frame.values(ci, 0, r -> 900);
+                        }
+                        assertWindowsHoldEveryByte("four columns of 900-byte values" + batch, frame, batchRows, isWillNeed);
+                    }
+                    // a column top and a VARCHAR column stored inline next to long VARCHARs
+                    try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR, ColumnType.VARCHAR, ColumnType.VARCHAR}, 20_000)) {
+                        frame.values(2, 0, r -> r % 10);
+                        frame.values(3, 0, r -> 4_000);
+                        assertWindowsHoldEveryByte("a column top and inline VARCHARs" + batch, frame, batchRows, isWillNeed);
+                    }
+                    // a frame of fewer rows than a slice whose values take more than the cap
+                    try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, array}, 500)) {
+                        frame.values(1, 0, r -> 40_000);
+                        assertWindowsHoldEveryByte("a 500-row frame of 40,000-byte arrays" + batch, frame, batchRows, isWillNeed);
+                    }
                 }
             }
         });
@@ -1293,59 +1281,72 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testWindowsStayWithinTheByteCap() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            // 40 LONG columns: 320 bytes a row caps a window at 16 MiB / 320 rows
-            final int[] wide = new int[40];
-            Arrays.fill(wide, ColumnType.LONG);
-            final int rows = 200_000;
-            try (TestFrame frame = new TestFrame(wide, false, 0, rows)) {
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(frame.metadata());
-                readAhead.ofFrame(frame, rows);
-                final long capRows = QwpBackwardReadAhead.MAX_WINDOW_BYTES / 320;
-                for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
-                    final long bytes = readAhead.advise(Math.max(0, rows - emitted - SLICE_ROWS));
-                    Assert.assertTrue("bytes=" + bytes, bytes <= capRows * 320);
-                    Assert.assertEquals(0, bytes % 320);
+            for (boolean isWillNeed : new boolean[]{true, false}) {
+                // 40 LONG columns: 320 bytes a row caps a window at 16 MiB / 320 rows
+                final int[] wide = new int[40];
+                Arrays.fill(wide, ColumnType.LONG);
+                final int rows = 200_000;
+                try (TestFrame frame = new TestFrame(wide, false, 0, rows)) {
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    readAhead.ofFrame(frame, rows);
+                    final long capRows = QwpBackwardReadAhead.MAX_WINDOW_BYTES / 320;
+                    for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
+                        final long bytes = advise(readAhead, ff, Math.max(0, rows - emitted - SLICE_ROWS));
+                        Assert.assertTrue("bytes=" + bytes, bytes <= capRows * 320);
+                        Assert.assertEquals(0, bytes % 320);
+                    }
+                    assertEachColumnTiled(frame, ff);
                 }
-                assertEachColumnTiled(frame, ff);
-            }
 
-            // Long values: 16,384 rows of 2 KiB VARCHARs hold 32 MiB. The first window asks for the
-            // aux entries of those rows, which tell where their data starts, and holds the top rows
-            // that fit the cap: 2,064 bytes a row with its aux entry, so 8,128 rows. The windows
-            // after it hold the rest, every byte once.
-            final int longRows = 20_000;
-            try (
-                    MemoryCARWImpl aux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl data = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
-            ) {
-                final Utf8String value = new Utf8String("x".repeat(2_048));
-                for (int r = 0; r < longRows; r++) {
-                    VarcharTypeDriver.appendValue(aux, data, value);
-                }
-                final AddressedFrame frame = new AddressedFrame(1, longRows);
-                setVarSizeColumn(frame, 0, VarcharTypeDriver.INSTANCE, aux, data, 0, longRows);
-                final RecordingFacade ff = new RecordingFacade(true);
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(metadata(new int[]{ColumnType.VARCHAR}));
-                readAhead.ofFrame(frame, longRows);
+                // Long values: 16,384 rows of 2 KiB VARCHARs hold 32 MiB. The first window asks for the
+                // aux entries of those rows, which tell where their data starts, and holds the top rows
+                // that fit the cap: 2,064 bytes a row with its aux entry, so 8,128 rows. The windows
+                // after it hold the rest, every byte once.
+                final int longRows = 20_000;
+                try (
+                        MemoryCARWImpl aux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARWImpl data = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    final Utf8String value = new Utf8String("x".repeat(2_048));
+                    for (int r = 0; r < longRows; r++) {
+                        VarcharTypeDriver.appendValue(aux, data, value);
+                    }
+                    final AddressedFrame frame = new AddressedFrame(1, longRows);
+                    setVarSizeColumn(frame, 0, VarcharTypeDriver.INSTANCE, aux, data, 0, longRows);
+                    final RecordingFacade ff = new RecordingFacade(isWillNeed);
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(metadata(new int[]{ColumnType.VARCHAR}));
+                    readAhead.ofFrame(frame, longRows);
 
-                final long first = readAhead.advise(longRows - SLICE_ROWS);
-                final long dataEnd = frame.getPageAddress(0) + frame.getPageSize(0);
-                final long fitRows = QwpBackwardReadAhead.MAX_WINDOW_BYTES / (16 + 2_048);
-                Assert.assertEquals(8_128, fitRows);
-                Assert.assertEquals(16L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS + fitRows * 2_048, first);
-                Assert.assertTrue(ff.contains(dataEnd - fitRows * 2_048, dataEnd));
-                for (long emitted = SLICE_ROWS; emitted < longRows; emitted += SLICE_ROWS) {
-                    final long bytes = readAhead.advise(Math.max(0, longRows - emitted - SLICE_ROWS));
-                    Assert.assertTrue("bytes=" + bytes, bytes <= QwpBackwardReadAhead.MAX_WINDOW_BYTES);
+                    final long first = advise(readAhead, ff, longRows - SLICE_ROWS);
+                    final long dataEnd = frame.getPageAddress(0) + frame.getPageSize(0);
+                    final long fitRows = QwpBackwardReadAhead.MAX_WINDOW_BYTES / (16 + 2_048);
+                    Assert.assertEquals(8_128, fitRows);
+                    Assert.assertEquals(16L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS + fitRows * 2_048, first);
+                    Assert.assertTrue(ff.contains(dataEnd - fitRows * 2_048, dataEnd));
+                    for (long emitted = SLICE_ROWS; emitted < longRows; emitted += SLICE_ROWS) {
+                        final long bytes = advise(readAhead, ff, Math.max(0, longRows - emitted - SLICE_ROWS));
+                        Assert.assertTrue("bytes=" + bytes, bytes <= QwpBackwardReadAhead.MAX_WINDOW_BYTES);
+                    }
+                    // every byte of the data and of the aux entries was asked for, or read, once
+                    ff.assertTiles("data", frame.getPageAddress(0), dataEnd);
+                    ff.assertTiles("aux", frame.getAuxPageAddress(0), frame.getAuxPageAddress(0) + frame.getAuxPageSize(0));
                 }
-                // every byte of the data and of the aux entries was asked for once
-                ff.assertTiles("data", frame.getPageAddress(0), dataEnd);
-                ff.assertTiles("aux", frame.getAuxPageAddress(0), frame.getAuxPageAddress(0) + frame.getAuxPageSize(0));
             }
         });
+    }
+
+    // Advises the slice of the current frame that starts at row lo, as the egress does, and
+    // returns the bytes the stream asked for or, where it reads its windows itself, read. Only
+    // what the stream asks the OS for counts as read ahead.
+    private static long advise(QwpBackwardReadAhead readAhead, RecordingFacade ff, long lo) {
+        final long before = ff.requestedBytes();
+        final long counted = readAhead.advise(lo);
+        final long bytes = ff.requestedBytes() - before;
+        Assert.assertEquals(ff.isWillNeedSupported ? bytes : 0, counted);
+        return bytes;
     }
 
     // a column of the type takes bytesPerRow in its widest range: one frame of it at the limit
@@ -1391,17 +1392,20 @@ public class QwpBackwardReadAheadTest {
     }
 
     // Walks the frame down as the egress appends it, in batches of batchRows rows and slices of
-    // at most SLICE_ROWS, over data out of memory. Before each slice, every byte of its rows has
-    // been asked for; each window takes at most the byte cap, unless it holds one slice of rows,
-    // and at most twice the rows of the window before it; at the end, every byte of every column
-    // has been asked for once, and nothing outside the published extents. Column 0 is a LONG,
-    // whose requests tell where each window starts.
-    private static void assertWindowsHoldEveryByte(String context, SyntheticFrame frame, int batchRows) {
-        final RecordingFacade ff = new RecordingFacade(true);
+    // at most SLICE_ROWS, over data out of memory, and returns the rows of each window, top window
+    // first. Before each slice, every byte of its rows has been asked for, or read; each window
+    // takes at most the byte cap, unless it holds one slice of rows, and at most twice the rows of
+    // the window before it; at the end, every byte of every column has been asked for, or read,
+    // once, and nothing outside the published extents. A stream that reads its windows itself
+    // reads one only when the slice reaches below the rows it has read, and counts none of it as
+    // read ahead. Column 0 is a LONG, whose ranges tell where each window starts.
+    private static LongList assertWindowsHoldEveryByte(String context, SyntheticFrame frame, int batchRows, boolean isWillNeed) {
+        final RecordingFacade ff = new RecordingFacade(isWillNeed);
         final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
         readAhead.of(frame.metadata());
         readAhead.ofFrame(frame, frame.rows);
         final long longs = frame.getPageAddress(0);
+        final LongList windows = new LongList();
         long advisedLo = frame.rows;
         long previousWindowRows = 0;
         long batchLeft = batchRows;
@@ -1411,7 +1415,16 @@ public class QwpBackwardReadAheadTest {
             }
             final long slice = Math.min(Math.min(batchLeft, frame.rows - emitted), SLICE_ROWS);
             final long lo = frame.rows - emitted - slice;
-            readAhead.advise(lo);
+            final long requested = ff.requestedBytes();
+            final long bytes = readAhead.advise(lo);
+            Assert.assertEquals(context, isWillNeed ? ff.requestedBytes() - requested : 0, bytes);
+            if (!isWillNeed) {
+                Assert.assertEquals(
+                        context + ": slice [" + lo + ", " + (lo + slice) + ") below rows read from " + advisedLo,
+                        lo < advisedLo,
+                        ff.requestedBytes() > requested
+                );
+            }
             final long windowLo = (ff.lowestWithin(longs, longs + 8 * frame.rows) - longs) / 8;
             if (windowLo < advisedLo) {
                 final long windowRows = advisedLo - windowLo;
@@ -1423,6 +1436,7 @@ public class QwpBackwardReadAheadTest {
                 if (previousWindowRows > 0 && windowLo > 0) {
                     Assert.assertTrue(context + ": window of " + windowRows + " rows after " + previousWindowRows, windowRows <= 2 * previousWindowRows);
                 }
+                windows.add(windowRows);
                 previousWindowRows = windowRows;
                 advisedLo = windowLo;
             }
@@ -1432,6 +1446,80 @@ public class QwpBackwardReadAheadTest {
         }
         frame.assertTiled(context, ff);
         ff.assertWithinExtents(context, frame);
+        return windows;
+    }
+
+    // Down a 40,000-row frame whose columns publish fewer bytes than its rows take, or aux
+    // entries that point outside the data extent, the stream asks for, or reads, the published
+    // bytes the rows cover and nothing else.
+    private static void assertWindowsStayInsideShortExtents(boolean isWillNeed) {
+        final int rows = 40_000;
+        final int[] types = {ColumnType.STRING, ColumnType.LONG, ColumnType.VARCHAR, ColumnType.STRING};
+        try (
+                MemoryCARWImpl shortAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARWImpl shortData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARWImpl longs = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARWImpl vcAux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARWImpl vcData = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARWImpl strAux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARWImpl strData = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            StringTypeDriver.INSTANCE.configureAuxMemO3RSS(shortAux);
+            for (int r = 0; r < 10; r++) {
+                StringTypeDriver.appendValue(shortAux, shortData, "s" + r);
+            }
+            longs.jumpTo(8 * 100);
+            StringTypeDriver.INSTANCE.configureAuxMemO3RSS(strAux);
+            for (int r = 0; r < rows; r++) {
+                VarcharTypeDriver.appendValue(vcAux, vcData, new Utf8String("a varchar too long to inline " + r));
+                StringTypeDriver.appendValue(strAux, strData, "string value " + r);
+            }
+            final AddressedFrame frame = new AddressedFrame(types.length, rows);
+            // aux entries of the first 10 rows only
+            frame.set(0, shortData.addressOf(0), shortData.getAppendOffset(), shortAux.addressOf(0), 8L * 10);
+            // values of the first 100 rows only
+            frame.set(1, longs.addressOf(0), 8L * 100, 0, 0);
+            // a data address with an empty data extent
+            frame.set(2, vcData.addressOf(0), 0, vcAux.addressOf(0), 16L * rows);
+            // aux entries that point past a 10-byte data extent
+            frame.set(3, strData.addressOf(0), 10, strAux.addressOf(0), 8L * rows);
+
+            final RecordingFacade ff = new RecordingFacade(isWillNeed);
+            final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+            readAhead.of(metadata(types));
+            readAhead.ofFrame(frame, rows);
+            long bytes = 0;
+            for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
+                bytes += advise(readAhead, ff, Math.max(0, rows - emitted - SLICE_ROWS));
+            }
+            ff.assertWithinExtents("hostile frame", frame);
+            // the short aux extent and the short LONG extent, at the bottom of the frame,
+            // and every aux entry of the two columns that publish them all; no data
+            Assert.assertEquals(8L * 10 + 8L * 100 + 16L * rows + 8L * rows, bytes);
+            Assert.assertEquals(bytes, ff.requestedBytes());
+            ff.assertTiles("varchar aux", vcAux.addressOf(0), vcAux.addressOf(16L * rows));
+            ff.assertTiles("string aux", strAux.addressOf(0), strAux.addressOf(8L * rows));
+            Assert.assertTrue(ff.contains(shortAux.addressOf(0), shortAux.addressOf(8L * 10)));
+            Assert.assertTrue(ff.contains(longs.addressOf(0), longs.addressOf(8L * 100)));
+        }
+
+        // a frame whose only column publishes its first 100 rows: windows above them have
+        // nothing to ask for, and keep the window sizes they had
+        try (MemoryCARWImpl longs = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            longs.jumpTo(8 * 100);
+            final AddressedFrame frame = new AddressedFrame(1, rows);
+            frame.set(0, longs.addressOf(0), 8L * 100, 0, 0);
+            final RecordingFacade ff = new RecordingFacade(isWillNeed);
+            final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+            readAhead.of(metadata(new int[]{ColumnType.LONG}));
+            readAhead.ofFrame(frame, rows);
+            long bytes = 0;
+            for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
+                bytes += advise(readAhead, ff, Math.max(0, rows - emitted - SLICE_ROWS));
+            }
+            Assert.assertEquals(8L * 100, bytes);
+            Assert.assertEquals(1, ff.requestCount());
+        }
     }
 
     private static void close(FiberRuntime runtime) {
@@ -1705,14 +1793,16 @@ public class QwpBackwardReadAheadTest {
     }
 
     /**
-     * Records the ranges the read-ahead asks the OS for, without asking it. It reports every
-     * range out of memory, unless a test says otherwise, and the major faults a test sets.
+     * Records the ranges the read-ahead asks the OS for, without asking it, or, where the OS
+     * does not read advised pages, the ranges it reads itself, without reading them. It
+     * reports every range out of memory, unless a test says otherwise, and the major faults a
+     * test sets.
      */
     static final class RecordingFacade extends TestFilesFacadeImpl {
         private final boolean isWillNeedSupported;
         // [lo, hi) address pairs a test reports out of memory, whatever isResident says
         private final LongList missingRanges = new LongList();
-        // [lo, hi) address pairs, in request order
+        // [lo, hi) address pairs the stream advised, or read itself, in request order
         private final LongList ranges = new LongList();
         int faultReads;
         boolean isResident;
@@ -1725,6 +1815,8 @@ public class QwpBackwardReadAheadTest {
 
         @Override
         public long getThreadMajorFaults() {
+            // a stream that reads its windows itself trusts none, so it needs no faults
+            Assert.assertTrue("read the faults of a stream that reads its windows itself", isWillNeedSupported);
             faultReads++;
             return majorFaults;
         }
@@ -1737,6 +1829,8 @@ public class QwpBackwardReadAheadTest {
         @Override
         public boolean isPageCacheResident(long address, long len) {
             Assert.assertTrue("len=" + len, len > 0);
+            // a stream that reads its windows itself checks none: a page in memory costs a load
+            Assert.assertTrue("checked a window it reads itself", isWillNeedSupported);
             residencyChecks++;
             for (int i = 0, n = missingRanges.size(); i < n; i += 2) {
                 if (address < missingRanges.getQuick(i + 1) && address + len > missingRanges.getQuick(i)) {
@@ -1749,8 +1843,19 @@ public class QwpBackwardReadAheadTest {
         @Override
         public int madviseWillNeed(long address, long len) {
             Assert.assertTrue("len=" + len, len > 0);
+            Assert.assertTrue("advised where the OS does not read advised pages", isWillNeedSupported);
             ranges.add(address, address + len);
             return 1;
+        }
+
+        // Records the range without reading it, so a frame can stand for data at an address that
+        // maps nothing, and returns its length, which the stream adds to its touch sink.
+        @Override
+        public long touchPages(long address, long len) {
+            Assert.assertTrue("len=" + len, len > 0);
+            Assert.assertFalse("read a window the OS reads ahead", isWillNeedSupported);
+            ranges.add(address, address + len);
+            return len;
         }
 
         // every request lies inside one of the frame's published page or aux extents

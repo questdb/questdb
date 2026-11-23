@@ -25,15 +25,18 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Files facade that picks how a backward QWP stream reads its frames ahead, whatever the
  * platform supports: through MADV_WILLNEED windows, which it still passes on to the OS
- * where the OS takes them, or by reading each frame at once. It counts the bytes the
- * stream asks the OS for. A cold facade reports every range out of memory, so the stream
- * asks for every window, as it does over data it has not read yet; otherwise the OS tells.
+ * where the OS takes them, or by reading the windows itself. It counts the bytes the
+ * stream asks the OS for, and the bytes the stream reads itself. A cold facade reports every
+ * range out of memory, so the stream asks for every window, as it does over data it has not
+ * read yet; otherwise the OS tells. A test can make the next range the stream reads ahead
+ * take a while, as slow storage makes it.
  */
 public class ReadAheadFilesFacade extends FilesFacadeImpl {
     private final AtomicLong advisedBytes = new AtomicLong();
@@ -41,6 +44,9 @@ public class ReadAheadFilesFacade extends FilesFacadeImpl {
     private final boolean isWillNeedSupported;
     private final AtomicLong requestCount = new AtomicLong();
     private final AtomicLong residencyCheckCount = new AtomicLong();
+    // how long the next range the stream reads ahead takes, in millis
+    private final AtomicLong stallMillis = new AtomicLong();
+    private final AtomicLong touchedBytes = new AtomicLong();
 
     public ReadAheadFilesFacade(boolean isWillNeedSupported) {
         this(isWillNeedSupported, false);
@@ -70,6 +76,7 @@ public class ReadAheadFilesFacade extends FilesFacadeImpl {
     public int madviseWillNeed(long address, long len) {
         advisedBytes.addAndGet(len);
         requestCount.incrementAndGet();
+        stall();
         return super.madviseWillNeed(address, len);
     }
 
@@ -81,8 +88,34 @@ public class ReadAheadFilesFacade extends FilesFacadeImpl {
         return residencyCheckCount.get();
     }
 
+    /**
+     * Makes the next range the stream reads ahead, whether it asks the OS for it or reads it
+     * itself, take at least {@code millis}.
+     */
+    public void stallNextRange(long millis) {
+        stallMillis.set(millis);
+    }
+
     @Override
     public String toString() {
-        return (isWillNeedSupported ? "MADV_WILLNEED windows" : "whole-frame reads") + (isCold ? ", cold" : "");
+        return (isWillNeedSupported ? "MADV_WILLNEED windows" : "windows the stream reads itself") + (isCold ? ", cold" : "");
+    }
+
+    @Override
+    public long touchPages(long address, long len) {
+        touchedBytes.addAndGet(len);
+        stall();
+        return super.touchPages(address, len);
+    }
+
+    public long touchedBytes() {
+        return touchedBytes.get();
+    }
+
+    private void stall() {
+        final long millis = stallMillis.getAndSet(0);
+        if (millis > 0) {
+            Os.sleep(millis);
+        }
     }
 }

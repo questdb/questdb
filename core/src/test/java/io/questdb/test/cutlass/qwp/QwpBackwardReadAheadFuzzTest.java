@@ -43,7 +43,10 @@ import org.junit.Test;
  * data out of memory, the stream must ask for every byte of every column once, before the walk
  * reads its row, and no window may take more than the byte cap unless it holds one slice of rows.
  * Over data in memory but for random holes, the stream must ask for every hole before the walk
- * reads it. Neither may ask for anything outside the published extents.
+ * reads it. Where the OS does not read advised pages, the stream must read every byte once itself,
+ * before the walk reads its row, in the same windows, and read a window only when the slice
+ * reaches below the rows it has read. None may ask for, or read, anything outside the published
+ * extents.
  * <p>
  * The first var-size column of a stream cycles through every type, value shape and kind of data,
  * so every run covers each combination; the rest is random. A run prints its seeds, which
@@ -54,6 +57,11 @@ public class QwpBackwardReadAheadFuzzTest {
     private static final int[] BATCH_ROWS = {7, 100, 1_000, (int) QwpBackwardReadAhead.INITIAL_WINDOW_ROWS};
     private static final int[] FIXED_TYPES = {ColumnType.LONG, ColumnType.INT, ColumnType.SHORT, ColumnType.DOUBLE, ColumnType.UUID};
     private static final long[] FRAME_ROWS = {1, 100, 1_000, 1_023, 3_000, 16_383, 16_384, 20_000, 70_000, 250_000};
+    // Kinds of data: out of memory, in memory but for holes (kind 1), and out of memory where the
+    // OS does not read advised pages, so the stream reads its windows itself.
+    private static final int KIND_COLD = 0;
+    private static final int KIND_COUNT = 3;
+    private static final int KIND_READ = 2;
     private static final Log LOG = LogFactory.getLog(QwpBackwardReadAheadFuzzTest.class);
     // value shapes of a var-size column: 17,000 bytes, one slice takes more than the byte cap
     private static final int SHAPE_17_KB = 4;
@@ -77,7 +85,7 @@ public class QwpBackwardReadAheadFuzzTest {
     private static final int STREAMS = Integer.getInteger("questdb.fuzz.read.ahead.streams", 160);
     private static final int[] VAR_TYPES = {ColumnType.STRING, ColumnType.BINARY, ColumnType.VARCHAR, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)};
     // streams it takes the first var-size column to cycle through every type, shape and kind of data
-    private static final int CYCLE = VAR_TYPES.length * SHAPE_COUNT * 2;
+    private static final int CYCLE = VAR_TYPES.length * SHAPE_COUNT * KIND_COUNT;
 
     @Test
     public void testFuzz() throws Exception {
@@ -92,7 +100,7 @@ public class QwpBackwardReadAheadFuzzTest {
         // as well as windows of one slice that take more.
         final Coverage coverage = new Coverage();
         TestUtils.assertMemoryLeak(() -> fuzz(TestUtils.generateRandom(LOG, 42, 4_242), Math.max(STREAMS, CYCLE), coverage));
-        Assert.assertEquals(VAR_TYPES.length * SHAPE_COUNT * 2, coverage.combinations.size());
+        Assert.assertEquals(VAR_TYPES.length * SHAPE_COUNT * KIND_COUNT, coverage.combinations.size());
         Assert.assertEquals(BATCH_ROWS.length, coverage.batchRows.size());
         Assert.assertEquals(FRAME_ROWS.length, coverage.frameRows.size());
         Assert.assertTrue("windows near the cap: " + coverage.windowsNearCap, coverage.windowsNearCap > 0);
@@ -178,7 +186,10 @@ public class QwpBackwardReadAheadFuzzTest {
         final int cycle = stream % CYCLE;
         types[fixedCount] = VAR_TYPES[cycle % VAR_TYPES.length];
         final int firstShape = (cycle / VAR_TYPES.length) % SHAPE_COUNT;
-        final boolean isCold = cycle / (VAR_TYPES.length * SHAPE_COUNT) == 0;
+        final int kind = cycle / (VAR_TYPES.length * SHAPE_COUNT);
+        final boolean isRead = kind == KIND_READ;
+        // the stream asks for, or reads, every byte of data out of memory
+        final boolean isCold = kind == KIND_COLD || isRead;
         for (int i = fixedCount + 1; i < types.length; i++) {
             types[i] = VAR_TYPES[rnd.nextInt(VAR_TYPES.length)];
         }
@@ -186,7 +197,7 @@ public class QwpBackwardReadAheadFuzzTest {
         coverage.batchRows.add(batchRows);
         coverage.combinations.add(cycle);
 
-        final RecordingFacade ff = new RecordingFacade(true);
+        final RecordingFacade ff = new RecordingFacade(!isRead);
         if (!isCold) {
             ff.isResident = true;
             // without the thread's major faults, the stream never trusts a frame it did not check
@@ -215,7 +226,7 @@ public class QwpBackwardReadAheadFuzzTest {
                     coverage.holes += holes.size() / 2;
                 }
                 final String context = "stream " + stream + ", frame " + f + " of " + rows + " rows, batches of " + batchRows
-                        + (isCold ? ", cold" : ", holes " + holes);
+                        + (isRead ? ", read" : isCold ? ", cold" : ", holes " + holes);
                 readAhead.ofFrame(frame, rows);
                 // the window checks read where windows start from the requests of a fixed-size column
                 final boolean isWindowChecked = isCold && fixedCount > 0 && !isHostile;
@@ -229,8 +240,20 @@ public class QwpBackwardReadAheadFuzzTest {
                     }
                     final long slice = Math.min(Math.min(batchLeft, rows - emitted), SLICE_ROWS);
                     final long lo = rows - emitted - slice;
-                    readAhead.advise(lo);
+                    final long requested = ff.requestedBytes();
+                    final long counted = readAhead.advise(lo);
+                    // only what the stream asks the OS for counts as read ahead
+                    Assert.assertEquals(context, isRead ? 0 : ff.requestedBytes() - requested, counted);
                     if (isWindowChecked) {
+                        if (isRead) {
+                            // a read waits for storage: the stream reads a window only when the
+                            // slice reaches below the rows it has read
+                            Assert.assertEquals(
+                                    context + ": slice [" + lo + ", " + (lo + slice) + ") below rows read from " + advisedLo,
+                                    lo < advisedLo,
+                                    ff.requestedBytes() > requested
+                            );
+                        }
                         final long windowLo = (ff.lowestWithin(values, values + valueSize * rows) - values) / valueSize;
                         if (windowLo < advisedLo) {
                             final long windowRows = advisedLo - windowLo;

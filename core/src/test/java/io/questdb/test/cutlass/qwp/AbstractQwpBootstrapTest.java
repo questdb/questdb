@@ -52,7 +52,7 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
     private static final Log LOG = LogFactory.getLog(AbstractQwpBootstrapTest.class);
     // reports every frame out of memory to backward streams, or lets the OS tell
     protected boolean isReadAheadCold;
-    // reads the frames of backward streams ahead through MADV_WILLNEED windows, or reads each frame at once
+    // reads the frames of backward streams ahead through MADV_WILLNEED windows, or reads the windows itself
     protected boolean isReadAheadWillNeed;
     protected int recvChunk;
     protected int sendChunk;

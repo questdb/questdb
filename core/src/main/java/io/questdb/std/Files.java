@@ -90,6 +90,9 @@ public final class Files {
     // MADV_WILLNEED in the Linux UAPI (include/uapi/asm-generic/mman-common.h), the same on every
     // architecture QuestDB ships. libquestdb has no getter for it; madvise0 passes it through.
     private static final int MADV_WILLNEED_LINUX = 3;
+    // The OS page, the unit the OS reads a mapping in. PAGE_SIZE aligns where a mapping starts:
+    // on Windows it is the 64 KiB allocation granularity, sixteen 4 KiB pages.
+    private static final long OS_PAGE_SIZE = Unsafe.getUnsafe().pageSize();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = MmapCache.INSTANCE;
@@ -788,6 +791,27 @@ public final class Files {
             close(fd);
         }
         return result;
+    }
+
+    /**
+     * Reads {@code [address, address + len)}, a range of a mapping, into memory before it
+     * returns: loads a byte of every OS page the range touches, first page to last, so the OS
+     * reads the pages that are not in memory as it reads a file forward, in large requests.
+     * Loads nothing outside the range, and nothing when {@code len} is not positive. Returns
+     * the sum of the bytes it loaded: a caller that keeps the sum stops the JIT from dropping
+     * the loads.
+     */
+    public static long touchPages(long address, long len) {
+        if (len <= 0) {
+            return 0;
+        }
+        long sum = 0;
+        final long hi = address + len;
+        for (long p = address; p < hi; p += OS_PAGE_SIZE) {
+            sum += Unsafe.getByte(p);
+        }
+        // the last byte can sit on the page past the last stride when address is not page-aligned
+        return sum + Unsafe.getByte(hi - 1);
     }
 
     public static boolean truncate(long fd, long size) {

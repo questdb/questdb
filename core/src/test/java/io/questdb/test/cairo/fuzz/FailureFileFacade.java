@@ -662,6 +662,11 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long touchPages(long address, long len) {
+        return ff.touchPages(address, len);
+    }
+
+    @Override
     public boolean truncate(long fd, long size) {
         if (checkForFailure()) {
             return false;

@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1900,6 +1901,53 @@ public class FilesTest {
             Assert.assertFalse(Files.readLink(path2, path3));
             Assert.assertEquals(0, path3.size());
         }
+    }
+
+    @Test
+    public void testTouchPagesLoadsEveryOsPage() throws Exception {
+        // touchPages() loads a byte of every OS page a range touches, and no page outside it.
+        // Files.PAGE_SIZE is the OS page on POSIX, but on Windows it is the 64 KiB allocation
+        // granularity, sixteen 4 KiB pages: a read that steps by it would load one page in
+        // sixteen.
+        assertMemoryLeak(() -> {
+            final long osPageSize = Os.isWindows() ? 4_096 : Files.PAGE_SIZE;
+            final int pageCount = 20;
+            // pages [0, pageCount + 2] from a page boundary, and the slack to find the boundary
+            final long allocSize = (pageCount + 4) * osPageSize;
+            final long alloc = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final long base = (alloc + osPageSize - 1) & -osPageSize;
+                // every byte of page p holds p + 1, so the sum of the loads names the pages they hit
+                for (int p = 0; p <= pageCount + 2; p++) {
+                    Vect.memset(base + p * osPageSize, osPageSize, p + 1);
+                }
+                // the ranges start in page 1, so a load below them would hit page 0
+                final long lo = base + osPageSize;
+                final long size = pageCount * osPageSize;
+                // pages [1, pageCount], a stride each
+                long strides = 0;
+                for (int p = 1; p <= pageCount; p++) {
+                    strides += p + 1;
+                }
+                // a range from a page boundary: the last byte loads the last page again
+                Assert.assertEquals(strides + pageCount + 1, Files.touchPages(lo, size));
+                Assert.assertEquals(strides + pageCount + 1, FilesFacadeImpl.INSTANCE.touchPages(lo, size));
+                // a range from the middle of a page: the strides load pages [1, pageCount], and the
+                // last byte page pageCount + 1, which no stride reaches
+                Assert.assertEquals(strides + pageCount + 2, Files.touchPages(lo + osPageSize / 2, size));
+                // a range that ends one byte into page pageCount + 1: a stride and the last byte load it
+                Assert.assertEquals(strides + 2L * (pageCount + 2), Files.touchPages(lo, size + 1));
+                // a range inside a page: its first byte and its last
+                Assert.assertEquals(2 * 3, Files.touchPages(lo + osPageSize + 100, 10));
+                Assert.assertEquals(2 * 2, Files.touchPages(lo, 1));
+                // nothing to load, not even from an address that maps nothing
+                Assert.assertEquals(0, Files.touchPages(lo, 0));
+                Assert.assertEquals(0, Files.touchPages(0, 0));
+                Assert.assertEquals(0, Files.touchPages(0, -1));
+            } finally {
+                Unsafe.free(alloc, allocSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test

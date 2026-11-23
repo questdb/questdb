@@ -123,7 +123,7 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     };
 
     // How the servers startServer boots read the frames of a backward stream ahead: through
-    // MADV_WILLNEED windows or by reading each frame at once, drawn once per class, so every
+    // MADV_WILLNEED windows or by reading the windows itself, drawn once per class, so every
     // test here runs either way on every platform.
     private static boolean isReadAheadWillNeed;
 
@@ -336,8 +336,8 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     public void testBackwardScanReadsEachFrameAheadOnce() throws Exception {
         // A backward scan over data not in memory reads every native frame ahead exactly once,
         // whatever the batches and the parks in between, through MADV_WILLNEED windows, which
-        // the metric counts; a forward scan and parquet frames read nothing ahead. Reading each
-        // frame at once asks the OS for nothing, and the metric counts none of it.
+        // the metric counts; a forward scan and parquet frames read nothing ahead. Reading the
+        // windows itself asks the OS for nothing, and the metric counts none of it.
         for (boolean isWillNeed : new boolean[]{true, false}) {
             TestUtils.assertMemoryLeak(() -> {
                 final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
@@ -386,9 +386,9 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     @Test
     public void testBackwardScanReadsLongValuesAheadOnce() throws Exception {
         // A frame whose values take more than a read-ahead window holds is still read ahead
-        // whole, every byte once, through MADV_WILLNEED windows, whatever the batches and the
-        // parks in between. Reading each frame at once asks the OS for nothing, and the metric
-        // counts none of it.
+        // whole, every byte once, whatever the batches and the parks in between, through
+        // MADV_WILLNEED windows, or windows the stream reads itself, which ask the OS for
+        // nothing, so the metric counts none of them.
         for (boolean isWillNeed : new boolean[]{true, false}) {
             TestUtils.assertMemoryLeak(() -> {
                 final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
@@ -413,6 +413,65 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                             .withInitialCredit(1)) {
                         client.connect();
                         assertReadAhead(ff, metrics, isWillNeed, frameBytes, () -> Assert.assertEquals(descendingLongs(2_100, 1), column(qwpRows(client, desc), 0)));
+                    }
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testBackwardScanStopsBetweenWindowsAtTimeout() throws Exception {
+        // A read-ahead that takes longer than the query timeout, a read of slow storage or an
+        // advice that blocks, stops the stream before its next slice: the query fails with the
+        // timeout before it sends a batch, having read ahead its first window only, whether it
+        // asks the OS for its windows or reads them itself. The connection then streams again,
+        // and the stream reads its frames ahead afresh.
+        for (boolean isWillNeed : new boolean[]{true, false}) {
+            TestUtils.assertMemoryLeak(() -> {
+                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
+                try (TestServerMain serverMain = startReadAheadServer(ff, PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s")) {
+                    final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                    // the last 100 rows, 0.4 s apart, in a frame of their own: 16 bytes a row
+                    final String lastRows = "SELECT x, d FROM t WHERE ts >= '1970-01-01T22:12:40' ORDER BY ts DESC";
+                    final List<String> lastRowsX = descendingLongs(READ_AHEAD_FRAME_ROWS, READ_AHEAD_FRAME_ROWS - 99);
+                    try (QwpQueryClient client = connect("failover=off;")) {
+                        // the backward stream is warm, so the query below meets the timeout in its read
+                        assertReadAhead(ff, metrics, isWillNeed, 100 * 16, () -> Assert.assertEquals(lastRowsX, column(qwpRows(client, lastRows), 0)));
+
+                        final long advisedBefore = ff.advisedBytes();
+                        final long touchedBefore = ff.touchedBytes();
+                        ff.stallNextRange(1_500);
+                        final int[] batches = {0};
+                        final boolean[] isEndSeen = {false};
+                        final byte[] status = {0};
+                        final String[] message = {null};
+                        client.execute("SELECT x, d FROM t ORDER BY ts DESC", new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                batches[0]++;
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                                isEndSeen[0] = true;
+                            }
+
+                            @Override
+                            public void onError(byte s, String m) {
+                                status[0] = s;
+                                message[0] = m;
+                            }
+                        });
+                        Assert.assertEquals(0, batches[0]);
+                        Assert.assertFalse(isEndSeen[0]);
+                        Assert.assertEquals(QwpConstants.STATUS_LIMIT_EXCEEDED, status[0]);
+                        Assert.assertTrue(message[0], message[0] != null && message[0].contains("timeout, query aborted"));
+                        // the first window: the top 16,384 rows of x and d
+                        final long firstWindowBytes = QwpBackwardReadAhead.INITIAL_WINDOW_ROWS * 16;
+                        Assert.assertEquals(isWillNeed ? firstWindowBytes : 0, ff.advisedBytes() - advisedBefore);
+                        Assert.assertEquals(isWillNeed ? 0 : firstWindowBytes, ff.touchedBytes() - touchedBefore);
+
+                        assertReadAhead(ff, metrics, isWillNeed, 100 * 16, () -> Assert.assertEquals(lastRowsX, column(qwpRows(client, lastRows), 0)));
                     }
                 }
             });
@@ -574,10 +633,10 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         // A descending stream over data not in memory asks for the rows of its first batch,
         // and of the next window, and sends the batch: by then MADV_WILLNEED windows have asked for the top 16,384
         // rows of the 200,000-row frame and, from the middle of them on, for the next 32,768.
-        // Reading each frame at once asks the OS for nothing, so the metric counts nothing,
-        // before the first batch or after it. Credit for one batch parks the stream after the
-        // batch, so the count the client sees in its first batch is all the stream asked for
-        // before it.
+        // A stream that reads its windows itself waits for each read, so it reads the rows of
+        // the first batch only, and asks the OS for nothing, so the metric counts nothing.
+        // Credit for one batch parks the stream after the batch, so the counts the client sees
+        // in its first batch are all the stream asked for, and read, before it.
         for (boolean isWillNeed : new boolean[]{true, false}) {
             TestUtils.assertMemoryLeak(() -> {
                 final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
@@ -587,8 +646,10 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                             .withInitialCredit(1)) {
                         client.connect();
                         final long before = metrics.readAheadBytesCount();
-                        // the bytes read ahead, and the bytes asked of the OS, when the first batch arrives
-                        final long[] atFirstBatch = {-1, -1};
+                        final long touchedBefore = ff.touchedBytes();
+                        // the bytes read ahead, the bytes asked of the OS, and the bytes the stream
+                        // read itself, when the first batch arrives
+                        final long[] atFirstBatch = {-1, -1, -1};
                         final List<String> firstBatch = new ArrayList<>();
                         final byte[] status = {0};
                         client.execute("SELECT x, d FROM t ORDER BY ts DESC", new QwpColumnBatchHandler() {
@@ -597,6 +658,7 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                                 if (firstBatch.isEmpty()) {
                                     atFirstBatch[0] = metrics.readAheadBytesCount() - before;
                                     atFirstBatch[1] = ff.advisedBytes();
+                                    atFirstBatch[2] = ff.touchedBytes() - touchedBefore;
                                     for (int r = 0; r < batch.getRowCount(); r++) {
                                         firstBatch.add(Long.toString(batch.getLongValue(0, r)));
                                     }
@@ -622,15 +684,24 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                         );
                         // the metric counts what the stream asked the OS for, no more
                         Assert.assertEquals(atFirstBatch[0], atFirstBatch[1]);
+                        Assert.assertEquals(
+                                isWillNeed ? 0 : QwpBackwardReadAhead.INITIAL_WINDOW_ROWS * 16,
+                                atFirstBatch[2]
+                        );
                         // The client grants credit for the first batch before the server reads its
                         // cancel, so the stream sends a second batch, whose first slice moves into
-                        // the second window and asks for the third, 65,536 rows.
+                        // the second window and asks for the third, 65,536 rows, or reads the
+                        // second, 32,768 rows.
                         final long readAhead = metrics.readAheadBytesCount() - before;
                         Assert.assertEquals(
                                 isWillNeed ? 7 * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS * 16 : 0,
                                 readAhead
                         );
                         Assert.assertEquals(readAhead, ff.advisedBytes());
+                        Assert.assertEquals(
+                                isWillNeed ? 0 : 3 * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS * 16,
+                                ff.touchedBytes() - touchedBefore
+                        );
                         // the connection then streams the query whole, every row read ahead once
                         assertReadAhead(ff, metrics, isWillNeed, READ_AHEAD_FRAME_ROWS * 16, () -> Assert.assertEquals(
                                 descendingLongs(READ_AHEAD_FRAME_ROWS, 1),
@@ -1220,16 +1291,19 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     }
 
     /**
-     * Boots a server with the read-ahead frame: table t holds one 200,000-row partition of
-     * LONG x, DOUBLE d and the timestamp, in one page frame.
+     * Boots a server with the read-ahead frame, plus {@code extraEnv}: table t holds one
+     * 200,000-row partition of LONG x, DOUBLE d and the timestamp, in one page frame.
      */
-    private static TestServerMain startReadAheadServer(ReadAheadFilesFacade ff) {
-        final TestServerMain serverMain = startServer(
-                ff,
-                PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
-                PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "1000000",
-                PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000000"
-        );
+    private static TestServerMain startReadAheadServer(ReadAheadFilesFacade ff, String... extraEnv) {
+        final String[] env = new String[extraEnv.length + 6];
+        env[0] = PropertyKey.METRICS_ENABLED.getEnvVarName();
+        env[1] = "true";
+        env[2] = PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName();
+        env[3] = "1000000";
+        env[4] = PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName();
+        env[5] = "1000000";
+        System.arraycopy(extraEnv, 0, env, 6, extraEnv.length);
+        final TestServerMain serverMain = startServer(ff, env);
         try {
             // a test that boots a server per read-ahead way finds the table of the previous one
             serverMain.execute("DROP TABLE IF EXISTS t");
@@ -1244,15 +1318,18 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         }
     }
 
-    // Runs a query and checks that its MADV_WILLNEED windows ask the OS for expectedBytes, and
-    // that the metric counts them; reading each frame at once asks for nothing and counts nothing.
+    // Runs a query and checks that the stream reads expectedBytes ahead: through MADV_WILLNEED
+    // windows, which ask the OS for them and which the metric counts, or through windows the
+    // stream reads itself, which ask for nothing and count nothing.
     private static void assertReadAhead(ReadAheadFilesFacade ff, QwpEgressMetrics metrics, boolean isWillNeed, long expectedBytes, ThrowingRunnable query) throws Exception {
         final long before = metrics.readAheadBytesCount();
         final long advisedBefore = ff.advisedBytes();
+        final long touchedBefore = ff.touchedBytes();
         query.run();
         final long advisedBytes = isWillNeed ? expectedBytes : 0;
         Assert.assertEquals(ff.toString(), advisedBytes, metrics.readAheadBytesCount() - before);
         Assert.assertEquals(ff.toString(), advisedBytes, ff.advisedBytes() - advisedBefore);
+        Assert.assertEquals(ff.toString(), expectedBytes - advisedBytes, ff.touchedBytes() - touchedBefore);
     }
 
     private void assertBackwardScan(TestServerMain serverMain, QwpQueryClient client, String table, String where) throws Exception {

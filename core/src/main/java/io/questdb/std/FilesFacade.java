@@ -180,6 +180,14 @@ public interface FilesFacade {
         return Files.isPageCacheResident(address, len);
     }
 
+    /**
+     * Reads {@code [address, address + len)} of a mapping into memory before it returns, see
+     * {@link Files#touchPages(long, long)}. Returns the sum of the bytes it loaded.
+     */
+    default long touchPages(long address, long len) {
+        return Files.touchPages(address, len);
+    }
+
     long getDirSize(Path path);
 
     long getDiskFreeSpace(LPSZ path);

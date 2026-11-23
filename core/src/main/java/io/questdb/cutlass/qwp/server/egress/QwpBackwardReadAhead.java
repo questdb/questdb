@@ -72,9 +72,15 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #SMALL_FRAME_RANGE_BYTES}, and the frames the stream must find in memory before
  * it trusts again double each time.
  * <p>
- * Elsewhere it reads the whole frame forward once, before the first slice: the OS reads
- * it in large requests, and the walk down finds it in page cache. The stream asks the OS
- * for nothing then, so it counts none of these bytes as read ahead.
+ * Elsewhere the stream reads the same windows itself, each forward, see
+ * {@link FilesFacade#touchPages(long, long)}: the OS reads them in large requests, and the
+ * walk down finds them in page cache. A read waits for storage, and running further ahead
+ * would gain nothing, so the stream reads a window only when the slice it appends reaches
+ * below the rows it has read. The first batch waits for the windows that hold its rows, not
+ * for the frame, the reads between two batches stay within the rows of the batch and one
+ * window, and a stream that its client abandons has read at most one window it did not use.
+ * Reading a page that is in memory costs a load, so the stream checks nothing. It asks the
+ * OS for nothing either, so it counts none of these bytes as read ahead.
  */
 public class QwpBackwardReadAhead implements Mutable {
     // The rows of the first batch: the egress fills a batch with at most this many rows.
@@ -98,9 +104,6 @@ public class QwpBackwardReadAhead implements Mutable {
     private static final int MAX_TRUST_STREAK = 1 << 20;
     // The egress appends a frame in slices of at most this many rows; a window holds at least one.
     private static final long MIN_WINDOW_ROWS = 1_024;
-    // The OS page, the unit the OS reads a mapping in. Files.PAGE_SIZE aligns where a mapping
-    // starts: on Windows it is the 64 KiB allocation granularity, sixteen 4 KiB pages.
-    private static final long OS_PAGE_SIZE = Unsafe.getUnsafe().pageSize();
     private final IntList columnTypes = new IntList();
     private final FilesFacade ff;
     // indexes of the var-size columns among the projected ones
@@ -131,10 +134,8 @@ public class QwpBackwardReadAhead implements Mutable {
     private long probeAddress;
     // rows of the frames the stream has navigated to
     private long streamRows;
-    // bytes the whole-frame reads covered, which advise() does not count; only tests read it back
-    private long touchedBytes;
-    // Sum of the bytes the whole-frame read loads. Storing it keeps the JIT from dropping
-    // loads whose values nothing else reads; only tests read it back.
+    // Sum of the bytes the stream loads itself. Storing it keeps the JIT from dropping loads
+    // whose values nothing else reads; only tests read it back.
     private long touchSink;
     // the carrier the stream trusts, see CARRIER
     private Object trustedCarrier;
@@ -158,17 +159,13 @@ public class QwpBackwardReadAhead implements Mutable {
      * slice of the current frame that starts at row {@code lo} and every row above it. Call
      * it before each slice, top slice first. Returns how many bytes it asked the OS to read
      * ahead; ranges it finds in memory, which it does not ask for, do not count. Where the OS
-     * does not read advised pages, the stream reads the whole frame itself, asks the OS for
-     * nothing, and returns 0.
+     * does not read advised pages, the stream reads the next window itself when the slice
+     * reaches below the rows it has read, which waits for storage, asks the OS for nothing, and
+     * returns 0.
      */
     public long advise(long lo) {
         // nothing left to read: no frame, a parquet, custom or empty frame, or every row is advised
         if (advisedLo == 0) {
-            return 0;
-        }
-        if (!isWillNeedSupported) {
-            advisedLo = 0;
-            touchFrame();
             return 0;
         }
         // the marker is never below advisedLo, so the slice is advised when it holds no row below the marker
@@ -193,7 +190,14 @@ public class QwpBackwardReadAhead implements Mutable {
             // the next windows double from the rows this one holds
             windowRows = advisedLo - windowLo;
         }
-        marker = isFirstWindow ? advisedLo - windowRows / 2 : advisedLo;
+        // Advice goes out a window ahead, so the OS has the rows read by the time the walk
+        // gets to them. A read waits for storage, so the stream reads the next window only
+        // when the walk needs its rows.
+        if (isWillNeedSupported) {
+            marker = isFirstWindow ? advisedLo - windowRows / 2 : advisedLo;
+        } else {
+            marker = windowLo;
+        }
         advisedLo = windowLo;
         return bytes;
     }
@@ -207,16 +211,8 @@ public class QwpBackwardReadAhead implements Mutable {
     }
 
     /**
-     * Returns how many bytes the whole-frame reads covered, none of which
-     * {@link #advise(long)} counts.
-     */
-    @TestOnly
-    public long getTouchedBytes() {
-        return touchedBytes;
-    }
-
-    /**
-     * Returns the sum of the bytes the whole-frame reads loaded, see {@link #advise(long)}.
+     * Returns the sum of the bytes the stream loaded itself: of the windows it read, where
+     * the OS does not read advised pages, and of the bytes it read before trusted frames.
      */
     @TestOnly
     public long getTouchSink() {
@@ -282,19 +278,6 @@ public class QwpBackwardReadAhead implements Mutable {
         return offset >= 0 && offset <= pageSize ? offset : -1;
     }
 
-    /**
-     * Loads one byte of every OS page {@code [address, address + size)} touches, in address
-     * order, and returns their sum. {@code size} must be positive.
-     */
-    private static long readPagesForward(long address, long size) {
-        long sink = 0;
-        for (long p = address, lim = address + size; p < lim; p += OS_PAGE_SIZE) {
-            sink += Unsafe.getByte(p);
-        }
-        // the last byte can sit on one page past the last stride when address is not page-aligned
-        return sink + Unsafe.getByte(address + size - 1);
-    }
-
     // Advises the aux entries of the frame's rows [rowLo, auxAdvisedLo) of every var-size column,
     // those of the rows from rowLo up that no window has asked for; returns the bytes advised.
     private long adviseAux(long rowLo, boolean isChecking) {
@@ -312,12 +295,30 @@ public class QwpBackwardReadAhead implements Mutable {
                 final long auxLo = driver.getAuxVectorOffset(rowLo);
                 final long auxHi = auxAdvisedLo < frameRows ? Math.min(auxSize, driver.getAuxVectorOffset(auxAdvisedLo)) : auxSize;
                 if (auxHi > auxLo) {
-                    advised += willNeed(auxAddress + auxLo, auxHi - auxLo, isChecking);
+                    advised += adviseRange(auxAddress + auxLo, auxHi - auxLo, isChecking);
                 }
             }
         }
         auxAdvisedLo = rowLo;
         return advised;
+    }
+
+    // Advises [address, address + len); when checking, only if any of its pages is not in memory.
+    // Where the OS does not read advised pages, reads the range instead, and returns 0: the
+    // stream asked the OS for nothing.
+    private long adviseRange(long address, long len, boolean isChecking) {
+        if (!isWillNeedSupported) {
+            touchSink += ff.touchPages(address, len);
+            return 0;
+        }
+        if (isChecking) {
+            if (ff.isPageCacheResident(address, len)) {
+                return 0;
+            }
+            hasMissingPages = true;
+        }
+        ff.madviseWillNeed(address, len);
+        return len;
     }
 
     // Advises a window of the frame that ends at row rowHi, every byte of every column, and sets
@@ -356,7 +357,7 @@ public class QwpBackwardReadAhead implements Mutable {
                 final long dataLo = dataOffset(driver, auxAddress, auxSize, pageSize, windowLo);
                 final long dataHi = rowHi < frameRows ? dataOffset(driver, auxAddress, auxSize, pageSize, rowHi) : pageSize;
                 if (dataLo >= 0 && dataHi > dataLo) {
-                    advised += willNeed(pageAddress + dataLo, dataHi - dataLo, isChecking);
+                    advised += adviseRange(pageAddress + dataLo, dataHi - dataLo, isChecking);
                     extent += dataHi - dataLo;
                 }
             } else if (pageAddress != 0 && pageSize > 0) {
@@ -365,7 +366,7 @@ public class QwpBackwardReadAhead implements Mutable {
                 final long lo = windowLo * size;
                 final long hi = Math.min(pageSize, rowHi * size);
                 if (hi > lo) {
-                    advised += willNeed(pageAddress + lo, hi - lo, isChecking);
+                    advised += adviseRange(pageAddress + lo, hi - lo, isChecking);
                     extent += hi - lo;
                 }
             }
@@ -438,7 +439,8 @@ public class QwpBackwardReadAhead implements Mutable {
         // The first batch goes out as soon as its rows are in memory: the first window of a frame
         // whose top row goes out in it asks for them unchecked. A batch whose rows take more than
         // a window, of long values or wide rows, checks its later windows as any window after it.
-        if (rowHi == frameRows && frameStreamLo < INITIAL_WINDOW_ROWS) {
+        // A stream that reads its windows itself checks none: a page in memory costs it a load.
+        if (!isWillNeedSupported || (rowHi == frameRows && frameStreamLo < INITIAL_WINDOW_ROWS)) {
             return adviseRows(rowLo, rowHi, maxWindowLo, false);
         }
         return isSmallFrame ? adviseSmallFrame() : adviseUnlessResident(rowLo, rowHi, maxWindowLo);
@@ -527,59 +529,6 @@ public class QwpBackwardReadAhead implements Mutable {
             }
         }
         return true;
-    }
-
-    /**
-     * Reads the column pages of the frame once, first byte to last, and adds the bytes that
-     * covered to touchedBytes. Each column covers exactly the frame's own bytes: the page
-     * extent of a fixed-size column; for a var-size column its aux entries, and its data from
-     * where the frame's first row points to the end of the data extent. The page extents of
-     * the frame bound every read.
-     */
-    private void touchFrame() {
-        long bytes = 0;
-        long sink = 0;
-        for (int ci = 0, n = columnTypes.size(); ci < n; ci++) {
-            final long pageAddress = frame.getPageAddress(ci);
-            final long pageSize = frame.getPageSize(ci);
-            final int columnType = columnTypes.getQuick(ci);
-            if (ColumnType.isVarSize(columnType)) {
-                final long auxAddress = frame.getAuxPageAddress(ci);
-                final long auxSize = frame.getAuxPageSize(ci);
-                // a column top publishes no aux entries: the frame stores nothing for it
-                if (auxAddress != 0 && auxSize > 0) {
-                    sink += readPagesForward(auxAddress, auxSize);
-                    bytes += auxSize;
-                    // The data extent starts at the column's first stored row and ends at the
-                    // frame's last row; the frame's own data starts where its first aux entry
-                    // points. Values that all sit inline in the aux vector leave no data.
-                    if (pageAddress != 0) {
-                        final long dataLo = ColumnType.getDriver(columnType).getDataVectorOffset(auxAddress, 0);
-                        if (dataLo >= 0 && dataLo < pageSize) {
-                            sink += readPagesForward(pageAddress + dataLo, pageSize - dataLo);
-                            bytes += pageSize - dataLo;
-                        }
-                    }
-                }
-            } else if (pageAddress != 0 && pageSize > 0) {
-                sink += readPagesForward(pageAddress, pageSize);
-                bytes += pageSize;
-            }
-        }
-        touchSink += sink;
-        touchedBytes += bytes;
-    }
-
-    // advises [address, address + len); when checking, only if any of its pages is not in memory
-    private long willNeed(long address, long len, boolean isChecking) {
-        if (isChecking) {
-            if (ff.isPageCacheResident(address, len)) {
-                return 0;
-            }
-            hasMissingPages = true;
-        }
-        ff.madviseWillNeed(address, len);
-        return len;
     }
 
     // Bytes the frame's rows [rowLo, rowHi) take over all columns, as adviseRows() asks for them:

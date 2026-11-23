@@ -2138,6 +2138,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // top of the rows it has left, appended in reverse.
                     final long lo = isPageFrameBackward ? frameRows - rowsEmitted - sliceRows : rowsEmitted;
                     if (isPageFrameBackward) {
+                        // Where the OS does not read advised pages, advise() reads the next
+                        // window of rows itself and waits for storage, and a batch can take
+                        // several such reads: check the breaker, for the query timeout, a
+                        // cancelled query and a dropped connection, before each slice, so the
+                        // stream stops between windows, not at the end of the batch.
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                         // Readahead only follows forward access: have this slice and the rows
                         // below it on their way into memory before the walk down reads them.
                         metrics.markReadAhead(state.getBackwardReadAhead().advise(lo));
