@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -69,9 +70,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
             if (argCount == 1 && ColumnType.isConvertibleFrom(countFunc.getType(), ColumnType.LONG)) {
                 try {
-                    return new CursorFunction(
-                            new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
-                    );
+                    final long count = countFunc.getLong(null);
+                    // The result keeps only the value. The argument, such as a cast to SYMBOL,
+                    // may hold native memory from the evaluation.
+                    Misc.freeObjList(args);
+                    return new CursorFunction(new LongSequenceCursorFactory(METADATA, count));
                 } catch (UnsupportedOperationException ex) {
                     throw SqlException.position(position).put("argument type ")
                             .put(ColumnType.nameOf(countFunc.getType())).put(" is not supported");
@@ -84,14 +87,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
                             && ColumnType.isSameOrBuiltInWideningCast((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
                             && ColumnType.isSameOrBuiltInWideningCast((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
             ) {
-                return new CursorFunction(
-                        new SeedingLongSequenceCursorFactory(
-                                METADATA,
-                                countFunc.getLong(null),
-                                seedLoFunc.getLong(null),
-                                seedHiFunc.getLong(null)
-                        )
-                );
+                final long count = countFunc.getLong(null);
+                final long seedLo = seedLoFunc.getLong(null);
+                final long seedHi = seedHiFunc.getLong(null);
+                Misc.freeObjList(args);
+                return new CursorFunction(new SeedingLongSequenceCursorFactory(METADATA, count, seedLo, seedHi));
             }
         }
         throw SqlException.position(position).put("invalid arguments");
