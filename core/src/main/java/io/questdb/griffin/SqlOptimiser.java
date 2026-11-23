@@ -318,6 +318,8 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
     private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
+    // the models hasSampleByFill() has visited
+    private final ObjHashSet<IQueryModel> tempSampleByFillModels = new ObjHashSet<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -2105,9 +2107,11 @@ public class SqlOptimiser implements Mutable {
     // Gives a model that projects and has no top-down columns the one column its rows need, so that it keeps that
     // column rather than every column, see QueryModel.getColumns(): the designated timestamp of its source if it
     // selects that as is, or else the first column it selects as is. A model that selects no column as is keeps every
-    // column.
+    // column, and so does a model that reads a SAMPLE BY with FILL, see hasSampleByFill().
     private void addRowColumnIfNoTopDownColumns(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE || model.getTopDownColumns().size() > 0) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
+                || model.getTopDownColumns().size() > 0
+                || hasSampleByFill(model)) {
             return;
         }
         CharSequence timestampName = null;
@@ -6644,6 +6648,38 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
+    }
+
+    // Whether the model, or a model it reads, is a SAMPLE BY with FILL. Code generation fills the empty buckets of a
+    // SAMPLE BY with the fill values of the aggregates the query keeps of it, see SqlCodeGenerator.generateSampleBy(),
+    // and keeps none of a list of fill values when the query keeps no aggregate, as with only the one column
+    // addRowColumnIfNoTopDownColumns() picks: the SAMPLE BY would return no filled bucket. A model that reads a SAMPLE
+    // BY with FILL keeps every column instead, whatever the fill.
+    private boolean hasSampleByFill(IQueryModel model) {
+        try {
+            return hasSampleByFill0(model);
+        } finally {
+            tempSampleByFillModels.clear();
+        }
+    }
+
+    // The optimiser shares models, as it does the left side of a LATERAL join, so the walk visits each model once.
+    private boolean hasSampleByFill0(@Nullable IQueryModel model) {
+        for (IQueryModel m = model; m != null && tempSampleByFillModels.add(m); m = m.getNestedModel()) {
+            if (m.getSampleByFill().size() > 0 || m.getFillStride() != null) {
+                return true;
+            }
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                if (hasSampleByFill0(joinModels.getQuick(i))) {
+                    return true;
+                }
+            }
+            if (hasSampleByFill0(m.getUnionModel())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasUnsupportedFunctionOrOperationInEquals(

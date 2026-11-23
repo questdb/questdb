@@ -580,6 +580,59 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnOutputThatReadsNoColumnKeepsSampleByFill() throws Exception {
+        // A SAMPLE BY with FILL fills its empty buckets with the fill values of the aggregates the query keeps of it. A
+        // filter on an output that reads no column of the SAMPLE BY leaves it every column, so it still returns the
+        // buckets it fills. Given only the one column its rows need, it would keep no aggregate and fill no bucket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            // rows in three of the six hourly buckets from the first one on
+            execute("INSERT INTO x VALUES ('2024-01-01T00:10:00.000000Z', 'k1', 1), ('2024-01-01T03:10:00.000000Z', 'k2', 2), ('2024-01-01T05:10:00.000000Z', 'k1', 3)");
+            final String sampleBy = "SELECT ts, sum(a) s, max(a) m FROM x SAMPLE BY 1h FILL(NULL, 0) ALIGN TO FIRST OBSERVATION";
+            execute("CREATE VIEW v AS (SELECT 'src' label, ts, s, m FROM (" + sampleBy + "))");
+            drainWalAndViewQueues();
+
+            assertQuery(
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-group-by ts, sum(a) s, max(a) m from (select [ts, a] from x timestamp (ts)) sample by 1h fill(NULL,0)) where b = 'c')",
+                    "SELECT count() FROM (SELECT 'c' b FROM (" + sampleBy + ")) WHERE b = 'c'"
+            );
+            assertQuery("SELECT count() FROM (SELECT 'c' b FROM (" + sampleBy + ")) WHERE b = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n6\n");
+            // a filter on the count of the buckets
+            assertQuery("SELECT * FROM (SELECT count() n FROM (" + sampleBy + ")) WHERE n > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("n\n6\n");
+            // a key of the SAMPLE BY, which fills the buckets of each key
+            assertQuery("SELECT count() FROM (SELECT 'c' b FROM (SELECT ts, k, sum(a) s, max(a) m FROM x SAMPLE BY 1h FILL(NULL, 0) ALIGN TO FIRST OBSERVATION)) WHERE b = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n12\n");
+            // LINEAR fills the buckets of a calendar-aligned SAMPLE BY too
+            assertQuery("SELECT count() FROM (SELECT 'c' b FROM (SELECT ts, sum(a) s, max(a) m FROM x SAMPLE BY 1h FILL(LINEAR, 0))) WHERE b = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n6\n");
+            // the SAMPLE BY on a side of a join
+            assertQuery("SELECT count() FROM (SELECT 'c' b FROM (SELECT * FROM (" + sampleBy + ") s CROSS JOIN long_sequence(2) l)) WHERE b = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n12\n");
+            // a read of a view that labels the buckets
+            assertQuery("SELECT label FROM v WHERE label = 'src'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("label\nsrc\nsrc\nsrc\nsrc\nsrc\nsrc\n");
+        });
+    }
+
+    @Test
     public void testFilterOnOutputThatReadsNoColumnScansOneColumn() throws Exception {
         // A filter on an output the SELECT computes from no column, such as a constant, stays with that SELECT, which
         // then gives the sub-query under it no column. The sub-query still has to produce its rows, which one of its
