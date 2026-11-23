@@ -230,7 +230,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * {@code null} for none: the assignments of a DECLARE block, without the DECLARE keyword,
      * such as {@code @from := '2026-01-01', @to := dateadd('d', 1, @from)}. The parser reads
      * them as a DECLARE block that opens the text {@link #getQueryVariablesSqlText()} returns,
-     * whenever it parses that text, and never in another text it parses with this context.
+     * when that text is a statement that reads them: a query, or an INSERT of a query's rows. It
+     * never reads them in another text it parses with this context.
+     * <p>
+     * The parser reads them at {@link SqlParser#QUERY_VARIABLES_POSITION}, which no other text
+     * reaches, so an error in them, however late the compile or the cursor reports it, has a
+     * position at or past it, and every other error a position before it.
      */
     default @Nullable CharSequence getQueryVariables() {
         return null;

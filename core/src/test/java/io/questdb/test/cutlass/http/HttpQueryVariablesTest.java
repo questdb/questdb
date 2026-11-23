@@ -209,17 +209,38 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testErrorInViewIsNoErrorInVariables() throws Exception {
+        // An error in the body of a view the query reads carries a position in the view's text,
+        // past the end of the query's here. It is no error in the variables, however long they
+        // are: each endpoint answers as it does without the parameter.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (a INT, b INT, c INT, k INT)", sqlExecutionContext);
+            engine.execute("CREATE VIEW v AS (SELECT a, b, c, k FROM t)", sqlExecutionContext);
+            engine.execute("ALTER TABLE t DROP COLUMN k", sqlExecutionContext);
+            engine.execute("CREATE TABLE t2 (u CHAR, n INT, ts TIMESTAMP)", sqlExecutionContext);
+            engine.execute("INSERT INTO t2 VALUES ('d', null, '2024-01-01')", sqlExecutionContext);
+            engine.execute("CREATE VIEW vd AS (SELECT dateadd(u, n, ts) d FROM t2)", sqlExecutionContext);
+            final String variables = "@pad := '" + "x".repeat(100) + "'";
+            for (String url : new String[]{"/query", "/exp", "/api/v1/sql/validate"}) {
+                // the view's body reads a column that is gone, which the compile finds
+                final String response = assertSameResponse(url, "SELECT * FROM v", variables);
+                TestUtils.assertContains(response, "\"error\":\"Invalid column: k\",\"position\":16}");
+            }
+            // a function of the view's body fails on the first row
+            final String response = assertSameResponse("/query", "SELECT * FROM vd", variables);
+            TestUtils.assertContains(response, "\"error\":\"`null` is not a valid stride\", \"errorPos\":18}");
+        }));
+    }
+
+    @Test
     public void testErrorWhileRowsStream() throws Exception {
-        // simulate_crash('0') fails at the first row with the fixed position 222
+        // simulate_crash('0') fails at the first row with the fixed position 222, which is no
+        // position in the variables, however long they are
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             final String sql = "SELECT simulate_crash('0') FROM long_sequence(1)";
-            final String prefix = "{\"query\":\"SELECT simulate_crash('0') FROM long_sequence(1)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"simulated cairo exception\", ";
-            // a position past the variables' text is left as it is
-            assertGet(prefix + "\"errorPos\":222}", sql, "@pad := 1");
-            // Within it, it is the position in the variables parameter: the parser reads the
-            // variables past the query and a newline, from 49 on, so 222 is 173 into them.
-            final String pad = "@pad := '" + "x".repeat(200) + "'";
-            assertGet(prefix + "\"errorPos\":173,\"errorSource\":\"variables\"}", sql, pad);
+            final String expected = "{\"query\":\"SELECT simulate_crash('0') FROM long_sequence(1)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"simulated cairo exception\", \"errorPos\":222}";
+            assertGet(expected, sql, "@pad := 1");
+            assertGet(expected, sql, "@pad := '" + "x".repeat(200) + "'");
         }));
     }
 
@@ -340,6 +361,26 @@ public class HttpQueryVariablesTest extends AbstractTest {
             assertGet(
                     "{\"query\":\"SELECT * FROM t\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"},{\"name\":\"s\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[42,\"x42\"],[42,\"cte\"]],\"count\":2}",
                     "SELECT * FROM t",
+                    null
+            );
+        }));
+    }
+
+    @Test
+    public void testInsertValuesIgnoresVariables() throws Exception {
+        // VALUES lists the rows of an INSERT without a query to read the variables, with a WITH
+        // clause ahead of it too: each statement answers as it does without the parameter, and
+        // does not parse it, so a parameter that holds no assignment fails none
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            for (String sql : new String[]{"INSERT INTO t VALUES (1)", "WITH c AS (SELECT 1 x) INSERT INTO t VALUES (2)"}) {
+                TestUtils.assertEquals("{\"dml\":\"OK\"}", assertSameResponse("/query", sql, "a := 1"));
+                TestUtils.assertContains(assertSameResponse("/api/v1/sql/validate", sql, "a := 1"), "\"queryType\":\"INSERT\"");
+            }
+            // /query ran each statement twice
+            assertGet(
+                    "{\"query\":\"SELECT v FROM t\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1],[1],[2],[2]],\"count\":4}",
+                    "SELECT v FROM t",
                     null
             );
         }));

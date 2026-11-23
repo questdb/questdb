@@ -26,9 +26,9 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
@@ -42,9 +42,10 @@ import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_VARIABLES;
  * DECLARE block that opens it, see
  * {@link io.questdb.griffin.SqlExecutionContext#getQueryVariables()}.
  * <p>
- * The parser reads the variables after the query's text and a newline, so the position of an
- * error in them lies past the query's text. {@link #locateError(int, int)} tells such an error
- * apart and reports it at the position in the parameter, with {@code "errorSource":"variables"}.
+ * The parser reads the variables at {@link SqlParser#QUERY_VARIABLES_POSITION}, which no other
+ * text the query reads reaches, so the position of an error tells whether the error lies in them.
+ * {@link #locateError(int)} tells such an error apart and reports it at the position in the
+ * parameter, with {@code "errorSource":"variables"}.
  */
 final class QueryVariablesParameter implements Mutable {
     private final StringSink text = new StringSink();
@@ -65,19 +66,14 @@ final class QueryVariablesParameter implements Mutable {
 
     /**
      * Returns the position to report for an error at a position in what the query was compiled
-     * from, and remembers whether the error lies in the variables. A position past the query's
-     * text and within the variables is reported as the position in the parameter. A position
-     * past the variables is no position in either text, such as the fixed one some runtime
-     * errors carry, and is left as it is.
+     * from, and remembers whether the error lies in the variables. A position at or past
+     * {@link SqlParser#QUERY_VARIABLES_POSITION} lies in them, and is reported as the position in
+     * the parameter. Any other position is left as it is: one in the query's text, one in the
+     * body of a view the query reads, the fixed one some runtime errors carry, or none.
      */
-    int locateError(int position, int queryLength) {
-        isErrorInVariables = false;
-        final int offset = position - queryLength - 1;
-        if (position == Numbers.INT_NULL || text.length() == 0 || offset < 0 || offset > text.length()) {
-            return position;
-        }
-        isErrorInVariables = true;
-        return offset;
+    int locateError(int position) {
+        isErrorInVariables = text.length() > 0 && position >= SqlParser.QUERY_VARIABLES_POSITION;
+        return isErrorInVariables ? position - SqlParser.QUERY_VARIABLES_POSITION : position;
     }
 
     /**
@@ -101,7 +97,7 @@ final class QueryVariablesParameter implements Mutable {
 
     /**
      * Adds {@code "errorSource":"variables"} to an error object when the error lies in the
-     * variables, see {@link #locateError(int, int)}.
+     * variables, see {@link #locateError(int)}.
      */
     void putErrorSource(Utf8Sink response) {
         if (isErrorInVariables) {

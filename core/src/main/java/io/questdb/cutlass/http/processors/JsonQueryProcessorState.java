@@ -537,20 +537,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Stores an error at a position in what the query was compiled from. A position past the
-     * query's text lies in the variables the client declared, which the parser reads after it:
-     * the error then reports the position in the variables parameter.
+     * Stores an error at a position in what the query was compiled from. An error in the
+     * variables the client declared then reports the position in the variables parameter, see
+     * {@link QueryVariablesParameter#locateError(int)}.
      */
     public void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.errorPosition = queryVariables.locateError(errorPosition, query.length());
+        this.errorPosition = queryVariables.locateError(errorPosition);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
 
     public void storeError(CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.errorPosition = queryVariables.locateError(Numbers.INT_NULL, query.length());
+        this.errorPosition = queryVariables.locateError(Numbers.INT_NULL);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
@@ -1433,7 +1433,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 response.putAscii(',')
                         .putAsciiQuoted("error").putAscii(':')
                         .putQuote().escapeJsonStr(message != null ? message : "Internal server error").putQuote()
-                        .putAscii(", \"errorPos\"").putAscii(':').put(queryVariables.locateError(messagePosition, query.length()));
+                        .putAscii(", \"errorPos\"").putAscii(':').put(queryVariables.locateError(messagePosition));
                 queryVariables.putErrorSource(response);
             }
             if (timings) {

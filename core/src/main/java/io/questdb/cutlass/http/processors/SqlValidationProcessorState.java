@@ -240,12 +240,12 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Stores an error at a position in what the query was compiled from: a position past the
-     * query's text lies in the variables, see {@link QueryVariablesParameter#locateError}.
+     * Stores an error at a position in what the query was compiled from, which can lie in the
+     * variables, see {@link QueryVariablesParameter#locateError}.
      */
     public void storeError(int errorPosition, CharSequence errorMessage) {
         this.validationState = VALIDATION_ERROR;
-        this.errorPosition = queryVariables.locateError(errorPosition, query.length());
+        this.errorPosition = queryVariables.locateError(errorPosition);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }

@@ -414,12 +414,12 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Stores an error at a position in what the query was compiled from: a position past the
-     * query's text lies in the variables, see {@link QueryVariablesParameter#locateError}.
+     * Stores an error at a position in what the query was compiled from, which can lie in the
+     * variables, see {@link QueryVariablesParameter#locateError}.
      */
     void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = ExportQueryProcessor.QUERY_SEND_ERROR;
-        this.errorPosition = queryVariables.locateError(errorPosition, sqlText.length());
+        this.errorPosition = queryVariables.locateError(errorPosition);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }

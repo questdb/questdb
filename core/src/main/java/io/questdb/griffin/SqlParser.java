@@ -145,6 +145,13 @@ public class SqlParser {
     // The characters a statement's parse may write to the compiler's character store for each
     // character of the text it parses once, see checkParseBudget().
     public static final int MAX_STORED_CHARS_PER_CHAR = 500;
+    // The position of the first character of the variables a client declared outside the
+    // statement's text, see SqlExecutionContext.getQueryVariables(). The parser reads them there,
+    // see QueryVariablesText. No other text a statement parses reaches it, as that would take a
+    // gigabyte of SQL: neither the statement's own text, nor the body of a view it reads, nor a
+    // text the parser makes up. So a position at or past this one lies in the variables, this
+    // far ahead of the offset in them.
+    public static final int QUERY_VARIABLES_POSITION = 1 << 30;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     // What a token seen at paren depth 0 does to an EXPIRE ROWS clause body: CLEANUP starts the cadence
     // sub-clause, TAIL hands the token to the CREATE TABLE tail, NONE leaves it as clause content.
@@ -211,8 +218,8 @@ public class SqlParser {
     private final ObjectPool<QueryModel> queryModelPool;
     // parses the variables a client declared outside the statement's text, see parseQueryVariables()
     private final GenericLexer queryVariablesLexer;
-    // the statement's text, a newline and the variables' assignments, see parseQueryVariables()
-    private final StringSink queryVariablesSource = new StringSink();
+    // the variables' assignments, at QUERY_VARIABLES_POSITION, see parseQueryVariables()
+    private final QueryVariablesText queryVariablesText = new QueryVariablesText();
     // One entry per reference to an audited view, in the order the parser expanded them, less the
     // ones an audited view around them shadows. A list rather than a map: the same view read twice
     // is two reads, and each records its own arguments.
@@ -319,7 +326,8 @@ public class SqlParser {
     private IQueryModel queryVariablesModel;
     // the principal of the statement being parsed, see isExpandableView()
     private SecurityContext securityContext;
-    // The length of the text the statement came in, for its parse budget, see checkParseBudget().
+    // The length of the text the statement came in, with the variables a client declared for it
+    // outside that text, see parseQueryVariables(), for its parse budget, see checkParseBudget().
     private int statementTextLength;
     private boolean subQueryMode = false;
     // Number of view bodies compileViewQuery() is expanding at the current parse position.
@@ -1313,8 +1321,9 @@ public class SqlParser {
     /**
      * Refuses to parse more of the statement once its parse has taken more from the compiler's
      * pools and character store than its budget allows. The budget has four parts, each a base
-     * plus an allowance for every character of the text the statement parses once, its own text
-     * and the body of every view it expands:
+     * plus an allowance for every character of the text the statement parses once, its own text,
+     * the variables a client declared for it outside that text and the body of every view it
+     * expands:
      * <ul>
      *     <li>query models: {@link #MAX_QUERY_MODELS}, plus {@link #MAX_QUERY_MODELS_PER_CHAR};</li>
      *     <li>expression nodes: {@link #MAX_EXPRESSION_NODES}, plus
@@ -2803,18 +2812,20 @@ public class SqlParser {
     }
 
     /**
-     * Whether the WITH clause whose CTEs the lexer is about to read heads an UPDATE. Reads past the
-     * CTEs, skipping their bodies by their brackets, to the token after them, and leaves the
-     * lexer where it found it. A WITH clause of another shape is no UPDATE; parseWithClauses()
-     * reports what is wrong with it.
+     * Whether the WITH clause whose CTEs the lexer is about to read heads a statement that ignores
+     * the client's variables, see parse0(): an UPDATE, or an INSERT of the rows VALUES lists,
+     * which reads no query. Reads past the CTEs, skipping their bodies by their brackets, to the
+     * statement after them, past the options, the target and the column list of an INSERT to its
+     * rows, and leaves the lexer where it found it. A WITH clause of another shape reads them;
+     * parseWithClauses() or parseInsert() reports what is wrong with it.
      */
-    private boolean isUpdateAfterWith(GenericLexer lexer) throws SqlException {
+    private boolean isIgnoringVariablesAfterWith(GenericLexer lexer) throws SqlException {
         lexer.stash();
         try {
-            while (true) {
+            CharSequence tok;
+            do {
                 // the CTE's name
-                CharSequence tok = optTok(lexer);
-                if (tok == null) {
+                if (optTok(lexer) == null) {
                     return false;
                 }
                 tok = optTok(lexer);
@@ -2838,10 +2849,26 @@ public class SqlParser {
                     }
                 }
                 tok = optTok(lexer);
-                if (tok == null || !Chars.equals(tok, ',')) {
-                    return tok != null && isUpdateKeyword(tok);
+            } while (tok != null && Chars.equals(tok, ','));
+            if (tok == null) {
+                return false;
+            }
+            if (isUpdateKeyword(tok)) {
+                return true;
+            }
+            if (isInsertKeyword(tok)) {
+                // Neither the options, nor the target, nor a column name can be SELECT or VALUES
+                // unless quoted, so the first of the two that follows names the INSERT's rows.
+                while ((tok = optTok(lexer)) != null) {
+                    if (isValuesKeyword(tok)) {
+                        return true;
+                    }
+                    if (isSelectKeyword(tok)) {
+                        return false;
+                    }
                 }
             }
+            return false;
         } finally {
             lexer.unstash();
         }
@@ -7359,8 +7386,8 @@ public class SqlParser {
      *                         INSERT
      * @param variablesContext the context of a statement the INSERT opens, whose variables, see
      *                         {@link #parseQueryVariables}, its query reads; null when a WITH
-     *                         clause heads the INSERT and has read them already. VALUES does not
-     *                         read them.
+     *                         clause heads the INSERT, which has parsed them unless VALUES lists
+     *                         the rows, see {@link #parseWith}. VALUES does not read them.
      */
     private ExecutionModel parseInsert(
             GenericLexer lexer,
@@ -8174,13 +8201,14 @@ public class SqlParser {
      * opens the statement. Returns null when the client declared none. Only a statement that
      * reads them calls this, once it knows it reads them, see parse0().
      * <p>
-     * The assignments are parsed from a text of their own: the statement's text, a newline, and
-     * the assignments, read from past the newline. So everything parsed from them takes a
-     * position past the statement's text, and an error in a value, which the code generator may
-     * report long after this parse, points past it too: the caller tells such a position apart by
-     * the length of the statement's text. The text outlives this parse, as the statement's does:
-     * a sub-query in a value is parsed again from it for each read past the first, see
-     * {@link #parseDeclaredQuery}.
+     * The assignments are parsed from a text of their own, which holds them at
+     * {@link #QUERY_VARIABLES_POSITION}, see {@link QueryVariablesText}. So everything parsed
+     * from them takes a position at or past it, and so does an error in a value, which the code
+     * generator may report long after this parse: the caller tells an error in the variables
+     * apart by its position alone, whichever text the statement reads, see
+     * {@link SqlExecutionContext#getQueryVariables()}. The text outlives this parse, as the
+     * statement's does: a sub-query in a value is parsed again from it for each read past the
+     * first, see {@link #parseDeclaredQuery}.
      */
     private @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> parseQueryVariables(
             GenericLexer lexer,
@@ -8192,11 +8220,13 @@ public class SqlParser {
             return null;
         }
         final CharSequence variables = executionContext.getQueryVariables();
-        queryVariablesSource.clear();
-        queryVariablesSource.put(lexer.getContent()).put('\n');
-        final int assignmentsLo = queryVariablesSource.length();
-        queryVariablesSource.put(variables);
-        queryVariablesLexer.of(queryVariablesSource, assignmentsLo, queryVariablesSource.length());
+        if (variables.length() > Integer.MAX_VALUE - QUERY_VARIABLES_POSITION) {
+            // past the last position an int holds; far longer than a URL parameter can be
+            throw SqlException.$(QUERY_VARIABLES_POSITION, "variables are too long [max=")
+                    .put(Integer.MAX_VALUE - QUERY_VARIABLES_POSITION).put(']');
+        }
+        queryVariablesText.of(variables);
+        queryVariablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
 
         CharSequence tok = optTok(queryVariablesLexer);
         if (tok == null) {
@@ -8208,8 +8238,11 @@ public class SqlParser {
         }
         // parseDeclare() reads each variable from the lexer's position, which a token handed
         // back would leave past it: start the lexer over instead
-        queryVariablesLexer.of(queryVariablesSource, assignmentsLo, queryVariablesSource.length());
-        recordStatementTextLength(queryVariablesLexer);
+        queryVariablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
+        // The statement parses the variables once, as it does its own text, so they count towards
+        // its parse budget, see checkParseBudget(). Their position does not: the blanks ahead of
+        // them are no text.
+        statementTextLength = Math.max(statementTextLength, lexer.getContent().length() + variables.length());
 
         // The model becomes the root of the statement that reads the variables, see parseDml0(),
         // so it keeps everything this parse leaves in it, as the root keeps what the DECLARE block
@@ -9034,10 +9067,11 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         // The WAL applies an UPDATE by parsing its text again, without the client's variables,
-        // so neither the UPDATE nor its CTEs read them, see parse0(). The scan for the UPDATE
-        // runs only when there are variables to skip.
+        // and an INSERT of the rows VALUES lists reads no query, so neither statement, nor its
+        // CTEs, reads them, see parse0(). The scan for them runs only when there are variables
+        // to skip.
         final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls =
-                hasQueryVariables(lexer, executionContext) && !isUpdateAfterWith(lexer)
+                hasQueryVariables(lexer, executionContext) && !isIgnoringVariablesAfterWith(lexer)
                         ? parseQueryVariables(lexer, executionContext, sqlParserCallback)
                         : null;
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);

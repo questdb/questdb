@@ -24,17 +24,22 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlParser;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,18 +48,44 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Variables a client declares outside the statement's text, see
  * {@link io.questdb.griffin.SqlExecutionContext#getQueryVariables()}: the assignments of a DECLARE
- * block, which the statement reads as a DECLARE block that opens it. Each expectation holds the result of
- * the same statement with the variables written as that block, which the test also runs.
+ * block, which the statement reads as a DECLARE block that opens it. An expectation holds the
+ * result of the same statement with the variables written as that block, the result of the
+ * statement without the variables, where it ignores them, or a result worked out by hand.
+ * <p>
+ * The parser reads the variables at {@link SqlParser#QUERY_VARIABLES_POSITION}, so an error in
+ * them points there plus the offset in the variables, and every other error points where it does
+ * without them.
  */
 public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
-    public void testErrorInValuePointsPastTheStatement() throws Exception {
-        // The value is parsed from the statement's text, a newline and "@a := nope_fn()", so
-        // its position lies past the statement: 10 + the 6 characters of "@a := ".
+    public void testErrorInValuePointsIntoVariables() throws Exception {
+        // the 6 characters of "@a := " into "@a := nope_fn()"
         final String sql = "SELECT @a";
         withVariables("@a := nope_fn()", sql, () -> assertQuery(sql)
-                .fails(sql.length() + 1 + 6, "unknown function name: nope_fn()"));
+                .fails(SqlParser.QUERY_VARIABLES_POSITION + 6, "unknown function name: nope_fn()"));
+    }
+
+    @Test
+    public void testErrorInViewPointsWhereItDoesWithoutVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // An error in the body of a view carries a position in the view's text, which can lie
+            // past the statement's text. It lies before the variables all the same, so the error
+            // is no error in them, however long they are.
+            execute("CREATE TABLE t (a INT, b INT, c INT, k INT)");
+            execute("CREATE VIEW v AS (SELECT a, b, c, k FROM t)");
+            execute("CREATE TABLE t2 (u CHAR, n INT, ts TIMESTAMP)");
+            execute("INSERT INTO t2 VALUES ('d', null, '2024-01-01')");
+            execute("CREATE VIEW vd AS (SELECT dateadd(u, n, ts) d FROM t2)");
+            drainWalAndViewQueues();
+            execute("ALTER TABLE t DROP COLUMN k");
+            drainWalAndViewQueues();
+            final String variables = "@pad := '" + "x".repeat(100) + "'";
+            // the view's body reads a column that is gone, which the compile finds
+            assertFailsWithVariablesAsWithout("SELECT * FROM v", variables, "Invalid column: k");
+            // a function of the view's body fails on the first row
+            assertFailsWithVariablesAsWithout("SELECT * FROM vd", variables, "`null` is not a valid stride");
+        });
     }
 
     @Test
@@ -103,6 +134,35 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     7\tcte
                     """);
         });
+    }
+
+    @Test
+    public void testLegacyPrecedenceAdvisoryShowsVariables() throws Exception {
+        // In legacy operator precedence mode, the parser logs an advisory for an expression that
+        // the current precedence reads otherwise: the text the expression sits in, and the
+        // position of the operator that reads otherwise, AND here. For an expression in the
+        // variables, that is the variables and the position in them.
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, "true");
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                // a compiler of its own takes the mode, see DeclareOperatorPrecedenceTest
+                try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+                    capture.start();
+                    // the same assignment in a DECLARE block, where AND sits 28 characters in
+                    final String reference = "DECLARE @a := true OR false AND false SELECT @a value";
+                    assertQuery(reference).withCompiler(compiler).expectSize().returns("value\nfalse\n");
+                    capture.waitFor(advisory(reference, 28));
+                    // AND sits 20 characters into the variables
+                    final String variables = "@a := true OR false AND false";
+                    final String sql = "SELECT @a value";
+                    withVariables(variables, sql, () -> assertQuery(sql).withCompiler(compiler).expectSize().returns("value\nfalse\n"));
+                    capture.waitFor(advisory(variables, 20));
+                }
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -155,7 +215,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     public void testOnlyAssignments() throws Exception {
         assertMemoryLeak(() -> {
             final String sql = "SELECT @a";
-            // Positions in the assignments, past the statement and a newline. Each case fails as
+            // Positions in the assignments, from QUERY_VARIABLES_POSITION on. Each case fails as
             // the same assignments in DECLARE <assignments> SELECT 1 do, at the same place.
             final Object[][] cases = {
                     {"1", 0, "unexpected token [1]"},
@@ -171,8 +231,41 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     {"@a := @b", 6, "tried to use undeclared variable `@b`"},
             };
             for (Object[] c : cases) {
-                withVariables((String) c[0], sql, () -> assertQuery(sql).fails(sql.length() + 1 + (int) c[1], (String) c[2]));
+                withVariables((String) c[0], sql, () -> assertQuery(sql).fails(SqlParser.QUERY_VARIABLES_POSITION + (int) c[1], (String) c[2]));
             }
+        });
+    }
+
+    @Test
+    public void testParseBudgetCountsVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // The parse budget of a statement grows with the text it parses once, the variables'
+            // text among it, not with the position the parser reads the variables at. Each CTE
+            // reads the one before it twice, so a later reference parses the chain again, and the
+            // parse runs out of query models at a second read of a CTE, which would parse it
+            // again, see WithClauseTest.testCteRefusedByParseBudgetLeavesNoLexerStash.
+            execute("CREATE TABLE t AS (SELECT x::INT x FROM long_sequence(5))");
+            final StringBuilder chain = new StringBuilder("WITH c0 AS (SELECT x FROM t)");
+            for (int i = 1; i <= 12; i++) {
+                chain.append(", c").append(i)
+                        .append(" AS (SELECT a.x FROM c").append(i - 1)
+                        .append(" a JOIN c").append(i - 1).append(" b ON a.x = b.x)");
+            }
+            final String sql = chain.append(" SELECT * FROM c12").toString();
+            final String variables = "@a := 1";
+            withVariables(variables, sql, () -> {
+                try {
+                    assertExceptionNoLeakCheck(sql);
+                } catch (SqlException e) {
+                    assertTooComplexToParseMessage(
+                            e.getFlyweightMessage(),
+                            "models",
+                            SqlParser.MAX_QUERY_MODELS + (long) SqlParser.MAX_QUERY_MODELS_PER_CHAR * (sql.length() + variables.length())
+                    );
+                    // at the second read of a CTE, in the text of the next one
+                    Assert.assertTrue(sql.startsWith("JOIN c", e.getPosition() - "JOIN ".length()));
+                }
+            });
         });
     }
 
@@ -282,33 +375,51 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             // "a := 1" is no assignment: a statement that reads the variables fails on it, one
             // that does not read them runs as it does without the parameter
             final String variables = "a := 1";
-            final String select = "SELECT 1 x";
-            withVariables(variables, select, () -> assertExceptionNoLeakCheck(select, select.length() + 1, "unexpected token [a]"));
-            final String insertSelect = "INSERT INTO x SELECT 1";
-            withVariables(variables, insertSelect, () -> assertExceptionNoLeakCheck(insertSelect, insertSelect.length() + 1, "unexpected token [a]"));
+            final String[] readers = {
+                    "SELECT 1 x",
+                    "INSERT INTO x SELECT 1",
+                    "WITH c AS (SELECT 1 y) SELECT y FROM c",
+                    "WITH c AS (SELECT 1 y) INSERT INTO x SELECT y FROM c",
+                    "WITH c AS (SELECT 1 y) INSERT BATCH 10 o3MaxLag 1s INTO x (a) SELECT y FROM c",
+            };
+            for (String sql : readers) {
+                withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, SqlParser.QUERY_VARIABLES_POSITION, "unexpected token [a]"));
+            }
 
             final String[] statements = {
                     "CREATE TABLE x (a INT)",
                     "INSERT INTO x VALUES (1)",
                     "UPDATE x SET a = a + 1",
                     "WITH c AS (SELECT 10 y) UPDATE x SET a = a + c.y FROM c",
+                    // VALUES lists the rows of an INSERT without a query to read them, with a WITH
+                    // clause ahead of it too, whatever options and columns the INSERT names
+                    "WITH c AS (SELECT 1 y) INSERT INTO x VALUES (20)",
+                    "WITH c AS (SELECT 1 y), d AS (SELECT (2) z) INSERT BATCH 10 o3MaxLag 1s INTO x (a) VALUES (30), (40)",
                     "CREATE TABLE y AS (SELECT a FROM x)",
                     "CREATE VIEW vx AS (SELECT a FROM x)",
             };
             for (String sql : statements) {
                 executeWithVariables(variables, sql);
             }
-            final String explainUpdate = "EXPLAIN UPDATE x SET a = 0";
-            final StringSink expected = new StringSink();
-            printSql(explainUpdate, expected);
-            final StringSink actual = new StringSink();
-            withVariables(variables, explainUpdate, () -> printSql(explainUpdate, actual));
-            TestUtils.assertEquals(expected, actual);
+            for (String explain : new String[]{"EXPLAIN UPDATE x SET a = 0", "EXPLAIN WITH c AS (SELECT 1 y) INSERT INTO x VALUES (50)"}) {
+                final StringSink expected = new StringSink();
+                printSql(explain, expected);
+                final StringSink actual = new StringSink();
+                withVariables(variables, explain, () -> printSql(explain, actual));
+                TestUtils.assertEquals(expected, actual);
+            }
 
             drainWalAndViewQueues();
-            assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns("a\n12\n");
-            assertQuery("SELECT * FROM y").noLeakCheck().expectSize().returns("a\n12\n");
-            assertQuery("SELECT * FROM vx").noLeakCheck().expectSize().returns("a\n12\n");
+            final String rows = """
+                    a
+                    12
+                    20
+                    30
+                    40
+                    """;
+            assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns(rows);
+            assertQuery("SELECT * FROM y").noLeakCheck().expectSize().returns(rows);
+            assertQuery("SELECT * FROM vx").noLeakCheck().expectSize().returns(rows);
         });
     }
 
@@ -323,7 +434,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             // "@q := (SELECT * FROM nope)": nope sits 21 characters into the assignments
             final String sql = "SELECT * FROM @q";
             withVariables("@q := (SELECT * FROM nope)", sql, () -> assertQuery(sql)
-                    .fails(sql.length() + 1 + 21, "table does not exist [table=nope]"));
+                    .fails(SqlParser.QUERY_VARIABLES_POSITION + 21, "table does not exist [table=nope]"));
         });
     }
 
@@ -384,7 +495,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         withVariables(
                 "@q := (SELECT * FROM nope)",
                 sql,
-                () -> assertQuery(sql).fails(sql.length() + 1 + 21, "table does not exist [table=nope]")
+                () -> assertQuery(sql).fails(SqlParser.QUERY_VARIABLES_POSITION + 21, "table does not exist [table=nope]")
         );
     }
 
@@ -446,7 +557,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         final String sql = "SELECT @a";
         // "@a := 1 SELECT 2": SELECT sits 8 characters into the assignments
         withVariables("@a := 1 SELECT 2", sql, () -> assertQuery(sql)
-                .fails(sql.length() + 1 + 8, "unexpected token [SELECT]"));
+                .fails(SqlParser.QUERY_VARIABLES_POSITION + 8, "unexpected token [SELECT]"));
     }
 
     @Test
@@ -458,6 +569,32 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             final String list = "SELECT 'x' IN @c a, 'z' IN @c b";
             withVariables(variables, list, () -> assertQuery(list).expectSize().returns("a\tb\ntrue\tfalse\n"));
         });
+    }
+
+    @Test
+    public void testVariablesTooLong() throws Exception {
+        // The variables end before the last position an int holds, or the positions past them
+        // would wrap. The parser refuses longer variables before it copies them: these blanks
+        // take no memory.
+        final int max = Integer.MAX_VALUE - SqlParser.QUERY_VARIABLES_POSITION;
+        final CharSequence variables = new CharSequence() {
+            @Override
+            public char charAt(int index) {
+                return ' ';
+            }
+
+            @Override
+            public int length() {
+                return max + 1;
+            }
+
+            @Override
+            public @NotNull CharSequence subSequence(int start, int end) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        final String sql = "SELECT 1 x";
+        withVariables(variables, sql, () -> assertQuery(sql).fails(SqlParser.QUERY_VARIABLES_POSITION, "variables are too long [max=" + max + ']'));
     }
 
     @Test
@@ -473,7 +610,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             withVariables("@lim := 1", overridable, () -> assertQuery(overridable).noLeakCheck().returns("l\n1\n"));
             // "@lim := 1": the error points at ":=", 5 characters into the assignments
             final String fixed = "SELECT * FROM v_fixed";
-            withVariables("@lim := 1", fixed, () -> assertQuery(fixed).noLeakCheck().fails(fixed.length() + 1 + 5, "variable is not overridable: @lim"));
+            withVariables("@lim := 1", fixed, () -> assertQuery(fixed).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + 5, "variable is not overridable: @lim"));
             assertQuery("DECLARE @lim := 1 SELECT * FROM v_ovl").noLeakCheck().returns("l\n1\n");
         });
     }
@@ -500,6 +637,8 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     "WITH c AS (SELECT 1",
                     "WITH c AS (SELECT 1)",
                     "WITH c AS (SELECT 1),",
+                    "WITH c AS (SELECT 1) INSERT INTO t",
+                    "WITH c AS (SELECT 1) INSERT INTO t VALUES",
             };
             for (String sql : malformed) {
                 final int position;
@@ -516,12 +655,38 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         });
     }
 
+    // the advisory the parser logs in legacy operator precedence mode, see
+    // testLegacyPrecedenceAdvisoryShowsVariables
+    private static String advisory(String text, int position) {
+        return "operator precedence compat mode: detected expression parsing behaviour change for query=[" + text + "] at position=" + position + Misc.EOL;
+    }
+
+    // The statement fails with the variables as it does without them, at a position before the
+    // variables: no error in them. Compiling or reading the statement reports the error.
+    private static void assertFailsWithVariablesAsWithout(String sql, String variables, String message) throws Exception {
+        final int position;
+        try {
+            assertExceptionNoLeakCheck(sql);
+            throw new AssertionError("expected an error for " + sql);
+        } catch (Throwable e) {
+            if (!(e instanceof FlyweightMessageContainer container)) {
+                throw e;
+            }
+            TestUtils.assertEquals(message, container.getFlyweightMessage());
+            position = container.getPosition();
+        }
+        // past the statement's text: only QUERY_VARIABLES_POSITION tells it from an error in them
+        Assert.assertTrue(position > sql.length());
+        Assert.assertTrue(position < SqlParser.QUERY_VARIABLES_POSITION);
+        withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+    }
+
     private static void executeWithVariables(String variables, String sql) throws Exception {
         withVariables(variables, sql, () -> execute(sql));
     }
 
     // runs the code with the variables a client sent with the statement's text, as /exec does
-    private static void withVariables(String variables, String sql, VariablesCode code) throws Exception {
+    private static void withVariables(CharSequence variables, String sql, VariablesCode code) throws Exception {
         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
         context.setQueryVariables(variables, sql);
         try {
