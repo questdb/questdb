@@ -641,9 +641,13 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     @Test
     public void testOnHeadersReadyRejectsMalformedOwnedBy() throws Exception {
         assertMemoryLeak(() -> {
-            // a bad or truncated percent escape, a lone UTF-8 lead byte, an empty name; '/' sorts below every hex digit,
-            // and in "%4g" only the second digit is bad
-            for (String value : new String[]{"%zz", "%/0", "%4g", "team%4", "%", "%C3", ""}) {
+            // A bad or truncated percent escape, a lone UTF-8 lead byte, an empty name. A bad first hex digit must
+            // fail the escape itself: read as -1, it would decode to the lead byte F0, which %9F%98%80 completes to
+            // valid UTF-8. The characters just outside the digit ranges must not read as digits, or %4: decodes to J.
+            for (String value : new String[]{
+                    "%zz", "%/0", "%/0%9F%98%80", "%G0%9F%98%80", "%4:", "%4@", "%4G", "%4`", "%4g",
+                    "team%4", "%", "%C3", ""
+            }) {
                 OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
                 String response = ownedByHandshake(securityContext, value, null, false);
                 assertTextReject(response, "400 Bad Request",
