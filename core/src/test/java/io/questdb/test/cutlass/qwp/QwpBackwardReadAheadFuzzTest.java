@@ -97,7 +97,9 @@ public class QwpBackwardReadAheadFuzzTest {
     public void testFuzzCoversEveryShape() throws Exception {
         // Whatever the seed, a run of the default budget covers every type, value shape and kind
         // of data, every batch size and frame size, windows the stream fits to the byte cap as
-        // well as windows of one slice that take more, and first batches that cut a window short.
+        // well as windows of one slice that take more, first batches that cut a window short, and
+        // holes in the frames after the first whose top rows go out in the first batch, which the
+        // stream checks.
         final Coverage coverage = new Coverage();
         TestUtils.assertMemoryLeak(() -> fuzz(TestUtils.generateRandom(LOG, 42, 4_242), Math.max(STREAMS, CYCLE), coverage));
         Assert.assertEquals(VAR_TYPES.length * SHAPE_COUNT * KIND_COUNT, coverage.combinations.size());
@@ -107,6 +109,7 @@ public class QwpBackwardReadAheadFuzzTest {
         Assert.assertTrue("windows of one slice over the cap: " + coverage.windowsOfOneSliceOverCap, coverage.windowsOfOneSliceOverCap > 0);
         Assert.assertTrue("holes: " + coverage.holes, coverage.holes > 0);
         Assert.assertTrue("first batches cut short: " + coverage.cutFirstBatches, coverage.cutFirstBatches > 0);
+        Assert.assertTrue("holes in first-batch frames after the first: " + coverage.firstBatchHolesAfterFirstFrame, coverage.firstBatchHolesAfterFirstFrame > 0);
     }
 
     // Adds up to four holes to data in memory, each in a random byte range of a random column of
@@ -237,6 +240,9 @@ public class QwpBackwardReadAheadFuzzTest {
                 final LongList holes = isCold ? null : addHoles(rnd, frame, ff);
                 if (holes != null) {
                     coverage.holes += holes.size() / 2;
+                    if (f > 0 && streamRows < QwpBackwardReadAhead.INITIAL_WINDOW_ROWS) {
+                        coverage.firstBatchHolesAfterFirstFrame += holes.size() / 2;
+                    }
                 }
                 final String context = "stream " + stream + ", frame " + f + " of " + rows + " rows, batches of " + batchRows
                         + (isRead ? ", read" : isCold ? ", cold" : ", holes " + holes);
@@ -333,6 +339,8 @@ public class QwpBackwardReadAheadFuzzTest {
         final IntHashSet frameRows = new IntHashSet();
         // streams whose first batch read less than whole windows would have
         long cutFirstBatches;
+        // holes in the frames after the first whose top rows go out in the first batch
+        long firstBatchHolesAfterFirstFrame;
         long holes;
         long windowsNearCap;
         long windowsOfOneSliceOverCap;

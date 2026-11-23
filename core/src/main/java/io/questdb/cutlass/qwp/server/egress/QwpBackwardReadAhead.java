@@ -56,14 +56,17 @@ import org.jetbrains.annotations.TestOnly;
  * stream that its client abandons has asked for at most two windows it did not use.
  * <p>
  * A request costs about a microsecond even when its pages are in memory, a cost that
- * dominates on small frames, so the stream asks only for what is missing. It sends the
- * rows of its first batch without delay; after them it asks mincore(2) whether a window
- * is in memory, see {@link FilesFacade#isPageCacheResident(long, long)}, and advises only
- * the ranges that are not. After a window with missing pages it advises the next 1, 3,
- * 7, up to 63 windows without asking, so a cold stream pays for almost no checks. A check
- * costs about as much as a request, so on small frames, whose short ranges keep a wrong
- * guess cheap, see {@link #SMALL_FRAME_RANGE_BYTES}, the stream stops checking after
- * {@link #TRUST_STREAK} frames in a row turn out to be in memory, and trusts the next
+ * dominates on small frames, so the stream asks only for what is missing. It sends its
+ * first window, the top rows of the frame that holds its top row, without delay; for each
+ * window after that it asks mincore(2) whether the window is in memory, see
+ * {@link FilesFacade#isPageCacheResident(long, long)}, and advises only the ranges that
+ * are not. The frames the first batch reaches after the first are no exception: over small
+ * partitions the first batch reaches thousands of frames, and a request for each of their
+ * columns would cost more than the walk. After a window with missing pages it advises the
+ * next 1, 3, 7, up to 63 windows without asking, so a cold stream pays for almost no
+ * checks. A check costs about as much as a request, so on small frames, whose short ranges
+ * keep a wrong guess cheap, see {@link #SMALL_FRAME_RANGE_BYTES}, the stream stops checking
+ * after {@link #TRUST_STREAK} frames in a row turn out to be in memory, and trusts the next
  * ones to be. Before each trusted frame it reads the byte its walk reads first, and goes
  * back to checking as soon as its thread has taken a major page fault, a read from
  * storage, see {@link FilesFacade#getThreadMajorFaults()}, or the stream runs on another
@@ -446,11 +449,14 @@ public class QwpBackwardReadAhead implements Mutable {
 
     // advises the window of the current frame that ends at rowHi and starts in [rowLo, maxWindowLo]
     private long adviseWindow(long rowLo, long rowHi, long maxWindowLo) {
-        // The first batch goes out as soon as its rows are in memory: the first window of a frame
-        // whose top row goes out in it asks for them unchecked. A batch whose rows take more than
-        // a window, of long values or wide rows, checks its later windows as any window after it.
-        // A stream that reads its windows itself checks none: a page in memory costs it a load.
-        if (!isWillNeedSupported || (rowHi == frameRows && frameStreamLo < INITIAL_WINDOW_ROWS)) {
+        // The first batch goes out as soon as its rows are in memory: the stream's first window,
+        // the top rows of the frame that holds its top row, asks for them unchecked. The stream
+        // checks every other window, those of the first batch included: a batch whose rows take
+        // more than a window, of long values or wide rows, spans several windows, and a batch
+        // over small frames reaches thousands of frames, whose checks and trust cost far less
+        // than a request for each of their columns. A stream that reads its windows itself
+        // checks none: a page in memory costs it a load.
+        if (!isWillNeedSupported || (rowHi == frameRows && frameStreamLo == 0)) {
             return adviseRows(rowLo, rowHi, maxWindowLo, false);
         }
         return isSmallFrame ? adviseSmallFrame() : adviseUnlessResident(rowLo, rowHi, maxWindowLo);

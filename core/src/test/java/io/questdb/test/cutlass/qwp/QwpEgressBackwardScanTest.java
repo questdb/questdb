@@ -285,10 +285,10 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
 
     @Test
     public void testBackwardScanDoesNotAskForFramesInMemory() throws Exception {
-        // Past its first batch, a backward scan asks the OS for no frame that is in memory: it
-        // checks the frames, and trusts small ones after a streak, until its thread reads from
-        // storage or the stream moves to another thread. Every query starts afresh, however it
-        // parks: the frames of its first batch go out unchecked.
+        // Past its first frame, a backward scan asks the OS for no frame that is in memory: it
+        // checks the frames, those its first batch reaches included, and trusts small ones after
+        // a streak, until its thread reads from storage or the stream moves to another thread.
+        // Every query starts afresh, however it parks: its first frame goes out unchecked.
         TestUtils.assertMemoryLeak(() -> {
             final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(true) {
                 @Override
@@ -310,23 +310,24 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                 serverMain.awaitTable("t");
                 final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final String desc = "SELECT x, d FROM t ORDER BY ts DESC";
-                // the 17 days whose top rows go out before row 16,384, at 16 bytes a row
-                final long firstBatchBytes = 17_000 * 16L;
+                // the last day, whose rows go out first, at 16 bytes a row; the first batch
+                // reaches 17 days
+                final long firstFrameBytes = 1_000 * 16L;
                 try (QwpQueryClient client = connect("")) {
                     for (int run = 0; run < 2; run++) {
                         final long checks = ff.residencyCheckCount();
-                        assertReadAhead(ff, metrics, true, firstBatchBytes, () -> Assert.assertEquals(descendingLongs(60_000, 1), column(qwpRows(client, desc), 0)));
+                        assertReadAhead(ff, metrics, true, firstFrameBytes, () -> Assert.assertEquals(descendingLongs(60_000, 1), column(qwpRows(client, desc), 0)));
                         // a column at a time, at least the streak before the stream trusted, at
-                        // most every frame after the first batch
+                        // most every frame after the first
                         final long streamChecks = ff.residencyCheckCount() - checks;
-                        Assert.assertTrue("checks=" + streamChecks, streamChecks >= 2L * QwpBackwardReadAhead.TRUST_STREAK && streamChecks <= 2L * 43);
+                        Assert.assertTrue("checks=" + streamChecks, streamChecks >= 2L * QwpBackwardReadAhead.TRUST_STREAK && streamChecks <= 2L * 59);
                     }
                 }
                 // parked after every 7-row batch, the stream resumes on either worker thread
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=7;")
                         .withInitialCredit(1)) {
                     client.connect();
-                    assertReadAhead(ff, metrics, true, firstBatchBytes, () -> Assert.assertEquals(descendingLongs(60_000, 1), column(qwpRows(client, desc), 0)));
+                    assertReadAhead(ff, metrics, true, firstFrameBytes, () -> Assert.assertEquals(descendingLongs(60_000, 1), column(qwpRows(client, desc), 0)));
                 }
             }
         });
