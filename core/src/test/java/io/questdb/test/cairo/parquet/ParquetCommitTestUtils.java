@@ -26,6 +26,7 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -42,7 +43,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
@@ -154,6 +157,28 @@ public final class ParquetCommitTestUtils {
         try (TableReader reader = engine.getReader(table)) {
             reader.openPartition(partitionIndex);
             return reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getRowGroupSize(rowGroup);
+        }
+    }
+
+    /**
+     * The designated timestamp bounds and the row count of each row group of a partition's parquet file, as its
+     * {@code _pm} records them: one "min max rows" line per row group, tab-separated. The table's timestamps must be
+     * in micros.
+     */
+    public static String parquetRowGroupTimestampBounds(CairoEngine engine, String table, int partitionIndex) {
+        try (TableReader reader = engine.getReader(table)) {
+            reader.openPartition(partitionIndex);
+            final ParquetMetaFileReader meta = reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata();
+            final int timestampIndex = meta.getDesignatedTimestampColumnIndex();
+            Assert.assertTrue("no designated timestamp in the parquet file", timestampIndex >= 0);
+            final StringSink bounds = new StringSink();
+            for (int rg = 0, n = meta.getRowGroupCount(); rg < n; rg++) {
+                MicrosFormatUtils.appendDateTimeUSec(bounds, meta.getRowGroupMinTimestamp(rg, timestampIndex));
+                bounds.put('\t');
+                MicrosFormatUtils.appendDateTimeUSec(bounds, meta.getRowGroupMaxTimestamp(rg, timestampIndex));
+                bounds.put('\t').put(meta.getRowGroupSize(rg)).put('\n');
+            }
+            return bounds.toString();
         }
     }
 

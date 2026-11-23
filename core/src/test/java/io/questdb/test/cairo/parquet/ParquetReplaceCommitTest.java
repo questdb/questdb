@@ -68,6 +68,7 @@ import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.assertTwinsEq
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.indexFiles;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCount;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupTimestampBounds;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetUnusedBytes;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionDirCount;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
@@ -1292,6 +1293,16 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceOverTimestampSpanningThreeRowGroups() throws Exception {
+        assertMemoryLeak(() -> assertReplaceOverTimestampSpanningThreeRowGroups(false));
+    }
+
+    @Test
+    public void testReplaceOverTimestampSpanningThreeRowGroupsDedup() throws Exception {
+        assertMemoryLeak(() -> assertReplaceOverTimestampSpanningThreeRowGroups(true));
+    }
+
+    @Test
     public void testReplaceRemovesAllPartitionsFormatParquet() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(true);
@@ -1619,9 +1630,18 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
      * partitions before {@code convertBefore} to parquet.
      */
     private static void createNarrowTwins(String timestampType, String natRows, String convertBefore) throws Exception {
-        final String ddl = "CREATE TABLE %s (id INT, ts %s) TIMESTAMP(ts) PARTITION BY DAY WAL";
-        execute(String.format(ddl, "nat", timestampType));
-        execute(String.format(ddl, "pq", timestampType));
+        createNarrowTwins(timestampType, false, natRows, convertBefore);
+    }
+
+    /**
+     * As {@link #createNarrowTwins(String, String, String)}; with isDedup, both tables are
+     * {@code DEDUP UPSERT KEYS(ts, id)}.
+     */
+    private static void createNarrowTwins(String timestampType, boolean isDedup, String natRows, String convertBefore) throws Exception {
+        final String ddl = "CREATE TABLE %s (id INT, ts %s) TIMESTAMP(ts) PARTITION BY DAY WAL%s";
+        final String dedupClause = isDedup ? " DEDUP UPSERT KEYS(ts, id)" : "";
+        execute(String.format(ddl, "nat", timestampType, dedupClause));
+        execute(String.format(ddl, "pq", timestampType, dedupClause));
         execute("INSERT INTO nat " + natRows);
         drainWalQueue();
         execute("INSERT INTO pq SELECT * FROM nat");
@@ -1823,6 +1843,114 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                 drainWalQueue();
                 assertTwinsEqual(engine, sqlExecutionContext);
             }
+        }
+    }
+
+    /**
+     * Day 1 holds six rows at 06:00, T, in row groups of 4: row group 0 (00:00 to T) ends at T, row group 1 holds only
+     * T and row group 2 (T to 12:00) starts at T. Each case commits a replace range that holds every row at T to fresh
+     * twins: [T, T], or one edge on T and the other inside a row group, without and with new rows. The commit drops
+     * row group 1, and every other row group the range covers, in place. New rows at T merge into row group 2, the
+     * last row group that holds T. No row group needs its timestamps decoded: the range holds the min or the max row
+     * of each row group it filters. On DEDUP twins the commit takes the same paths: a replace commit never dedups,
+     * so it does not coalesce the tied row groups into a rewrite.
+     */
+    private void assertReplaceOverTimestampSpanningThreeRowGroups(boolean isDedup) throws Exception {
+        final String rows = """
+                VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T02:00:00.000000Z'),
+                    (3, '2024-01-01T04:00:00.000000Z'),
+                    (4, '2024-01-01T06:00:00.000000Z'),
+                    (5, '2024-01-01T06:00:00.000000Z'),
+                    (6, '2024-01-01T06:00:00.000000Z'),
+                    (7, '2024-01-01T06:00:00.000000Z'),
+                    (8, '2024-01-01T06:00:00.000000Z'),
+                    (9, '2024-01-01T06:00:00.000000Z'),
+                    (10, '2024-01-01T08:00:00.000000Z'),
+                    (11, '2024-01-01T10:00:00.000000Z'),
+                    (12, '2024-01-01T12:00:00.000000Z'),
+                    (13, '2024-01-01T14:00:00.000000Z'),
+                    (14, '2024-01-01T16:00:00.000000Z'),
+                    (15, '2024-01-01T18:00:00.000000Z'),
+                    (16, '2024-01-01T20:00:00.000000Z'),
+                    (17, '2024-01-02T00:00:00.000000Z'),
+                    (18, '2024-01-02T12:00:00.000000Z')
+                """;
+        final String layout = """
+                2024-01-01T00:00:00.000000Z\t2024-01-01T06:00:00.000000Z\t4
+                2024-01-01T06:00:00.000000Z\t2024-01-01T06:00:00.000000Z\t4
+                2024-01-01T06:00:00.000000Z\t2024-01-01T12:00:00.000000Z\t4
+                2024-01-01T14:00:00.000000Z\t2024-01-01T20:00:00.000000Z\t4
+                """;
+        final String[] none = new String[0];
+        // range lo and hi on day 1 (inclusive), the times of the commit's new rows (ids 1001, 1002, ... in that
+        // order), the row groups the commit drops, and day 1's rows after it, as id@time
+        final Object[][] cases = {
+                // [T, T]: row groups 0 and 2 lose their T rows, row group 1 goes
+                {"06:00:00.000000", "06:00:00.000000", none, 1,
+                        "1@00:00 2@02:00 3@04:00 10@08:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                // [T, T] with more rows at T than a row group holds
+                {"06:00:00.000000", "06:00:00.000000", new String[]{"06:00", "06:00", "06:00", "06:00", "06:00"}, 1,
+                        "1@00:00 2@02:00 3@04:00 1001@06:00 1002@06:00 1003@06:00 1004@06:00 1005@06:00 10@08:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                // [T, 09:00): the range ends between row group 2's rows
+                {"06:00:00.000000", "08:59:59.999999", none, 1,
+                        "1@00:00 2@02:00 3@04:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                {"06:00:00.000000", "08:59:59.999999", new String[]{"06:00", "07:00"}, 1,
+                        "1@00:00 2@02:00 3@04:00 1001@06:00 1002@07:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                {"06:00:00.000000", "08:59:59.999999", new String[]{"07:00"}, 1,
+                        "1@00:00 2@02:00 3@04:00 1001@07:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                // [T, 17:00): the range covers row group 2 too and ends between row group 3's rows
+                {"06:00:00.000000", "16:59:59.999999", none, 2,
+                        "1@00:00 2@02:00 3@04:00 15@18:00 16@20:00"},
+                {"06:00:00.000000", "16:59:59.999999", new String[]{"06:00", "16:00"}, 1,
+                        "1@00:00 2@02:00 3@04:00 1001@06:00 1002@16:00 15@18:00 16@20:00"},
+                // [03:00, T]: the range starts between row group 0's rows
+                {"03:00:00.000000", "06:00:00.000000", none, 1,
+                        "1@00:00 2@02:00 10@08:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                {"03:00:00.000000", "06:00:00.000000", new String[]{"03:00", "06:00"}, 1,
+                        "1@00:00 2@02:00 1001@03:00 1002@06:00 10@08:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+                {"03:00:00.000000", "06:00:00.000000", new String[]{"05:00"}, 1,
+                        "1@00:00 2@02:00 1001@05:00 10@08:00 11@10:00 12@12:00 13@14:00 14@16:00 15@18:00 16@20:00"},
+        };
+        for (Object[] testCase : cases) {
+            final String lo = "2024-01-01T" + testCase[0] + "Z";
+            final String hi = "2024-01-01T" + testCase[1] + "Z";
+            final String[] newRows = (String[]) testCase[2];
+            final int drops = (int) testCase[3];
+            final String rowsLeft = (String) testCase[4];
+            final String range = "range [" + lo + ", " + hi + "], new rows " + Arrays.toString(newRows);
+            final String[] newRowTs = new String[newRows.length];
+            for (int i = 0; i < newRows.length; i++) {
+                newRowTs[i] = "2024-01-01T" + newRows[i] + ":00.000000Z";
+            }
+
+            createNarrowTwins("TIMESTAMP", isDedup, rows, "2024-01-02");
+            Assert.assertEquals("layout, " + range, layout, parquetRowGroupTimestampBounds(engine, "pq", 0));
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
+            final long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            replaceBothFromQuery("SELECT (1000 + x)::INT id FROM long_sequence(%d)", lo, hi, newRowTs);
+            Assert.assertEquals(
+                    "paths, " + range,
+                    "inPlace=1, rewrite=0, dropInPlace=" + drops + ", dropRewrite=0, replaceNoop=0, replaceRemoval=0, dedupIdentical=0",
+                    paths.toString()
+            );
+            Assert.assertEquals("timestamp decodes, " + range, 0, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals("name txn, " + range, txnBefore, partitionNameTxn(engine, "pq", 0));
+            final StringSink expected = new StringSink();
+            expected.put("id\tts\n");
+            for (String row : rowsLeft.split(" ")) {
+                final int at = row.indexOf('@');
+                expected.put(row, 0, at).put("\t2024-01-01T").put(row, at + 1, row.length()).put(":00.000000Z\n");
+            }
+            assertQuery("SELECT id, ts FROM pq WHERE ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            execute("DROP TABLE nat");
+            execute("DROP TABLE pq");
         }
     }
 

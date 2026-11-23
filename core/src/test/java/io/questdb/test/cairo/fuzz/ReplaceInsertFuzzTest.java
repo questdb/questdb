@@ -145,14 +145,25 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    // Half the runs keep rows at one timestamp rare, as the other fuzz tests do. The other half write long runs of rows
+    // at one timestamp, so that one timestamp often spans three of the small row groups (one row group ends at it, the
+    // next holds only it, the one after starts at it) and replace windows land on it. A run of rows at one timestamp
+    // must outgrow a row group, of up to 34 rows here, hence the high probability.
+    private static double rndEqualTsRowsProb(Rnd rnd) {
+        final double equalTsRowsProb = rnd.nextBoolean() ? 0.01 : 0.9 + 0.08 * rnd.nextDouble();
+        LOG.info().$("rows at one timestamp [equalTsRowsProb=").$(equalTsRowsProb).I$();
+        return equalTsRowsProb;
+    }
+
     private void runReplaceOnFormatParquetTable(int timestampType) throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setTimestampType(timestampType);
         setCreateWalAsParquet(true);
+        final double equalTsRowsProb = rndEqualTsRowsProb(rnd);
         setFuzzProbabilities(
                 0.01, 0.2, 0.1, 0.01,
                 0.02, 0.02, 0.02, 0,
-                1.0, 0.01, 0.01,
+                1.0, equalTsRowsProb, 0.01,
                 0, 0, 0, 0, 0,
                 0.5, 0.05, 0
         );
@@ -168,10 +179,11 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     private void runReplaceWithParquetConversions(int timestampType) throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setTimestampType(timestampType);
+        final double equalTsRowsProb = rndEqualTsRowsProb(rnd);
         setFuzzProbabilities(
                 0.01, 0.2, 0.1, 0.01,
                 0.02, 0.02, 0.02, 0,
-                1.0, 0.01, 0.01,
+                1.0, equalTsRowsProb, 0.01,
                 0.2, 0.02, 0, 0, 0,
                 0.5, 0.05, 0
         );
