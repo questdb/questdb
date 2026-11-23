@@ -112,7 +112,7 @@ public class QwpBackwardReadAheadBenchmark {
             final MappedFrame frame = frames.getQuick(f);
             readAhead.ofFrame(frame, frameRows);
             for (long hi = frameRows; hi > 0; hi -= SLICE) {
-                bytes += readAhead.advise(Math.max(0, hi - SLICE));
+                bytes += readAhead.advise(Math.max(0, hi - SLICE), 0);
             }
         }
         readAhead.clear();

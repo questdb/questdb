@@ -76,11 +76,13 @@ import org.jetbrains.annotations.TestOnly;
  * {@link FilesFacade#touchPages(long, long)}: the OS reads them in large requests, and the
  * walk down finds them in page cache. A read waits for storage, and running further ahead
  * would gain nothing, so the stream reads a window only when the slice it appends reaches
- * below the rows it has read. The first batch waits for the windows that hold its rows, not
- * for the frame, the reads between two batches stay within the rows of the batch and one
- * window, and a stream that its client abandons has read at most one window it did not use.
- * Reading a page that is in memory costs a load, so the stream checks nothing. It asks the
- * OS for nothing either, so it counts none of these bytes as read ahead.
+ * below the rows it has read. While the first batch fills, no window reaches below the
+ * lowest row the batch takes, but to hold a slice of rows, so the first batch waits for its
+ * own rows only; the windows after it keep the size they planned and span batches, which
+ * reads in larger requests. The reads between two batches stay within the rows of the batch
+ * and one window, and a stream that its client abandons has read at most one window it did
+ * not use. Reading a page that is in memory costs a load, so the stream checks nothing. It
+ * asks the OS for nothing either, so it counts none of these bytes as read ahead.
  */
 public class QwpBackwardReadAhead implements Mutable {
     // The rows of the first batch: the egress fills a batch with at most this many rows.
@@ -161,9 +163,11 @@ public class QwpBackwardReadAhead implements Mutable {
      * ahead; ranges it finds in memory, which it does not ask for, do not count. Where the OS
      * does not read advised pages, the stream reads the next window itself when the slice
      * reaches below the rows it has read, which waits for storage, asks the OS for nothing, and
-     * returns 0.
+     * returns 0. That window reads no row below {@code batchLo}, the lowest row of the frame the
+     * batch being built may take, unless it needs them to hold a slice of rows; a {@code batchLo}
+     * of 0 lets it span batches. Advice ignores {@code batchLo}: it does not wait for storage.
      */
-    public long advise(long lo) {
+    public long advise(long lo, long batchLo) {
         // nothing left to read: no frame, a parquet, custom or empty frame, or every row is advised
         if (advisedLo == 0) {
             return 0;
@@ -177,7 +181,13 @@ public class QwpBackwardReadAhead implements Mutable {
             windowRows = Math.min(maxWindowRows, windowRows * 2);
         }
         // the window always holds the slice itself
-        final long rowLo = Math.max(0, Math.min(lo, advisedLo - windowRows));
+        long rowLo = Math.max(0, Math.min(lo, advisedLo - windowRows));
+        if (!isWillNeedSupported) {
+            // A read waits for storage: the window reads no row the batch does not take, which a
+            // later batch reads when it needs it, but holds at least a slice of rows. The windows
+            // after it double from the size this one planned.
+            rowLo = Math.max(rowLo, Math.min(lo, Math.min(batchLo, advisedLo - MIN_WINDOW_ROWS)));
+        }
         // Long values can take more than the byte cap: the window then starts higher, never
         // above the slice or less than a slice below advisedLo. A small frame goes in one window.
         final long maxWindowLo = isSmallFrame || varSizeColumns.size() == 0

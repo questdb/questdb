@@ -629,6 +629,82 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     }
 
     @Test
+    public void testFirstBatchOfLongRowsReadsItsOwnRowsOnly() throws Exception {
+        // A stream that reads its windows itself waits for each read, so its first batch reads no
+        // row below the lowest one it takes, but to hold a slice of rows. Rows of 1,124 bytes, a
+        // LONG, a 16-byte aux entry and 1,100 bytes of VARCHAR data, fit 14,926 to a 16 MiB window:
+        // the first batch of 16,384 rows reads a window and the 1,458 rows it leaves, not a second
+        // window; one of 1,000 rows reads 1,024; one over frames of 3,000 rows reads five frames
+        // and the top 1,384 rows of the sixth. The batches after the first read whole windows.
+        // MADV_WILLNEED windows go a window ahead of the walk, whatever the batch takes. A batch of
+        // 16,384 such rows takes more than the send buffer, so the server sends it in parts; credit
+        // for one part parks the stream after each, so the counts the client sees in the first
+        // part are all the stream asked for, and read, for the first batch. The client cancels at
+        // the last part of the first batch, and grants credit for it before the server reads the
+        // cancel, so the stream builds a second batch.
+        for (boolean isWillNeed : new boolean[]{true, false}) {
+            TestUtils.assertMemoryLeak(() -> {
+                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
+                // These batches take 18 MB: a server that fragments its sends would park after
+                // every chunk of them.
+                try (TestServerMain serverMain = startServerWithRetry(() -> startWithEnvVariables(
+                        ff,
+                        PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "1000000",
+                        PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000000"
+                ))) {
+                    // the server booted for the other read-ahead way left its tables
+                    serverMain.execute("DROP TABLE IF EXISTS one_day");
+                    serverMain.execute("DROP TABLE IF EXISTS days");
+                    // one day of 40,000 rows, one frame
+                    serverMain.execute("CREATE TABLE one_day (x LONG, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    serverMain.execute("INSERT INTO one_day SELECT x, rpad(x::VARCHAR, 1_100, 'v'), ((x - 1) * 2_000_000L)::TIMESTAMP FROM long_sequence(40_000)");
+                    // fourteen days of 3,000 rows, a frame a day
+                    serverMain.execute("CREATE TABLE days (x LONG, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    serverMain.execute("INSERT INTO days SELECT x, rpad(x::VARCHAR, 1_100, 'v'), ((x - 1) * 28_800_000L)::TIMESTAMP FROM long_sequence(42_000)");
+                    serverMain.awaitTable("one_day");
+                    serverMain.awaitTable("days");
+                    final long rowBytes = 8 + 16 + 1_100;
+
+                    // rows of the first batch, its first x, then the bytes asked for and the bytes
+                    // read when it goes out, and once the stream has built the second batch
+                    long[] reads = firstBatchReads(ff, "", 16_384, "SELECT x, v FROM one_day ORDER BY ts DESC");
+                    Assert.assertEquals(16_384, reads[0]);
+                    Assert.assertEquals(40_000, reads[1]);
+                    // MADV_WILLNEED: the first window, then the next two from the middle of each
+                    // window before, the whole frame; reading: the 16,384 rows of the first batch
+                    Assert.assertEquals(isWillNeed ? 40_000 * rowBytes : 0, reads[2]);
+                    Assert.assertEquals(isWillNeed ? 0 : 16_384 * rowBytes, reads[3]);
+                    // the second batch reads a window and the rest of the frame
+                    Assert.assertEquals(isWillNeed ? 40_000 * rowBytes : 0, reads[4]);
+                    Assert.assertEquals(isWillNeed ? 0 : 40_000 * rowBytes, reads[5]);
+
+                    reads = firstBatchReads(ff, "max_batch_rows=1000;", 1_000, "SELECT x, v FROM one_day ORDER BY ts DESC");
+                    Assert.assertEquals(1_000, reads[0]);
+                    Assert.assertEquals(40_000, reads[1]);
+                    // MADV_WILLNEED: the aux entries of the 16,384 rows the first window plans, and
+                    // the 14,926 rows it holds; reading: a slice of rows
+                    final long firstWindowBytes = 16_384 * 16 + 14_926 * (rowBytes - 16);
+                    Assert.assertEquals(isWillNeed ? firstWindowBytes : 0, reads[2]);
+                    Assert.assertEquals(isWillNeed ? 0 : 1_024 * rowBytes, reads[3]);
+                    // the second batch reads the window below the slice
+                    Assert.assertEquals(isWillNeed ? firstWindowBytes : 0, reads[4]);
+                    Assert.assertEquals(isWillNeed ? 0 : (1_024 + 14_926) * rowBytes, reads[5]);
+
+                    reads = firstBatchReads(ff, "", 16_384, "SELECT x, v FROM days ORDER BY ts DESC");
+                    Assert.assertEquals(16_384, reads[0]);
+                    Assert.assertEquals(42_000, reads[1]);
+                    // MADV_WILLNEED: the six frames the first batch reaches, whole
+                    Assert.assertEquals(isWillNeed ? 18_000 * rowBytes : 0, reads[2]);
+                    Assert.assertEquals(isWillNeed ? 0 : 16_384 * rowBytes, reads[3]);
+                    // the second batch reaches the eleventh frame, and reads each frame it reaches whole
+                    Assert.assertEquals(isWillNeed ? 33_000 * rowBytes : 0, reads[4]);
+                    Assert.assertEquals(isWillNeed ? 0 : 33_000 * rowBytes, reads[5]);
+                }
+            });
+        }
+    }
+
+    @Test
     public void testFirstBatchWaitsForItsOwnRowsOnly() throws Exception {
         // A descending stream over data not in memory asks for the rows of its first batch,
         // and of the next window, and sends the batch: by then MADV_WILLNEED windows have asked for the top 16,384
@@ -1293,6 +1369,51 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         Assert.assertEquals(desc, reversed(qwpRows(client, asc)), descRows);
         // oracle 2: the engine's own cursor; x is the first column of every table here
         Assert.assertEquals(desc, inProcessRows(serverMain, desc, "x"), column(descRows, 0));
+    }
+
+    // Runs the query with credit for one part of a batch at a time, and cancels it once the first
+    // batch, of firstBatchRows rows, has arrived. Returns the rows that arrived by then, the first
+    // x, the bytes the stream asked the OS for and the bytes it read itself when the first part
+    // arrived, and the same by the end of the query: the client grants credit for the last part
+    // of the first batch before the server reads the cancel, so the stream builds a second batch.
+    private static long[] firstBatchReads(ReadAheadFilesFacade ff, String options, long firstBatchRows, String sql) {
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;" + options)
+                .withInitialCredit(1)) {
+            client.connect();
+            final long advisedBefore = ff.advisedBytes();
+            final long touchedBefore = ff.touchedBytes();
+            final long[] reads = {0, -1, -1, -1, -1, -1};
+            final byte[] status = {0};
+            client.execute(sql, new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    if (reads[1] < 0) {
+                        reads[1] = batch.getLongValue(0, 0);
+                        reads[2] = ff.advisedBytes() - advisedBefore;
+                        reads[3] = ff.touchedBytes() - touchedBefore;
+                    }
+                    if (reads[0] < firstBatchRows) {
+                        reads[0] += batch.getRowCount();
+                        if (reads[0] >= firstBatchRows) {
+                            client.cancel();
+                        }
+                    }
+                }
+
+                @Override
+                public void onEnd(long totalRows) {
+                }
+
+                @Override
+                public void onError(byte s, String message) {
+                    status[0] = s;
+                }
+            });
+            Assert.assertEquals(QwpConstants.STATUS_CANCELLED, status[0]);
+            reads[4] = ff.advisedBytes() - advisedBefore;
+            reads[5] = ff.touchedBytes() - touchedBefore;
+            return reads;
+        }
     }
 
     private QwpQueryClient connect(String options) {

@@ -44,9 +44,9 @@ import org.junit.Test;
  * reads its row, and no window may take more than the byte cap unless it holds one slice of rows.
  * Over data in memory but for random holes, the stream must ask for every hole before the walk
  * reads it. Where the OS does not read advised pages, the stream must read every byte once itself,
- * before the walk reads its row, in the same windows, and read a window only when the slice
- * reaches below the rows it has read. None may ask for, or read, anything outside the published
- * extents.
+ * before the walk reads its row, in the same windows, read a window only when the slice reaches
+ * below the rows it has read, and read no row below the first batch but to hold a slice of rows.
+ * None may ask for, or read, anything outside the published extents.
  * <p>
  * The first var-size column of a stream cycles through every type, value shape and kind of data,
  * so every run covers each combination; the rest is random. A run prints its seeds, which
@@ -96,8 +96,8 @@ public class QwpBackwardReadAheadFuzzTest {
     @Test
     public void testFuzzCoversEveryShape() throws Exception {
         // Whatever the seed, a run of the default budget covers every type, value shape and kind
-        // of data, every batch size and frame size, and windows the stream fits to the byte cap
-        // as well as windows of one slice that take more.
+        // of data, every batch size and frame size, windows the stream fits to the byte cap as
+        // well as windows of one slice that take more, and first batches that cut a window short.
         final Coverage coverage = new Coverage();
         TestUtils.assertMemoryLeak(() -> fuzz(TestUtils.generateRandom(LOG, 42, 4_242), Math.max(STREAMS, CYCLE), coverage));
         Assert.assertEquals(VAR_TYPES.length * SHAPE_COUNT * KIND_COUNT, coverage.combinations.size());
@@ -106,6 +106,7 @@ public class QwpBackwardReadAheadFuzzTest {
         Assert.assertTrue("windows near the cap: " + coverage.windowsNearCap, coverage.windowsNearCap > 0);
         Assert.assertTrue("windows of one slice over the cap: " + coverage.windowsOfOneSliceOverCap, coverage.windowsOfOneSliceOverCap > 0);
         Assert.assertTrue("holes: " + coverage.holes, coverage.holes > 0);
+        Assert.assertTrue("first batches cut short: " + coverage.cutFirstBatches, coverage.cutFirstBatches > 0);
     }
 
     // Adds up to four holes to data in memory, each in a random byte range of a random column of
@@ -204,7 +205,13 @@ public class QwpBackwardReadAheadFuzzTest {
             ff.majorFaults = -1;
         }
         final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+        // A stream that reads its windows itself, but is not told where the first batch ends: the
+        // first batch reads less than this one when the batch cuts a window.
+        final RecordingFacade shadowFf = isRead ? new RecordingFacade(false) : null;
+        final QwpBackwardReadAhead shadow = isRead ? new QwpBackwardReadAhead(shadowFf) : null;
         long batchLeft = batchRows;
+        // rows of the stream appended so far
+        long streamRows = 0;
         for (int f = 0, frames = 1 + rnd.nextInt(3); f < frames; f++) {
             final int frameRowsIndex = rnd.nextInt(FRAME_ROWS.length);
             final long rows = FRAME_ROWS[frameRowsIndex];
@@ -218,9 +225,15 @@ public class QwpBackwardReadAheadFuzzTest {
                 }
                 if (f == 0) {
                     readAhead.of(frame.metadata());
+                    if (shadow != null) {
+                        shadow.of(frame.metadata());
+                    }
                 }
                 ff.clear();
                 ff.clearMisses();
+                if (shadowFf != null) {
+                    shadowFf.clear();
+                }
                 final LongList holes = isCold ? null : addHoles(rnd, frame, ff);
                 if (holes != null) {
                     coverage.holes += holes.size() / 2;
@@ -228,20 +241,30 @@ public class QwpBackwardReadAheadFuzzTest {
                 final String context = "stream " + stream + ", frame " + f + " of " + rows + " rows, batches of " + batchRows
                         + (isRead ? ", read" : isCold ? ", cold" : ", holes " + holes);
                 readAhead.ofFrame(frame, rows);
+                if (shadow != null) {
+                    shadow.ofFrame(frame, rows);
+                }
                 // the window checks read where windows start from the requests of a fixed-size column
                 final boolean isWindowChecked = isCold && fixedCount > 0 && !isHostile;
                 final long values = fixedCount > 0 ? frame.getPageAddress(0) : 0;
                 final long valueSize = fixedCount > 0 ? ColumnType.sizeOf(types[0]) : 0;
                 long advisedLo = rows;
                 long previousWindowRows = 0;
+                // the first batch cut the window before, so the window after it doubles what was planned
+                boolean isPreviousCut = false;
                 for (long emitted = 0; emitted < rows; ) {
                     if (batchLeft == 0) {
                         batchLeft = batchRows;
                     }
                     final long slice = Math.min(Math.min(batchLeft, rows - emitted), SLICE_ROWS);
                     final long lo = rows - emitted - slice;
+                    // as the egress does, the first batch tells the read-ahead the lowest row it takes
+                    final long batchLo = streamRows < batchRows ? Math.max(0, lo + slice - batchLeft) : 0;
                     final long requested = ff.requestedBytes();
-                    final long counted = readAhead.advise(lo);
+                    final long counted = readAhead.advise(lo, batchLo);
+                    if (shadow != null) {
+                        shadow.advise(lo, 0);
+                    }
                     // only what the stream asks the OS for counts as read ahead
                     Assert.assertEquals(context, isRead ? 0 : ff.requestedBytes() - requested, counted);
                     if (isWindowChecked) {
@@ -268,9 +291,15 @@ public class QwpBackwardReadAheadFuzzTest {
                             } else if (windowBytes >= QwpBackwardReadAhead.MAX_WINDOW_BYTES * 3 / 4) {
                                 coverage.windowsNearCap++;
                             }
-                            if (previousWindowRows > 0 && windowLo > 0) {
+                            // a read reaches no row below the first batch, but to hold a slice of rows
+                            final long cutLo = Math.min(batchLo, advisedLo - SLICE_ROWS);
+                            if (isRead && batchLo > 0) {
+                                Assert.assertTrue(context + ": window [" + windowLo + ", " + advisedLo + ") below the first batch from " + batchLo, windowLo >= cutLo);
+                            }
+                            if (previousWindowRows > 0 && windowLo > 0 && !isPreviousCut) {
                                 Assert.assertTrue(context + ": window of " + windowRows + " rows after " + previousWindowRows, windowRows <= 2 * previousWindowRows);
                             }
+                            isPreviousCut = isRead && batchLo > 0 && windowLo == cutLo;
                             previousWindowRows = windowRows;
                             advisedLo = windowLo;
                         }
@@ -282,6 +311,12 @@ public class QwpBackwardReadAheadFuzzTest {
                     }
                     emitted += slice;
                     batchLeft -= slice;
+                    streamRows += slice;
+                    if (shadow != null && isWindowChecked && streamRows == batchRows
+                            && ff.lowestWithin(values, values + valueSize * rows) > shadowFf.lowestWithin(values, values + valueSize * rows)) {
+                        // the first batch ends having read less than the stream that is not told where it ends
+                        coverage.cutFirstBatches++;
+                    }
                 }
                 if (isCold) {
                     frame.assertTiled(context, ff);
@@ -296,6 +331,8 @@ public class QwpBackwardReadAheadFuzzTest {
         // the type, shape and kind of data of the first var-size column, as an index into the cycle
         final IntHashSet combinations = new IntHashSet();
         final IntHashSet frameRows = new IntHashSet();
+        // streams whose first batch read less than whole windows would have
+        long cutFirstBatches;
         long holes;
         long windowsNearCap;
         long windowsOfOneSliceOverCap;

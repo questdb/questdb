@@ -2128,6 +2128,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             final int dictBudgetWireBytes = (bufSize * 6) / 10;
             boolean isCursorExhausted;
             boolean dictCapHit = false;
+            // The first batch of a query (batch_seq == 0) carries the schema inline;
+            // continuation batches carry rows only.
+            final boolean isFirstBatch = state.getStreamingBatchSeq() == 0;
             if (isPageFrame) {
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
@@ -2146,7 +2149,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                         // Readahead only follows forward access: have this slice and the rows
                         // below it on their way into memory before the walk down reads them.
-                        metrics.markReadAhead(state.getBackwardReadAhead().advise(lo));
+                        // The first batch goes out as soon as its own rows are in memory, so it
+                        // tells the read-ahead the lowest row of the frame it can take; later
+                        // batches let windows span batches, which reads in larger requests.
+                        final long batchLo = isFirstBatch ? Math.max(0, lo + sliceRows - rowsToAdd) : 0;
+                        metrics.markReadAhead(state.getBackwardReadAhead().advise(lo, batchLo));
                     }
                     batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows, isPageFrameBackward);
                     state.consumePageFrameRows(sliceRows);
@@ -2170,9 +2177,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 isCursorExhausted = !hasMore;
             }
             int rowsBuffered = batchBuffer.getRowCount();
-            // The first batch of a query (batch_seq == 0) carries the schema inline;
-            // continuation batches carry rows only.
-            boolean isFirstBatch = state.getStreamingBatchSeq() == 0;
             // Empty trailing batch AND we've already shipped at least one RESULT_BATCH on
             // this query -- skip straight to RESULT_END. The getStreamingBatchSeq() > 0
             // guard is load-bearing: without it, an empty cursor would take this shortcut

@@ -201,8 +201,8 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                     long advisedBytes = 0;
                     for (long emitted = 0; emitted < rows; ) {
                         final long slice = Math.min(1_024, rows - emitted);
-                        advisedBytes += adviseFrame.advise(rows - emitted - slice);
-                        Assert.assertEquals(context, 0, readFrame.advise(rows - emitted - slice));
+                        advisedBytes += adviseFrame.advise(rows - emitted - slice, 0);
+                        Assert.assertEquals(context, 0, readFrame.advise(rows - emitted - slice, 0));
                         emitted += slice;
                     }
                     final long frameBytes = frame.getFormat() == PartitionFormat.NATIVE ? frameBytes(frame, metadata) : 0;
