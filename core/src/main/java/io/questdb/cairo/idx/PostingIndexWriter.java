@@ -34,6 +34,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -57,6 +58,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectStackPool;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
@@ -65,6 +67,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.tasks.PostingSealPurgeTask;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
@@ -165,6 +168,10 @@ public class PostingIndexWriter implements IndexWriter {
     public static final java.util.concurrent.atomic.AtomicLong COVERING_COW_MIGRATE_COUNT = new java.util.concurrent.atomic.AtomicLong();
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
+    // How a seal makes the files it wrote durable; see sealFlushGrade().
+    private static final int SEAL_FLUSH_ASYNC = 1;
+    private static final int SEAL_FLUSH_NONE = 0;
+    private static final int SEAL_FLUSH_ORDERED = 2;
     private final double alignedBitWidthThreshold;
     // v2 chain helper: owns the in-memory mirror of the chain header,
     // exposes append/extend/recovery primitives. Single instance per writer
@@ -284,6 +291,10 @@ public class PostingIndexWriter implements IndexWriter {
     // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
     // overridden via setCommitMode() while the owning table is not yet enrolled in adaptive.
     private int indexCommitMode;
+    // The owning table writer's txn record, read when a seal decides whether its entry is stamped above the
+    // committed txn (see sealFlushGrade()). Null when the owner supplies none, and then every ADAPTIVE seal takes
+    // the ordered flush. Kept across of() and close(): it belongs to the owner, not to the column instance.
+    private TxReader committedTxnSource;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -783,6 +794,11 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void setCommitMode(int commitMode) {
         this.indexCommitMode = commitMode;
+    }
+
+    @Override
+    public void setCommittedTxnSource(@Nullable TxReader committedTxnSource) {
+        this.committedTxnSource = committedTxnSource;
     }
 
     // Sync order is .pv and covering sidecars before .pk: a torn write must
@@ -2114,12 +2130,10 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        // Pair with sealFull/sealIncremental's path-based sync block: those
-        // sync sealValueMem + sidecar + .pci only when partitionPath is set;
-        // syncing .pk while .pv is still in mmap dirty pages would let a
-        // power-loss reader see chain entries that reference unflushed data.
+        // Step 2 of the seal's flush, after the encode paths flushed the new
+        // .pv and covers (step 1) and published the entry naming them.
         if (partitionPath.size() > 0 && keyMem.isOpen()) {
-            keyMem.sync(false);
+            flushSealKeyFile();
         }
     }
 
@@ -2290,13 +2304,14 @@ public class PostingIndexWriter implements IndexWriter {
             sealTxn = newTxn;
             initKeyMemory(keyMem, sealTxn);
             // Make the header rewrite durable before recording the purge of
-            // the superseded .pv. PostingSealPurgeOperator unlinks with no
+            // the superseded .pv, where the commit mode asks for it (see
+            // sealFlushGrade()). PostingSealPurgeOperator unlinks with no
             // ordering against .pk writeback, so without this barrier a
             // power loss after the unlink journals but before the .pk page
             // writes back recovers the old chain head pointing at a deleted
             // .pv -- readers fail hard until REINDEX. Pairs with seal()'s
-            // unconditional .pk sync.
-            keyMem.sync(false);
+            // .pk flush.
+            flushSealKeyFile();
             recordPostingSealPurge(oldSealTxn);
         }
         // initKeyMemory just rewrote the .pk header pages; resync the chain
@@ -3990,6 +4005,76 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    // Step 1 of a seal's flush (see sealFlushGrade()), for the files written after the value file: starts the
+    // writeback of every open cover file and .pci, then waits for it. flushSealFilesBarrier() completes the step.
+    private void flushSealCoverFiles(int grade) {
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            flushSealFileStart(sidecarMems.getQuick(c), grade);
+        }
+        flushSealFileStart(sidecarInfoMem, grade);
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            flushSealFileWait(sidecarMems.getQuick(c), grade);
+        }
+        flushSealFileWait(sidecarInfoMem, grade);
+    }
+
+    // Step 1 of a seal's flush for one file: starts its writeback and waits for it.
+    private void flushSealFile(MemoryMARW mem, int grade) {
+        flushSealFileStart(mem, grade);
+        flushSealFileWait(mem, grade);
+    }
+
+    private void flushSealFileStart(MemoryMARW mem, int grade) {
+        if (mem == null || !mem.isOpen() || grade == SEAL_FLUSH_NONE) {
+            return;
+        }
+        if (grade == SEAL_FLUSH_ASYNC) {
+            // As commit() under ASYNC: the OS writes the pages back on its own.
+            mem.sync(true);
+        } else if (ff.isSyncfsFileSystemWide()) {
+            mem.syncFlushKick();
+        } else {
+            // No filesystem-wide barrier: an ordering barrier per file, F_BARRIERFSYNC on macOS. Windows has no
+            // cheaper flush than a durable one per file.
+            mem.flushFile(true);
+        }
+    }
+
+    private void flushSealFileWait(MemoryMARW mem, int grade) {
+        if (mem != null && mem.isOpen() && grade == SEAL_FLUSH_ORDERED && ff.isSyncfsFileSystemWide()) {
+            mem.syncFlushDrain();
+        }
+    }
+
+    // Step 1 of a seal's flush, the value file and every cover file at once (see sealFlushGrade()).
+    private void flushSealFiles(MemoryMARW valueFile, int grade) {
+        flushSealFileStart(valueFile, grade);
+        flushSealCoverFiles(grade);
+        flushSealFileWait(valueFile, grade);
+        flushSealFilesBarrier(valueFile, grade);
+    }
+
+    // Completes step 1 of a seal's flush: where syncfs is filesystem-wide (Linux), one device flush makes every
+    // file the seal wrote back durable, with the new sizes and extents journaled. Issued on the seal's own file,
+    // so it lands on the right filesystem for a partition linked elsewhere. Elsewhere the per-file barriers of
+    // flushSealFileStart() have done it.
+    private void flushSealFilesBarrier(MemoryMARW valueFile, int grade) {
+        if (grade == SEAL_FLUSH_ORDERED && ff.isSyncfsFileSystemWide() && valueFile.isOpen()) {
+            ff.syncfs(valueFile.getFd());
+        }
+    }
+
+    // Step 2 of a seal's flush (see sealFlushGrade()): the .pk, after the entry naming the new files is published
+    // and before the superseded files are queued for deletion.
+    private void flushSealKeyFile() {
+        switch (sealFlushGrade()) {
+            case SEAL_FLUSH_ORDERED -> keyMem.sync(false);
+            case SEAL_FLUSH_ASYNC -> keyMem.sync(true);
+            default -> {
+            }
+        }
+    }
+
     private void freeFsstScratch() {
         if (fsstSrcOffsAddr != 0) {
             Unsafe.free(fsstSrcOffsAddr, fsstSrcOffsCap, MemoryTag.NATIVE_INDEX_READER);
@@ -5086,18 +5171,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             // .pv before .pk: copyData's bytes must be durable before publishing
             // a chain head that references them. Mirrors sealIncremental.
-            if (valueMem.isOpen()) {
-                valueMem.sync(false);
-            }
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            flushSealFiles(valueMem, sealFlushGrade());
 
             Unsafe.storeFence();
             this.genCount = 1;
@@ -5116,7 +5190,7 @@ public class PostingIndexWriter implements IndexWriter {
             // files alone -- mirrors the rollback path's isReencodePublished.
             isPublished = true;
             if (keyMem.isOpen()) {
-                keyMem.sync(false);
+                flushSealKeyFile();
             }
         } catch (Throwable th) {
             // A failure AFTER publishToChain leaves newSealTxn live and the writer
@@ -5496,14 +5570,14 @@ public class PostingIndexWriter implements IndexWriter {
                         // .pv/.pc synced). A failure past this point must NOT unlink
                         // those files -- the rollback has committed.
                         isReencodePublished = true;
-                        // Sync the chain publish now -- the new .pv/.pc are already
-                        // synced inside reencodeWithPerKeyStreaming -- so once
+                        // Flush the chain publish now -- the new .pv/.pc are already
+                        // flushed inside reencodeWithPerKeyStreaming -- so once
                         // rollbackToMaxValue queues the old files for purge, a
                         // power loss cannot recover a committed chain head pointing
                         // at a deleted file. The seal path defers this to seal()'s
-                        // unconditional .pk sync; the rollback path has none.
+                        // .pk flush; the rollback path has none.
                         if (keyMem.isOpen()) {
-                            keyMem.sync(false);
+                            flushSealKeyFile();
                         }
                     }
                 } catch (Throwable th) {
@@ -5840,22 +5914,17 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         valueMemSize = sealTarget.getAppendOffset();
-        sealValueMem.sync(false);
+        // Step 1 of the flush: the staged .pv before the switch, the covers after it, one barrier for all.
+        final int flushGrade = sealFlushGrade();
+        flushSealFile(sealValueMem, flushGrade);
         switchToSealedValueFile(newSealTxn);
         sealTarget = null;
 
         if (coverCount > 0 && sidecarMems.size() > 0) {
             writeSidecarsPerColumnStreaming(totalCountsAddr, keyBuffer, maxKeyCount);
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            flushSealCoverFiles(flushGrade);
         }
+        flushSealFilesBarrier(valueMem, flushGrade);
 
         Unsafe.storeFence();
         this.maxValue = maxValue;
@@ -5982,25 +6051,20 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         valueMemSize = sealTarget.getAppendOffset();
-        sealValueMem.sync(false);
+        // Step 1 of the flush: the staged .pv before the switch, the covers after it, one barrier for all.
+        final int flushGrade = sealFlushGrade();
+        flushSealFile(sealValueMem, flushGrade);
         switchToSealedValueFile(newSealTxn);
         sealTarget = null;
 
         if (coverCount > 0 && sidecarMems.size() > 0) {
             writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
-            // Sync covering sidecars before publishing the new sealTxn in
+            // Flush covering sidecars before publishing the new sealTxn in
             // .pk so readers do not see a torn sidecar tail after a power
             // loss.
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            flushSealCoverFiles(flushGrade);
         }
+        flushSealFilesBarrier(valueMem, flushGrade);
 
         Unsafe.storeFence();
         // genFileOffset is 0: the seal wrote at offset 0 of a fresh .pv.
@@ -6198,6 +6262,42 @@ public class PostingIndexWriter implements IndexWriter {
      * keyCount, hitting 32 KiB for keyCount = 1M and unbounded above).
      * Both fast and streaming paths allocate the same pair.
      */
+    /**
+     * How a seal, a rollback re-encode or {@link #truncate()} makes the files it wrote durable, by the owner's
+     * commit mode (see {@link #setCommitMode(int)}):
+     * <ul>
+     *   <li>NOSYNC: no flush.</li>
+     *   <li>ASYNC: starts writeback without waiting, as {@link #commit()} does.</li>
+     *   <li>ADAPTIVE: no flush for an entry stamped above the committed txn. Recovery drops such an entry and
+     *       deletes its files when a power loss comes before the next save point, and the save point makes them
+     *       durable otherwise. Recovery keeps an entry stamped at or below the committed txn, so it takes the ordered
+     *       flush, as does every seal whose owner supplies no committed txn
+     *       ({@link #setCommittedTxnSource(TxReader)}).</li>
+     *   <li>SYNC: the ordered flush.</li>
+     * </ul>
+     * The ordered flush has two steps: every new value and cover file reaches the disk before the {@code .pk}
+     * entry that names them is published, then the {@code .pk} does, before the superseded files are queued for
+     * deletion.
+     */
+    private int sealFlushGrade() {
+        return switch (indexCommitMode) {
+            case CommitMode.NOSYNC -> SEAL_FLUSH_NONE;
+            case CommitMode.ASYNC -> SEAL_FLUSH_ASYNC;
+            case CommitMode.ADAPTIVE -> isSealInProgress() ? SEAL_FLUSH_NONE : SEAL_FLUSH_ORDERED;
+            default -> SEAL_FLUSH_ORDERED;
+        };
+    }
+
+    // True when the entry the next publish stamps lies above the owner's committed txn. A source that reads no
+    // txn (a closed record) proves nothing.
+    private boolean isSealInProgress() {
+        if (committedTxnSource == null) {
+            return false;
+        }
+        final long committedTxn = committedTxnSource.getTxn();
+        return committedTxn > -1 && pendingTxnAtSeal > committedTxn;
+    }
+
     private long sealAuxiliaryBufferBytes() {
         long strideIndexBuf = ((long) PostingIndexUtils.strideCount(keyCount) + 1L) * Long.BYTES;
         long localHeaderBuf = 4096L; // DENSE_STRIDE delta header rounded up
@@ -6677,24 +6777,14 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
-            // Sync sealed file, switch writer to it, then publish metadata.
+            // Flush the sealed file, switch writer to it, then publish metadata.
             // sealTxn must be set BEFORE the chain publish so the new
             // entry's SEAL_TXN field references the .pv just allocated.
-            sealValueMem.sync(false);
-            // Sync covering sidecars before publishing the new sealTxn in
-            // .pk. Without this, power loss can leave .pk pointing at
-            // sealTxn=N+1 while .pc<N>/.pci tail pages are still dirty in
-            // page cache; readers built around the new sealTxn would map a
-            // torn sidecar and decode garbage.
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            // The covering sidecars flush with it: without that, power loss
+            // can leave .pk pointing at sealTxn=N+1 while .pc<N>/.pci tail
+            // pages are still dirty in page cache; readers built around the
+            // new sealTxn would map a torn sidecar and decode garbage.
+            flushSealFiles(sealValueMem, sealFlushGrade());
             switchToSealedValueFile(newSealTxn);
             Unsafe.storeFence();
             // genCount must publish after the chain entry is appended so a

@@ -933,6 +933,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // Give this possibly transient index writer the table's effective commit mode, so its commit()
                 // flush follows the destination-column sync gate above rather than the instance-wide mode.
                 indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
+                indexWriter.setCommittedTxnSource(tableWriter.getTxWriter());
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {

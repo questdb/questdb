@@ -818,6 +818,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long colNameTxn = versions.getColumnNameTxn(partitionTimestamp, colIdx);
             final byte indexType = metadata.getColumnIndexType(colIdx);
             final IndexWriter indexWriter = IndexFactory.createWriter(indexType, tableWriter.getConfiguration());
+            // Flush as the table commits, not at the instance-wide mode; an ADAPTIVE seal of this commit skips its
+            // flush (IndexWriter.setCommittedTxnSource).
+            indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
+            indexWriter.setCommittedTxnSource(tableWriter.getTxWriter());
             try {
                 // A column whose first row in this partition is this very write has no index files yet,
                 // since the writer that would have built them was never opened for it. Build them now.
@@ -7314,6 +7318,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // the flush grade would depend on whether the pooled instance last passed through
                         // O3CopyJob, which sets it.
                         indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
+                        indexWriter.setCommittedTxnSource(tableWriter.getTxWriter());
                         if (IndexType.isPosting(indexType)) {
                             // commitDense may seal (spill-driven reseal), rotating the
                             // .pv and recording a purge for the superseded file. The

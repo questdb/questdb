@@ -1251,6 +1251,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         prepareStaleParquetPartitionReindexes();
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+        // The build seals every partition at the txn the meta commit below lands on: flush as this table commits
+        // (an ADAPTIVE build takes no flush, see IndexWriter.setCommittedTxnSource), not at the instance-wide mode.
+        indexer.getWriter().setCommitMode(getFlushCommitMode());
+        indexer.getWriter().setCommittedTxnSource(txWriter);
         boolean isTxnWriteStarted = false;
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
@@ -15297,6 +15301,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // without threading the mode through the configureFollowerAndWriter() call sites. See
                 // reapplyColumnCommitMode.
                 indexer.getWriter().setCommitMode(effectiveCommitMode);
+                // Lets an ADAPTIVE seal of a commit in progress skip its flush (IndexWriter.setCommittedTxnSource).
+                // The effective mode, not getFlushCommitMode(), because these indexers outlive a role change: a
+                // replica's NOSYNC kept after a promotion would skip flushes recovery then relies on.
+                indexer.getWriter().setCommittedTxnSource(txWriter);
                 if (IndexType.isPosting(indexer.getWriter().getIndexType())) {
                     hasPostingIndexers = true;
                 }
@@ -18888,8 +18896,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (parquetRewriteIndexer == null || parquetRewriteIndexerType != indexType) {
                     parquetRewriteIndexer = Misc.free(parquetRewriteIndexer);
                     parquetRewriteIndexer = new SymbolColumnIndexer(configuration, indexType);
+                    parquetRewriteIndexer.getWriter().setCommittedTxnSource(txWriter);
                     parquetRewriteIndexerType = indexType;
                 }
+                // The seal flushes as this table commits; an ADAPTIVE one skips its flush, see
+                // IndexWriter.setCommittedTxnSource.
+                parquetRewriteIndexer.getWriter().setCommitMode(flushCommitMode);
                 try {
                     indexParquetColumn(
                             parquetRewriteIndexer,
@@ -18957,6 +18969,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         IndexWriter iw = null;
         try {
             iw = IndexFactory.createWriter(indexType, configuration);
+            // The seal flushes as this table commits; an ADAPTIVE one skips its flush, see
+            // IndexWriter.setCommittedTxnSource.
+            iw.setCommitMode(getFlushCommitMode());
+            iw.setCommittedTxnSource(txWriter);
             iw.of(indexDir.trimTo(indexDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
             // Both callers run during a partition format conversion before
             // txWriter.commit; tag the chain entry with the upcoming committed txn.
@@ -23231,6 +23247,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } finally {
                 path.trimTo(pathSize);
+            }
+            // The build changed the index files of partitions whose records it left alone. Where the save point
+            // flushes only its write set (no filesystem-wide syncfs, or a partition linked elsewhere), the next one
+            // must flush them: an ADAPTIVE build took no flush of its own.
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                txWriter.markPartitionDirty(txWriter.getPartitionTimestampByIndex(i));
             }
         } catch (Throwable th) {
             Misc.free(indexer);
