@@ -45,11 +45,18 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
     }
 
     /**
+     * The facade {@link #runWithCrashFacade} installs. A test that watches more file calls returns a subclass.
+     */
+    protected CrashFaultFilesFacade newCrashFacade() {
+        return new CrashFaultFilesFacade();
+    }
+
+    /**
      * Run {@code body} with the crash facade installed as the engine's FilesFacade.
      */
     protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
         assumeCrashHarnessSupported();
-        crashFf = new CrashFaultFilesFacade();
+        crashFf = newCrashFacade();
         // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
         // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().
         crashFf.setDbRoot(root);

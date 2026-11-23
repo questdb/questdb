@@ -236,6 +236,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private boolean killImageTaken;
     private int killPoints = 0;
     private String killRoot;
+    private boolean isNamespaceJournaled;
     private boolean isSyncfsFileSystemWide = super.isSyncfsFileSystemWide();
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
     private String dbRootPrefix; // set via setDbRoot(); scopes cached-fd reclamation to per-table files
@@ -513,6 +514,17 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public boolean isSyncfsFileSystemWide() {
         return isSyncfsFileSystemWide;
+    }
+
+    /**
+     * Whether a journal commit ({@code fsync}, {@code fdatasync}, {@code fsyncAndClose} or {@code msync(MS_SYNC)} of
+     * a file) also makes every directory entry created, removed or renamed before it durable. Default ext4 and xfs
+     * keep one journal for the whole filesystem, so the fsync of one file commits every pending directory change
+     * with it. The default, false, is strict POSIX: an entry is durable only after its parent directory's fsync or a
+     * {@code syncfs}. Not cleared by {@link #reset()}.
+     */
+    public void setNamespaceJournaled(boolean isNamespaceJournaled) {
+        this.isNamespaceJournaled = isNamespaceJournaled;
     }
 
     public void setSyncfsFileSystemWide(boolean isSyncfsFileSystemWide) {
@@ -1949,6 +1961,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 journaledDataEnd.put(g, syncedDataEnd.getOrDefault(g, 0L));
             }
         }
+        if (isNamespaceJournaled) {
+            for (String root : namespaceRoots) {
+                snapshotDirectories(Paths.get(root));
+            }
+        }
     }
 
     private static void clampTo(Map<String, Long> watermark, String path, long end) {
@@ -2261,6 +2278,22 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             });
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    // Every directory under root, as its fsync would: a rename's target takes the image it was renamed with.
+    private void snapshotDirectories(Path root) {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        final List<Path> directories = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(root)) {
+            stream.filter(Files::isDirectory).forEach(directories::add);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        for (int i = 0, n = directories.size(); i < n; i++) {
+            snapshotDirectory(directories.get(i));
         }
     }
 
