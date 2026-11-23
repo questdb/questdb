@@ -621,6 +621,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     @Test
     public void testSpanMapsMergeInParallel() throws Exception {
         Assume.assumeTrue(parallel && workers > 3);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, workers);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 16);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
@@ -1552,6 +1553,105 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 TestUtils.assertContains(plan, "Long Top K");
                 Assert.assertFalse(sql + '\n' + plan, plan.contains("Stream Group By"));
             }
+        });
+    }
+
+    @Test
+    public void testLongTopKKeepsHashGroupByForTimestampKeyOtherThanBucket() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE fills AS (SELECT "
+                    + "timestamp_sequence('2024-01-01T00:00:00'::TIMESTAMP, 1_000_000L) ts, "
+                    + "dateadd('s', ((x * 7_919) % 1_001)::INT, '2023-12-31T00:00:00'::TIMESTAMP) order_ts, "
+                    + "x qty "
+                    + "FROM long_sequence(1_001)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            final String keys = "SELECT timestamp_floor('1m', ts) m, order_ts, count(), sum(qty) s FROM fills";
+            for (String sql : new String[]{
+                    keys + " ORDER BY order_ts DESC LIMIT 2",
+                    keys + " ORDER BY order_ts LIMIT 2",
+                    "SELECT * FROM (" + keys + ") ORDER BY order_ts DESC LIMIT 2",
+                    "SELECT m, order_ts o, s FROM (" + keys + ") ORDER BY o DESC LIMIT 2",
+            }) {
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                TestUtils.assertContains(plan, "Long Top K");
+                Assert.assertFalse(sql + '\n' + plan, plan.contains("Stream Group By"));
+            }
+            TestUtils.assertEquals(
+                    """
+                            m\torder_ts\tcount\ts
+                            2024-01-01T00:00:00.000000Z\t2023-12-31T00:16:40.000000Z\t1\t45
+                            2024-01-01T00:01:00.000000Z\t2023-12-31T00:16:39.000000Z\t1\t90
+                            """,
+                    compileAndRead(compiler, context, keys + " ORDER BY order_ts DESC LIMIT 2")
+            );
+            TestUtils.assertEquals(
+                    """
+                            m\torder_ts\tcount\ts
+                            2024-01-01T00:16:00.000000Z\t2023-12-31T00:00:00.000000Z\t1\t1001
+                            """,
+                    compileAndRead(compiler, context, keys + " ORDER BY order_ts LIMIT 1")
+            );
+            final String buckets = "SELECT timestamp_floor('1m', ts) m, count(), sum(qty) s FROM fills";
+            for (String sql : new String[]{
+                    buckets + " ORDER BY m DESC LIMIT 3",
+                    buckets + " ORDER BY m LIMIT 3",
+                    "SELECT m, order_ts, s, dateadd('s', 1, order_ts) t FROM (" + keys + ") ORDER BY t DESC LIMIT 3",
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                TestUtils.assertContains(compileAndRead(compiler, context, "EXPLAIN " + sql), "Stream Group By");
+                Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
+            }
+        });
+    }
+
+    @Test
+    public void testLongTopKResolvesDottedAliases() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            context.getBindVariableService().clear();
+            context.getBindVariableService().setLong(0, 3);
+            TestUtils.assertEquals(
+                    """
+                            ts\ts.x
+                            2024-01-01T00:15:00.000000Z\t50253
+                            2024-01-01T00:14:00.000000Z\t47885
+                            2024-01-01T00:13:00.000000Z\t43779
+                            """,
+                    compileAndRead(compiler, context, "SELECT ts, sum(v) AS \"s.x\" FROM trades SAMPLE BY 1m ORDER BY 2 DESC LIMIT 3")
+            );
+            for (String sql : new String[]{
+                    "SELECT ts, sum(v) AS \"s.x\" FROM trades SAMPLE BY 1m ORDER BY 2 DESC LIMIT 3",
+                    "SELECT ts, sum(t.v) FROM trades t SAMPLE BY 1m ORDER BY 2 DESC LIMIT 3",
+                    "SELECT ts, sym, sum(v) AS \"s.x\" FROM trades WHERE v > 0 SAMPLE BY 1m ORDER BY 3 LIMIT 3",
+                    "SELECT * FROM (SELECT ts, sym, sum(v) AS \"s.x\" FROM trades SAMPLE BY 1m) ORDER BY 3 DESC LIMIT 3",
+                    "SELECT timestamp_floor('1m', ts) b, sum(v) AS \"s.x\" FROM trades ORDER BY 2 LIMIT 3",
+                    "SELECT ts, max(t.ts) FROM trades t SAMPLE BY 1m ORDER BY 2 DESC LIMIT 3",
+            }) {
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                TestUtils.assertContains(plan, "Long Top K");
+                Assert.assertFalse(sql + '\n' + plan, plan.contains("Stream Group By"));
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
+            }
+            for (String sql : new String[]{
+                    "SELECT ts, sum(v * 1.5) FROM trades SAMPLE BY 1m ORDER BY 2 DESC LIMIT 3",
+                    "SELECT ts, avg(d * 1.5), sum(v) FROM trades SAMPLE BY 1m ORDER BY 2 DESC, 3 LIMIT 3",
+                    "SELECT ts, sum(v) AS \"s.x\" FROM trades SAMPLE BY 1m ORDER BY 2 DESC LIMIT -3",
+                    "SELECT ts, sum(v) AS \"s.x\" FROM trades SAMPLE BY 1m ORDER BY 2 DESC LIMIT $1",
+                    "SELECT * FROM (SELECT ts, sum(v * 1.5) FROM trades SAMPLE BY 1m) ORDER BY 2 DESC LIMIT 3",
+            }) {
+                TestUtils.assertContains(compileAndRead(compiler, context, "EXPLAIN " + sql), "Stream Group By");
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
+            }
+            final String sql = "SELECT sym, sum(v * 1.5) FROM trades ORDER BY 2 DESC LIMIT 1";
+            TestUtils.assertEquals("sym\tsum(v * 1.5)\nA\t341595.0\n", compileAndRead(compiler, context, sql));
         });
     }
 

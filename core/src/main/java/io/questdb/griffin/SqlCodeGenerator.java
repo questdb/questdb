@@ -12119,12 +12119,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         hasGroupingSetFillKey
                 );
             }
-            final int streamKeyIndex = executionContext.isStreamGroupByEnabled()
+            int streamKeyIndex = executionContext.isStreamGroupByEnabled()
                     && sharedOuterProjectionFunctions == null
                     && isStreamGroupByFillSupported(model, keyTypes.getColumnCount(), outerProjectionMetadata)
-                    && !isLongTopKOrderBy(model, outerProjectionMetadata, projectionFunctionFlags, executionContext)
                     ? GroupByUtils.getStreamGroupByKeyIndex(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
                     : -1;
+            if (streamKeyIndex >= 0) {
+                final int bucketIndex = GroupByUtils.getStreamGroupByTimestampIndex(outerProjectionMetadata,
+                        outerProjectionFunctions, valueTypes.getColumnCount() + streamKeyIndex);
+                if (isLongTopKOrderBy(model, outerProjectionMetadata, bucketIndex, executionContext)) {
+                    streamKeyIndex = -1;
+                }
+            }
             final Function streamKey = streamKeyIndex >= 0
                     ? GroupByUtils.getGroupByKeyFunction(factory, keyTypes, listColumnFilterA, keyFunctions, streamKeyIndex)
                     : null;
@@ -15365,7 +15371,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0;
     }
 
-    private boolean isLongTopKOrderBy(IQueryModel model, RecordMetadata metadata, IntList projectionFunctionFlags, SqlExecutionContext executionContext) throws SqlException {
+    private boolean isLongTopKOrderBy(
+            IQueryModel model,
+            RecordMetadata metadata,
+            int bucketIndex,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final IQueryModel orderByModel = lastSeenOrderByModel;
         if (orderByModel == null || orderByModel.getOrderBy().size() != 1 || orderByModel.getLimitLo() == null
                 || orderByModel.getLimitHi() != null || model.getUnionModel() != null || model.getWhereClause() != null
@@ -15381,15 +15392,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     || column.type != LITERAL) {
                 return false;
             }
-            column = current.getAliasToColumnMap().get(column.token).getAst();
+            final QueryColumn queryColumn = current.getAliasToColumnMap().get(column.token);
+            if (queryColumn == null) {
+                return false;
+            }
+            column = queryColumn.getAst();
         }
         if (column.type != LITERAL) {
             return false;
         }
-        final int columnIndex = metadata.getColumnIndex(column.token);
+        final int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, column.token);
+        if (columnIndex < 0) {
+            return false;
+        }
         final int columnType = metadata.getColumnType(columnIndex);
-        final boolean isAggregate = projectionFunctionFlags.getQuick(columnIndex) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY;
-        if (columnType != ColumnType.LONG && !(ColumnType.isTimestamp(columnType) && isAggregate)) {
+        if (columnType != ColumnType.LONG && !(ColumnType.isTimestamp(columnType) && columnIndex != bucketIndex)) {
             return false;
         }
         final Function loFunc = getLoFunction(orderByModel, executionContext);
