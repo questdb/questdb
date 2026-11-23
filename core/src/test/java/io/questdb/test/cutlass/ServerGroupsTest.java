@@ -34,6 +34,8 @@ import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Worker;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.LaunchResult;
@@ -44,6 +46,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8s;
@@ -65,9 +68,13 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
 
 /**
@@ -82,6 +89,8 @@ public class ServerGroupsTest extends AbstractCairoTest {
     // 5, so jobs 2 and 3, which serve group 1, run on workers whose index differs from theirs
     private static final int ILP_WORKERS = 8;
     private static final Log LOG = LogFactory.getLog(ServerGroupsTest.class);
+    private static final int OWN_GROUP_CONNECTIONS = 8;
+    private static final int OWN_GROUP_PG_CONNECTIONS = 4;
     private static final int PG_CONNECTIONS = 24;
     private static final int WORKERS = 4;
     @Rule
@@ -127,8 +136,18 @@ public class ServerGroupsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHttpFibersServedByOwnGroup() throws Exception {
+        assertHttpServedByOwnGroup(WorkerPoolMode.FIBER_HOST, true);
+    }
+
+    @Test
     public void testHttpLegacy() throws Exception {
         assertHttp(WorkerPoolMode.LEGACY, false);
+    }
+
+    @Test
+    public void testHttpLegacyServedByOwnGroup() throws Exception {
+        assertHttpServedByOwnGroup(WorkerPoolMode.LEGACY, false);
     }
 
     @Test
@@ -212,13 +231,38 @@ public class ServerGroupsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIlpTcpServedByOwnGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            final TestWorkerPool networkPool = new TestWorkerPool(groupedPool(WorkerPoolMode.LEGACY, ILP_WORKERS));
+            final GroupCheckingFacade nf = new GroupCheckingFacade(networkPool);
+            assertIlpTcp(
+                    networkPool,
+                    nf,
+                    port -> nf.connectToBothGroups(port, CONNECTIONS),
+                    receiver -> awaitGroupConnections(receiver::getGroupConnectionCount, CONNECTIONS / 2, CONNECTIONS / 2)
+            );
+            nf.assertServedByOwnGroup(CONNECTIONS / 2);
+        });
+    }
+
+    @Test
     public void testPgFibers() throws Exception {
         assertPg(WorkerPoolMode.FIBER_HOST, true);
     }
 
     @Test
+    public void testPgFibersServedByOwnGroup() throws Exception {
+        assertPgServedByOwnGroup(WorkerPoolMode.FIBER_HOST, true);
+    }
+
+    @Test
     public void testPgLegacy() throws Exception {
         assertPg(WorkerPoolMode.LEGACY, false);
+    }
+
+    @Test
+    public void testPgLegacyServedByOwnGroup() throws Exception {
+        assertPgServedByOwnGroup(WorkerPoolMode.LEGACY, false);
     }
 
     private static void assertHttpResponds(long fd) {
@@ -403,10 +447,62 @@ public class ServerGroupsTest extends AbstractCairoTest {
         });
     }
 
-    // Sends one line per connection to an ILP/TCP receiver on a pool of two groups, and checks
-    // that every line lands. awaitConnections waits until the receiver holds all connections.
-    private void assertIlpTcp(NetworkFacade nf, Consumer<LineTcpReceiver> awaitConnections) throws Exception {
+    private void assertHttpServedByOwnGroup(WorkerPoolMode mode, boolean isFiberEnabled) throws Exception {
         assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final TestWorkerPool pool = new TestWorkerPool(groupedPool(mode));
+            try {
+                final GroupCheckingFacade nf = new GroupCheckingFacade(pool);
+                final DefaultHttpServerConfiguration httpConfig = new HttpServerConfigurationBuilder()
+                        .withPort(port)
+                        .withNetwork(nf)
+                        .withFiberEnabled(isFiberEnabled)
+                        .build(configuration);
+                try (HttpServer server = new HttpServer(httpConfig, pool, PlainSocketFactory.INSTANCE)) {
+                    Assert.assertEquals(2, server.getGroupCount());
+                    pool.start(LOG);
+                    try {
+                        final long[] fds = nf.connectToBothGroups(port, OWN_GROUP_CONNECTIONS);
+                        try {
+                            awaitGroupConnections(server::getGroupConnectionCount, OWN_GROUP_CONNECTIONS / 2, OWN_GROUP_CONNECTIONS / 2);
+                            for (long fd : fds) {
+                                assertHttpResponds(fd);
+                            }
+                        } finally {
+                            close(fds);
+                        }
+                    } finally {
+                        // the server's jobs run on the pool, so the pool halts before the server closes
+                        pool.halt();
+                    }
+                }
+                nf.assertServedByOwnGroup(OWN_GROUP_CONNECTIONS / 2);
+            } finally {
+                pool.halt();
+            }
+        });
+    }
+
+    private void assertIlpTcp(NetworkFacade nf, Consumer<LineTcpReceiver> awaitConnections) throws Exception {
+        assertMemoryLeak(() -> assertIlpTcp(
+                new TestWorkerPool(groupedPool(WorkerPoolMode.LEGACY, ILP_WORKERS)),
+                nf,
+                port -> connect(port, CONNECTIONS),
+                awaitConnections
+        ));
+    }
+
+    // Sends one line per connection to an ILP/TCP receiver on networkPool, a pool of two groups,
+    // and checks that every line lands. connect opens CONNECTIONS connections given the receiver's
+    // port, and awaitConnections waits until the receiver holds all of them.
+    private void assertIlpTcp(
+            TestWorkerPool networkPool,
+            NetworkFacade nf,
+            IntFunction<long[]> connect,
+            Consumer<LineTcpReceiver> awaitConnections
+    ) throws Exception {
+        final TestWorkerPool writePool = new TestWorkerPool(1);
+        try {
             final int port = pickFreePort();
             final DefaultLineTcpReceiverConfiguration lineConfig = new DefaultLineTcpReceiverConfiguration(configuration) {
                 @Override
@@ -419,14 +515,12 @@ public class ServerGroupsTest extends AbstractCairoTest {
                     return nf;
                 }
             };
-            final TestWorkerPool networkPool = new TestWorkerPool(groupedPool(WorkerPoolMode.LEGACY, ILP_WORKERS));
-            final TestWorkerPool writePool = new TestWorkerPool(1);
             try (LineTcpReceiver receiver = new LineTcpReceiver(lineConfig, engine, networkPool, writePool)) {
                 Assert.assertEquals(2, receiver.getGroupCount());
                 networkPool.start(LOG);
                 writePool.start(LOG);
                 try {
-                    final long[] fds = connect(port, CONNECTIONS);
+                    final long[] fds = connect.apply(port);
                     try {
                         awaitConnections.accept(receiver);
                         for (int i = 0; i < CONNECTIONS; i++) {
@@ -446,11 +540,15 @@ public class ServerGroupsTest extends AbstractCairoTest {
                                 .returns("count\tcount_distinct\tsum\n" + CONNECTIONS + "\t" + CONNECTIONS + "\t" + (CONNECTIONS * (CONNECTIONS - 1) / 2) + "\n");
                     }, 60);
                 } finally {
+                    // the receiver's jobs run on both pools, so the pools halt before the receiver closes
                     networkPool.halt();
                     writePool.halt();
                 }
             }
-        });
+        } finally {
+            networkPool.halt();
+            writePool.halt();
+        }
     }
 
     private void assertPg(WorkerPoolMode mode, boolean isFiberEnabled) throws Exception {
@@ -511,5 +609,165 @@ public class ServerGroupsTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertPgServedByOwnGroup(WorkerPoolMode mode, boolean isFiberEnabled) throws Exception {
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final TestWorkerPool pool = new TestWorkerPool(groupedPool(mode));
+            try {
+                final GroupCheckingFacade nf = new GroupCheckingFacade(pool);
+                final Port0PGConfiguration pgConfig = new Port0PGConfiguration() {
+                    @Override
+                    public int getBindPort() {
+                        return port;
+                    }
+
+                    @Override
+                    public NetworkFacade getNetworkFacade() {
+                        return nf;
+                    }
+
+                    @Override
+                    public boolean isFiberEnabled() {
+                        return isFiberEnabled;
+                    }
+                };
+                try (
+                        DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(pgConfig, configuration);
+                        PGServer server = new PGServer(pgConfig, engine, pool, registry, () -> new SqlExecutionContextImpl(engine, 1))
+                ) {
+                    Assert.assertEquals(2, server.getGroupCount());
+                    pool.start(LOG);
+                    try {
+                        final Properties properties = new Properties();
+                        properties.setProperty("user", "admin");
+                        properties.setProperty("password", "quest");
+                        properties.setProperty("sslmode", "disable");
+                        final ObjList<Connection> connections = new ObjList<>();
+                        try {
+                            for (int i = 0; i < OWN_GROUP_PG_CONNECTIONS; i++) {
+                                final int connectionPort = i % 2 == 0 ? port : nf.getGroup1Port();
+                                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + connectionPort + "/qdb", properties);
+                                connections.add(connection);
+                                try (Statement statement = connection.createStatement();
+                                     ResultSet rs = statement.executeQuery("select " + i)) {
+                                    Assert.assertTrue(rs.next());
+                                    Assert.assertEquals(i, rs.getInt(1));
+                                }
+                            }
+                            awaitGroupConnections(server::getGroupConnectionCount, OWN_GROUP_PG_CONNECTIONS / 2, OWN_GROUP_PG_CONNECTIONS / 2);
+                        } finally {
+                            for (int i = 0, n = connections.size(); i < n; i++) {
+                                connections.getQuick(i).close();
+                            }
+                        }
+                    } finally {
+                        // the server's jobs run on the pool, so the pool halts before the server closes
+                        pool.halt();
+                    }
+                }
+                nf.assertServedByOwnGroup(OWN_GROUP_PG_CONNECTIONS / 2);
+            } finally {
+                pool.halt();
+            }
+        });
+    }
+
+    /**
+     * Checks that each accept and read on a server's network sockets runs on a worker of the group
+     * whose listener the network socket came from. Group 1's listener binds to an ephemeral port of
+     * its own, so connections reach both groups on every platform.
+     */
+    private static class GroupCheckingFacade extends NetworkFacadeImpl {
+        private final AtomicIntegerArray acceptCounts = new AtomicIntegerArray(2);
+        private final AtomicInteger bindCount = new AtomicInteger();
+        private final AtomicReference<String> failure = new AtomicReference<>();
+        // listener fds and accepted connection fds, mapped to their listener's group
+        private final ConcurrentHashMap<Long, Integer> fdGroups = new ConcurrentHashMap<>();
+        private volatile int group1Port;
+        private final WorkerPool pool;
+        private final AtomicIntegerArray recvCounts = new AtomicIntegerArray(2);
+
+        GroupCheckingFacade(WorkerPool pool) {
+            this.pool = pool;
+        }
+
+        @Override
+        public long accept(long serverFd) {
+            final long fd = super.accept(serverFd);
+            final Integer group = fdGroups.get(serverFd);
+            if (fd >= 0 && group != null) {
+                fdGroups.put(fd, group);
+                checkWorkerGroup(group, "accept");
+                acceptCounts.incrementAndGet(group);
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean bindTcp(long fd, int address, int port) {
+            // the port check binds first, then group 0, then group 1
+            final int bind = bindCount.incrementAndGet();
+            if (bind == 2) {
+                fdGroups.put(fd, 0);
+            } else if (bind == 3) {
+                fdGroups.put(fd, 1);
+                if (!super.bindTcp(fd, address, 0)) {
+                    return false;
+                }
+                group1Port = resolvePort(fd);
+                return true;
+            }
+            return super.bindTcp(fd, address, port);
+        }
+
+        @Override
+        public int recvRaw(long fd, long buffer, int bufferLen) {
+            final Integer group = fdGroups.get(fd);
+            if (group != null) {
+                checkWorkerGroup(group, "recv");
+                recvCounts.incrementAndGet(group);
+            }
+            return super.recvRaw(fd, buffer, bufferLen);
+        }
+
+        void assertServedByOwnGroup(int connectionsPerGroup) {
+            Assert.assertNull(failure.get());
+            Assert.assertEquals(3, bindCount.get());
+            for (int g = 0; g < 2; g++) {
+                Assert.assertEquals("group " + g + " accepts", connectionsPerGroup, acceptCounts.get(g));
+                Assert.assertTrue("group " + g + " reads", recvCounts.get(g) > 0);
+            }
+        }
+
+        // connects every other connection to group 1's port
+        long[] connectToBothGroups(int port, int count) {
+            final long[] fds = new long[count];
+            final long sockAddr = Net.sockaddr("127.0.0.1", port);
+            final long group1SockAddr = Net.sockaddr("127.0.0.1", group1Port);
+            try {
+                for (int i = 0; i < count; i++) {
+                    fds[i] = Net.socketTcp(true);
+                    TestUtils.assertConnect(fds[i], i % 2 == 0 ? sockAddr : group1SockAddr);
+                }
+            } finally {
+                Net.freeSockAddr(sockAddr);
+                Net.freeSockAddr(group1SockAddr);
+            }
+            return fds;
+        }
+
+        int getGroup1Port() {
+            return group1Port;
+        }
+
+        private void checkWorkerGroup(int group, String operation) {
+            final Worker worker = Worker.current();
+            if (worker == null || !pool.getPoolName().equals(worker.getPoolName()) || pool.getGroup(worker.getWorkerId()) != group) {
+                failure.compareAndSet(null, operation + " for group " + group + " ran on "
+                        + (worker == null ? "a thread outside the pool" : worker.getPoolName() + " worker " + worker.getWorkerId()));
+            }
+        }
     }
 }

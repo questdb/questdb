@@ -83,6 +83,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
@@ -145,6 +146,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
@@ -153,6 +156,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -1073,6 +1077,37 @@ public final class TestUtils {
             formatted = message + " ";
         }
         Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
+    }
+
+    /**
+     * Asserts that {@code configurationClass}, a wrapper around another
+     * {@link WorkerPoolConfiguration}, overrides every method of that interface, so that no
+     * method falls back to the interface default and drops the delegate's value. A method the
+     * class inherits from a superclass counts as an override. {@code isLegacy()} is exempt: its
+     * default derives from {@code getWorkerPoolMode()}.
+     */
+    public static void assertOverridesWorkerPoolConfiguration(Class<? extends WorkerPoolConfiguration> configurationClass) {
+        final ArrayList<String> notOverridden = new ArrayList<>();
+        for (Method method : WorkerPoolConfiguration.class.getMethods()) {
+            if (Modifier.isStatic(method.getModifiers()) || method.getName().equals("isLegacy")) {
+                continue;
+            }
+            final Method resolved;
+            try {
+                resolved = configurationClass.getMethod(method.getName(), method.getParameterTypes());
+            } catch (NoSuchMethodException e) {
+                throw new AssertionError(e);
+            }
+            if (resolved.getDeclaringClass().isInterface()) {
+                notOverridden.add(method.getName());
+            }
+        }
+        notOverridden.sort(null);
+        Assert.assertEquals(
+                configurationClass.getName() + " leaves WorkerPoolConfiguration methods to interface defaults",
+                "[]",
+                notOverridden.toString()
+        );
     }
 
     /**

@@ -35,6 +35,7 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolConfigurationWrapper;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.mp.continuation.FiberDispatchController;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -157,6 +158,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public FiberDispatchController getFiberDispatchController() {
+        return getDelegate().getFiberDispatchController();
+    }
+
+    @Override
     public int getFiberMaxLiveCount() {
         return workerPoolConfiguration.getFiberMaxLiveCount();
     }
@@ -169,6 +175,16 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     @Override
     public int getFiberRetainedCount() {
         return workerPoolConfiguration.getFiberRetainedCount();
+    }
+
+    @Override
+    public int getGroupCount() {
+        return getDelegate().getGroupCount();
+    }
+
+    @Override
+    public int[][] getGroupCpus() {
+        return getDelegate().getGroupCpus();
     }
 
     @Override
