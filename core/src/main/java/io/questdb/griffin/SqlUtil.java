@@ -2779,7 +2779,7 @@ public class SqlUtil {
         final StringSink sink = wildcardSources.otherReadColumnName;
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-            addReadColumn(columns, innerColumns, isOtherReadLent, topDownColumns.getQuick(i).getName(), sink, isUnlentColumnDropped, ownReads);
+            addReadColumn(columns, innerColumns, isOtherReadLent, tableColumnName(model, topDownColumns.getQuick(i).getName()), sink, isUnlentColumnDropped, ownReads);
         }
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
@@ -2804,7 +2804,7 @@ public class SqlUtil {
         if (dot > -1) {
             timestampName = timestampName.subSequence(dot + 1, timestampName.length());
         }
-        addReadColumn(columns, innerColumns, isOtherReadLent, unquote(timestampName), sink, isUnlentColumnDropped, ownReads);
+        addReadColumn(columns, innerColumns, isOtherReadLent, tableColumnName(model, unquote(timestampName)), sink, isUnlentColumnDropped, ownReads);
     }
 
     // Adds "*" for the tables a parsed SELECT reads every column of, see collectTableAndColumnReferences().
@@ -3228,6 +3228,14 @@ public class SqlUtil {
             }
         }
         throw NumericException.instance();
+    }
+
+    // The name of a column of the table the model scans as the table spells it, rather than as the SELECT does, which
+    // names columns in any letter case. A read of the table authorizes its columns under the names the table gives
+    // them, see AbstractPartitionFrameCursorFactory.authorizeSelect(), and so does ViewWildcardSources.authorizeOwnReads().
+    private static CharSequence tableColumnName(@NotNull IQueryModel model, @NotNull CharSequence columnName) {
+        final QueryColumn column = model.getAliasToColumnMap().get(columnName);
+        return column != null ? column.getAlias() : columnName;
     }
 
     // Whether the model at index in the join models of joinHolder is a sub-query, a CTE or a view only the projection

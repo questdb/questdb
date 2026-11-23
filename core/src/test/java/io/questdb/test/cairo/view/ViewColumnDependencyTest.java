@@ -2964,6 +2964,31 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewCreatorReadsAreCheckedUnderColumnNamesOfTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE t (X TIMESTAMP, K SYMBOL, V LONG, Ts2 TIMESTAMP)");
+            execute("INSERT INTO t VALUES (1_000_000, 'k1', 7, 500_000)");
+            drainWalQueue();
+            // A read of t checks the principal on its columns as t names them, whatever letter case the SELECT names
+            // them in, and a permission on a column names it so. The view statements open no plan of their SELECT and
+            // check the reads of the principal themselves, those of the plan of the view and those of the reads that
+            // count its rows, which take X for the ASOF JOIN, see testViewCreatorNeedsColumnOnlyOtherReadsScan().
+            final String viewSql = "SELECT s.v, u.c FROM (SELECT k, v, ts2 FROM t TIMESTAMP(x) ORDER BY ts2) s ASOF JOIN y u ON (k)";
+            final ScanRecordingSecurityContext securityContext = new ScanRecordingSecurityContext();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
+                execute("CREATE VIEW v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+                execute("ALTER VIEW v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+                execute("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+            }
+            Assert.assertEquals("{t=[K, Ts2, V, X], y=[c, k, ts]}", securityContext.toString());
+        });
+    }
+
+    @Test
     public void testViewOverViewLendsNoColumnThatViewLendsToNoRead() throws Exception {
         assertMemoryLeak(() -> {
             createTablesWithTwoTimestamps();
