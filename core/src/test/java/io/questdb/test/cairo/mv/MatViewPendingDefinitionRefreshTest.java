@@ -1087,6 +1087,11 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodRefreshInWindowRequestsItsOwnWake() throws Exception {
+        assertPeriodRefreshRequestsItsOwnWake(false);
+    }
+
+    @Test
     public void testPeriodRefreshInWindowWaitsForDefinitionMicros() throws Exception {
         assertPeriodRefreshInWindowWaitsForDefinition("TIMESTAMP");
     }
@@ -1094,6 +1099,11 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
     @Test
     public void testPeriodRefreshInWindowWaitsForDefinitionNanos() throws Exception {
         assertPeriodRefreshInWindowWaitsForDefinition("TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testPeriodRefreshLateCheckRequestsItsOwnWake() throws Exception {
+        assertPeriodRefreshRequestsItsOwnWake(true);
     }
 
     @Test
@@ -1711,6 +1721,29 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUserIncrementalOnSuspendedViewWalDefersBeforeLock() throws Exception {
+        // The REFRESH ... INCREMENTAL of testUserIncrementalOnSuspendedViewWalWaitsForDefinition defers before it tries
+        // the view lock: no lock attempt, and nothing written.
+        assertMemoryLeak(() -> {
+            createManualView();
+            alterView(MAX_SQL);
+            execute("ALTER MATERIALIZED VIEW v SUSPEND WAL");
+            final long viewSeqTxn = viewSeqTxn();
+            execute(BUCKET_0200_ROWS);
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW v INCREMENTAL");
+            final AtomicInteger lockAttempts = new AtomicInteger();
+            try (MatViewRefreshJob refreshJob = newRefreshJob()) {
+                refreshJob.setOnBeforeRefreshLockForTesting(lockAttempts::incrementAndGet);
+                drainMatViewQueue(refreshJob);
+            }
+            Assert.assertEquals(0, lockAttempts.get());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            Assert.assertTrue(viewState().hasDeferredDefinitionRefreshForTesting());
+        });
+    }
+
+    @Test
     public void testUserIncrementalOnSuspendedViewWalWaitsForDefinition() throws Exception {
         // REFRESH ... INCREMENTAL on a view WAL suspended short of the definition event writes nothing into it: the
         // refresh defers, RESUME WAL wakes nothing while the event waits, and its apply wakes the refresh.
@@ -2277,6 +2310,49 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
             Assert.assertEquals("incremental_refresh v\n", queuedTasks());
             drainWalAndMatViewQueues();
             assertPeriodViewRows(timestampType);
+        });
+    }
+
+    // The rows of the 02:00 period land, and the refresh of their base commit runs, while the period is open, before
+    // ALTER ... AS: so the period refresh is the only refresh that meets the definition event, and its own request wakes
+    // the incremental refresh that computes the period with the new SQL. ALTER ... AS runs before the period timer
+    // fires, and the period refresh defers before the view lock, or, when isLateCheck, once the period refresh holds the
+    // view lock and before its base reader opens, and it defers at its check after the reader opened.
+    private void assertPeriodRefreshRequestsItsOwnWake(boolean isLateCheck) throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewTimerJob timerJob = createPeriodView("TIMESTAMP");
+            execute(BUCKET_0200_ROWS);
+            drainWalAndMatViewQueues();
+            // the period of the rows has not ended
+            assertViewRows("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    """);
+            final AtomicLong definitionSeqTxn = new AtomicLong(-1);
+            if (!isLateCheck) {
+                alterView(MAX_SQL);
+                definitionSeqTxn.set(viewState().getPendingDefinitionSeqTxn());
+            }
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T03:00:00.000001Z");
+            drainMatViewTimerQueue(timerJob);
+            Assert.assertEquals("range_refresh v\n", queuedTasks());
+            Assert.assertFalse(viewState().hasDeferredDefinitionRefreshForTesting());
+            try (MatViewRefreshJob refreshJob = newRefreshJob()) {
+                if (isLateCheck) {
+                    refreshJob.setOnHoldingLockForTesting(once(() -> {
+                        alterView(MAX_SQL);
+                        definitionSeqTxn.set(viewState().getPendingDefinitionSeqTxn());
+                    }));
+                }
+                drainMatViewQueue(refreshJob);
+            }
+            Assert.assertTrue(definitionSeqTxn.get() > -1);
+            Assert.assertEquals(definitionSeqTxn.get(), viewSeqTxn());
+            Assert.assertTrue(viewState().hasDeferredDefinitionRefreshForTesting());
+            drainWalQueue();
+            Assert.assertEquals("incremental_refresh v\n", queuedTasks());
+            drainWalAndMatViewQueues();
+            assertPeriodViewRows("TIMESTAMP");
         });
     }
 

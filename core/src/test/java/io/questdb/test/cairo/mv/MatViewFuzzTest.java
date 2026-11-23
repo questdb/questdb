@@ -2664,11 +2664,58 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalAndMatViewQueues();
     }
 
+    // Asserts the view's buckets outside the hours, those of base rows committed before the last ALTER ... AS, whose
+    // refresh may have run with an earlier SQL: the view holds a bucket of each hour and symbol with base rows there,
+    // and each bucket holds the price and qty that one of the aggregates gives over its base rows.
+    private static void assertAlterAsFuzzOtherHours(
+            String actualSql,
+            TreeSet<String> hours,
+            TreeSet<String> aggregates,
+            String context
+    ) throws SqlException {
+        final String[] viewRows = printAlterAsFuzzHours(actualSql, hours, false).split("\n");
+        final ObjList<String[]> aggregateRows = new ObjList<>();
+        for (String aggregate : aggregates) {
+            aggregateRows.add(printAlterAsFuzzHours(
+                    "SELECT ts, sym, price, qty FROM (SELECT ts, sym, " + aggregate + "(price) AS price, " + aggregate
+                            + "(qty) AS qty FROM base SAMPLE BY 1h) ORDER BY ts, sym",
+                    hours,
+                    false
+            ).split("\n"));
+        }
+        TestUtils.assertEquals(
+                "buckets outside the hours with base rows after ALTER ... AS " + context,
+                printAlterAsFuzzKeys(aggregateRows.getQuick(0)),
+                printAlterAsFuzzKeys(viewRows)
+        );
+        // the rows after the header
+        for (int i = 1; i < viewRows.length; i++) {
+            boolean isAggregateFound = false;
+            final StringSink aggregateValues = new StringSink();
+            int j = 0;
+            for (String aggregate : aggregates) {
+                final String aggregateRow = aggregateRows.getQuick(j++)[i];
+                isAggregateFound |= viewRows[i].equals(aggregateRow);
+                aggregateValues.put(aggregate).put(": ").put(aggregateRow).put("; ");
+            }
+            if (!isAggregateFound) {
+                Assert.fail("view bucket of base rows before ALTER ... AS holds no aggregate of the view's SQLs since its last rebuild [view="
+                        + viewRows[i] + ", " + aggregateValues + "] " + context);
+            }
+        }
+    }
+
     // A check of testPassthroughViewAlterAs() and testAggregatingViewAlterAs(): catches the view up, as the next base
     // commit would after a restart lost its refresh, and asserts that the view is valid, has the SQL the fuzzer last
     // saw taken, and holds exactly the rows the SQL gives on the base: all of them, or those of the hours, given as
-    // the rows print them, when other buckets may hold the values of an earlier SQL.
-    private static void checkAlterAsFuzzView(String viewSql, int step, @Nullable TreeSet<String> hours) throws Exception {
+    // the rows print them, when other buckets may hold the values of an earlier SQL. Those buckets then hold the values
+    // of one of the aggregates of the SQLs since the view's last rebuild, see assertAlterAsFuzzOtherHours().
+    private static void checkAlterAsFuzzView(
+            String viewSql,
+            int step,
+            @Nullable TreeSet<String> hours,
+            TreeSet<String> aggregates
+    ) throws Exception {
         final TableToken viewToken = engine.verifyTableName("mv");
         engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
         for (int i = 0; i < 3; i++) {
@@ -2686,12 +2733,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             assertSqlCursors(expectedSql, actualSql);
             return;
         }
-        LOG.info().$("fuzz: checking the hours with base rows after the last ALTER ... AS [count=").$(hours.size()).I$();
-        TestUtils.assertEquals(context, printAlterAsFuzzHours(expectedSql, hours), printAlterAsFuzzHours(actualSql, hours));
+        LOG.info().$("fuzz: checking the hours with base rows after the last ALTER ... AS [count=").$(hours.size())
+                .$(", aggregates=").$(aggregates.toString())
+                .I$();
+        TestUtils.assertEquals(context, printAlterAsFuzzHours(expectedSql, hours, true), printAlterAsFuzzHours(actualSql, hours, true));
+        assertAlterAsFuzzOtherHours(actualSql, hours, aggregates, context);
     }
 
-    // The rows of the query in the hours, which the rows' first column, the timestamp, starts with.
-    private static String printAlterAsFuzzHours(String sql, TreeSet<String> hours) throws SqlException {
+    // The rows of the query in the hours, or outside them when isInHours is false, after the header. The hour is the
+    // start of the rows' first column, the timestamp.
+    private static String printAlterAsFuzzHours(String sql, TreeSet<String> hours, boolean isInHours) throws SqlException {
         final StringSink rows = new StringSink();
         printSql(sql, rows);
         final StringSink sink = new StringSink();
@@ -2700,9 +2751,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         sink.put(lines[0]).put('\n');
         for (int i = 1; i < lines.length; i++) {
             final String line = lines[i];
-            if (line.length() >= ALTER_AS_HOUR_PREFIX_LENGTH && hours.contains(line.substring(0, ALTER_AS_HOUR_PREFIX_LENGTH))) {
+            if (line.length() >= ALTER_AS_HOUR_PREFIX_LENGTH && hours.contains(line.substring(0, ALTER_AS_HOUR_PREFIX_LENGTH)) == isInHours) {
                 sink.put(line).put('\n');
             }
+        }
+        return sink.toString();
+    }
+
+    // The timestamp and the symbol of the rows after the header, which the rows print first, one row a line.
+    private static String printAlterAsFuzzKeys(String[] rows) {
+        final StringSink sink = new StringSink();
+        for (int i = 1; i < rows.length; i++) {
+            final String row = rows[i];
+            sink.put(row.substring(0, row.indexOf('\t', row.indexOf('\t') + 1))).put('\n');
         }
         return sink.toString();
     }
@@ -3067,13 +3128,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String alterHead = "ALTER MATERIALIZED VIEW mv AS (";
         final PassthroughSql passthroughAlter = new PassthroughSql();
         final AggregatingSql aggregatingAlter = new AggregatingSql();
-        // The aggregate of the view's SQL, whether a bucket may hold the values of another aggregate, a FULL issued since
-        // the last ALTER ... AS the view took that no refresh job has run yet, and a FULL that ran since: every bucket
-        // holds the values of the view's SQL while all SQLs since the view's last rebuild took one aggregate, as the SQLs
-        // of one aggregate agree on every bucket, after a FULL, which rebuilds the view, and always in the passthrough
-        // round, whose SQLs all pass the rows through.
+        // The aggregate of the view's SQL, the aggregates of the view's SQLs since its last rebuild, which a bucket's
+        // values come from, a FULL issued since the last ALTER ... AS the view took that no refresh job has run yet, and
+        // a FULL that ran since: every bucket holds the values of the view's SQL while all SQLs since the view's last
+        // rebuild took one aggregate, as the SQLs of one aggregate agree on every bucket, after a FULL, which rebuilds
+        // the view, and always in the passthrough round, whose SQLs all pass the rows through.
         String viewAggregate = "sum";
-        boolean isAggregateMixed = false;
+        final TreeSet<String> aggregatesSinceRebuild = new TreeSet<>();
+        aggregatesSinceRebuild.add(viewAggregate);
         boolean isFullQueued = false;
         boolean isFullSinceAlter = false;
         for (int step = 0; step < steps; step++) {
@@ -3112,8 +3174,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         viewSql = sql;
                         hoursSinceAlter.clear();
                         if (isAggregating) {
-                            // a FULL since the previous ALTER ... AS rebuilt every bucket with that one's aggregate
-                            isAggregateMixed = (isAggregateMixed && !isFullSinceAlter) || !viewAggregate.equals(aggregatingAlter.aggregate);
+                            if (isFullSinceAlter) {
+                                // a FULL since the previous ALTER ... AS rebuilt every bucket with that one's aggregate
+                                aggregatesSinceRebuild.clear();
+                                aggregatesSinceRebuild.add(viewAggregate);
+                            }
+                            aggregatesSinceRebuild.add(aggregatingAlter.aggregate);
                             viewAggregate = aggregatingAlter.aggregate;
                         }
                         isFullQueued = false;
@@ -3189,8 +3255,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 // the check drains the queues, which run a queued FULL
                 isFullSinceAlter |= isFullQueued;
                 isFullQueued = false;
-                final boolean isEveryBucketChecked = !isAggregateMixed || isFullSinceAlter;
-                checkAlterAsFuzzView(viewSql, step, isEveryBucketChecked ? null : hoursSinceAlter);
+                final boolean isEveryBucketChecked = aggregatesSinceRebuild.size() == 1 || isFullSinceAlter;
+                checkAlterAsFuzzView(viewSql, step, isEveryBucketChecked ? null : hoursSinceAlter, aggregatesSinceRebuild);
             }
         }
         execute("DROP MATERIALIZED VIEW mv");

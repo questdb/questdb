@@ -73,7 +73,9 @@ import org.junit.Test;
  *     complete day with a base partition, or an ATTACH of a complete day, then the firing over a day without a base
  *     partition, before an incremental refresh recomputes the range. An EVERY view refreshes incrementally at a refresh
  *     job run, which stands for its EVERY firing, and at the view check after every sixth operation, and a FULL, a
- *     TRUNCATE and a base replacement drop the range too. A view without a period draws no firing.</li>
+ *     TRUNCATE and a base replacement drop the range too. A view without a period draws no firing. A firing, then the
+ *     refresh job while a definition event waits in the view's WAL, which the firing's range refresh waits for, and
+ *     RESUME WAL while such an event waits.</li>
  * </ul>
  * The rounds start with the initial rows the generator draws, as the fuzz test's do. The generator draws without an
  * engine; the seed is fixed, so a failure reproduces.
@@ -83,12 +85,17 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // incremental refresh
     private static final int CHECK_STEPS = 6;
     private static final int DAY_COUNT = 6;
-    // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL, and
-    // each shape of the refresh job and of the view's WAL suspension around such an event
+    // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL, in
+    // SCALED_MIN_ROUNDS rounds
     private static final int DEFINITION_PENDING_MIN = 10;
-    // each shape of an invalidation that publishes its marker while a range task waits in the refresh queue
+    // each shape of the refresh job and of the view's WAL suspension around a definition event that waits in the view's
+    // WAL, in ROUNDS rounds
+    private static final int DEFINITION_WINDOW_SHAPE_MIN = 10;
+    // each shape of an invalidation that publishes its marker while a range task waits in the refresh queue, in
+    // SCALED_MIN_ROUNDS rounds
     private static final int MARKER_FIRST_SHAPE_MIN = 20;
-    // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
+    // each shape of an ALTER ... AS that copies by position, and the column changes it refuses, in SCALED_MIN_ROUNDS
+    // rounds
     private static final int POSITIONAL_ALTER_MIN = 20;
     // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts, in RESTART_SHAPE_ROUNDS rounds
     private static final int PURGE_THEN_RESTART_MIN = 40;
@@ -108,6 +115,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // minimums of testBareNameRoundShapes() are for this many rounds
     private static final int BARE_NAME_ROUNDS = 1_000;
     private static final int ROUNDS = 1_000;
+    // the rounds that the minimums scaledMin() scales to ROUNDS were set for
+    private static final int SCALED_MIN_ROUNDS = 500;
     private static final int STEPS_PER_ROUND = 60;
 
     @Test
@@ -488,67 +497,69 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         }
 
         assertKindShares(kindCounts, false);
-        assertShare("refresh job after the apply of the base's WAL alone while a definition event waits", refreshJobAfterBaseOnlyApply, DEFINITION_PENDING_MIN);
-        assertShare("second refresh job on one pending definition event", secondRefreshJobOnOneDefinition, DEFINITION_PENDING_MIN);
-        assertShare("refresh job while the view's WAL is suspended short of a definition event", refreshJobWhileSuspended, DEFINITION_PENDING_MIN);
-        assertShare("ALTER ... AS after a refresh job deferred on a pending definition event", alterAfterDeferredRefresh, DEFINITION_PENDING_MIN);
-        assertShare("ALTER ... AS refused while the view's WAL is suspended short of a definition event", alterRefusedBySuspension, DEFINITION_PENDING_MIN);
-        assertShare("RESUME WAL while a definition event waits", resumeWalWhileDefinitionPending, DEFINITION_PENDING_MIN);
-        assertShare("RESUME WAL FROM TXN past a definition event", resumeWalPastDefinition, DEFINITION_PENDING_MIN);
-        assertShare("tracker reset after a definition event applied, then the refresh job", refreshJobAfterResetOfAppliedDefinition, DEFINITION_PENDING_MIN);
+        assertShare("refresh job after the apply of the base's WAL alone while a definition event waits", refreshJobAfterBaseOnlyApply, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("second refresh job on one pending definition event", secondRefreshJobOnOneDefinition, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("refresh job while the view's WAL is suspended short of a definition event", refreshJobWhileSuspended, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("ALTER ... AS after a refresh job deferred on a pending definition event", alterAfterDeferredRefresh, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("ALTER ... AS refused while the view's WAL is suspended short of a definition event", alterRefusedBySuspension, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("RESUME WAL while a definition event waits", resumeWalWhileDefinitionPending, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("RESUME WAL FROM TXN past a definition event", resumeWalPastDefinition, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("tracker reset after a definition event applied, then the refresh job", refreshJobAfterResetOfAppliedDefinition, DEFINITION_WINDOW_SHAPE_MIN);
         final int detachCount = kindCounts[MatViewFuzzOpGenerator.Kind.BASE_DETACH_PARTITION.ordinal()];
         assertShare("ATTACH of a partition the round detached, of " + detachCount + " DETACH", attachAfterDetach, detachCount / 4);
         assertShare("reload of a partition the round detached, of " + detachCount + " DETACH", reloadAfterDetach, detachCount / 8);
-        assertShare("ALTER ... AS refused by the same-position rule", alterRefused, 100);
-        assertShare("ALTER ... AS accepted", alterAccepted, 100);
-        assertShare("ALTER ... AS with ts and sym moved", alterReordered, 100);
-        assertShare("view ADD COLUMN under a cast type", addCast, 50);
-        assertShare("view ADD COLUMN that no SQL produces", addUnproduced, 50);
-        assertShare("row that recreates a dropped partition", insertIntoDropped, 100);
-        assertShare("RESUME SKIP BACKLOG", resumeSkip, 50);
-        assertShare("plain RESUME", resumePlain, 100);
-        assertShare("forced invalidation marker published while a range task waits", markerFirstBehindRangeTask, MARKER_FIRST_SHAPE_MIN);
+        assertShare("ALTER ... AS refused by the same-position rule", alterRefused, scaledMin(100));
+        assertShare("ALTER ... AS accepted", alterAccepted, scaledMin(100));
+        assertShare("ALTER ... AS with ts and sym moved", alterReordered, scaledMin(100));
+        assertShare("view ADD COLUMN under a cast type", addCast, scaledMin(50));
+        assertShare("view ADD COLUMN that no SQL produces", addUnproduced, scaledMin(50));
+        assertShare("row that recreates a dropped partition", insertIntoDropped, scaledMin(100));
+        assertShare("RESUME SKIP BACKLOG", resumeSkip, scaledMin(50));
+        assertShare("plain RESUME", resumePlain, scaledMin(100));
+        assertShare("forced invalidation marker published while a range task waits", markerFirstBehindRangeTask, scaledMin(MARKER_FIRST_SHAPE_MIN));
         assertShare(
                 "bare-name guard's invalidation marker published while a range task waits, after a covering FULL",
                 guardMarkerBehindRangeTaskCovered,
-                MARKER_FIRST_SHAPE_MIN
+                scaledMin(MARKER_FIRST_SHAPE_MIN)
         );
         assertShare(
                 "bare-name guard's invalidation marker published while a range task waits, without a FULL",
                 guardMarkerBehindRangeTaskUncovered,
-                MARKER_FIRST_SHAPE_MIN
+                scaledMin(MARKER_FIRST_SHAPE_MIN)
         );
         assertShare(
                 "invalidation marker published right after an UPDATE or ATTACH applied",
                 markerFirstAfterRangeOperation,
-                MARKER_FIRST_SHAPE_MIN
+                scaledMin(MARKER_FIRST_SHAPE_MIN)
         );
-        assertShare("base replacement without the first day", replaceLeavesFirstDay, 50);
-        assertShare("bulk INSERT", bulkInsert, 100);
-        assertShare("SET EXPIRE refused over a column the view lacks", setExpireRefused, 100);
-        assertShare("SET EXPIRE over two columns", setExpireTwoColumns, 50);
-        assertShare("SET EXPIRE of a window WHEN policy", policyShapes[0], 100);
-        assertShare("SET EXPIRE of a scalar WHEN policy", policyShapes[1], 100);
-        assertShare("SET EXPIRE of a KEEP LATEST policy", policyShapes[2], 100);
-        assertShare("SET EXPIRE of a KEEP HIGHEST or LOWEST policy", policyShapes[3], 100);
-        assertShare("SET EXPIRE of a KEEP N HIGHEST or LOWEST policy", policyShapes[4], 100);
-        assertShare("view DROP COLUMN refused by the EXPIRE ROWS policy", dropColumnRefused, 100);
-        assertShare("view DROP COLUMN of a column the EXPIRE ROWS policy does not read", dropColumnBesidePolicy, 100);
-        assertShare("ALTER ... AS copying by position refused for a moved column", positionalAlterMoved, POSITIONAL_ALTER_MIN);
-        assertShare("ALTER ... AS copying by position refused for a renamed column", positionalAlterRenamed, POSITIONAL_ALTER_MIN);
-        assertShare("ALTER ... AS copying by position refused on the column count", positionalAlterCountDiffers, POSITIONAL_ALTER_MIN);
-        assertShare("ALTER ... AS copying by position accepted", positionalAlterAccepted, POSITIONAL_ALTER_MIN);
-        assertShare("view ADD COLUMN refused while the SQL copies by position", addColumnRefusedPositional, POSITIONAL_ALTER_MIN);
-        assertShare("view DROP COLUMN refused while the SQL copies by position", dropColumnRefusedPositional, POSITIONAL_ALTER_MIN);
-        assertShare("view ADD COLUMN accepted while a definition event is pending", addWhileDefinitionPending[0], DEFINITION_PENDING_MIN);
-        assertShare("view DROP COLUMN accepted while a definition event is pending", dropWhileDefinitionPending[0], DEFINITION_PENDING_MIN);
+        assertShare("base replacement without the first day", replaceLeavesFirstDay, scaledMin(50));
+        assertShare("bulk INSERT", bulkInsert, scaledMin(100));
+        assertShare("SET EXPIRE refused over a column the view lacks", setExpireRefused, scaledMin(100));
+        assertShare("SET EXPIRE over two columns", setExpireTwoColumns, scaledMin(50));
+        assertShare("SET EXPIRE of a window WHEN policy", policyShapes[0], scaledMin(100));
+        assertShare("SET EXPIRE of a scalar WHEN policy", policyShapes[1], scaledMin(100));
+        assertShare("SET EXPIRE of a KEEP LATEST policy", policyShapes[2], scaledMin(100));
+        assertShare("SET EXPIRE of a KEEP HIGHEST or LOWEST policy", policyShapes[3], scaledMin(100));
+        assertShare("SET EXPIRE of a KEEP N HIGHEST or LOWEST policy", policyShapes[4], scaledMin(100));
+        assertShare("view DROP COLUMN refused by the EXPIRE ROWS policy", dropColumnRefused, scaledMin(100));
+        assertShare("view DROP COLUMN of a column the EXPIRE ROWS policy does not read", dropColumnBesidePolicy, scaledMin(100));
+        assertShare("ALTER ... AS copying by position refused for a moved column", positionalAlterMoved, scaledMin(POSITIONAL_ALTER_MIN));
+        assertShare("ALTER ... AS copying by position refused for a renamed column", positionalAlterRenamed, scaledMin(POSITIONAL_ALTER_MIN));
+        assertShare("ALTER ... AS copying by position refused on the column count", positionalAlterCountDiffers, scaledMin(POSITIONAL_ALTER_MIN));
+        assertShare("ALTER ... AS copying by position accepted", positionalAlterAccepted, scaledMin(POSITIONAL_ALTER_MIN));
+        assertShare("view ADD COLUMN refused while the SQL copies by position", addColumnRefusedPositional, scaledMin(POSITIONAL_ALTER_MIN));
+        assertShare("view DROP COLUMN refused while the SQL copies by position", dropColumnRefusedPositional, scaledMin(POSITIONAL_ALTER_MIN));
+        assertShare("view ADD COLUMN accepted while a definition event is pending", addWhileDefinitionPending[0], scaledMin(DEFINITION_PENDING_MIN));
+        assertShare("view DROP COLUMN accepted while a definition event is pending", dropWhileDefinitionPending[0], scaledMin(DEFINITION_PENDING_MIN));
+        // the draws of the operations that meet a pending definition event, which take no view column change, leave this
+        // shape below its share of SCALED_MIN_ROUNDS rounds, so its minimum is not scaled
         assertShare(
                 "view ADD or DROP COLUMN refused while a definition event is pending",
                 addWhileDefinitionPending[1] + dropWhileDefinitionPending[1],
                 DEFINITION_PENDING_MIN
         );
-        assertShare("ALTER ... AS accepted while a definition event is pending", alterWhileDefinitionPending[0], DEFINITION_PENDING_MIN);
-        assertShare("ALTER ... AS refused while a definition event is pending", alterWhileDefinitionPending[1], DEFINITION_PENDING_MIN);
+        assertShare("ALTER ... AS accepted while a definition event is pending", alterWhileDefinitionPending[0], scaledMin(DEFINITION_PENDING_MIN));
+        assertShare("ALTER ... AS refused while a definition event is pending", alterWhileDefinitionPending[1], scaledMin(DEFINITION_PENDING_MIN));
 
         // rounds of a period view
         final int[] periodKindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
@@ -558,6 +569,10 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int updatesOfCompleteDay = 0;
         int reloadsOfCompleteDay = 0;
         int periodRefreshOverEmptyDayWithQueuedRange = 0;
+        // the refresh job, which runs the range refresh of a period timer firing, and RESUME WAL, while a definition
+        // event waits in the view's WAL
+        int periodRefreshThenRefreshJobOnPendingDefinition = 0;
+        int periodViewResumeWalWhileDefinitionPending = 0;
         for (int round = 0; round < ROUNDS; round++) {
             final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, true);
             generator.initView(rnd);
@@ -573,8 +588,15 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             // the range of an UPDATE or ATTACH of a complete day waits in the view's cache: no incremental refresh,
             // FULL, TRUNCATE or base replacement came since
             boolean isRangeQueued = false;
+            // the round added a view column, after which the fuzz applies the view's WAL before a view DROP PARTITION
+            boolean isViewColumnAdded = false;
+            // the range refresh of a period timer firing waits in the refresh queue: no refresh job run, restart, view
+            // check or operation that drains the queues came since
+            boolean isPeriodRefreshQueued = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final int completeDays = generator.getCompleteDays();
+                final boolean wasDefinitionPending = generator.isDefinitionPending();
+                final boolean wasViewWalSuspended = generator.isViewWalSuspended();
                 generator.next(rnd, op);
                 periodKindCounts[op.kind.ordinal()]++;
                 for (int i = 0, n = op.rowTs.size(); i < n; i++) {
@@ -615,24 +637,54 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     default -> {
                     }
                 }
+                switch (op.kind) {
+                    case VIEW_PERIOD_REFRESH -> isPeriodRefreshQueued = true;
+                    case RUN_REFRESH_JOB -> {
+                        if (wasDefinitionPending && isPeriodRefreshQueued) {
+                            periodRefreshThenRefreshJobOnPendingDefinition++;
+                        }
+                        isPeriodRefreshQueued = false;
+                    }
+                    // a restart loses the queued tasks, and these base replacements drain the queues first
+                    case RESTART, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> isPeriodRefreshQueued = false;
+                    case VIEW_RESUME_WAL -> {
+                        if (wasDefinitionPending && !op.isSkipDefinition) {
+                            periodViewResumeWalWhileDefinitionPending++;
+                        }
+                    }
+                    default -> {
+                    }
+                }
                 if (step % CHECK_STEPS == CHECK_STEPS - 1) {
                     // the view check
                     isRangeQueued = false;
+                    isPeriodRefreshQueued = false;
                 }
+                if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_RESUME_WAL && op.isSkipDefinition) {
+                    generator.onDefinitionSkipped();
+                }
+                trackDefinitionPending(rnd, generator, op, wasDefinitionPending, wasViewWalSuspended, isViewColumnAdded, step);
+                isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
                 Assert.assertTrue(generator.getCompleteDays() <= DAY_COUNT);
             }
         }
         assertKindShares(periodKindCounts, true);
         assertShare("gap day", gapDayCount, ROUNDS);
         assertShare("period timer firing over a gap day", gapDayFirings, ROUNDS);
-        assertShare("late row into a gap day whose period ended", lateRowsIntoGapDay, 200);
-        assertShare("UPDATE of a complete day", updatesOfCompleteDay, 500);
-        assertShare("reload of a complete day", reloadsOfCompleteDay, 50);
+        assertShare("late row into a gap day whose period ended", lateRowsIntoGapDay, scaledMin(200));
+        assertShare("UPDATE of a complete day", updatesOfCompleteDay, scaledMin(500));
+        assertShare("reload of a complete day", reloadsOfCompleteDay, scaledMin(50));
         assertShare(
                 "period timer firing over a day without a base partition while the range of an UPDATE or ATTACH of a complete day is queued",
                 periodRefreshOverEmptyDayWithQueuedRange,
-                50
+                scaledMin(50)
         );
+        assertShare(
+                "period timer firing, then the refresh job while a definition event waits",
+                periodRefreshThenRefreshJobOnPendingDefinition,
+                DEFINITION_WINDOW_SHAPE_MIN
+        );
+        assertShare("RESUME WAL of a period view while a definition event waits", periodViewResumeWalWhileDefinitionPending, DEFINITION_WINDOW_SHAPE_MIN);
     }
 
     @Test
@@ -1173,6 +1225,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             case VIEW_INVALIDATE -> op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_TASK;
             default -> false;
         };
+    }
+
+    // A minimum count of a shape in SCALED_MIN_ROUNDS rounds, scaled to ROUNDS: the share of rounds the minimum pins stays
+    // the same.
+    private static int scaledMin(int min) {
+        return min * ROUNDS / SCALED_MIN_ROUNDS;
     }
 
     // Follows in the generator what MatViewFuzzTest tells it of the definition events that wait in the view's WAL: an
