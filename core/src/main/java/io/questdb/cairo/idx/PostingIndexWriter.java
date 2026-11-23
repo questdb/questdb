@@ -1308,6 +1308,14 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @TestOnly
+    public long getPendingPurgeSealTxnForTesting(int idx) {
+        if (idx < 0 || idx >= pendingPurges.size()) {
+            return -1L;
+        }
+        return pendingPurges.getQuick(idx).sealTxn;
+    }
+
+    @TestOnly
     public long getPendingPurgeToTxnForTesting(int idx) {
         if (idx < 0 || idx >= pendingPurges.size()) {
             return -1L;
@@ -2121,19 +2129,19 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
             }
-            // Only record the superseded oldSealTxn for purge when the seal
-            // actually published. On a failed seal the chain head is still
-            // oldSealTxn (the live file), so recording its purge would lean
-            // entirely on the liveness guard to avoid deleting it.
-            if (isSealed && sealTxn != oldSealTxn) {
-                recordPostingSealPurge(oldSealTxn);
-            }
         }
 
         // Step 2 of the seal's flush, after the encode paths flushed the new
         // .pv and covers (step 1) and published the entry naming them.
         if (partitionPath.size() > 0 && keyMem.isOpen()) {
             flushSealKeyFile();
+        }
+        // Record the superseded oldSealTxn for purge only once the seal
+        // published and its .pk flush succeeded. On a failed seal the chain
+        // head is still oldSealTxn, the live file; after a failed .pk flush
+        // the head on disk may still be oldSealTxn, so its files stay.
+        if (isSealed && sealTxn != oldSealTxn) {
+            recordPostingSealPurge(oldSealTxn);
         }
     }
 
@@ -5133,10 +5141,12 @@ public class PostingIndexWriter implements IndexWriter {
         // drains publishPendingPurges; if the caller closes without that
         // commit, the orphan files leak -- same window as the pre-PR
         // behaviour, just now narrower (only post-switch throws).
-        openSealValueFile(newSealTxn);
         boolean isSwitched = false;
         boolean isPublished = false;
         try {
+            // Inside the try: an open that fails after it created the staged
+            // .pv (allocate, mmap) must unlink it too.
+            openSealValueFile(newSealTxn);
             long srcFd = valueMem.getFd();
             long dstFd = sealValueMem.getFd();
             long copied = ff.copyData(srcFd, dstFd, 0, valueMemSize);
@@ -6262,6 +6272,12 @@ public class PostingIndexWriter implements IndexWriter {
      * keyCount, hitting 32 KiB for keyCount = 1M and unbounded above).
      * Both fast and streaming paths allocate the same pair.
      */
+    private long sealAuxiliaryBufferBytes() {
+        long strideIndexBuf = ((long) PostingIndexUtils.strideCount(keyCount) + 1L) * Long.BYTES;
+        long localHeaderBuf = 4096L; // DENSE_STRIDE delta header rounded up
+        return strideIndexBuf + localHeaderBuf;
+    }
+
     /**
      * How a seal, a rollback re-encode or {@link #truncate()} makes the files it wrote durable, by the owner's
      * commit mode (see {@link #setCommitMode(int)}):
@@ -6296,12 +6312,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final long committedTxn = committedTxnSource.getTxn();
         return committedTxn > -1 && pendingTxnAtSeal > committedTxn;
-    }
-
-    private long sealAuxiliaryBufferBytes() {
-        long strideIndexBuf = ((long) PostingIndexUtils.strideCount(keyCount) + 1L) * Long.BYTES;
-        long localHeaderBuf = 4096L; // DENSE_STRIDE delta header rounded up
-        return strideIndexBuf + localHeaderBuf;
     }
 
     private void sealFull(long newSealTxn) {
