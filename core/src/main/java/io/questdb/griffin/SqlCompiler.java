@@ -53,9 +53,9 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * joins it without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, or selects from
      * it alone. The plan of such a read computes every column of the sub-query, as the plan of
      * {@code SELECT n FROM v} does for a view {@code SELECT count() n, sum(a) s FROM (SELECT * FROM x)}. A read that
-     * filters on outputs of the view scans no more than reads that name those outputs: the SELECT that computes an
-     * output, or takes it from a column of another name, applies the filter to the output, and gives the model under
-     * it no column of the same name, see {@code SqlOptimiser.propagateTopDownColumns0()}. A read
+     * filters on outputs of the view scans no more than reads that name those outputs: the SELECT that defines an
+     * output applies the filter to the output, and gives the model under it no column by the name of the output, see
+     * {@code SqlOptimiser.propagateTopDownColumns0()}. A read
      * that counts the rows of the view drops the ORDER BY of a sub-query, and a temporal join or a SAMPLE BY that
      * took its timestamp from it takes the timestamp of the source of the sub-query instead. A read that places the
      * view on a side of a join other than the first keeps the ORDER BY of every sub-query instead, also one the plan

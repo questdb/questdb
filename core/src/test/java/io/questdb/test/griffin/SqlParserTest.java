@@ -8299,7 +8299,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLatestByDeprecatedNonSelectedColumn() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x, z] from tab t2 latest by z where x > 100) t2 where y > 0) t1",
+                "select-choose x, y from (select-choose [x, y] x, y from (select [x, y, z] from tab t2 latest by z where x > 100) t2 where y > 0) t1",
                 "select x, y from (select x, y from tab t2 latest by z where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
         );
@@ -8335,7 +8335,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLatestByDeprecatedWithOuterFilter() throws SqlException {
         assertQuery(
-                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [uuid, time] from positions timestamp (time) latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
+                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [time, uuid] from positions timestamp (time) latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
                 "(positions latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28'",
                 modelOf("positions").timestamp("time").col("uuid", ColumnType.SYMBOL)
 
@@ -8363,7 +8363,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLatestByNonSelectedColumn() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x, z] from tab t2 where x > 100 latest on ts partition by z) t2 where y > 0) t1",
+                "select-choose x, y from (select-choose [x, y] x, y from (select [x, y, z] from tab t2 where x > 100 latest on ts partition by z) t2 where y > 0) t1",
                 "select x, y from (select x, y from tab t2 where x > 100 latest on ts partition by z) t1 where y > 0",
                 modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
         );
@@ -8498,7 +8498,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLatestByWithOuterFilter() throws SqlException {
         assertQuery(
-                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [uuid, time] from positions where time < '2021-05-11T14:00' latest on time partition by uuid) where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
+                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [time, uuid] from positions where time < '2021-05-11T14:00' latest on time partition by uuid) where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
                 "(positions where time < '2021-05-11T14:00' latest on time partition by uuid) where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28'",
                 modelOf("positions").timestamp("time").col("uuid", ColumnType.SYMBOL)
 
@@ -9593,7 +9593,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-choose [contactId] contactId from (select-group-by [contactId] contactId, count() count from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) eventlist except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-choose [contactId] contactId from (select-group-by [contactId] contactId, count() count from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [contactId, groupId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) eventlist except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [_id, notRealType] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
                 """
                         WITH\s
                         contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),
@@ -13048,7 +13048,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSubQuery() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x] from tab t2 where x > 100 latest on ts partition by x) t2 where y > 0) t1",
+                "select-choose x, y from (select-choose [x, y] x, y from (select [x, y] from tab t2 where x > 100 latest on ts partition by x) t2 where y > 0) t1",
                 "select x, y from (select x, y from tab t2 where x > 100 latest on ts partition by x) t1 where y > 0",
                 modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );

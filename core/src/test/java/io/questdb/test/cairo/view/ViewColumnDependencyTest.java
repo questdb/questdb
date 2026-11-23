@@ -435,6 +435,29 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testJoinOutputFiltered() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE z (k SYMBOL, a LONG)");
+            execute("INSERT INTO z VALUES ('k1', 7)");
+            // A read that filters on the output a, which the view takes from a of z, keeps the filter with the SELECT
+            // of the view, above LATEST ON or the window function, where it filters the output. The read scans no
+            // column a of x, which no output of the view reads, so a principal with SELECT on the view only runs it.
+            assertReads(
+                    "SELECT x.ts, x.k, z.a FROM x JOIN z ON (k) LATEST ON ts PARTITION BY k",
+                    "{x=[k, ts], z=[a, k]}",
+                    "SELECT * FROM v WHERE a = 7",
+                    "SELECT k FROM v WHERE a IS NOT NULL"
+            );
+            assertReads(
+                    "SELECT x.ts, z.a, row_number() OVER (PARTITION BY x.k ORDER BY x.ts) rn FROM x JOIN z ON (k)",
+                    "{x=[k, ts], z=[a, k]}",
+                    "SELECT * FROM v WHERE a = 7 AND rn = 2"
+            );
+        });
+    }
+
+    @Test
     public void testLateralJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2224,8 +2247,9 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             } finally {
                 Misc.freeObjList(compilers);
             }
-            // The second compile of the SELECT keeps the sub-query whole, and fills maps and sets of outputs that grow
-            // with the columns. The compilers live on in the pool once the statement ends, and keep none of them.
+            // The second compile of the SELECT keeps the sub-query whole, and fills containers, maps and sets of
+            // outputs that grow with the columns. The compilers live on in the pool once the statement ends, and keep
+            // none of them: a later statement would otherwise clear containers sized for this one.
             final ObjList<WeakReference<Object>> references = new ObjList<>();
             SqlOptimiser.setKeptWholePoolListenerForTesting(object -> references.add(new WeakReference<>(object)));
             try {
@@ -2234,19 +2258,57 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 SqlOptimiser.setKeptWholePoolListenerForTesting(null);
             }
             Assert.assertEquals("{w_chain=[c1]}", dependenciesOf("v"));
-            // the two sets of outputs of the projections, and a map of the columns of each model the outputs reach
-            Assert.assertTrue(references.size() + " objects taken from the pools", references.size() > 2);
-            int retainedCount = references.size();
-            for (int attempt = 0; attempt < 10 && retainedCount > 0; attempt++) {
-                System.gc();
-                retainedCount = 0;
-                for (int i = 0, n = references.size(); i < n; i++) {
-                    if (references.getQuick(i).get() != null) {
-                        retainedCount++;
-                    }
-                }
+            // the containers, the two sets of outputs of the projections, and a map of the columns of each model the
+            // outputs reach
+            Assert.assertTrue(references.size() + " objects filled or taken from the pools", references.size() > 12);
+            assertCollected(references);
+        });
+    }
+
+    @Test
+    public void testSubQueryKeptWholeReleasesItsMemoryWhenItFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String createViewSql = "CREATE VIEW v AS (SELECT count() n, sum(a) s FROM (SELECT * FROM x))";
+            final int[] objectCount = {0};
+            SqlOptimiser.setKeptWholePoolListenerForTesting(object -> objectCount[0]++);
+            try {
+                execute(createViewSql);
+            } finally {
+                SqlOptimiser.setKeptWholePoolListenerForTesting(null);
             }
-            Assert.assertEquals("objects of the propagation that outlive it", 0, retainedCount);
+            // the read SELECT n FROM v keeps the sub-query whole
+            Assert.assertEquals("{x=[?*, a]}", dependenciesOf("v"));
+            execute("DROP VIEW v");
+            drainWalAndViewQueues();
+            // The propagation in kept-whole mode fails at each object it fills or takes from the pools in turn, as it
+            // starts or later. The statement fails with the error, the compiler keeps nothing of the propagation, and
+            // the statement then records the view as before.
+            Assert.assertTrue(objectCount[0] + " objects filled or taken from the pools", objectCount[0] > 10);
+            final ObjList<WeakReference<Object>> references = new ObjList<>();
+            for (int failingObject = 0; failingObject < objectCount[0]; failingObject++) {
+                final int failAt = failingObject;
+                final int[] handedCount = {0};
+                SqlOptimiser.setKeptWholePoolListenerForTesting(object -> {
+                    if (handedCount[0]++ == failAt) {
+                        throw CairoException.nonCritical().put("kept-whole failure");
+                    }
+                    references.add(new WeakReference<>(object));
+                });
+                try {
+                    execute(createViewSql);
+                    Assert.fail("the statement did not fail at object " + failAt);
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "kept-whole failure");
+                } finally {
+                    SqlOptimiser.setKeptWholePoolListenerForTesting(null);
+                }
+                execute(createViewSql);
+                Assert.assertEquals("failure at object " + failAt, "{x=[?*, a]}", dependenciesOf("v"));
+                execute("DROP VIEW v");
+                drainWalAndViewQueues();
+            }
+            assertCollected(references);
         });
     }
 
@@ -3160,6 +3222,22 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     // and the ones ALTER VIEW and CREATE OR REPLACE VIEW record, and that the walks of the optimised SELECT
     // reach about twice as many models with twice as many joins. A walk of every path to the models reaches
     // 2^8 times as many with 16 joins as with 8.
+    // Asserts that no object the references hold outlives a few garbage collections: nothing, such as a pooled
+    // compiler, keeps it.
+    private static void assertCollected(ObjList<WeakReference<Object>> references) {
+        int retainedCount = references.size();
+        for (int attempt = 0; attempt < 10 && retainedCount > 0; attempt++) {
+            System.gc();
+            retainedCount = 0;
+            for (int i = 0, n = references.size(); i < n; i++) {
+                if (references.getQuick(i).get() != null) {
+                    retainedCount++;
+                }
+            }
+        }
+        Assert.assertEquals("objects of the propagation that outlive it", 0, retainedCount);
+    }
+
     private static void assertLateralJoinDependencies(
             SqlCompilerImpl compiler,
             IntFunction<String> viewSql,

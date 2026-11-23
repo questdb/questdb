@@ -510,6 +510,76 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnJoinOutputReadsNoColumnOfOtherTable() throws Exception {
+        // A filter cannot move below LATEST ON over a join, so it stays with the SELECT above it and filters an output
+        // of that SELECT: a is the output that reads a of t2. The scans read that column, and not the column a of t1,
+        // which no output reads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (ts TIMESTAMP, k SYMBOL, a INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (k SYMBOL, a INT)");
+            // the latest row of k1 has a = 20 in t1 and a = 1 in t2, that of k2 a = 30 in t1 and a = 2 in t2
+            execute("INSERT INTO t1 VALUES (0, 'k1', 10), (3_600_000_000, 'k1', 20), (0, 'k2', 30)");
+            execute("INSERT INTO t2 VALUES ('k1', 1), ('k2', 2)");
+
+            final String latestQuery = "SELECT * FROM (SELECT t1.ts, t1.k, t2.a FROM t1 JOIN t2 ON (k) LATEST ON ts PARTITION BY k) WHERE a = 1";
+            assertQuery(
+                    "select-choose ts, k, a from (select-choose [t1.ts ts, t1.k k, t2.a a] t1.ts ts, t1.k k, t2.a a from (select [ts, k] from t1 join select [a, k] from t2 on t2.k = t1.k latest on ts partition by k) where a = 1)",
+                    latestQuery
+            );
+            assertQuery(latestQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\ta
+                            1970-01-01T01:00:00.000000Z\tk1\t1
+                            """);
+
+            final String leftQuery = "SELECT * FROM (SELECT t1.ts, t1.k, t2.a FROM t1 LEFT JOIN t2 ON (k) LATEST ON ts PARTITION BY k) WHERE a = 2";
+            assertQuery(
+                    "select-choose ts, k, a from (select-choose [t1.ts ts, t1.k k, t2.a a] t1.ts ts, t1.k k, t2.a a from (select [ts, k] from t1 left join select [a, k] from t2 on t2.k = t1.k latest on ts partition by k) where a = 2)",
+                    leftQuery
+            );
+            assertQuery(leftQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\ta
+                            1970-01-01T00:00:00.000000Z\tk2\t2
+                            """);
+
+            final String cteQuery = "WITH l AS (SELECT t1.ts, t1.k, t2.a FROM t1 JOIN t2 ON (k) LATEST ON ts PARTITION BY k) SELECT k, a FROM l WHERE a = 1";
+            assertQuery(
+                    "select-choose k, a from (select-choose [t1.k k, t2.a a] t1.ts ts, t1.k k, t2.a a from (select [k] from t1 join select [a, k] from t2 on t2.k = t1.k latest on ts partition by k) where a = 1) l",
+                    cteQuery
+            );
+            assertQuery(cteQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\ta
+                            k1\t1
+                            """);
+
+            // The output of the first table: the scans read a of t1, which the output reads, and not a of t2.
+            final String firstTableQuery = "SELECT * FROM (SELECT t1.ts, t1.k, t1.a FROM t1 JOIN t2 ON (k) LATEST ON ts PARTITION BY k) WHERE a = 20";
+            assertQuery(
+                    "select-choose ts, k, a from (select-choose [t1.ts ts, t1.k k, t1.a a] t1.ts ts, t1.k k, t1.a a from (select [ts, k, a] from t1 join select [k] from t2 on t2.k = t1.k latest on ts partition by k) where a = 20)",
+                    firstTableQuery
+            );
+            assertQuery(firstTableQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\ta
+                            1970-01-01T01:00:00.000000Z\tk1\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testFilterOnRenamedColumnAboveLatestOn() throws Exception {
         // A filter cannot move below LATEST ON, so it stays with the SELECT above it and filters the output of that
         // SELECT: a is the output that reads b. The scan reads b for it, and not the column a, which no output reads.
@@ -545,11 +615,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 1970-01-01T01:00:00.000000Z\tk1\t1
                                 """);
 
-                // The filter also names k, which the SELECT takes from the column of the same name, so the scan reads k
-                // first, for the filter.
+                // The filter also names k, the output the SELECT takes from the column of the same name: the scan reads
+                // k for that output.
                 final String keyQuery = "SELECT * FROM (SELECT ts, k, b AS a FROM x LATEST ON ts PARTITION BY k) WHERE a = 1 OR k = 'k2' ORDER BY k";
                 assertQuery(
-                        "select-choose ts, k, a from (select-choose [ts, k, b a] ts, k, b a from (select [k, ts, b] from x latest on ts partition by k) where a = 1 or k = 'k2') order by k",
+                        "select-choose ts, k, a from (select-choose [ts, k, b a] ts, k, b a from (select [ts, k, b] from x latest on ts partition by k) where a = 1 or k = 'k2') order by k",
                         keyQuery
                 );
                 assertQuery(keyQuery)

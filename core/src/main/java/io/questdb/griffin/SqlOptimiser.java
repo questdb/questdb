@@ -208,8 +208,8 @@ public class SqlOptimiser implements Mutable {
     // thread that ran the compile and assert on deltas.
     private static long keptWholeOriginAddCount;
     // Test-only observability for the release of the memory of the propagation of the columns of a query in
-    // kept-whole mode: when set, receives each map and set the propagation takes from its pools, see
-    // releaseKeptWholeMemory().
+    // kept-whole mode: when set, receives each container the propagation fills and each map and set it takes from its
+    // pools, see releaseKeptWholeMemory().
     private static volatile Consumer<Object> keptWholePoolListener;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
@@ -245,36 +245,12 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
-    // While the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(): the index of each column
-    // of the projection of a VIRTUAL model, by alias, see addSameModelReaderOrigins()
-    private final LowerCaseCharSequenceIntHashMap keptWholeColumnIndexes = new LowerCaseCharSequenceIntHashMap();
-    // per column of the projection emitKeptWholeProjection() emits, the join models of its nested model the column
-    // reaches
-    private final ObjList<IntHashSet> keptWholeColumnJoins = new ObjList<>();
-    // and the outputs of the view the column serves, null when every read of the view needs it
-    private final ObjList<IntHashSet> keptWholeColumnOrigins = new ObjList<>();
-    // the sets of outputs collectWithholdingOutputs() has added to keptWholeNeededBy
-    private final ObjHashSet<IntHashSet> keptWholeNeededOrigins = new ObjHashSet<>();
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOriginMapPool = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 16);
-    // per model, the outputs of the view each top-down column serves, see recordKeptWholeOrigins()
-    private final ObjObjHashMap<IQueryModel, LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOrigins = new ObjObjHashMap<>();
     // the sets of outputs recordKeptWholeOrigins() makes for a column of its own, see KeptWholeOrigins
     private final ObjectPool<KeptWholeOrigins> keptWholeOriginsPool = new ObjectPool<>(KeptWholeOrigins::new, 16);
-    // the models whose columns are the outputs of the view: its SELECT and the branches of its set operation
-    private final ObjHashSet<IQueryModel> keptWholeOutputLayers = new ObjHashSet<>();
-    // per column of the projection of a VIRTUAL model, the columns of the projection that read the nested model it
-    // reaches through the columns of the model it reads, see reachedNestedReaders()
-    private final ObjList<IntHashSet> keptWholeReachedReaders = new ObjList<>();
-    // per column of the projection of a VIRTUAL model, its outputs with those of the columns that read it, see
-    // addSameModelReaderOrigins(): null when no column reads it, and EVERY_OUTPUT when every read needs it
-    private final ObjList<IntHashSet> keptWholeReaderOrigins = new ObjList<>();
-    // the sets of outputs collectWithholdingOutputs() has added to keptWholeServedBy
-    private final ObjHashSet<IntHashSet> keptWholeServedOrigins = new ObjHashSet<>();
     // the sets the propagation in kept-whole mode fills, see nextKeptWholeSet(): a pool of its own, of which no other
     // code keeps a set, so that releaseKeptWholeMemory() frees them
     private final ObjectPool<IntHashSet> keptWholeSetPool = new ObjectPool<>(IntHashSet::new, 16);
-    // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
-    private final IntHashSet keptWholeWithheldJoins = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> lateralCountTemplateMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LateralJoinRewriter lateralJoinRewriter;
@@ -388,16 +364,42 @@ public class SqlOptimiser implements Mutable {
     // Whether the optimiser optimises a sub-query nested in a PIVOT IN subquery that derives an ordinary
     // view's metadata, see optimiseExpressionModels()
     private boolean isViewMetadataCheckDeferred;
+    // While the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(): the index of each column
+    // of the projection of a VIRTUAL model, by alias, see addSameModelReaderOrigins(). This and the other containers
+    // the propagation fills grow with the projections it walks, and start over once it ends, see
+    // releaseKeptWholeMemory().
+    private LowerCaseCharSequenceIntHashMap keptWholeColumnIndexes = new LowerCaseCharSequenceIntHashMap();
+    // per column of the projection emitKeptWholeProjection() emits, the join models of its nested model the column
+    // reaches
+    private ObjList<IntHashSet> keptWholeColumnJoins = new ObjList<>();
+    // and the outputs of the view the column serves, null when every read of the view needs it
+    private ObjList<IntHashSet> keptWholeColumnOrigins = new ObjList<>();
     // the outputs of the view the projection column emitKeptWholeProjection() emits serves, null otherwise
     private IntHashSet keptWholeEmittedOrigins;
     // the outputs of the view whose columns need a join model, see collectWithholdingOutputs(), a set of
     // keptWholeSetPool while the columns of a query propagate in kept-whole mode, null otherwise
     private IntHashSet keptWholeNeededBy;
+    // the sets of outputs collectWithholdingOutputs() has added to keptWholeNeededBy
+    private ObjHashSet<IntHashSet> keptWholeNeededOrigins = new ObjHashSet<>();
+    // per model, the outputs of the view each top-down column serves, see recordKeptWholeOrigins()
+    private ObjObjHashMap<IQueryModel, LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOrigins = new ObjObjHashMap<>();
     // the number of outputs of the view while the columns of a query propagate in kept-whole mode
     private int keptWholeOutputCount;
+    // the models whose columns are the outputs of the view: its SELECT and the branches of its set operation
+    private ObjHashSet<IQueryModel> keptWholeOutputLayers = new ObjHashSet<>();
+    // per column of the projection of a VIRTUAL model, the columns of the projection that read the nested model it
+    // reaches through the columns of the model it reads, see reachedNestedReaders()
+    private ObjList<IntHashSet> keptWholeReachedReaders = new ObjList<>();
+    // per column of the projection of a VIRTUAL model, its outputs with those of the columns that read it, see
+    // addSameModelReaderOrigins(): null when no column reads it, and EVERY_OUTPUT when every read needs it
+    private ObjList<IntHashSet> keptWholeReaderOrigins = new ObjList<>();
     // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs(), a set of
     // keptWholeSetPool while the columns of a query propagate in kept-whole mode, null otherwise
     private IntHashSet keptWholeServedBy;
+    // the sets of outputs collectWithholdingOutputs() has added to keptWholeServedBy
+    private ObjHashSet<IntHashSet> keptWholeServedOrigins = new ObjHashSet<>();
+    // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
+    private IntHashSet keptWholeWithheldJoins = new IntHashSet();
     // the entries the propagation in kept-whole mode has added to its sets, see takeKeptWholeWork()
     private long keptWholeWork;
     private OperatorExpression opAnd;
@@ -547,9 +549,10 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Sets the listener that receives each map and set the propagation of the columns of a query in kept-whole mode
-     * takes from its pools, see {@link #setSubQueryKeptWhole(boolean)}, or clears it with null.
-     * Tests hold the objects weakly to check that no compiler keeps them once the propagation has ended.
+     * Sets the listener that receives each container the propagation of the columns of a query in kept-whole mode
+     * fills, as the propagation starts, and each map and set it takes from its pools, see
+     * {@link #setSubQueryKeptWhole(boolean)}, or clears it with null. Tests hold the objects weakly to check that no
+     * compiler keeps them once the propagation has ended, and make the listener throw to fail the propagation.
      *
      * @param listener the listener, called on the thread that compiles the query, or null
      */
@@ -576,7 +579,10 @@ public class SqlOptimiser implements Mutable {
         isOrderByCleared = false;
         isOrderByKept = false;
         isViewMetadataCheckDeferred = false;
-        endKeptWholePropagation();
+        // optimise() drops the state and the containers of each propagation in kept-whole mode as it ends it, see
+        // endKeptWholePropagation(), so a statement finds no propagation to end and nothing of one to clear
+        assert keptWholeNeededBy == null : "propagation in kept-whole mode not ended";
+        isSubQueryKeptWhole = false;
         keptWholeOriginMapPool.clear();
         keptWholeOriginsPool.clear();
         keptWholeSetPool.clear();
@@ -985,23 +991,6 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
-    // Whether the projection defines its column alias otherwise than as the column of the same name of its nested
-    // model: it takes it from a column of another name, as SELECT b a takes a from b, or it computes it, as
-    // SELECT a * 10 b, count() b and 'all' b do. The projection of a join names the column of the same name with the
-    // alias of its table, as t.a.
-    private static boolean isRenamedOrComputedColumn(IQueryModel projection, CharSequence alias) {
-        final QueryColumn column = projection.getAliasToColumnMap().get(alias);
-        if (column == null) {
-            return false;
-        }
-        final ExpressionNode ast = column.getAst();
-        if (ast.type != LITERAL) {
-            return true;
-        }
-        final CharSequence token = ast.token;
-        return !Chars.equalsIgnoreCase(alias, token, Chars.indexOfLastUnquoted(token, '.') + 1, token.length());
-    }
-
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -1088,7 +1077,7 @@ public class SqlOptimiser implements Mutable {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
-    // Hands an object the propagation in kept-whole mode takes from its pools to the listener tests set, see
+    // Hands an object the propagation in kept-whole mode fills or takes from its pools to the listener tests set, see
     // setKeptWholePoolListenerForTesting().
     private static <T> T notifyKeptWholePoolListener(T object) {
         final Consumer<Object> listener = keptWholePoolListener;
@@ -2263,11 +2252,11 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Adds the column the literal names to the top-down columns of the model, unless the projection, if any, takes that
-    // column from a column of another name or computes it, see emitLiteralsTopDown(). The nodes of an expression a
-    // projection comes with, its WHERE clause, are not null.
+    // Adds the column the literal names to the top-down columns of the model, unless the literal names an output of the
+    // projection, if any, which gives the model what the output reads, see emitLiteralsTopDown(). The nodes of an
+    // expression a projection comes with, its WHERE clause, are not null.
     private void addTopDownColumn(@Transient ExpressionNode node, IQueryModel model, @Nullable IQueryModel projection) {
-        if (projection == null || node.type != LITERAL || !isRenamedOrComputedColumn(projection, node.token)) {
+        if (projection == null || node.type != LITERAL || projection.getAliasToColumnMap().excludes(node.token)) {
             addTopDownColumn(node, model);
         }
     }
@@ -5333,8 +5322,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Emits the literals of the expression to the model as top-down columns. Given a projection, the expression is the
-    // WHERE clause of the projection and the model is its nested model, and a literal that names a column the
-    // projection renames or computes is not emitted, see propagateTopDownColumns0().
+    // WHERE clause of the projection and the model is its nested model, and a literal that names an output of the
+    // projection is not emitted, see propagateTopDownColumns0().
     private void emitLiteralsTopDown(@Transient ExpressionNode node, IQueryModel model, @Nullable IQueryModel projection) {
         sqlNodeStack.clear();
 
@@ -5443,25 +5432,19 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Ends the propagation of the columns of a query in kept-whole mode that startKeptWholePropagation() started, as it
+    // completes or fails: drops its state, and the memory of its containers and of the sets of its pools, see
+    // releaseKeptWholeMemory().
     private void endKeptWholePropagation() {
         isSubQueryKeptWhole = false;
         isKeptWholeDryRun = false;
         keptWholeWork = 0;
-        keptWholeColumnIndexes.clear();
-        keptWholeColumnJoins.clear();
-        keptWholeColumnOrigins.clear();
         keptWholeEmittedOrigins = null;
         keptWholeNeededBy = null;
-        keptWholeNeededOrigins.clear();
-        keptWholeOrigins.clear();
         keptWholeOutputCount = 0;
-        keptWholeOutputLayers.clear();
-        keptWholeReachedReaders.clear();
-        keptWholeReaderOrigins.clear();
         keptWholeServedBy = null;
-        keptWholeServedOrigins.clear();
-        keptWholeWithheldJoins.clear();
         projectionJoinHolder = null;
+        releaseKeptWholeMemory();
     }
 
     private QueryColumn ensureAliasUniqueness(IQueryModel model, QueryColumn qc) {
@@ -9537,12 +9520,12 @@ public class SqlOptimiser implements Mutable {
             }
             if (nestedAllowsColumnChange) {
                 // A model that projects applies its WHERE clause to the output of its projection, see
-                // SqlCodeGenerator.generateQuery0Inner(), so the literals of the clause name columns of the projection,
-                // and the projection gives the nested model what those columns read, see emitColumnLiteralsTopDown()
-                // below. A column the projection takes from a column of another name, such as a in SELECT b a, which a
-                // filter that stays above LATEST ON names, reads b, and one it computes, such as b in SELECT a * 10 b
-                // or SELECT count() b, reads what its expression reads: the column of the same name of the nested
-                // model is one the query does not read, so the clause does not give it to the nested model.
+                // SqlCodeGenerator.generateQuery0Inner(), so a literal of the clause that names an output reads that
+                // output, and the projection gives the nested model what the output reads, see
+                // emitColumnLiteralsTopDown() below: b for a in SELECT b a, which a filter that stays above LATEST ON
+                // names, a for b in SELECT a * 10 b, and a of t2 for a in SELECT t2.a a over a join of t1 and t2. A
+                // column of the nested model named like the output, such as a of t1, is one the query does not read,
+                // so the clause gives the nested model none of the outputs it names.
                 final IQueryModel projection = model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE ? model : null;
                 emitLiteralsTopDown(model.getWhereClause(), nested, projection);
                 // Don't emit to nested union models by name here. In UNION, columns are matched
@@ -10281,11 +10264,22 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // The propagation in kept-whole mode takes the sets it fills from pools of its own, which keep the capacity of
-    // their objects for the life of the compiler, up to KEPT_WHOLE_WORK_LIMIT entries. The pools start over instead,
-    // as the next statements of the compiler rarely propagate in kept-whole mode. endKeptWholePropagation(), which
-    // runs first, drops every other reference the optimiser holds to those objects, so they go with the pools.
+    // The propagation in kept-whole mode fills containers, and sets it takes from pools of its own, which grow with the
+    // projections it walks, up to KEPT_WHOLE_WORK_LIMIT entries. Kept, they would hold that capacity for the life of
+    // the compiler, and a later statement that cleared them would pay for it. The containers and the pools start over
+    // instead, as the next statements of the compiler rarely propagate in kept-whole mode. endKeptWholePropagation(),
+    // which calls this, drops every other reference the optimiser holds to their objects, so the objects go with them.
     private void releaseKeptWholeMemory() {
+        keptWholeColumnIndexes = new LowerCaseCharSequenceIntHashMap();
+        keptWholeColumnJoins = new ObjList<>();
+        keptWholeColumnOrigins = new ObjList<>();
+        keptWholeNeededOrigins = new ObjHashSet<>();
+        keptWholeOrigins = new ObjObjHashMap<>();
+        keptWholeOutputLayers = new ObjHashSet<>();
+        keptWholeReachedReaders = new ObjList<>();
+        keptWholeReaderOrigins = new ObjList<>();
+        keptWholeServedOrigins = new ObjHashSet<>();
+        keptWholeWithheldJoins = new IntHashSet();
         keptWholeOriginMapPool.resetCapacity();
         keptWholeOriginsPool.resetCapacity();
         keptWholeSetPool.resetCapacity();
@@ -16235,6 +16229,16 @@ public class SqlOptimiser implements Mutable {
     private void startKeptWholePropagation(IQueryModel root) {
         isSubQueryKeptWhole = true;
         keptWholeWork = 0;
+        notifyKeptWholePoolListener(keptWholeColumnIndexes);
+        notifyKeptWholePoolListener(keptWholeColumnJoins);
+        notifyKeptWholePoolListener(keptWholeColumnOrigins);
+        notifyKeptWholePoolListener(keptWholeNeededOrigins);
+        notifyKeptWholePoolListener(keptWholeOrigins);
+        notifyKeptWholePoolListener(keptWholeOutputLayers);
+        notifyKeptWholePoolListener(keptWholeReachedReaders);
+        notifyKeptWholePoolListener(keptWholeReaderOrigins);
+        notifyKeptWholePoolListener(keptWholeServedOrigins);
+        notifyKeptWholePoolListener(keptWholeWithheldJoins);
         // The sets grow with the outputs of the view. Taken from the pool, they go with the rest of the memory of the
         // propagation once it ends, see releaseKeptWholeMemory().
         keptWholeNeededBy = nextKeptWholeSet();
@@ -17693,15 +17697,14 @@ public class SqlOptimiser implements Mutable {
                 rebuildStrandedAndOffsets(rewrittenModel);
             }
             moveTimestampToChooseModel(rewrittenModel);
-            if (isKeptWhole) {
-                startKeptWholePropagation(rewrittenModel);
-            }
             try {
+                if (isKeptWhole) {
+                    startKeptWholePropagation(rewrittenModel);
+                }
                 propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             } finally {
                 if (isKeptWhole) {
                     endKeptWholePropagation();
-                    releaseKeptWholeMemory();
                 }
             }
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
