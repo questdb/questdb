@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DatabaseCheckpointAgent;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
@@ -46,7 +47,10 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
@@ -66,16 +70,27 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -4010,6 +4025,548 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBootLoadOpensNoSequencerForViewWithNothingUnapplied() throws Exception {
+        // The boot load reads the header of the view's transaction log first, and opens the view's sequencer only when
+        // the header counts a transaction above the view's applied seqTxn. NOSYNC: under ADAPTIVE the engine's recovery
+        // pass opens the sequencer of every table with a save point before the load.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicInteger txnLogOpens = new AtomicInteger();
+        final StringSink txnLogFile = new StringSink();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isCounting.get() && txnLogFile.length() > 0 && Utf8s.endsWithAscii(name, txnLogFile)) {
+                    txnLogOpens.incrementAndGet();
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createBaseWithRefreshedView("MANUAL");
+            txnLogFile.put(viewToken().getDirName()).put(Files.SEPARATOR).put(WalUtils.SEQ_DIR).put(Files.SEPARATOR).put(WalUtils.TXNLOG_FILE_NAME);
+            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(viewToken()), engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            restartEngineCountingBoot(isCounting, (restarted, context) -> {
+                Assert.assertEquals(0, txnLogOpens.get());
+                Assert.assertEquals(-1, viewState(restarted).getPendingDefinitionSeqTxn());
+            });
+            execute(ALTER_PREFIX + "SET REFRESH LIMIT 1 HOUR");
+            final long lastTxn = engine.getTableSequencerAPI().lastTxn(viewToken());
+            Assert.assertEquals(lastTxn - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            restartEngineCountingBoot(isCounting, (restarted, context) -> {
+                Assert.assertEquals(1, txnLogOpens.get());
+                Assert.assertEquals(-1, viewState(restarted).getPendingDefinitionSeqTxn());
+            });
+        });
+    }
+
+    @Test
+    public void testBootLoadWithBrokenViewTxnLogKeepsLoadOutcome() throws Exception {
+        // A view whose transaction log the boot load cannot read loads as before: a view on a dropped base gets its
+        // invalidation, one on a present base its default state, and the view records no pending definition. The load
+        // logs why, except for a log shorter than the count in its header, whose short read leaves nothing to log, and
+        // the next view loads its pending definition. NOSYNC: under ADAPTIVE the engine's recovery pass opens the log
+        // first, and fails the boot.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            final String seedError = "could not read pending definition of materialized view, recording none \\[view=price_1h~";
+            for (int round = 0; round < 6; round++) {
+                final boolean isBaseDropped = round > 2;
+                final int brokenLog = round % 3;
+                createBase("base_o");
+                execute("INSERT INTO base_o VALUES ('o', 1.0, 1.0, '2024-01-01T00:10:00.000000Z')");
+                execute("CREATE MATERIALIZED VIEW other_1h AS (SELECT ts, sym, last(price) AS price FROM base_o SAMPLE BY 1h) PARTITION BY DAY");
+                createBaseWithRefreshedView("IMMEDIATE");
+                if (isBaseDropped) {
+                    execute("DROP TABLE base");
+                    drainWalAndMatViewQueues();
+                }
+                execute("ALTER MATERIALIZED VIEW other_1h AS (SELECT ts, sym, max(price) AS price FROM base_o SAMPLE BY 1h)");
+                final long otherDefinitionSeqTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("other_1h"));
+                final TableToken viewToken = viewToken();
+                // a transaction above the view's applied seqTxn, so that the header of its log counts one
+                execute(ALTER_PREFIX + "SET REFRESH LIMIT 1 HOUR");
+                Assert.assertEquals(
+                        engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn() + 1,
+                        engine.getTableSequencerAPI().lastTxn(viewToken)
+                );
+                releaseAllForLogEdit();
+                final java.nio.file.Path txnLog = new File(txnLogPath(viewToken)).toPath();
+                final byte[] txnLogBytes = java.nio.file.Files.readAllBytes(txnLog);
+                switch (brokenLog) {
+                    case 0 -> {
+                        // shorter than its header
+                        try (RandomAccessFile f = new RandomAccessFile(txnLog.toFile(), "rw")) {
+                            f.setLength(10);
+                        }
+                    }
+                    case 1 -> {
+                        // of an unknown format version
+                        try (RandomAccessFile f = new RandomAccessFile(txnLog.toFile(), "rw")) {
+                            f.seek(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
+                            f.write(new byte[]{7, 0, 0, 0});
+                        }
+                    }
+                    default -> java.nio.file.Files.delete(txnLog);
+                }
+                final int finalRound = round;
+                final LogCapture logCapture = new LogCapture();
+                logCapture.start();
+                try {
+                    restartEngine((restarted, context) -> {
+                        logCapture.drain();
+                        Assert.assertEquals("round=" + finalRound, brokenLog == 0 ? 0 : 1, logCapture.countLoggedRE(seedError));
+                        final MatViewState state = viewState(restarted);
+                        Assert.assertEquals(-1, state.getPendingDefinitionSeqTxn());
+                        Assert.assertFalse(state.isInvalid());
+                        final TableToken otherToken = restarted.verifyTableName("other_1h");
+                        Assert.assertEquals(otherDefinitionSeqTxn, restarted.getMatViewStateStore().getViewState(otherToken).getPendingDefinitionSeqTxn());
+                        // the refresh job would open the broken log, so the test reads the tasks from the queue
+                        TestUtils.assertEquals(
+                                "round=" + finalRound,
+                                isBaseDropped ? "invalidate base table does not exist\n" : "",
+                                queuedViewTasks(restarted)
+                        );
+                    });
+                } finally {
+                    logCapture.stop();
+                }
+                // the static engine opens the view's log again
+                java.nio.file.Files.write(txnLog, txnLogBytes);
+                execute("DROP MATERIALIZED VIEW other_1h");
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base_o");
+                execute("DROP TABLE IF EXISTS base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testBootLoadWithoutAssertionsRecordsPendingDefinition() throws Exception {
+        // A JVM without -ea, as the Windows service starts QuestDB, boots on views whose WAL holds an ALTER ... AS that
+        // it has not applied, in a transaction log of one file (V1) and in parts (V2), as the last transaction and below
+        // an unapplied invalidation: each view loads the definition event as pending, so the walk does not depend on
+        // assertions to position its cursor.
+        assertMemoryLeak(() -> {
+            createBase("base");
+            execute("INSERT INTO base VALUES ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z')");
+            drainWalQueue();
+            final String[] viewNames = {"v1_last", "v1_below", "v2_last", "v2_below"};
+            final long[] definitionSeqTxns = new long[viewNames.length];
+            for (int i = 0; i < viewNames.length; i++) {
+                setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, i < 2 ? 0 : 2);
+                execute("CREATE MATERIALIZED VIEW " + viewNames[i] + " AS (" + VIEW_SQL + ") PARTITION BY DAY");
+            }
+            drainWalAndMatViewQueues();
+            for (int i = 0; i < viewNames.length; i++) {
+                final TableToken viewToken = engine.verifyTableName(viewNames[i]);
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(viewToken, 0)) {
+                    Assert.assertEquals(i < 2 ? WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1 : WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2, cursor.getVersion());
+                }
+                execute("ALTER MATERIALIZED VIEW " + viewNames[i] + " AS (" + TEN_TIMES_MAX_SQL + ")");
+                definitionSeqTxns[i] = engine.getTableSequencerAPI().lastTxn(viewToken);
+                if (i % 2 == 1) {
+                    engine.getMatViewStateStore().enqueueInvalidate(viewToken, "test invalidation");
+                    drainMatViewQueue(engine);
+                    Assert.assertEquals(definitionSeqTxns[i] + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
+                }
+                Assert.assertEquals(definitionSeqTxns[i] - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn());
+            }
+            releaseAllForLogEdit();
+            final String output = runBootLoadMain(viewNames);
+            for (int i = 0; i < viewNames.length; i++) {
+                TestUtils.assertContains(output, "pending definition " + viewNames[i] + '=' + definitionSeqTxns[i] + '\n');
+            }
+            drainWalAndMatViewQueues();
+            for (String viewName : viewNames) {
+                Assert.assertEquals(TEN_TIMES_MAX_SQL, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName(viewName)).getMatViewSql());
+            }
+        });
+    }
+
+    @Test
+    public void testReloadRecordsNoPendingDefinition() throws Exception {
+        // A reload of the view states, as a promote runs it while the WAL apply runs, records no pending definition:
+        // the WAL apply could apply the event before the reloaded store is in place, which would leave it pending.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            Assert.assertTrue(viewState().isDefinitionPending());
+            restartStates();
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            Assert.assertFalse(viewState().isDefinitionPending());
+        });
+    }
+
+    @Test
+    public void testRestartKeepsBackToBackBaseRevertFollowingSecondStatement() throws Exception {
+        // A restart between two ALTER ... WITH BASE statements, before the view's WAL applies the first: the second waits
+        // for the first, compares its base table with the first one's, and moves the view back to its old base table.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                final AtomicBoolean isWaitSeen = armSeamDrain(restarted);
+                restarted.execute(ALTER_PREFIX + "WITH BASE base AS (" + TEN_TIMES_MAX_SQL + ")", context);
+                Assert.assertTrue(isWaitSeen.get());
+                drainWalAndMatViewQueues(restarted);
+                Assert.assertEquals("base", viewDefinition(restarted).getBaseTableName());
+                Assert.assertEquals(TEN_TIMES_MAX_SQL, viewDefinition(restarted).getMatViewSql());
+                assertViewStatus(restarted, context, "invalid", "base table changed");
+                restarted.execute(RESUME_SKIP_SQL, context);
+                drainWalAndMatViewQueues(restarted);
+                assertViewStatus(restarted, context, "valid", "");
+                Assert.assertEquals(restarted.verifyTableName("base").getTableId(), viewState(restarted).getBaseTableId());
+            });
+        });
+    }
+
+    @Test
+    public void testRestartKeepsRefreshWaitingForPendingDefinition() throws Exception {
+        // A restart before the view's WAL applies an ALTER ... AS loads its definition event as pending: REFRESH ... FULL
+        // waits until the WAL applies it, and rebuilds the view with the new SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            final String newSql = "SELECT ts, sym, last(price) * 10 AS price FROM base SAMPLE BY 1h";
+            execute(ALTER_PREFIX + "AS (" + newSql + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                final AtomicBoolean isWaitSeen = armSeamDrain(restarted);
+                restarted.execute("REFRESH MATERIALIZED VIEW price_1h FULL", context);
+                Assert.assertTrue(isWaitSeen.get());
+                drainWalAndMatViewQueues(restarted);
+                try (SqlCompiler compiler = restarted.getSqlCompiler()) {
+                    TestUtils.assertSqlCursors(compiler, context, newSql, "price_1h", LOG);
+                }
+                // ten times the last price of each bucket
+                assertQuery("price_1h ORDER BY ts, sym").withEngine(restarted).withContext(context).timestamp("ts").noLeakCheck().expectSize().returns("""
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t10.0
+                        2024-01-01T01:00:00.000000Z\tb\t20.0
+                        """);
+                assertQuery("SELECT view_sql, view_status FROM materialized_views() WHERE view_name = 'price_1h'")
+                        .withEngine(restarted)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_sql\tview_status\n" + newSql + "\tvalid\n");
+            });
+        });
+    }
+
+    @Test
+    public void testRestartKeepsViewAlterRefusedWhileListedViewWalShortOfDefinition() throws Exception {
+        // A view in cairo.wal.apply.suspended.tables across a restart, whose WAL holds an ALTER ... AS it has not
+        // applied: the restart loads the definition event as pending, so the view ALTERs that check the view's SQL and
+        // REFRESH ... RANGE refuse with the list hint, before the WAL apply runs and after, until the list no longer
+        // holds the view and its WAL applies the event.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            final String dirName = viewToken().getDirName();
+            final String refusal = DEFINITION_NOT_APPLIED + "remove " + dirName
+                    + " from cairo.wal.apply.suspended.tables and run ALTER MATERIALIZED VIEW price_1h RESUME WAL first";
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+            try {
+                restartEngine((restarted, context) -> {
+                    Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                    for (int round = 0; round < 2; round++) {
+                        if (round == 1) {
+                            drainWalQueue(restarted);
+                        }
+                        armNoWaitGuard(restarted);
+                        try {
+                            for (String tail : new String[]{
+                                    "ADD COLUMN x CHAR",
+                                    "DROP COLUMN price",
+                                    "AS (" + VIEW_SQL + ")",
+                                    "WITH BASE base AS (" + VIEW_SQL + ")"
+                            }) {
+                                assertRefused(restarted, context, ALTER_PREFIX + tail, VIEW_NAME_POSITION, refusal);
+                            }
+                            assertRefused(restarted, context, RANGE_SQL, REFRESH_VIEW_NAME_POSITION, refusal);
+                        } finally {
+                            viewState(restarted).setOnDefinitionWaitForTesting(null);
+                        }
+                        // the list holds the view, so its WAL does not apply
+                        Assert.assertEquals(VIEW_SQL, viewDefinition(restarted).getMatViewSql());
+                    }
+                    setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                    drainWalQueue(restarted);
+                    Assert.assertEquals(X_SQL, viewDefinition(restarted).getMatViewSql());
+                    final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+                    assertRefused(restarted, context, addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+                });
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+        });
+    }
+
+    @Test
+    public void testRestartKeepsViewAlterWaitingForPendingDefinition() throws Exception {
+        // A restart before the view's WAL applies an ALTER ... AS loads its definition event as pending: a view ADD
+        // COLUMN waits until the WAL applies it and checks itself against the new SQL, as on the node before the
+        // restart, and a view ALTER after that does not wait.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(viewToken()), definitionSeqTxn);
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                Assert.assertTrue(viewState(restarted).isDefinitionPending());
+                final AtomicBoolean isWaitSeen = armSeamDrain(restarted);
+                final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+                assertRefused(restarted, context, addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+                Assert.assertTrue(isWaitSeen.get());
+                Assert.assertEquals(X_SQL, viewDefinition(restarted).getMatViewSql());
+                armNoWaitGuard(restarted);
+                try {
+                    restarted.execute(ALTER_PREFIX + "ADD COLUMN extra INT", context);
+                } finally {
+                    viewState(restarted).setOnDefinitionWaitForTesting(null);
+                }
+                Assert.assertEquals(definitionSeqTxn + 1, restarted.getTableSequencerAPI().lastTxn(restarted.verifyTableName("price_1h")));
+            });
+        });
+    }
+
+    @Test
+    public void testRestartRecordsDefinitionBelowTornTxnLogTail() throws Exception {
+        // A committed definition event below a torn one: the restart loads the committed one as pending, and a view ADD
+        // COLUMN waits for it and checks itself against its SQL.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            final long committedSeqTxn;
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                committedSeqTxn = writer.appendMatViewDefinition("base", X_SQL, false);
+            }
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            final long tornSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            Assert.assertEquals(committedSeqTxn + 1, tornSeqTxn);
+            tearTxnLogRecord(tornSeqTxn);
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(committedSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                Assert.assertEquals(committedSeqTxn, restarted.getTableSequencerAPI().lastTxn(restarted.verifyTableName("price_1h")));
+                final AtomicBoolean isWaitSeen = armSeamDrain(restarted);
+                final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+                assertRefused(restarted, context, addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+                Assert.assertTrue(isWaitSeen.get());
+                Assert.assertEquals(X_SQL, viewDefinition(restarted).getMatViewSql());
+            });
+        });
+    }
+
+    @Test
+    public void testRestartRecordsNewestOfSeveralPendingDefinitions() throws Exception {
+        // Two definition events that the view's WAL has not applied: the restart loads the newer one as pending, so a
+        // refresh defers until the WAL applies both, and runs with the newer SQL.
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final AtomicInteger definitionOpens = new AtomicInteger();
+        assertMemoryLeak(newDefinitionWriteFailingFacade(isFailArmed, definitionOpens, 2), () -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            final long firstSeqTxn;
+            final long secondSeqTxn;
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                firstSeqTxn = writer.appendMatViewDefinition("base", X_SQL, false);
+                secondSeqTxn = writer.appendMatViewDefinition("base", TEN_TIMES_MAX_SQL, false);
+            }
+            restartEngine((restarted, context) -> {
+                final TableToken viewToken = restarted.verifyTableName("price_1h");
+                final MatViewState state = viewState(restarted);
+                Assert.assertEquals(secondSeqTxn, state.getPendingDefinitionSeqTxn());
+                // the WAL apply applies the first event, and fails on the second
+                isFailArmed.set(true);
+                try {
+                    drainWalQueue(restarted);
+                } finally {
+                    isFailArmed.set(false);
+                }
+                Assert.assertEquals(2, definitionOpens.get());
+                Assert.assertEquals(firstSeqTxn, restarted.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn());
+                Assert.assertEquals(firstSeqTxn, state.getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertTrue(state.isDefinitionPending());
+                restarted.execute("INSERT INTO base VALUES ('c', 3.0, 1.0, '2024-01-01T02:10:00.000000Z')", context);
+                drainWalQueue(restarted);
+                final long viewSeqTxn = restarted.getTableSequencerAPI().lastTxn(viewToken);
+                drainMatViewQueue(restarted);
+                // the refresh deferred and wrote nothing
+                Assert.assertEquals(viewSeqTxn, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                Assert.assertTrue(state.hasDeferredDefinitionRefreshForTesting());
+                restarted.execute(ALTER_PREFIX + "RESUME WAL", context);
+                drainWalAndMatViewQueues(restarted);
+                Assert.assertEquals(secondSeqTxn, state.getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertEquals(TEN_TIMES_MAX_SQL, viewDefinition(restarted).getMatViewSql());
+                // ten times the maximum price of the new bucket
+                assertQuery("price_1h ORDER BY ts, sym").withEngine(restarted).withContext(context).timestamp("ts").noLeakCheck().expectSize().returns(
+                        VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tc\t30.0\n"
+                );
+            });
+        });
+    }
+
+    @Test
+    public void testRestartRecordsNothingForAppliedDefinition() throws Exception {
+        // An ALTER ... AS that the view's WAL applied, below a transaction it has not: the restart loads no pending
+        // definition, so a view ALTER does not wait and a refresh does not defer.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            drainWalQueue();
+            Assert.assertEquals(definitionSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            execute(ALTER_PREFIX + "SET REFRESH LIMIT 10 DAYS");
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(-1, viewState(restarted).getPendingDefinitionSeqTxn());
+                Assert.assertFalse(viewState(restarted).isDefinitionPending());
+                armNoWaitGuard(restarted);
+                try {
+                    restarted.execute(ALTER_PREFIX + "ADD COLUMN extra INT", context);
+                } finally {
+                    viewState(restarted).setOnDefinitionWaitForTesting(null);
+                }
+                restarted.execute("INSERT INTO base VALUES ('c', 3.0, 1.0, '2024-01-01T02:10:00.000000Z')", context);
+                drainWalAndMatViewQueues(restarted);
+                Assert.assertFalse(viewState(restarted).hasDeferredDefinitionRefreshForTesting());
+                Assert.assertEquals(2, viewState(restarted).getLastRefreshBaseTxn());
+                assertQuery("SELECT ts, sym, price FROM price_1h ORDER BY ts, sym").withEngine(restarted).withContext(context).timestamp("ts").noLeakCheck().expectSize().returns(
+                        VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tc\t30.0\n"
+                );
+            });
+        });
+    }
+
+    @Test
+    public void testRestartRecordsNothingFromTornTxnLogTailAdaptive() throws Exception {
+        assertRestartRecordsNothingFromTornTxnLogTail("adaptive");
+    }
+
+    @Test
+    public void testRestartRecordsNothingFromTornTxnLogTailNosync() throws Exception {
+        assertRestartRecordsNothingFromTornTxnLogTail("nosync");
+    }
+
+    @Test
+    public void testRestartRecordsNothingFromTornTxnLogTailSync() throws Exception {
+        assertRestartRecordsNothingFromTornTxnLogTail("sync");
+    }
+
+    @Test
+    public void testRestartRecordsNothingFromV1TxnLogShorterThanItsHeader() throws Exception {
+        // A power loss before the definition event's record reached the disk whole: the log's header counts it, but the
+        // file ends inside it. The sequencer's open drops it, so the restart records no pending definition.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            Assert.assertEquals(definitionSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken()));
+            releaseAllForLogEdit();
+            try (RandomAccessFile f = new RandomAccessFile(txnLogPath(viewToken()), "rw")) {
+                writeLong(f, TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64, definitionSeqTxn);
+                Assert.assertEquals(definitionSeqTxn, readLong(f, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+                f.setLength(TableTransactionLogFile.HEADER_SIZE + (definitionSeqTxn - 1) * TableTransactionLogV1.RECORD_SIZE + TableTransactionLogV1.RECORD_SIZE / 2);
+            }
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(-1, viewState(restarted).getPendingDefinitionSeqTxn());
+                Assert.assertEquals(definitionSeqTxn - 1, restarted.getTableSequencerAPI().lastTxn(restarted.verifyTableName("price_1h")));
+                armNoWaitGuard(restarted);
+                try {
+                    restarted.execute(ALTER_PREFIX + "ADD COLUMN x CHAR", context);
+                } finally {
+                    viewState(restarted).setOnDefinitionWaitForTesting(null);
+                }
+                drainWalQueue(restarted);
+                Assert.assertEquals(VIEW_SQL, viewDefinition(restarted).getMatViewSql());
+            });
+        });
+    }
+
+    @Test
+    public void testRestartRecordsPendingBaseChangeOfViewWithDroppedBase() throws Exception {
+        assertRestartRecordsPendingBaseChangeOfViewWithoutWalBase(false);
+    }
+
+    @Test
+    public void testRestartRecordsPendingBaseChangeOfViewWithNonWalBase() throws Exception {
+        assertRestartRecordsPendingBaseChangeOfViewWithoutWalBase(true);
+    }
+
+    @Test
+    public void testRestartRecordsPendingDefinitionOfNeverRefreshedView() throws Exception {
+        // A view that never refreshed has no state to load, and its load records the pending definition all the same: a
+        // view ADD COLUMN waits for it and checks itself against the new SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithNeverRefreshedView();
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                Assert.assertEquals(-1, viewState(restarted).getLastRefreshBaseTxn());
+                final AtomicBoolean isWaitSeen = armSeamDrain(restarted);
+                final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+                assertRefused(restarted, context, addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+                Assert.assertTrue(isWaitSeen.get());
+                Assert.assertEquals(X_SQL, viewDefinition(restarted).getMatViewSql());
+            });
+        });
+    }
+
+    @Test
+    public void testRestartRefusesViewAlterWhileRecordedDefinitionFailsToApply() throws Exception {
+        // The definition event that the restart loads as pending fails to apply, which suspends the view's WAL: a view
+        // ALTER refuses until RESUME WAL lets the event apply, and then checks itself against the new SQL.
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final AtomicInteger definitionOpens = new AtomicInteger();
+        assertMemoryLeak(newDefinitionWriteFailingFacade(isFailArmed, definitionOpens, 1), () -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            restartEngine((restarted, context) -> {
+                final TableToken viewToken = restarted.verifyTableName("price_1h");
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                isFailArmed.set(true);
+                try {
+                    drainWalQueue(restarted);
+                } finally {
+                    isFailArmed.set(false);
+                }
+                Assert.assertEquals(1, definitionOpens.get());
+                Assert.assertTrue(restarted.getTableSequencerAPI().isSuspended(viewToken));
+                Assert.assertEquals(definitionSeqTxn - 1, restarted.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn());
+                Assert.assertEquals(-1, viewState(restarted).getAppliedDefinitionSeqTxnForTesting());
+                armNoWaitGuard(restarted);
+                try {
+                    assertRefused(
+                            restarted,
+                            context,
+                            ALTER_PREFIX + "ADD COLUMN x CHAR",
+                            VIEW_NAME_POSITION,
+                            DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+                    );
+                } finally {
+                    viewState(restarted).setOnDefinitionWaitForTesting(null);
+                }
+                restarted.execute(ALTER_PREFIX + "RESUME WAL", context);
+                drainWalQueue(restarted);
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertEquals(X_SQL, viewDefinition(restarted).getMatViewSql());
+                final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+                assertRefused(restarted, context, addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+            });
+        });
+    }
+
     private static void assertDefinitionEventApplies() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4173,6 +4730,191 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             final MatViewDefinition definition = new MatViewDefinition();
             MatViewDefinition.readFrom(engine, definition, reader, path, path.size(), viewToken);
             return definition;
+        }
+    }
+
+    // Arms the definition wait seam of the view price_1h on the engine to fail the statement that reaches it, see
+    // armNoWaitGuard() above. The caller disarms it.
+    private static void armNoWaitGuard(CairoEngine e) {
+        viewState(e).setOnDefinitionWaitForTesting(() -> {
+            throw new AssertionError("the statement waited for the pending definition event");
+        });
+    }
+
+    // Arms the definition wait seam of the view price_1h on the engine to apply the engine's WAL of every table, and
+    // returns the flag the seam sets when it runs.
+    private static AtomicBoolean armSeamDrain(CairoEngine e) {
+        final AtomicBoolean isWaitSeen = new AtomicBoolean();
+        viewState(e).setOnDefinitionWaitForTesting(() -> {
+            isWaitSeen.set(true);
+            drainWalQueue(e);
+        });
+        return isWaitSeen;
+    }
+
+    // Fails the statement on the engine with the message at the position, and asserts that it wrote nothing to the WAL
+    // of the view price_1h.
+    private static void assertRefused(CairoEngine e, SqlExecutionContext context, String sql, int position, String message) {
+        Assert.assertTrue(position > -1);
+        final TableToken viewToken = e.verifyTableName("price_1h");
+        final long lastTxn = e.getTableSequencerAPI().lastTxn(viewToken);
+        try {
+            e.execute(sql, context);
+            Assert.fail("the statement must fail: " + sql);
+        } catch (SqlException ex) {
+            TestUtils.assertEquals(message, ex.getFlyweightMessage());
+            Assert.assertEquals(sql, position, ex.getPosition());
+        }
+        Assert.assertEquals(lastTxn, e.getTableSequencerAPI().lastTxn(viewToken));
+    }
+
+    // Fails, while armed, the open for write of the definition file _mv of the view price_1h, which the WAL apply job
+    // writes as it applies a definition event, at the given count of such opens.
+    private static TestFilesFacadeImpl newDefinitionWriteFailingFacade(AtomicBoolean isFailArmed, AtomicInteger definitionOpens, int failingOpen) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isFailArmed.get()
+                        && Utf8s.endsWithAscii(name, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME)
+                        && Utf8s.containsAscii(name, "price_1h")
+                        && definitionOpens.incrementAndGet() == failingOpen) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+    }
+
+    // The refresh tasks of the view price_1h in the engine's queue, one line each, in queue order: the operation and the
+    // invalidation reason, if any. The tasks go back on the queue in their order.
+    private static String queuedViewTasks(CairoEngine e) {
+        final ObjList<MatViewRefreshTask> tasks = new ObjList<>();
+        final StringSink sink = new StringSink();
+        final TableToken viewToken = e.verifyTableName("price_1h");
+        while (true) {
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            if (!e.getMatViewStateStore().tryDequeueRefreshTask(task)) {
+                break;
+            }
+            tasks.add(task);
+            if (viewToken.equals(task.matViewToken)) {
+                sink.put(MatViewRefreshTask.getRefreshOperationName(task.operation));
+                if (task.invalidationReason != null) {
+                    sink.put(' ').put(task.invalidationReason);
+                }
+                sink.put('\n');
+            }
+        }
+        for (int i = 0, n = tasks.size(); i < n; i++) {
+            e.getMatViewStateStore().reenqueueRefreshTask(tasks.getQuick(i));
+        }
+        return sink.toString();
+    }
+
+    private static long readLong(RandomAccessFile f, long offset) throws IOException {
+        final byte[] bytes = new byte[Long.BYTES];
+        f.seek(offset);
+        f.readFully(bytes);
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getLong();
+    }
+
+    // Releases the engine's writers and sequencers, so that a test can edit a transaction log as a crash left it, and the
+    // next engine opens it again.
+    private static void releaseAllForLogEdit() {
+        engine.releaseInactive();
+        engine.releaseAllWriters();
+        engine.releaseAllWalWriters();
+        engine.releaseAllViewWalWriters();
+        engine.getTableSequencerAPI().releaseAll();
+    }
+
+    // Runs MatViewBootLoadMain in a JVM without -ea, as the Windows service starts QuestDB, on the data directory and
+    // the views, and returns its output once it exited with 0.
+    private static String runBootLoadMain(String... viewNames) throws Exception {
+        File javaExecutable = new File(new File(System.getProperty("java.home"), "bin"), "java");
+        if (!javaExecutable.exists()) {
+            javaExecutable = new File(javaExecutable.getPath() + ".exe");
+        }
+        final String classPath = Paths.get(MatViewBootLoadMain.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                + File.pathSeparator
+                + Paths.get(CairoEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        final List<String> command = new ArrayList<>(List.of(
+                javaExecutable.getAbsolutePath(),
+                "--enable-native-access=ALL-UNNAMED",
+                "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--sun-misc-unsafe-memory-access=allow",
+                "-cp",
+                classPath,
+                MatViewBootLoadMain.class.getName(),
+                configuration.getDbRoot()
+        ));
+        command.addAll(List.of(viewNames));
+        // the data directory of a server of this version, so that the child runs no table migrations
+        final File upgradeFile = new File(configuration.getDbRoot(), TableUtils.UPGRADE_FILE_NAME);
+        final boolean isUpgradeFileWritten = !upgradeFile.exists();
+        if (isUpgradeFileWritten) {
+            try (RandomAccessFile f = new RandomAccessFile(upgradeFile, "rw")) {
+                f.write(ByteBuffer.allocate(2 * Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(ColumnType.VERSION)
+                        .putInt(ColumnType.MIGRATION_VERSION)
+                        .array());
+            }
+        }
+        final File outputFile = File.createTempFile("mat-view-boot-load", ".out");
+        try {
+            final Process process = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(outputFile).start();
+            try {
+                process.getOutputStream().close();
+                if (!process.waitFor(120, TimeUnit.SECONDS)) {
+                    Assert.fail("the boot load process timed out:\n" + java.nio.file.Files.readString(outputFile.toPath(), StandardCharsets.UTF_8));
+                }
+                final String output = java.nio.file.Files.readString(outputFile.toPath(), StandardCharsets.UTF_8);
+                Assert.assertEquals(output, 0, process.exitValue());
+                return output;
+            } finally {
+                if (process.isAlive()) {
+                    process.destroyForcibly().onExit().join();
+                }
+            }
+        } finally {
+            Assert.assertTrue(outputFile.delete());
+            if (isUpgradeFileWritten) {
+                Assert.assertTrue(upgradeFile.delete());
+            }
+        }
+    }
+
+    private static String txnLogPath(TableToken viewToken) {
+        return configuration.getDbRoot() + Files.SEPARATOR + viewToken.getDirName() + Files.SEPARATOR + WalUtils.SEQ_DIR
+                + Files.SEPARATOR + WalUtils.TXNLOG_FILE_NAME;
+    }
+
+    private static MatViewDefinition viewDefinition(CairoEngine e) {
+        return e.getDependentViewGraph().getViewDefinition(e.verifyTableName("price_1h"));
+    }
+
+    private static MatViewState viewState(CairoEngine e) {
+        return e.getMatViewStateStore().getViewState(e.verifyTableName("price_1h"));
+    }
+
+    private static void writeLong(RandomAccessFile f, long offset, long value) throws IOException {
+        f.seek(offset);
+        f.write(ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array());
+    }
+
+    // Tears the record of the seqTxn, the last one, in the V1 transaction log of the view price_1h, as a power loss
+    // before the flush of its last bytes completed does: its commit timestamp, written last, is zero, and the
+    // flushed-through hint names it. The record's event stays intact.
+    private static void tearTxnLogRecord(long seqTxn) throws IOException {
+        final String path = txnLogPath(engine.verifyTableName("price_1h"));
+        releaseAllForLogEdit();
+        final long recordOffset = TableTransactionLogFile.HEADER_SIZE + (seqTxn - 1) * TableTransactionLogV1.RECORD_SIZE;
+        try (RandomAccessFile f = new RandomAccessFile(path, "rw")) {
+            Assert.assertEquals(seqTxn, readLong(f, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            writeLong(f, recordOffset + TableTransactionLogFile.TX_LOG_COMMIT_TIMESTAMP_OFFSET, 0);
+            writeLong(f, TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64, seqTxn);
         }
     }
 
@@ -4414,6 +5156,102 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         });
     }
 
+    // A base change whose definition event the view's WAL has not applied, of a view whose base table was dropped, or
+    // created again without WAL: the restart invalidates the view as before and loads the definition event as pending,
+    // so an ALTER ... AS on the new base table waits for it, and checks itself against the new base table.
+    private void assertRestartRecordsPendingBaseChangeOfViewWithoutWalBase(boolean isNonWalBase) throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute("DROP TABLE base");
+            if (isNonWalBase) {
+                execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            }
+            drainWalAndMatViewQueues();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            restartEngine((restarted, context) -> {
+                Assert.assertEquals(
+                        "invalidate " + (isNonWalBase ? "base table is not WAL table" : "base table does not exist") + '\n',
+                        queuedViewTasks(restarted)
+                );
+                Assert.assertEquals(definitionSeqTxn, viewState(restarted).getPendingDefinitionSeqTxn());
+                final AtomicBoolean isWaitSeen = armSeamDrain(restarted);
+                final String newSql = "SELECT ts, sym, max(price) AS price FROM base2 SAMPLE BY 1h";
+                restarted.execute(ALTER_PREFIX + "AS (" + newSql + ")", context);
+                Assert.assertTrue(isWaitSeen.get());
+                drainWalAndMatViewQueues(restarted);
+                Assert.assertEquals("base2", viewDefinition(restarted).getBaseTableName());
+                Assert.assertEquals(newSql, viewDefinition(restarted).getMatViewSql());
+            });
+        });
+    }
+
+    // MANUAL view, V1 log: ALTER ... AS writes its definition event as the last record n, and a power loss tears the
+    // record before the flush of its last bytes completed: its commit timestamp, written last, is zero, and the
+    // flushed-through hint names it, while its event stays intact. The sequencer's open drops record n and a later
+    // commit takes its seqTxn, so the restart records no pending definition: a view ADD COLUMN and REFRESH ... FULL do
+    // not wait, and the view keeps its SQL. Under ADAPTIVE the setup takes a save point, so the engine's recovery pass
+    // opens the log, and drops record n, before the load.
+    private void assertRestartRecordsNothingFromTornTxnLogTail(String commitMode) throws Exception {
+        final boolean isAdaptive = "adaptive".equals(commitMode);
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+        if (isAdaptive) {
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            // a durable epoch for the setup
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        }
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            if (isAdaptive) {
+                // the statement below applies lazily, above the setup's save point
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            }
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long tornSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            Assert.assertEquals(tornSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken()));
+            tearTxnLogRecord(tornSeqTxn);
+            final String txnLogPath = txnLogPath(viewToken());
+            restartEngine(restarted -> {
+                if (isAdaptive) {
+                    // the recovery pass of the engine's start opened the log, which dropped the torn record
+                    try (RandomAccessFile f = new RandomAccessFile(txnLogPath, "r")) {
+                        Assert.assertEquals(tornSeqTxn - 1, readLong(f, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+                    } catch (IOException e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }, (restarted, context) -> {
+                final TableToken viewToken = restarted.verifyTableName("price_1h");
+                Assert.assertEquals(-1, viewState(restarted).getPendingDefinitionSeqTxn());
+                Assert.assertEquals(tornSeqTxn - 1, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                armNoWaitGuard(restarted);
+                try {
+                    restarted.execute(ALTER_PREFIX + "ADD COLUMN x CHAR", context);
+                    // the commit takes the seqTxn of the torn record
+                    Assert.assertEquals(tornSeqTxn, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                    restarted.execute("REFRESH MATERIALIZED VIEW price_1h FULL", context);
+                } finally {
+                    viewState(restarted).setOnDefinitionWaitForTesting(null);
+                }
+                drainWalAndMatViewQueues(restarted);
+                Assert.assertEquals(VIEW_SQL, viewDefinition(restarted).getMatViewSql());
+                assertQuery("SELECT ts, sym, price FROM price_1h ORDER BY ts, sym").withEngine(restarted).withContext(context).timestamp("ts").noLeakCheck().expectSize().returns(VIEW_ROWS);
+                assertViewStatus(restarted, context, "valid", "");
+            });
+        });
+    }
+
+    private void assertViewStatus(CairoEngine e, SqlExecutionContext context, String status, String reason) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'price_1h'")
+                .withEngine(e)
+                .withContext(context)
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\n" + status + "\t" + reason + "\n");
+    }
+
     private void assertViewColumns(String viewName, String... expected) throws Exception {
         final StringBuilder sb = new StringBuilder("column\n");
         for (String column : expected) {
@@ -4580,15 +5418,34 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
 
     // Stops the engine and starts another one on the same data directory, which loads the views from disk.
     private void restartEngine(RestartedEngineCheck check) throws Exception {
+        restartEngine(restarted -> {
+        }, check);
+    }
+
+    // As restartEngine() above, running the action on the new engine before it loads the tables and views.
+    private void restartEngine(Consumer<CairoEngine> beforeLoad, RestartedEngineCheck check) throws Exception {
         engine.releaseInactive();
         engine.releaseAllWriters();
         try (
                 CairoEngine restarted = new CairoEngine(configuration);
                 SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
         ) {
+            beforeLoad.accept(restarted);
             restarted.load();
             restarted.buildViewGraphs();
             check.run(restarted, restartedContext);
+        }
+    }
+
+    // As restartEngine() above, with the flag set while the new engine loads the tables and views.
+    private void restartEngineCountingBoot(AtomicBoolean isCounting, RestartedEngineCheck check) throws Exception {
+        try {
+            restartEngine(restarted -> isCounting.set(true), (restarted, context) -> {
+                isCounting.set(false);
+                check.run(restarted, context);
+            });
+        } finally {
+            isCounting.set(false);
         }
     }
 

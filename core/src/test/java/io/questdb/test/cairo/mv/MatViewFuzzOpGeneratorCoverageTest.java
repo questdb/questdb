@@ -50,6 +50,9 @@ import org.junit.Test;
  *     suspended short of the event; RESUME WAL while the event waits, after which the WAL apply wakes the refresh, and
  *     RESUME WAL FROM TXN past the event; and a reset of the view's tracker after the event applied, then the refresh
  *     job;</li>
+ *     <li>for a view without a period, a boot load of the view while such an event waits, also while the view's WAL is
+ *     suspended short of it; a view ADD or DROP COLUMN, an ALTER ... AS or the refresh job right after it, the event
+ *     still waiting; and RESUME WAL FROM TXN past an event that a boot load recorded;</li>
  *     <li>a view ADD COLUMN of a column the SQL produces under another type than the SQL's, which name mapping casts,
  *     and of a column no SQL produces;</li>
  *     <li>an ATTACH of a partition the same round detached, and a row into a day whose base partition the round
@@ -88,6 +91,13 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL, in
     // SCALED_MIN_ROUNDS rounds
     private static final int DEFINITION_PENDING_MIN = 10;
+    // a boot load while the view's WAL is suspended short of a definition event, in ROUNDS rounds: the boot load is one
+    // of the few operations drawn there, in a window that needs both an accepted ALTER ... AS and a SUSPEND WAL before the
+    // next view check
+    private static final int BOOT_LOAD_WHILE_SUSPENDED_MIN = 5;
+    // RESUME WAL FROM TXN past a definition event that a boot load recorded, in ROUNDS rounds: it needs a boot load, a
+    // SUSPEND WAL and the RESUME WAL that skips the event, all while the event waits and before the next view check
+    private static final int RESUME_WAL_PAST_BOOT_LOADED_DEFINITION_MIN = 1;
     // each shape of the refresh job and of the view's WAL suspension around a definition event that waits in the view's
     // WAL, in ROUNDS rounds
     private static final int DEFINITION_WINDOW_SHAPE_MIN = 10;
@@ -167,6 +177,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int resumeWalWhileDefinitionPending = 0;
         int resumeWalPastDefinition = 0;
         int refreshJobAfterResetOfAppliedDefinition = 0;
+        // the boot loads of the view while a definition event waits, the operations right after one, and RESUME WAL FROM
+        // TXN past an event that a boot load recorded
+        int bootLoadWhileDefinitionPending = 0;
+        int bootLoadWhileSuspendedShortOfDefinition = 0;
+        int viewChangeOrRefreshJobAfterBootLoad = 0;
+        int resumeWalPastDefinitionRecordedByBootLoad = 0;
         final int[] policyShapes = new int[5];
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < ROUNDS; round++) {
@@ -192,6 +208,10 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             boolean isBaseAppliedOnPendingDefinition = false;
             boolean isAlterApplied = false;
             boolean isTrackerResetAfterAppliedAlter = false;
+            // the previous operation was a boot load while a definition event waited, and a boot load recorded the event
+            // that waits
+            boolean isBootLoadBefore = false;
+            boolean isDefinitionRecordedByBootLoad = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final ObjList<String> sqlBefore = new ObjList<>();
                 sqlBefore.addAll(generator.getSqlColumns());
@@ -242,14 +262,40 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                         Assert.assertTrue("RESUME WAL FROM TXN past a definition event drawn only while one waits", wasDefinitionPending || !op.isSkipDefinition);
                         if (op.isSkipDefinition) {
                             resumeWalPastDefinition++;
+                            if (isDefinitionRecordedByBootLoad) {
+                                resumeWalPastDefinitionRecordedByBootLoad++;
+                            }
                         } else if (wasDefinitionPending) {
                             resumeWalWhileDefinitionPending++;
                         }
                     }
                     case VIEW_SUSPEND_WAL -> Assert.assertTrue(generator.isViewWalSuspended());
+                    case BOOT_LOAD -> {
+                        // the load applies nothing, so the generator's state stays
+                        Assert.assertEquals(wasDefinitionPending, generator.isDefinitionPending());
+                        Assert.assertEquals(wasViewWalSuspended, generator.isViewWalSuspended());
+                        Assert.assertEquals(sqlBefore, generator.getSqlColumns());
+                        if (wasDefinitionPending) {
+                            bootLoadWhileDefinitionPending++;
+                            isDefinitionRecordedByBootLoad = true;
+                            if (wasViewWalSuspended) {
+                                bootLoadWhileSuspendedShortOfDefinition++;
+                            }
+                        }
+                    }
                     default -> {
                     }
                 }
+                switch (op.kind) {
+                    case VIEW_ADD_COLUMN, VIEW_DROP_COLUMN, VIEW_ALTER_AS, RUN_REFRESH_JOB -> {
+                        if (isBootLoadBefore && wasDefinitionPending) {
+                            viewChangeOrRefreshJobAfterBootLoad++;
+                        }
+                    }
+                    default -> {
+                    }
+                }
+                isBootLoadBefore = op.kind == MatViewFuzzOpGenerator.Kind.BOOT_LOAD && wasDefinitionPending;
                 if (wasDefinitionPending) {
                     final int outcome = op.isRefused ? 1 : 0;
                     switch (op.kind) {
@@ -434,7 +480,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     case VIEW_INVALIDATE -> Assert.assertNotEquals(MatViewFuzzOpGenerator.INVALIDATE_NONE, op.invalidationShape);
                     case RUN_REFRESH_JOB, BASE_TRUNCATE, BASE_TRUNCATE_ATTACH_UPDATE -> isRangeTaskQueued = false;
                     case VIEW_FULL -> isFullIssued = true;
-                    case RESTART, BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> {
+                    case RESTART, BOOT_LOAD, BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> {
                         isRangeTaskQueued = false;
                         isFullIssued = false;
                         isFullCovering = false;
@@ -487,10 +533,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     }
                     refreshJobsOnPendingDefinition = 0;
                     isBaseAppliedOnPendingDefinition = false;
+                    isDefinitionRecordedByBootLoad = false;
                 } else if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ALTER_AS && !op.isRefused) {
                     // another definition event waits now, so the shapes start over
                     refreshJobsOnPendingDefinition = 0;
                     isBaseAppliedOnPendingDefinition = false;
+                    isDefinitionRecordedByBootLoad = false;
                 }
                 isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
             }
@@ -505,6 +553,18 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("RESUME WAL while a definition event waits", resumeWalWhileDefinitionPending, DEFINITION_WINDOW_SHAPE_MIN);
         assertShare("RESUME WAL FROM TXN past a definition event", resumeWalPastDefinition, DEFINITION_WINDOW_SHAPE_MIN);
         assertShare("tracker reset after a definition event applied, then the refresh job", refreshJobAfterResetOfAppliedDefinition, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("boot load while a definition event waits", bootLoadWhileDefinitionPending, DEFINITION_WINDOW_SHAPE_MIN);
+        assertShare("boot load while the view's WAL is suspended short of a definition event", bootLoadWhileSuspendedShortOfDefinition, BOOT_LOAD_WHILE_SUSPENDED_MIN);
+        assertShare(
+                "view ADD or DROP COLUMN, ALTER ... AS or refresh job right after a boot load, the definition event still waiting",
+                viewChangeOrRefreshJobAfterBootLoad,
+                DEFINITION_WINDOW_SHAPE_MIN
+        );
+        assertShare(
+                "RESUME WAL FROM TXN past a definition event recorded by a boot load",
+                resumeWalPastDefinitionRecordedByBootLoad,
+                RESUME_WAL_PAST_BOOT_LOADED_DEFINITION_MIN
+        );
         final int detachCount = kindCounts[MatViewFuzzOpGenerator.Kind.BASE_DETACH_PARTITION.ordinal()];
         assertShare("ATTACH of a partition the round detached, of " + detachCount + " DETACH", attachAfterDetach, detachCount / 4);
         assertShare("reload of a partition the round detached, of " + detachCount + " DETACH", reloadAfterDetach, detachCount / 8);
@@ -646,7 +706,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                         isPeriodRefreshQueued = false;
                     }
                     // a restart loses the queued tasks, and these base replacements drain the queues first
-                    case RESTART, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> isPeriodRefreshQueued = false;
+                    case RESTART, BOOT_LOAD, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> isPeriodRefreshQueued = false;
                     case VIEW_RESUME_WAL -> {
                         if (wasDefinitionPending && !op.isSkipDefinition) {
                             periodViewResumeWalWhileDefinitionPending++;
@@ -843,6 +903,11 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                             purgeStage = 0;
                         }
                         // the restart loses the queued tasks
+                        isStateTaskQueued = false;
+                        isInvalidationQueued = false;
+                    }
+                    case BOOT_LOAD -> {
+                        // the boot load loses the queued tasks too, and applies nothing, so the shapes go on
                         isStateTaskQueued = false;
                         isInvalidationQueued = false;
                     }

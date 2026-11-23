@@ -117,11 +117,11 @@ public final class MatViewAlter {
     }
 
     /**
-     * Waits until the view's WAL is applied up to the definition event of the last {@code ALTER MATERIALIZED VIEW ...
-     * AS} this node ran, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a REFRESH issued right after
-     * the statement runs the new SQL. Returns at once with no such statement pending, and when the view's WAL is
-     * suspended or dropped, which leaves REFRESH as it was before the statement. Honours the statement timeout and
-     * cancellation, as RESUME's wait for the view's WAL does.
+     * Waits until the view's WAL is applied up to the pending definition event of an {@code ALTER MATERIALIZED VIEW ...
+     * AS}, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a REFRESH issued right after the statement
+     * runs the new SQL. Returns at once with no such statement pending, and when the view's WAL is suspended or
+     * dropped, which leaves REFRESH as it was before the statement. Honours the statement timeout and cancellation, as
+     * RESUME's wait for the view's WAL does.
      */
     public static void awaitPendingDefinition(
             @NotNull CairoEngine engine,
@@ -152,11 +152,11 @@ public final class MatViewAlter {
     }
 
     /**
-     * Waits until the view's WAL is applied up to the definition event of the last {@code ALTER MATERIALIZED VIEW ...
-     * AS} this node ran, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a view ADD COLUMN, DROP COLUMN
-     * or ALTER ... AS issued right after the statement checks itself against the definition that its own WAL entry
-     * applies after, and a REFRESH ... RANGE recomputes its range with that definition. Returns at once with no such
-     * statement pending, and once the view's WAL applied the event, or passed it, whatever the WAL's state is then.
+     * Waits until the view's WAL is applied up to the pending definition event of an {@code ALTER MATERIALIZED VIEW ...
+     * AS}, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a view ADD COLUMN, DROP COLUMN or ALTER ...
+     * AS issued right after the statement checks itself against the definition that its own WAL entry applies after,
+     * and a REFRESH ... RANGE recomputes its range with that definition. Returns at once with no such statement
+     * pending, and once the view's WAL applied the event, or passed it, whatever the WAL's state is then.
      * While the event waits, it refuses a dropped view, and a view whose WAL apply is suspended, see
      * {@link MatViewBacklog#isViewWalSuspended(CairoEngine, TableToken, SeqTxnTracker)}: the WAL then reaches the event
      * only after a user acts, and the definition the statement would run against is unknown until then. A RANGE refuses
@@ -174,7 +174,7 @@ public final class MatViewAlter {
     ) throws SqlException {
         final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
         if (viewState == null) {
-            // no ALTER ... AS ran on this node, which alter() refuses for a view without a state
+            // a view without a state has no pending definition: alter() refuses it, and the boot load records none
             return;
         }
         final long pendingSeqTxn = viewState.getPendingDefinitionSeqTxn();

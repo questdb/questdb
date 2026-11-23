@@ -283,10 +283,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
+            int bootLoadsWhileDefinitionPending = 0;
             for (int round = 0; round < rounds; round++) {
                 LOG.info().$("fuzz: aggregating round ").$(round).$();
-                runAlterAsOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40), true);
+                bootLoadsWhileDefinitionPending += runAlterAsOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40), true);
             }
+            assertBootLoadsWhileDefinitionPending(rounds, bootLoadsWhileDefinitionPending);
         });
     }
 
@@ -824,10 +826,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
+            int bootLoadsWhileDefinitionPending = 0;
             for (int round = 0; round < rounds; round++) {
                 LOG.info().$("fuzz: passthrough round ").$(round).$();
-                runAlterAsOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40), false);
+                bootLoadsWhileDefinitionPending += runAlterAsOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40), false);
             }
+            assertBootLoadsWhileDefinitionPending(rounds, bootLoadsWhileDefinitionPending);
         });
     }
 
@@ -2117,11 +2121,49 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         insertOperationsFuzzRows(op, oracle);
     }
 
+    // The ALTER ... AS rounds draw a boot load of the view while a definition event waits in a share of their restarts:
+    // over ten rounds and more, a tenth of the rounds at least.
+    private static void assertBootLoadsWhileDefinitionPending(int rounds, int bootLoadsWhileDefinitionPending) {
+        LOG.info().$("fuzz: boot loads while a definition event waited [count=").$(bootLoadsWhileDefinitionPending)
+                .$(", rounds=").$(rounds)
+                .I$();
+        if (rounds >= 10) {
+            Assert.assertTrue(
+                    "boot loads while a definition event waited: " + bootLoadsWhileDefinitionPending + " in " + rounds + " rounds",
+                    bootLoadsWhileDefinitionPending >= rounds / 10
+            );
+        }
+    }
+
+    // A boot load of the view, as a booting server runs it before any WAL apply, with no WAL apply before it: the view
+    // leaves the dependency graph and the state store, and buildViewGraphs() loads it from disk again. The load records
+    // the definition event that the view's WAL holds unapplied, so whether a definition waits survives it, and the
+    // seqTxn of the one that waits; the record of the applied definition events starts again. Returns whether a
+    // definition waited.
+    private static boolean bootLoadFuzzView(String viewName) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        final MatViewState before = opsViewState(viewName);
+        final boolean wasDefinitionPending = before.isDefinitionPending();
+        final long pendingDefinitionSeqTxn = before.getPendingDefinitionSeqTxn();
+        LOG.info().$("fuzz: boot load of the view [definitionPending=").$(wasDefinitionPending).I$();
+        engine.getMatViewStateStore().clear();
+        engine.getDependentViewGraph().removeView(viewToken);
+        engine.buildViewGraphs();
+        final MatViewState after = opsViewState(viewName);
+        Assert.assertEquals("the boot load changed whether a definition waits", wasDefinitionPending, after.isDefinitionPending());
+        if (wasDefinitionPending) {
+            Assert.assertEquals("the boot load changed the definition that waits", pendingDefinitionSeqTxn, after.getPendingDefinitionSeqTxn());
+        }
+        Assert.assertEquals(-1, after.getAppliedDefinitionSeqTxnForTesting());
+        return wasDefinitionPending;
+    }
+
     // A restart of the view states: the store reloads them from disk, and loses the tasks it has not run. Unless a
     // task the restart loses would have changed it, the view keeps the state its writers committed to the view's WAL,
     // which the restart oracle compares: the validity and reason, the refresh position, the base table id and, when a
-    // view state event persisted it, the backlog-lost marker.
-    private static void restartOperationsFuzzViewStates(MatViewFuzzOracle oracle) {
+    // view state event persisted it, the backlog-lost marker. A boot load, as a booting server runs it before any WAL
+    // apply, loads the view into the graph and the store from disk, see bootLoadFuzzView().
+    private static void restartOperationsFuzzViewStates(MatViewFuzzOracle oracle, boolean isBootLoad) {
         final TableToken viewToken = engine.verifyTableName("mv");
         final MatViewState before = opsViewState("mv");
         final boolean isStateCompared = !before.isLocked()
@@ -2141,8 +2183,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         } else {
             LOG.info().$("fuzz: restarting view states").$();
         }
-        engine.getMatViewStateStore().clear();
-        engine.hydrateMatViewStateStore();
+        if (isBootLoad) {
+            bootLoadFuzzView("mv");
+        } else {
+            engine.getMatViewStateStore().clear();
+            engine.hydrateMatViewStateStore();
+        }
         oracle.onRestart();
         if (isStateCompared) {
             final MatViewState after = opsViewState("mv");
@@ -2200,7 +2246,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case BASE_DROP_PARTITION_LIST, BASE_DROP_PARTITION_WHERE, BASE_DETACH_PARTITION, BASE_ATTACH_PARTITION,
                  BASE_TRUNCATE, BASE_TRUNCATE_ATTACH_UPDATE, BASE_UPDATE, BASE_SET_TTL, BASE_REPLACE,
                  BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART, VIEW_ADD_COLUMN, VIEW_DROP_PARTITION_LIST,
-                 VIEW_DROP_PARTITION_WHERE, VIEW_INVALIDATE, VIEW_RESUME, BACKLOG_UPDATE, RESTART ->
+                 VIEW_DROP_PARTITION_WHERE, VIEW_INVALIDATE, VIEW_RESUME, BACKLOG_UPDATE, RESTART, BOOT_LOAD ->
                     oracle.onPostAlterRowsUnchecked();
             default -> {
                 // the operations that leave those buckets to the refreshes
@@ -2270,7 +2316,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 execute("REFRESH MATERIALIZED VIEW mv FULL");
                 oracle.onFullIssued();
                 drainMatViewQueue(engine);
-                restartOperationsFuzzViewStates(oracle);
+                restartOperationsFuzzViewStates(oracle, false);
             }
             case BASE_REPLACE_RESUME_RESTART -> {
                 // the view goes invalid, RESUME SKIP BACKLOG positions it on the new base, and the restart comes before
@@ -2295,7 +2341,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     }
                     Assert.assertFalse(state.isInvalid());
                 }
-                restartOperationsFuzzViewStates(oracle);
+                restartOperationsFuzzViewStates(oracle, false);
             }
             case VIEW_ADD_COLUMN -> {
                 final long viewSeqTxn = opsViewSeqTxn();
@@ -2452,15 +2498,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("mv"));
             case RESTART -> {
                 if (generator.isDefinitionPending()) {
-                    // A restart of the view states forgets the seqTxn of the definition event that an ALTER ... AS left
-                    // in the view's WAL, so a view ADD or DROP COLUMN after it would not wait for the event, and would
-                    // check the SQL before it instead of the one the generator predicts with. Until the restart's load
-                    // finds such an event in the view's WAL, the view's WAL applies it first.
+                    // A reload of the view states, as a promote runs it, records no definition event that an ALTER ...
+                    // AS left in the view's WAL, see CairoEngine.buildViewGraphs(), so a view ADD or DROP COLUMN after it
+                    // would not wait for the event, and would check the SQL before it instead of the one the generator
+                    // predicts with. So the view's WAL applies it first. BOOT_LOAD records the event.
                     drainWalQueue();
                     generator.onViewWalApplied();
                 }
-                restartOperationsFuzzViewStates(oracle);
+                restartOperationsFuzzViewStates(oracle, false);
             }
+            case BOOT_LOAD -> restartOperationsFuzzViewStates(oracle, true);
             case APPLY_WAL -> {
                 drainWalQueue();
                 // the WAL apply skips a suspended view's WAL
@@ -3105,8 +3152,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // minimum, so that a bucket of several rows tells them apart. The WAL apply runs for every table, or for the base
     // alone, as an apply run that serves the base before the view does. The round starts with an ALTER ... AS whose
     // definition event the refresh job meets in the view's WAL, behind base rows that the base's WAL applied alone.
-    private static void runAlterAsOperations(Rnd rnd, int steps, boolean isAggregating) throws Exception {
+    private static int runAlterAsOperations(Rnd rnd, int steps, boolean isAggregating) throws Exception {
         final String timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
+        // the boot loads of the view while a definition event waited in its WAL
+        int bootLoadsWhileDefinitionPending = 0;
         execute("CREATE TABLE base (ts " + timestampType + ", ts2 " + timestampType + ", sym SYMBOL, price DOUBLE, qty LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         // The hours that got a base row after the last ALTER ... AS the view took. Their refresh read rows committed
         // after the statement returned, so it ran with the statement's SQL, as the check asserts. The other buckets of
@@ -3233,15 +3282,24 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     }
                 }
                 default -> {
-                    if (opsViewState("mv").isDefinitionPending()) {
-                        // A restart of the view states forgets the seqTxn of the definition event that an ALTER ... AS
-                        // left in the view's WAL, so the refreshes after it would not wait for the event. Until the
-                        // restart's load finds such an event in the view's WAL, the view's WAL applies it first.
-                        drainWalQueue();
+                    if (rnd.nextBoolean()) {
+                        // a boot load, with no WAL apply before it: the refreshes after it wait for the definition event
+                        // that waits, or the round's check of the hours after the last ALTER ... AS fails
+                        LOG.info().$("fuzz: step ").$(step).$(" boot load of the view").$();
+                        if (bootLoadFuzzView("mv")) {
+                            bootLoadsWhileDefinitionPending++;
+                        }
+                    } else {
+                        if (opsViewState("mv").isDefinitionPending()) {
+                            // A reload of the view states, as a promote runs it, records no definition event that an
+                            // ALTER ... AS left in the view's WAL, see CairoEngine.buildViewGraphs(), so the refreshes
+                            // after it would not wait for the event. So the view's WAL applies it first.
+                            drainWalQueue();
+                        }
+                        LOG.info().$("fuzz: step ").$(step).$(" restarting view states").$();
+                        engine.getMatViewStateStore().clear();
+                        engine.hydrateMatViewStateStore();
                     }
-                    LOG.info().$("fuzz: step ").$(step).$(" restarting view states").$();
-                    engine.getMatViewStateStore().clear();
-                    engine.hydrateMatViewStateStore();
                     // the restart loses a FULL that has not run
                     isFullQueued = false;
                 }
@@ -3265,6 +3323,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             execute("DROP TABLE other");
         }
         drainWalAndMatViewQueues();
+        return bootLoadsWhileDefinitionPending;
     }
 
     // dateadd() of the timestamp column by a nonzero number of minutes or hours, forward or back.

@@ -44,18 +44,24 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The persisted base table identity of a materialized view: the id of the base table that the view's refresh
@@ -65,7 +71,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * refresh, which persists it with one view state event before any data commit.
  */
 public class MatViewBaseIdentityTest extends AbstractCairoTest {
+    private static final String MAX_SQL = "SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h";
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
+    // a SQL that also produces the column x, the average price of the hour, which the view lacks
+    private static final String X_SQL = "SELECT ts, sym, last(price) AS price, avg(price) AS x FROM base SAMPLE BY 1h";
 
     @Test
     public void testApplyFailureOfResumeStateLeavesOldIdAndNextRefreshInvalidates() throws Exception {
@@ -259,6 +268,491 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
             assertViewStatus("valid", "");
             Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
             assertPersistedBaseTableId(baseTableId());
+        });
+    }
+
+    @Test
+    public void testBootLoadClaimsNoEventOfAnotherRecord() throws Exception {
+        // The event index of a segment points the record of an invalidation at the definition event below it, as a
+        // damaged _event.i does. The boot load takes no event whose stored segment txn is not its record's: it records
+        // the definition event at its own record, which the WAL apply applies, so nothing stays pending after it.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+            createView("MANUAL");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            final MatViewState state = viewState();
+            final long definitionSeqTxn;
+            final int walId;
+            final int segmentId;
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                definitionSeqTxn = writer.appendMatViewDefinition("base", X_SQL, false);
+                writer.resetMatViewState(state.getLastRefreshBaseTxn(), 1, false, null, Numbers.LONG_NULL, null, -1, baseTableId());
+                walId = writer.getWalId();
+                segmentId = writer.getSegmentId();
+            }
+            final long invalidationSeqTxn = viewSeqTxn();
+            Assert.assertEquals(definitionSeqTxn + 1, invalidationSeqTxn);
+            final int definitionSegmentTxn;
+            final int invalidationSegmentTxn;
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(viewToken(), definitionSeqTxn - 1)) {
+                Assert.assertTrue(cursor.hasNext());
+                definitionSegmentTxn = cursor.getSegmentTxn();
+                Assert.assertTrue(cursor.hasNext());
+                invalidationSegmentTxn = cursor.getSegmentTxn();
+                Assert.assertEquals(walId, cursor.getWalId());
+                Assert.assertEquals(segmentId, cursor.getSegmentId());
+            }
+            Assert.assertEquals(definitionSegmentTxn + 1, invalidationSegmentTxn);
+            engine.releaseInactive();
+            // the index entry of the invalidation's segment txn takes the offset of the definition event
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewToken()).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId)
+                        .concat(WalUtils.EVENT_INDEX_FILE_NAME);
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long fd = ff.openRW(path.$(), 0);
+                Assert.assertTrue(fd > -1);
+                final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, (long) definitionSegmentTxn * Long.BYTES));
+                    Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, (long) invalidationSegmentTxn * Long.BYTES));
+                } finally {
+                    Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    ff.close(fd);
+                }
+            }
+            bootLoad();
+            Assert.assertEquals(definitionSeqTxn, viewState().getPendingDefinitionSeqTxn());
+            drainWalQueue();
+            Assert.assertEquals(invalidationSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            Assert.assertEquals(definitionSeqTxn, viewState().getAppliedDefinitionSeqTxnForTesting());
+            Assert.assertFalse(viewState().isDefinitionPending());
+            Assert.assertEquals(X_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+            insertBaseRow("a", 3.0, "2024-01-01T01:10:00.000000Z");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            final long viewSeqTxn = viewSeqTxn();
+            drainMatViewQueue(engine);
+            // the refresh ran with the new SQL, which gives the view no x, and did not defer
+            Assert.assertFalse(viewState().hasDeferredDefinitionRefreshForTesting());
+            Assert.assertTrue(viewSeqTxn() > viewSeqTxn);
+            drainWalQueue();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T01:00:00.000000Z\ta\t3.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testBootLoadClaimsNoUnreadableTxnLogPart() throws Exception {
+        // A transaction log in parts of one transaction, whose parts the boot load cannot open: a record the load cannot
+        // read claims nothing, and the load reads on below it, down to the view's applied seqTxn. It logs the newest
+        // record it could not read once, and opens no part that the WAL purge deleted below the applied seqTxn.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final ObjList<String> failingParts = new ObjList<>();
+        final AtomicLong firstKeptPart = new AtomicLong(-1);
+        final AtomicInteger purgedPartOpens = new AtomicInteger();
+        final StringSink partsDir = new StringSink();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                return isPartOpenFailing(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                return isPartOpenFailing(name) ? -1 : super.openRONoCache(name);
+            }
+
+            private boolean isPartOpenFailing(LPSZ name) {
+                if (!isArmed.get() || partsDir.length() == 0) {
+                    return false;
+                }
+                final String path = Utf8s.stringFromUtf8Bytes(name);
+                final int dirIndex = path.indexOf(partsDir.toString());
+                if (dirIndex < 0) {
+                    return false;
+                }
+                final long part = Long.parseLong(path.substring(dirIndex + partsDir.length()));
+                if (part < firstKeptPart.get()) {
+                    purgedPartOpens.incrementAndGet();
+                }
+                for (int i = 0, n = failingParts.size(); i < n; i++) {
+                    if (path.endsWith(failingParts.getQuick(i))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createBase();
+            insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+            createView("MANUAL");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            partsDir.put(viewToken().getDirName()).put(Files.SEPARATOR).put(WalUtils.SEQ_DIR).put(Files.SEPARATOR)
+                    .put(WalUtils.TXNLOG_PARTS_DIR).put(Files.SEPARATOR);
+            final String unreadLog = "could not read materialized view WAL transaction, it counts as no pending definition \\[view=price_1h~";
+
+            // the newest unapplied record is a definition event whose part cannot be opened
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + X_SQL + ")");
+            final long newestSeqTxn = viewSeqTxn();
+            Assert.assertEquals(newestSeqTxn - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            failingParts.add(Files.SEPARATOR + String.valueOf(newestSeqTxn - 1));
+            LogCapture logCapture = new LogCapture();
+            logCapture.start();
+            try {
+                bootLoadArmed(isArmed);
+                logCapture.drain();
+                Assert.assertEquals(1, logCapture.countLoggedRE(unreadLog + "\\d+, seqTxn=" + newestSeqTxn + "\\]"));
+                Assert.assertEquals(1, logCapture.countLoggedRE(unreadLog));
+            } finally {
+                logCapture.stop();
+            }
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            failingParts.clear();
+            drainWalQueue();
+
+            // a definition event below two records whose parts cannot be opened
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + VIEW_SQL + ")");
+            final long definitionSeqTxn = viewSeqTxn();
+            commitViewRowsWithoutState(2);
+            Assert.assertEquals(definitionSeqTxn + 2, viewSeqTxn());
+            failingParts.add(Files.SEPARATOR + String.valueOf(definitionSeqTxn));
+            failingParts.add(Files.SEPARATOR + String.valueOf(definitionSeqTxn + 1));
+            logCapture = new LogCapture();
+            logCapture.start();
+            try {
+                bootLoadArmed(isArmed);
+                logCapture.drain();
+                Assert.assertEquals(1, logCapture.countLoggedRE(unreadLog + "\\d+, seqTxn=" + (definitionSeqTxn + 2) + "\\]"));
+                Assert.assertEquals(1, logCapture.countLoggedRE(unreadLog));
+            } finally {
+                logCapture.stop();
+            }
+            Assert.assertEquals(definitionSeqTxn, viewState().getPendingDefinitionSeqTxn());
+            failingParts.clear();
+            drainWalQueue();
+            Assert.assertEquals(VIEW_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+
+            // the purge deleted the parts below the one of the applied seqTxn
+            final long appliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn();
+            Assert.assertEquals(viewSeqTxn(), appliedSeqTxn);
+            MatViewTxnLogParts.purge(engine, viewToken());
+            Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), appliedSeqTxn - 2));
+            Assert.assertTrue(MatViewTxnLogParts.exists(engine, viewToken(), appliedSeqTxn - 1));
+            commitViewRowsWithoutState(1);
+            firstKeptPart.set(appliedSeqTxn - 1);
+            bootLoadArmed(isArmed);
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            Assert.assertEquals(0, purgedPartOpens.get());
+        });
+    }
+
+    @Test
+    public void testBootLoadClaimsNoUnreadableUnappliedRecord() throws Exception {
+        // An unapplied invalidation whose event file is gone, below a readable refresh commit: the boot load records no
+        // pending definition, as it cannot tell what the record is. The WAL apply suspends on the record, a view ALTER
+        // goes through against the SQL the view has, and a refresh does not defer; RESUME WAL suspends again on the
+        // record, and RESUME WAL FROM TXN past it lets the rest apply.
+        assertMemoryLeak(() -> {
+            createManualViewWithRefresh();
+            final long unreadableSeqTxn = writeUnreadableInvalidationAndRefreshCommit(false);
+            bootLoad();
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            drainWalQueue();
+            assertSuspendedAt(unreadableSeqTxn);
+            armNoWaitGuard();
+            try {
+                execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra INT");
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            insertBaseRow("a", 3.0, "2024-01-01T01:10:00.000000Z");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            final long viewSeqTxn = viewSeqTxn();
+            drainMatViewQueue(engine);
+            // the refresh did not defer, and committed into the suspended WAL
+            Assert.assertFalse(viewState().hasDeferredDefinitionRefreshForTesting());
+            Assert.assertTrue(viewSeqTxn() > viewSeqTxn);
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainWalQueue();
+            assertSuspendedAt(unreadableSeqTxn);
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL FROM TXN " + (unreadableSeqTxn + 1));
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+            Assert.assertEquals(viewSeqTxn(), engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            assertQuery("SELECT \"column\" FROM table_columns('price_1h')").noLeakCheck().noRandomAccess().returns("""
+                    column
+                    ts
+                    sym
+                    price
+                    extra
+                    """);
+        });
+    }
+
+    @Test
+    public void testBootLoadClaimsReadableDefinitionBelowUnreadableRecord() throws Exception {
+        // A definition event below an unapplied invalidation whose event file is gone: the boot load reads on below the
+        // record it cannot read, and records the definition event, as on the node that ran the statement. The WAL apply
+        // reads the events of the transactions ahead of the one it applies, so it fails on the record before it applies
+        // the definition event, and suspends short of it: a view ALTER refuses until RESUME WAL FROM TXN skips both, which
+        // leaves the view its SQL.
+        assertMemoryLeak(() -> {
+            createManualViewWithRefresh();
+            final long unreadableSeqTxn = writeUnreadableInvalidationAndRefreshCommit(true);
+            final long definitionSeqTxn = unreadableSeqTxn - 1;
+            bootLoad();
+            Assert.assertEquals(definitionSeqTxn, viewState().getPendingDefinitionSeqTxn());
+            drainWalQueue();
+            assertSuspendedAt(definitionSeqTxn);
+            Assert.assertEquals(-1, viewState().getAppliedDefinitionSeqTxnForTesting());
+            Assert.assertTrue(viewState().isDefinitionPending());
+            final String addChar = "ALTER MATERIALIZED VIEW price_1h ADD COLUMN x CHAR";
+            assertExceptionNoLeakCheck(
+                    addChar,
+                    "ALTER MATERIALIZED VIEW ".length(),
+                    "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+            );
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL FROM TXN " + (unreadableSeqTxn + 1));
+            Assert.assertFalse(viewState().isDefinitionPending());
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+            Assert.assertEquals(VIEW_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+            // the SQL the view kept gives no x, so the column is the view's own
+            execute(addChar);
+            drainWalQueue();
+            assertQuery("SELECT \"column\" FROM table_columns('price_1h')").noLeakCheck().noRandomAccess().returns("""
+                    column
+                    ts
+                    sym
+                    price
+                    x
+                    """);
+        });
+    }
+
+    @Test
+    public void testBootLoadRecordsNothingOnUnexpectedReadFailure() throws Exception {
+        // A failure other than a read error while the boot load walks the view's WAL, here at the second open of an
+        // event, which the state scan opened first: the load closes what it opened, logs the newest record it could not
+        // read and the failure, and records no pending definition, not even the one below; the view loads as before.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger stateEventOpens = new AtomicInteger();
+        final StringSink stateEventFile = new StringSink();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isArmed.get() && stateEventFile.length() > 0 && Utf8s.endsWithAscii(name, stateEventFile)
+                        && stateEventOpens.incrementAndGet() == 2) {
+                    throw new UnsupportedOperationException("test failure");
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createManualViewWithRefresh();
+            final MatViewState state = viewState();
+            final long definitionSeqTxn;
+            final int stateWalId;
+            final int stateSegmentId;
+            final int unreadableSegmentId;
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                definitionSeqTxn = writer.appendMatViewDefinition("base", X_SQL, false);
+                writer.rollSegment();
+                writer.resetMatViewState(state.getLastRefreshBaseTxn(), 77, false, null, Numbers.LONG_NULL, null, -1, 12_345);
+                stateWalId = writer.getWalId();
+                stateSegmentId = writer.getSegmentId();
+                writer.rollSegment();
+                // the newest record, a refresh commit, whose event file the test removes
+                final long ts = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+                final TableWriter.Row row = writer.newRow(ts);
+                row.putSym(1, "a");
+                row.putDouble(2, 2.0);
+                row.append();
+                writer.commitMatView(1, 1, Numbers.LONG_NULL, ts, ts + 3_600_000_000L);
+                unreadableSegmentId = writer.getSegmentId();
+            }
+            final long unreadableSeqTxn = viewSeqTxn();
+            Assert.assertEquals(definitionSeqTxn + 2, unreadableSeqTxn);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewToken()).concat(WalUtils.WAL_NAME_BASE).put(stateWalId)
+                        .slash().put(unreadableSegmentId).concat(WalUtils.EVENT_FILE_NAME);
+                Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+            }
+            stateEventFile.put(viewToken().getDirName()).put(Files.SEPARATOR).put(WalUtils.WAL_NAME_BASE).put(stateWalId)
+                    .put(Files.SEPARATOR).put(stateSegmentId).put(Files.SEPARATOR).put(WalUtils.EVENT_FILE_NAME);
+            final LogCapture logCapture = new LogCapture();
+            logCapture.start();
+            try {
+                bootLoadArmed(isArmed);
+                logCapture.drain();
+                Assert.assertEquals(1, logCapture.countLoggedRE(
+                        "could not read materialized view WAL transaction, it counts as no pending definition \\[view=price_1h~\\d+, seqTxn=" + unreadableSeqTxn + "\\]"
+                ));
+                Assert.assertEquals(1, logCapture.countLoggedRE(
+                        "could not read pending definition of materialized view, recording none \\[view=price_1h~\\d+, ex=.*test failure"
+                ));
+            } finally {
+                logCapture.stop();
+            }
+            Assert.assertEquals(2, stateEventOpens.get());
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            // the view loaded the state that a reload, which records no pending definition, loads
+            final long lastRefreshFinishTimestampUs = viewState().getLastRefreshFinishTimestampUs();
+            Assert.assertEquals(12_345, viewState().getBaseTableId());
+            restart();
+            Assert.assertEquals(lastRefreshFinishTimestampUs, viewState().getLastRefreshFinishTimestampUs());
+            Assert.assertEquals(12_345, viewState().getBaseTableId());
+        });
+    }
+
+    @Test
+    public void testBootLoadReadsUnappliedEventsDownToNewestDefinition() throws Exception {
+        // Above 10,000 applied refresh commits, the boot load reads the events of the unapplied transactions newest first,
+        // down to the newest definition event, and no applied transaction's event. The state scan reads the newest
+        // unapplied view state event, as a reload of the view states shows, and the rest are the boot load's.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicInteger eventOpens = new AtomicInteger();
+        assertMemoryLeak(newViewEventOpenCountingFacade(isCounting, eventOpens), () -> {
+            createViewWithAppliedRefreshCommits();
+            // the definition event at the position, from 1, among the five unapplied transactions, or none, the last one
+            // a view state event
+            final int[] definitionPositions = {1, 4, 0};
+            final int[] expectedEventOpens = {5, 2, 5};
+            for (int round = 0; round < definitionPositions.length; round++) {
+                final long appliedSeqTxn = viewSeqTxn();
+                Assert.assertEquals(appliedSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+                for (int position = 1; position < 5; position++) {
+                    if (position == definitionPositions[round]) {
+                        try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                            writer.appendMatViewDefinition("base", MAX_SQL, false);
+                        }
+                    } else {
+                        commitViewRowsWithoutState(1);
+                    }
+                }
+                try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                    writer.resetMatViewState(1, 77 + round, false, null, Numbers.LONG_NULL, null, -1, 12_345);
+                }
+                Assert.assertEquals(appliedSeqTxn + 5, viewSeqTxn());
+
+                eventOpens.set(0);
+                restartCountingViewEventOpens(isCounting);
+                Assert.assertEquals(1, eventOpens.get());
+                Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+
+                eventOpens.set(0);
+                isCounting.set(true);
+                try {
+                    bootLoad();
+                } finally {
+                    isCounting.set(false);
+                }
+                Assert.assertEquals("round=" + round, 1 + expectedEventOpens[round], eventOpens.get());
+                Assert.assertEquals(
+                        "round=" + round,
+                        definitionPositions[round] > 0 ? appliedSeqTxn + definitionPositions[round] : -1,
+                        viewState().getPendingDefinitionSeqTxn()
+                );
+                // the state comes from the view state event, as at a reload
+                Assert.assertEquals(77 + round, viewState().getLastRefreshFinishTimestampUs());
+                Assert.assertEquals(12_345, viewState().getBaseTableId());
+                drainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testBootLoadRecordsPendingDefinitionFromOlderTxnLogPart() throws Exception {
+        // A definition event that the view's WAL has not applied, in an older part of the transaction log than the
+        // transactions above it: the boot load records it.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+        assertMemoryLeak(() -> {
+            createManualViewWithRefresh();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewSeqTxn();
+            commitViewRowsWithoutState(3);
+            // with two transactions in a part, the definition event's part is older than the newest transaction's
+            Assert.assertTrue((definitionSeqTxn - 1) / 2 < (viewSeqTxn() - 1) / 2);
+            Assert.assertTrue(MatViewTxnLogParts.exists(engine, viewToken(), (viewSeqTxn() - 1) / 2));
+            bootLoad();
+            Assert.assertEquals(definitionSeqTxn, viewState().getPendingDefinitionSeqTxn());
+            drainWalQueue();
+            Assert.assertEquals(definitionSeqTxn, viewState().getAppliedDefinitionSeqTxnForTesting());
+            Assert.assertFalse(viewState().isDefinitionPending());
+        });
+    }
+
+    @Test
+    public void testBootLoadSkipsStructuralTxnsForPendingDefinition() throws Exception {
+        // A structural change of the view carries no event: the boot load reads past it to the definition event below,
+        // and records nothing for a view whose only unapplied transaction is one.
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicInteger eventOpens = new AtomicInteger();
+        assertMemoryLeak(newViewEventOpenCountingFacade(isCounting, eventOpens), () -> {
+            createManualViewWithRefresh();
+            final long appliedSeqTxn = viewSeqTxn();
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                writer.appendMatViewDefinition("base", X_SQL, false);
+            }
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "test invalidation");
+            drainMatViewQueue(engine);
+            Assert.assertEquals(appliedSeqTxn + 3, viewSeqTxn());
+            Assert.assertTrue(viewTxnTypes().endsWith("," + WalTxnType.MAT_VIEW_DEFINITION + ",STRUCTURE,INVALIDATE"));
+            // the state scan reads the invalidation, and the boot load the invalidation and the definition event
+            bootLoadCountingViewEventOpens(isCounting);
+            Assert.assertEquals(3, eventOpens.get());
+            Assert.assertEquals(appliedSeqTxn + 1, viewState().getPendingDefinitionSeqTxn());
+            drainWalQueue();
+
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra2 DOUBLE");
+            Assert.assertEquals(engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn() + 1, viewSeqTxn());
+            eventOpens.set(0);
+            // the state scan reads the applied invalidation below the structural change, and the boot load reads nothing
+            bootLoadCountingViewEventOpens(isCounting);
+            Assert.assertEquals(1, eventOpens.get());
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+        });
+    }
+
+    @Test
+    public void testBootLoadWithUnknownAppliedTxnRecordsNothing() throws Exception {
+        // When the boot load cannot read the view's applied seqTxn, it cannot tell an unapplied definition event from an
+        // applied one, and records none. The first read of the view's _txn passes: the load takes the view's timestamp
+        // type from its metadata before it creates the view's state.
+        final AtomicBoolean isTxnReadFailArmed = new AtomicBoolean();
+        final AtomicInteger txnOpens = new AtomicInteger();
+        final StringSink viewTxnFile = new StringSink();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isTxnReadFailArmed.get() && Utf8s.endsWithAscii(name, viewTxnFile) && txnOpens.incrementAndGet() > 1) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createManualViewWithRefresh();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + X_SQL + ")");
+            Assert.assertTrue(viewState().isDefinitionPending());
+            viewTxnFile.put(viewToken().getDirName()).put(Files.SEPARATOR).put(TableUtils.TXN_FILE_NAME);
+            bootLoadArmed(isTxnReadFailArmed);
+            Assert.assertTrue(txnOpens.get() > 1);
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            Assert.assertFalse(viewState().isDefinitionPending());
         });
     }
 
@@ -1536,6 +2030,38 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
         };
     }
 
+    private void armNoWaitGuard() {
+        viewState().setOnDefinitionWaitForTesting(() -> {
+            throw new AssertionError("the statement waited for the pending definition event");
+        });
+    }
+
+    private void assertSuspendedAt(long seqTxn) {
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(viewToken()));
+        Assert.assertEquals(seqTxn - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+    }
+
+    // Loads the view as a booting server does: the view leaves the state store and the dependency graph, and
+    // buildViewGraphs() loads it from disk again, before any WAL apply.
+    private void bootLoad() {
+        engine.getMatViewStateStore().clear();
+        engine.getDependentViewGraph().removeView(viewToken());
+        engine.buildViewGraphs();
+    }
+
+    private void bootLoadArmed(AtomicBoolean isArmed) {
+        isArmed.set(true);
+        try {
+            bootLoad();
+        } finally {
+            isArmed.set(false);
+        }
+    }
+
+    private void bootLoadCountingViewEventOpens(AtomicBoolean isCounting) {
+        bootLoadArmed(isCounting);
+    }
+
     private void assertPersistedBaseTableId(int expected) {
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
             path.of(configuration.getDbRoot()).concat(viewToken()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
@@ -1561,6 +2087,16 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
 
     private void createBase() throws SqlException {
         execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    // A MANUAL view refreshed from one base row.
+    private void createManualViewWithRefresh() throws SqlException {
+        createBase();
+        insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+        createView("MANUAL");
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainWalAndMatViewQueues();
     }
 
     private void createView(String refreshType) throws SqlException {
@@ -1735,6 +2271,40 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
 
     private TableToken viewToken() {
         return engine.verifyTableName("price_1h");
+    }
+
+    // Writes to the view's WAL, unapplied: with the flag, a definition event of X_SQL in a segment of its own, then a
+    // valid view state event in a segment whose event file the test removes, and a refresh commit in the next segment.
+    // Returns the seqTxn of the view state event, which the WAL apply cannot read.
+    private long writeUnreadableInvalidationAndRefreshCommit(boolean isDefinitionBelow) {
+        final MatViewState state = viewState();
+        final long unreadableSeqTxn;
+        final int walId;
+        final int segmentId;
+        try (WalWriter writer = engine.getWalWriter(viewToken())) {
+            if (isDefinitionBelow) {
+                writer.appendMatViewDefinition("base", X_SQL, false);
+                writer.rollSegment();
+            }
+            writer.resetMatViewState(state.getLastRefreshBaseTxn(), 1, false, null, Numbers.LONG_NULL, null, -1, baseTableId());
+            unreadableSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken());
+            walId = writer.getWalId();
+            segmentId = writer.getSegmentId();
+            writer.rollSegment();
+            final TableWriter.Row row = writer.newRow(parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z"));
+            row.putSym(1, "a");
+            row.putDouble(2, 2.0);
+            row.append();
+            final long ts = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            writer.commitMatView(1, 1, Numbers.LONG_NULL, ts, ts + 3_600_000_000L);
+        }
+        Assert.assertEquals(unreadableSeqTxn + 1, viewSeqTxn());
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(viewToken()).concat(WalUtils.WAL_NAME_BASE).put(walId)
+                    .slash().put(segmentId).concat(WalUtils.EVENT_FILE_NAME);
+            Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+        }
+        return unreadableSeqTxn;
     }
 
     // The base table id of the view state event that is the first transaction of the view's WAL.

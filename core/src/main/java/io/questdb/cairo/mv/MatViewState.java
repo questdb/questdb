@@ -136,10 +136,12 @@ public class MatViewState implements QuietCloseable {
     // The highest pending definition seqTxn whose wait the refresh job logged, or -1, see claimDefinitionWaitLog().
     private final AtomicLong definitionWaitLoggedSeqTxn = new AtomicLong(-1);
     // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
-    // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
-    // the new SQL, and so do view ADD COLUMN, DROP COLUMN and ALTER ... AS, so that they check themselves against it.
-    // The refresh job defers while the view's WAL has not applied or skipped the event, see isDefinitionPending().
-    // Kept in memory only: a restart loses it.
+    // or of the newest one whose event the view's WAL held committed and unapplied when the node booted, or -1.
+    // REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run the new
+    // SQL, and so do view ADD COLUMN, DROP COLUMN and ALTER ... AS, so that they check themselves against it. The
+    // refresh job defers while the view's WAL has not applied or skipped the event, see isDefinitionPending(). Kept in
+    // memory: the boot load finds an unapplied event again in the view's WAL; a promote's reload does not, see
+    // CairoEngine.buildViewGraphs().
     private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
     // holder's release claims the handoff and enqueues the pending owner, even an owner the holder
@@ -991,7 +993,8 @@ public class MatViewState implements QuietCloseable {
 
     /**
      * Returns the sequencer txn of the definition event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
-     * or -1 when it ran none since it started.
+     * or of the newest one whose event the view's WAL held committed and unapplied when the node booted, or -1 when
+     * there is none since the node started.
      */
     public long getPendingDefinitionSeqTxn() {
         return pendingDefinitionSeqTxn.get();
@@ -1190,9 +1193,10 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Returns true while the definition event of an ALTER MATERIALIZED VIEW ... AS that this node ran waits in the
-     * view's WAL: this node's WAL apply of the view has neither applied nor skipped it, see
-     * {@link #recordAppliedDefinitionSeqTxn(long)}. False when the node ran no such statement since it started.
+     * Returns true while the definition event of an ALTER MATERIALIZED VIEW ... AS that this node ran, or that the
+     * view's WAL held committed and unapplied when the node booted, waits in the view's WAL: this node's WAL apply of
+     * the view has neither applied nor skipped it, see {@link #recordAppliedDefinitionSeqTxn(long)}. False when there
+     * is no such event since the node started.
      */
     public boolean isDefinitionPending() {
         return appliedDefinitionSeqTxn < pendingDefinitionSeqTxn.get();
@@ -1577,10 +1581,11 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Records the sequencer txn of the definition event that ALTER MATERIALIZED VIEW ... AS wrote, see
-     * {@link #getPendingDefinitionSeqTxn()}. The record only grows.
+     * Records the sequencer txn of the definition event that ALTER MATERIALIZED VIEW ... AS wrote, or that the boot
+     * load found committed and unapplied in the view's WAL, see {@link #getPendingDefinitionSeqTxn()}. The record only
+     * grows.
      */
-    void recordPendingDefinitionSeqTxn(long seqTxn) {
+    public void recordPendingDefinitionSeqTxn(long seqTxn) {
         pendingDefinitionSeqTxn.accumulateAndGet(seqTxn, Math::max);
     }
 

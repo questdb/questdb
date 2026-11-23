@@ -47,9 +47,11 @@ import io.questdb.std.datetime.microtime.Micros;
  * It draws the operations around a pending ALTER ... AS too: the apply of the base's WAL alone, which lets the refresh
  * job meet the definition event that waits in the view's WAL, a reset of the view's SeqTxnTracker, as a republish of
  * the WAL apply job does, and SUSPEND WAL and RESUME WAL of the view, the latter also as RESUME WAL FROM TXN past the
- * pending definition event alone, after which the view keeps the SQL it had. While the view's WAL is suspended, it draws
- * only the operations whose outcome it predicts there, see {@link #isAllowedWhileViewWalSuspended(Kind)}, and an ALTER
- * ... AS is refused while an earlier one's definition event waits.
+ * pending definition event alone, after which the view keeps the SQL it had, and, for a view without a period, a boot
+ * load of the view, as a booting server runs it before any WAL apply, which records the definition event that the
+ * view's WAL holds unapplied, so the operations after it wait for the event as before it. While the view's WAL is suspended, it draws only the operations
+ * whose outcome it predicts there, see {@link #isAllowedWhileViewWalSuspended(Kind)}, and an ALTER ... AS is refused
+ * while an earlier one's definition event waits.
  * <p>
  * It draws the round's initial rows, one to ten in each day. In a period view's round, half of the days after the
  * first are gap days, as a weekend is: the base takes no row there until the day's period ends, so the period timer's
@@ -151,8 +153,27 @@ public final class MatViewFuzzOpGenerator {
     public static final String TS = "ts";
     // The operations that meet a definition event that waits in the view's WAL, which a third of the draws take while one
     // waits: base rows, the base's WAL applied alone, the refresh job, a reset of the view's tracker, the suspension of
-    // the view's WAL and its resume, and another ALTER ... AS.
+    // the view's WAL and its resume, another ALTER ... AS, and, for a view without a period, a boot load of the view.
     private static final Kind[] DEFINITION_WINDOW_KINDS = {
+            Kind.INSERT,
+            Kind.APPLY_BASE_WAL,
+            Kind.APPLY_BASE_WAL,
+            Kind.RUN_REFRESH_JOB,
+            Kind.RUN_REFRESH_JOB,
+            Kind.RUN_REFRESH_JOB,
+            Kind.RESET_VIEW_TRACKER,
+            Kind.VIEW_SUSPEND_WAL,
+            Kind.VIEW_SUSPEND_WAL,
+            Kind.VIEW_RESUME_WAL,
+            Kind.VIEW_RESUME_WAL,
+            Kind.VIEW_ALTER_AS,
+            Kind.VIEW_ALTER_AS,
+            Kind.BOOT_LOAD,
+            Kind.BOOT_LOAD
+    };
+    // The operations of DEFINITION_WINDOW_KINDS for a period view, which draws no boot load: its round's shapes around
+    // a definition event, which MatViewFuzzOpGeneratorCoverageTest pins, need the draws as they are.
+    private static final Kind[] PERIOD_DEFINITION_WINDOW_KINDS = {
             Kind.INSERT,
             Kind.APPLY_BASE_WAL,
             Kind.APPLY_BASE_WAL,
@@ -348,11 +369,12 @@ public final class MatViewFuzzOpGenerator {
     }
 
     // The operations drawn while the view's WAL is suspended: those that touch the base alone, run the jobs, reset the
-    // view's tracker, or that a pending definition decides, ALTER ... AS, and RESUME WAL. The others fall back to INSERT
-    // there: their outcome on a suspended view WAL is not the one the generator predicts.
+    // view's tracker, load the view as a boot does, or that a pending definition decides, ALTER ... AS, and RESUME WAL.
+    // The others fall back to INSERT there: their outcome on a suspended view WAL is not the one the generator predicts.
     public static boolean isAllowedWhileViewWalSuspended(Kind kind) {
         return switch (kind) {
-            case INSERT, APPLY_WAL, APPLY_BASE_WAL, RUN_REFRESH_JOB, RESET_VIEW_TRACKER, VIEW_ALTER_AS, VIEW_RESUME_WAL -> true;
+            case INSERT, APPLY_WAL, APPLY_BASE_WAL, RUN_REFRESH_JOB, RESET_VIEW_TRACKER, VIEW_ALTER_AS, VIEW_RESUME_WAL,
+                 BOOT_LOAD -> true;
             default -> false;
         };
     }
@@ -380,6 +402,8 @@ public final class MatViewFuzzOpGenerator {
             case VIEW_ALTER_AS -> 5;
             case APPLY_BASE_WAL -> 4;
             case RESET_VIEW_TRACKER, VIEW_SUSPEND_WAL -> 2;
+            // a view without a period only, see PERIOD_DEFINITION_WINDOW_KINDS
+            case BOOT_LOAD -> isPeriodView ? 0 : 2;
             // drawn only while the view's WAL is suspended, INSERT otherwise
             case VIEW_RESUME_WAL -> 6;
             // only a bare-name round draws them, see bareNameRoundWeight()
@@ -542,7 +566,8 @@ public final class MatViewFuzzOpGenerator {
         op.clear();
         Kind kind = Kind.INSERT;
         if (!isBareNameRound && isDefinitionPending && rnd.nextInt(3) == 0) {
-            kind = DEFINITION_WINDOW_KINDS[rnd.nextInt(DEFINITION_WINDOW_KINDS.length)];
+            final Kind[] windowKinds = isPeriodView ? PERIOD_DEFINITION_WINDOW_KINDS : DEFINITION_WINDOW_KINDS;
+            kind = windowKinds[rnd.nextInt(windowKinds.length)];
         } else {
             int pick = rnd.nextInt(totalWeight);
             for (Kind k : Kind.values()) {
@@ -1267,6 +1292,10 @@ public final class MatViewFuzzOpGenerator {
         // the refresh intervals update that the timer job enqueues for an invalid view's backlog
         BACKLOG_UPDATE,
         RESTART,
+        // a boot load of the view, as a booting server runs it before any WAL apply, with no WAL apply before it: the
+        // load records the definition event that the view's WAL holds unapplied, and the generator's state stays as it
+        // is, since the load applies nothing
+        BOOT_LOAD,
         APPLY_WAL,
         RUN_REFRESH_JOB,
         PURGE_WAL,

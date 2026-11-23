@@ -38,6 +38,11 @@ import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -48,6 +53,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -1261,6 +1267,150 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartKeepsRefreshDeferredUntilDefinitionApplies() throws Exception {
+        // A restart before the view's WAL applies an ALTER ... AS loads its definition event as pending: the refresh of
+        // the rows committed after the statement defers until the WAL applies the event, which wakes it, and then runs
+        // with the new SQL.
+        assertMemoryLeak(() -> {
+            createImmediateView();
+            alterView(MAX_SQL);
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            execute(BUCKET_0200_ROWS);
+            restartEngine((restarted, context) -> {
+                final TableToken viewToken = restarted.verifyTableName("v");
+                final MatViewState state = restarted.getMatViewStateStore().getViewState(viewToken);
+                Assert.assertEquals(definitionSeqTxn, state.getPendingDefinitionSeqTxn());
+                Assert.assertEquals(-1, state.getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertTrue(state.isDefinitionPending());
+                applyWal(restarted, restarted.verifyTableName("base"));
+                final long viewSeqTxn = restarted.getTableSequencerAPI().lastTxn(viewToken);
+                final LogCapture logCapture = new LogCapture();
+                logCapture.start();
+                try {
+                    drainMatViewQueue(restarted);
+                    logCapture.drain();
+                    Assert.assertEquals(1, logCapture.countLoggedRE(DEFINITION_WAIT_LOG));
+                } finally {
+                    logCapture.stop();
+                }
+                Assert.assertEquals(viewSeqTxn, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                Assert.assertTrue(state.hasDeferredDefinitionRefreshForTesting());
+                applyWal(restarted, viewToken);
+                Assert.assertEquals(definitionSeqTxn, state.getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertEquals("incremental_refresh v\n", queuedTasks(restarted));
+                drainMatViewQueue(restarted);
+                drainWalQueue(restarted);
+                assertRestartedViewRows(restarted, context);
+            });
+        });
+    }
+
+    @Test
+    public void testRestartKeepsRefreshDeferredWhileViewWalListed() throws Exception {
+        // A view in cairo.wal.apply.suspended.tables across a restart, whose WAL holds an ALTER ... AS it has not
+        // applied: the refreshes after the restart defer, and write nothing into the view's WAL, until the list no
+        // longer holds the view and its WAL applies the event.
+        assertMemoryLeak(() -> {
+            createImmediateView();
+            alterView(MAX_SQL);
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            execute(BUCKET_0200_ROWS);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, viewToken().getDirName());
+            try {
+                restartEngine((restarted, context) -> {
+                    final TableToken viewToken = restarted.verifyTableName("v");
+                    final MatViewState state = restarted.getMatViewStateStore().getViewState(viewToken);
+                    Assert.assertEquals(definitionSeqTxn, state.getPendingDefinitionSeqTxn());
+                    for (int i = 0; i < 2; i++) {
+                        drainWalAndMatViewQueues(restarted);
+                        // no refresh wrote to the view's WAL, whose last transaction is the definition event
+                        Assert.assertEquals(definitionSeqTxn, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                        Assert.assertTrue(state.hasDeferredDefinitionRefreshForTesting());
+                    }
+                    setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                    drainWalAndMatViewQueues(restarted);
+                    Assert.assertEquals(definitionSeqTxn, state.getAppliedDefinitionSeqTxnForTesting());
+                    assertRestartedViewRows(restarted, context);
+                });
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+        });
+    }
+
+    @Test
+    public void testRestartRecordsReadableDefinitionAboveUnreadableRecord() throws Exception {
+        // A definition event above a view transaction whose event file is gone: the restart loads the definition event
+        // as pending. The WAL apply suspends at the unreadable transaction, so the refreshes defer and a view ALTER
+        // refuses, until RESUME WAL FROM TXN skips it: the definition event applies, which wakes one refresh with the new
+        // SQL.
+        assertMemoryLeak(() -> {
+            createImmediateView();
+            final TableToken viewToken = viewToken();
+            final MatViewState oldState = viewState();
+            final long unreadableSeqTxn;
+            final long definitionSeqTxn;
+            final int walId;
+            final int segmentId;
+            try (WalWriter writer = engine.getWalWriter(viewToken)) {
+                writer.resetMatViewState(
+                        oldState.getLastRefreshBaseTxn(),
+                        oldState.getLastRefreshFinishTimestampUs(),
+                        false,
+                        null,
+                        oldState.getLastPeriodHi(),
+                        null,
+                        -1,
+                        oldState.getBaseTableId()
+                );
+                unreadableSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                walId = writer.getWalId();
+                segmentId = writer.getSegmentId();
+                writer.rollSegment();
+                definitionSeqTxn = writer.appendMatViewDefinition("base", MAX_SQL, false);
+            }
+            Assert.assertEquals(unreadableSeqTxn + 1, definitionSeqTxn);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewToken).concat(WalUtils.WAL_NAME_BASE).put(walId)
+                        .slash().put(segmentId).concat(WalUtils.EVENT_FILE_NAME);
+                Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+            }
+            execute(BUCKET_0200_ROWS);
+            restartEngine((restarted, context) -> {
+                final MatViewState state = restarted.getMatViewStateStore().getViewState(viewToken);
+                Assert.assertEquals(definitionSeqTxn, state.getPendingDefinitionSeqTxn());
+                Assert.assertEquals(-1, state.getAppliedDefinitionSeqTxnForTesting());
+                drainWalQueue(restarted);
+                Assert.assertTrue(restarted.getTableSequencerAPI().isSuspended(viewToken));
+                Assert.assertEquals(unreadableSeqTxn - 1, restarted.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn());
+                drainMatViewQueue(restarted);
+                // the refreshes deferred, and wrote nothing into the suspended WAL
+                Assert.assertEquals(definitionSeqTxn, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                Assert.assertTrue(state.hasDeferredDefinitionRefreshForTesting());
+                final String addColumn = "ALTER MATERIALIZED VIEW v ADD COLUMN extra INT";
+                try {
+                    restarted.execute(addColumn, context);
+                    Assert.fail("the statement must fail: " + addColumn);
+                } catch (SqlException e) {
+                    TestUtils.assertEquals(
+                            "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, run ALTER MATERIALIZED VIEW v RESUME WAL first",
+                            e.getFlyweightMessage()
+                    );
+                    Assert.assertEquals("ALTER MATERIALIZED VIEW ".length(), e.getPosition());
+                }
+                Assert.assertEquals(definitionSeqTxn, restarted.getTableSequencerAPI().lastTxn(viewToken));
+                restarted.execute("ALTER MATERIALIZED VIEW v RESUME WAL FROM TXN " + definitionSeqTxn, context);
+                drainWalQueue(restarted);
+                Assert.assertEquals(definitionSeqTxn, state.getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertEquals("incremental_refresh v\n", queuedTasks(restarted));
+                drainMatViewQueue(restarted);
+                drainWalQueue(restarted);
+                assertRestartedViewRows(restarted, context);
+            });
+        });
+    }
+
+    @Test
     public void testResumeFromTxnAtDefinitionKeepsItPending() throws Exception {
         // RESUME WAL FROM TXN at the definition event skips the transactions before it and applies the event: the
         // event stays pending until the WAL apply reaches it, so a refresh in between defers.
@@ -1907,6 +2057,12 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
         }
     }
 
+    private static void applyWal(CairoEngine e, TableToken tableToken) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(e)) {
+            walApplyJob.applyWalDirect(tableToken, Job.RUNNING_STATUS);
+        }
+    }
+
     private static void applyViewWal() {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
             walApplyJob.applyWalDirect(viewToken(), Job.RUNNING_STATUS);
@@ -2013,7 +2169,12 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
     // The refresh tasks in the queue, one line each, in queue order: the operation and the view's name, or the base
     // table's of a task that refreshes the views of a base. The tasks go back on the queue in their order.
     private static String queuedTasks() {
-        final MatViewStateStore stateStore = engine.getMatViewStateStore();
+        return queuedTasks(engine);
+    }
+
+    // As queuedTasks() above, of the engine.
+    private static String queuedTasks(CairoEngine e) {
+        final MatViewStateStore stateStore = e.getMatViewStateStore();
         final ObjList<MatViewRefreshTask> tasks = new ObjList<>();
         final StringSink sink = new StringSink();
         while (true) {
@@ -2370,6 +2531,25 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
         Assert.assertEquals(error, viewState().getLastRefreshError());
     }
 
+    // The rows of the view v on the restarted engine, after the rows of the 02:00 bucket refreshed with MAX_SQL, and
+    // its status.
+    private void assertRestartedViewRows(CairoEngine restarted, SqlExecutionContext context) throws Exception {
+        assertQuery("v").withEngine(restarted).withContext(context).timestamp("ts").noLeakCheck().expectSize().returns("""
+                ts\ts
+                2024-01-01T00:00:00.000000Z\t1.0
+                2024-01-01T02:00:00.000000Z\t3.0
+                """);
+        try (SqlCompiler compiler = restarted.getSqlCompiler()) {
+            TestUtils.assertSqlCursors(compiler, context, MAX_SQL, "v", LOG);
+        }
+        assertQuery("SELECT view_sql, view_status FROM materialized_views() WHERE view_name = 'v'")
+                .withEngine(restarted)
+                .withContext(context)
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_sql\tview_status\n" + MAX_SQL + "\tvalid\n");
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery("v").timestamp("ts").noLeakCheck().expectSize().returns(expected);
     }
@@ -2433,6 +2613,20 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
                 """);
     }
 
+    // Stops the engine and starts another one on the same data directory, which loads the views from disk.
+    private void restartEngine(RestartedEngineCheck check) throws Exception {
+        engine.releaseInactive();
+        engine.releaseAllWriters();
+        try (
+                CairoEngine restarted = new CairoEngine(configuration);
+                SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+        ) {
+            restarted.load();
+            restarted.buildViewGraphs();
+            check.run(restarted, restartedContext);
+        }
+    }
+
     // The IMMEDIATE period view v of one hour periods over a base of the timestamp type with one row at 00:10, built at
     // 02:40, when the periods up to 02:00 are complete; returns the timer job that fires its period timer.
     private MatViewTimerJob createPeriodView(String timestampType) throws Exception {
@@ -2447,6 +2641,11 @@ public class MatViewPendingDefinitionRefreshTest extends AbstractCairoTest {
         final String fraction = "TIMESTAMP_NS".equals(timestampType) ? ".000000000Z" : ".000000Z";
         assertViewRows("ts\ts\n2024-01-01T00:00:00" + fraction + "\t1.0\n");
         return timerJob;
+    }
+
+    @FunctionalInterface
+    private interface RestartedEngineCheck {
+        void run(CairoEngine restarted, SqlExecutionContext context) throws Exception;
     }
 
     @FunctionalInterface

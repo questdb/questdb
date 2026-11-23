@@ -103,16 +103,20 @@ import io.questdb.cairo.wal.UnsupportedWalTxnTypeHandler;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalGroupCommitFlushQueue;
+import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalTxnTypeHandler;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
@@ -959,6 +963,12 @@ public class CairoEngine implements Closeable, WriterSource {
                             matViewStateReader,
                             false
                     );
+                    // Only the boot load records a pending definition: the WAL apply job starts once the engine is
+                    // READY (ServerMain), so it applies or skips the event on the state this load created. A promote
+                    // hydrates a store while the WAL apply runs, which resolves an event it applies before the install
+                    // on no state of that store, and would leave the recorded event pending, see
+                    // MatViewState.isDefinitionPending(). A caller of this method with running jobs breaks that order.
+                    loadMatViewPendingDefinition(tableToken, path, pathLen, walEventReader);
                 }
                 if (tableToken.isLiveView()) {
                     if (TableUtils.isLiveViewDropSentinelFileExists(configuration, path, tableToken.getDirName())) {
@@ -5027,8 +5037,115 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    // Returns the seqTxn that the view's table has applied up to, or -1 when its _txn file cannot be read, in which
-    // case the load scans every transaction of the view's WAL for its base table id.
+    // Records in the view's state the newest MAT_VIEW_DEFINITION event that the view's WAL holds committed and not
+    // applied, see MatViewState#getPendingDefinitionSeqTxn(). It reads the sequencer's log, whose open drops a torn tail
+    // whose seqTxns later commits take, newest first, down to the view's applied seqTxn. A record whose log entry or
+    // event cannot be read, or whose event is not its own, claims nothing: the consumers of the record release it only
+    // when the WAL apply applies or skips a definition event there. An unknown applied seqTxn or log records nothing.
+    private void loadMatViewPendingDefinition(TableToken viewToken, Path path, int pathLen, WalEventReader walEventReader) {
+        final MatViewState state = matViewStateStore.getViewState(viewToken);
+        if (state == null) {
+            return;
+        }
+        try {
+            final long appliedSeqTxn = readMatViewAppliedSeqTxn(viewToken, path, pathLen);
+            if (appliedSeqTxn < 0) {
+                return;
+            }
+            // The header counts at least every committed record, so a view with nothing above its applied seqTxn opens
+            // no sequencer. A short read gives -1.
+            final FilesFacade ff = configuration.getFilesFacade();
+            path.trimTo(pathLen).concat(viewToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_FILE_NAME);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            final long publishedTxn;
+            try {
+                publishedTxn = ff.readNonNegativeLong(fd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            } finally {
+                ff.close(fd);
+            }
+            if (publishedTxn <= appliedSeqTxn) {
+                return;
+            }
+            final long lastTxn = tableSequencerAPI.lastTxn(viewToken);
+            if (lastTxn <= appliedSeqTxn) {
+                return;
+            }
+            long unreadSeqTxn = -1;
+            try (TransactionLogCursor cursor = tableSequencerAPI.getCursor(viewToken, appliedSeqTxn)) {
+                for (long seqTxn = Math.min(lastTxn, cursor.getMaxTxn()); seqTxn > appliedSeqTxn; seqTxn--) {
+                    cursor.setPosition(seqTxn - 1);
+                    final boolean hasRecord;
+                    try {
+                        // moves the cursor onto record seqTxn; on a log in parts, it maps the record's part and checks
+                        // the record's checksum
+                        hasRecord = cursor.hasNext();
+                    } catch (CairoException e) {
+                        unreadSeqTxn = Math.max(unreadSeqTxn, seqTxn);
+                        continue;
+                    }
+                    if (!hasRecord || cursor.getTxn() != seqTxn) {
+                        // Within the cursor's count, hasNext() lands on record seqTxn or throws. A cursor anywhere else
+                        // would pin this seqTxn on another record's event, so nothing is recorded.
+                        assert false : cursor.getTxn();
+                        LOG.error().$("materialized view WAL cursor is not on the expected transaction, recording no pending definition [view=")
+                                .$(viewToken)
+                                .$(", seqTxn=").$(seqTxn)
+                                .$(", cursorTxn=").$(cursor.getTxn())
+                                .I$();
+                        return;
+                    }
+                    final int walId = cursor.getWalId();
+                    if (walId <= 0) {
+                        // a structural change or a drop carries no event
+                        continue;
+                    }
+                    final int segmentTxn = cursor.getSegmentTxn();
+                    path.trimTo(pathLen).concat(viewToken).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(cursor.getSegmentId());
+                    final byte type;
+                    try (WalEventReader eventReader = walEventReader) {
+                        final WalEventCursor eventCursor = eventReader.of(path, segmentTxn);
+                        // An event stores the segment txn it was written at, so another value is another record's
+                        // event, which a damaged event index can point at.
+                        type = eventCursor.getTxn() == segmentTxn ? eventCursor.getType() : WalTxnType.NONE;
+                    } catch (CairoException e) {
+                        unreadSeqTxn = Math.max(unreadSeqTxn, seqTxn);
+                        continue;
+                    }
+                    if (type == WalTxnType.NONE) {
+                        unreadSeqTxn = Math.max(unreadSeqTxn, seqTxn);
+                        continue;
+                    }
+                    if (type == WalTxnType.MAT_VIEW_DEFINITION) {
+                        state.recordPendingDefinitionSeqTxn(seqTxn);
+                        LOG.info().$("materialized view definition waits in its WAL, refreshes and view ALTERs wait for it [view=")
+                                .$(viewToken)
+                                .$(", definitionSeqTxn=").$(seqTxn)
+                                .$(", appliedSeqTxn=").$(appliedSeqTxn)
+                                .I$();
+                        return;
+                    }
+                }
+            } finally {
+                if (unreadSeqTxn > -1) {
+                    LOG.info().$("could not read materialized view WAL transaction, it counts as no pending definition [view=")
+                            .$(viewToken)
+                            .$(", seqTxn=").$(unreadSeqTxn)
+                            .I$();
+                }
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not read pending definition of materialized view, recording none [view=")
+                    .$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+        } finally {
+            path.trimTo(pathLen);
+        }
+    }
+
+    // Returns the seqTxn that the view's table has applied up to, or -1 when its _txn file cannot be read. Then the load
+    // scans every transaction of the view's WAL for its base table id, and the boot load records no pending definition,
+    // since it cannot tell an applied definition event from one that waits.
     private long readMatViewAppliedSeqTxn(TableToken viewToken, Path path, int pathLen) {
         try (TableMetadata metadata = getTableMetadata(viewToken); TxReader txReader = new TxReader(configuration.getFilesFacade())) {
             path.trimTo(pathLen).concat(viewToken).concat(TableUtils.TXN_FILE_NAME);
@@ -5036,7 +5153,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             return txReader.getSeqTxn();
         } catch (Throwable th) {
-            LOG.info().$("could not read applied seqTxn of materialized view, scanning its whole WAL for the base table id [view=")
+            LOG.info().$("could not read applied seqTxn of materialized view [view=")
                     .$(viewToken)
                     .$(", ex=").$(th)
                     .I$();

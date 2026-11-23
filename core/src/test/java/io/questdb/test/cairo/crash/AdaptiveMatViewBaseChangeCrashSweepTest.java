@@ -62,8 +62,9 @@ import java.util.TreeSet;
  * driver's restart does not rebuild: a crash that loses the definition event would leave the graph on {@code base2}
  * while the disk says {@code base1}. {@link #recoverAfterCrash} therefore drops both and loads them from disk after
  * {@link RecoveryCoordinator#recover()} and before WAL apply, as a booting server runs
- * {@link io.questdb.cairo.CairoEngine#buildViewGraphs()}. The load also clears the in-memory record of the definition
- * event, which a crash may have lost, so a RESUME in the oracle does not wait for it.
+ * {@link io.questdb.cairo.CairoEngine#buildViewGraphs()}. The load rebuilds the record of the definition event from the
+ * committed, unapplied part of the view's WAL, so a crash that lost the event leaves nothing to wait for, and the
+ * oracle asserts the record: the definition event's seqTxn once the event is durable, none before.
  *
  * <h3>A crash the statements or the refresh swallow</h3>
  * A {@link CrashSimulationError} fired in the refresh becomes a view invalidation, and one fired in a statement's
@@ -100,6 +101,8 @@ public class AdaptiveMatViewBaseChangeCrashSweepTest extends AbstractAdaptiveCra
     private static final int STAGE_NOTHING_DURABLE = 0;
     private static final int STAGE_RESUME_DURABLE = 3;
     private static final int SWEEP_CRASH_POINT_CAP = 512;
+    // the pending definition seqTxn that the boot load of recoverAfterCrash() recorded
+    private long recoveredPendingDefinitionSeqTxn = -1;
 
     @Test
     public void testBaseChangeAndResumeSweepRecoversConsistentInPart1Of2() throws Exception {
@@ -122,7 +125,9 @@ public class AdaptiveMatViewBaseChangeCrashSweepTest extends AbstractAdaptiveCra
         final TableToken mvTt = engine.verifyTableName("mv");
         engine.getDependentViewGraph().removeView(mvTt);
         engine.getMatViewStateStore().removeViewState(mvTt);
-        engine.hydrateMatViewStateStore();
+        engine.buildViewGraphs();
+        // the load's record of the pending definition event, before the WAL apply resolves it
+        recoveredPendingDefinitionSeqTxn = engine.getMatViewStateStore().getViewState(mvTt).getPendingDefinitionSeqTxn();
         for (TableToken tt : tokens) {
             engine.notifyWalTxnRepublisher(tt);
         }
@@ -209,11 +214,14 @@ public class AdaptiveMatViewBaseChangeCrashSweepTest extends AbstractAdaptiveCra
     private final class BaseChangeWorkload implements AdaptiveCrashWorkload {
         private TableToken base1Tt;
         private TableToken base2Tt;
+        // the seqTxn of the definition event of the base change: the view's WAL takes its invalidation, then the event
+        private long definitionSeqTxn;
         private TableToken mvTt;
 
         @Override
         public void commit() throws Exception {
             step(ALTER_SQL);
+            Assert.assertEquals(definitionSeqTxn, engine.getMatViewStateStore().getViewState(mvTt).getPendingDefinitionSeqTxn());
             step(RESUME_SQL);
             step(insertSql("base2", BASE2_AFTER_RESUME_HOUR));
         }
@@ -270,6 +278,11 @@ public class AdaptiveMatViewBaseChangeCrashSweepTest extends AbstractAdaptiveCra
                         base2BucketsAfterResume.isEmpty());
                 stage = isOnBase2 ? STAGE_DEFINITION_DURABLE : STAGE_INVALIDATION_DURABLE;
             }
+
+            // Recovery rolled the view's applied seqTxn back to the setup's save point, so a durable definition event
+            // waited unapplied at the load, which recorded it.
+            Assert.assertEquals(at + "the load must record the definition event once it is durable, and none before",
+                    stage >= STAGE_DEFINITION_DURABLE ? definitionSeqTxn : -1, recoveredPendingDefinitionSeqTxn);
 
             // The post-boot refresh: a valid view stays valid and catches up on base2's rows written after RESUME.
             final boolean isInvalid = state.isInvalid();
@@ -328,6 +341,7 @@ public class AdaptiveMatViewBaseChangeCrashSweepTest extends AbstractAdaptiveCra
             base1Tt = engine.verifyTableName("base1");
             base2Tt = engine.verifyTableName("base2");
             mvTt = engine.verifyTableName("mv");
+            definitionSeqTxn = engine.getTableSequencerAPI().lastTxn(mvTt) + 2;
             final MatViewState state = engine.getMatViewStateStore().getViewState(mvTt);
             Assert.assertFalse("the view must be valid before the commit phase", state.isInvalid());
             Assert.assertEquals(base1Tt.getTableId(), state.getBaseTableId());
