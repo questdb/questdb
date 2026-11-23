@@ -232,7 +232,8 @@ fn dict_chunk_stats_varchar() {
     let col2 = build_varchar_column(&aux2, &data);
 
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
-    let pages = encode_varchar(&[col1, col2], 0, 3, &pt, write_options(), None).expect("encode");
+    let (pages, _) =
+        encode_varchar(&[col1, col2], 0, 3, &pt, write_options(), None).expect("encode");
     let datas = data_pages(&pages);
     assert_eq!(datas.len(), 1);
 

@@ -80,6 +80,22 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertEqualsExactOrderChecksAsciiFlagOfVarchar() {
+        final byte[] nonAscii = {(byte) 0xc3, (byte) 0xa9};
+        final GenericRecordMetadata varchar = new GenericRecordMetadata();
+        varchar.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+        final GenericRecordMetadata string = new GenericRecordMetadata();
+        string.add(new TableColumnMetadata("v", ColumnType.STRING));
+
+        TestUtils.assertEqualsExactOrder(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, false), varchar, false);
+        // the expected side or the actual side flagged ASCII, against VARCHAR or STRING
+        assertExactOrderAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, varcharCursor(nonAscii, false), varchar, false);
+        assertExactOrderAsciiFlagRejected(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, true), varchar, false);
+        assertExactOrderAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, stringCursor(), string, true);
+        assertExactOrderAsciiFlagRejected(stringCursor(), string, varcharCursor(nonAscii, true), varchar, true);
+    }
+
+    @Test
     public void testAssertEqualsOfTimestampedCursorsChecksAsciiFlagOfVarchar() {
         final Utf8String nonAscii = new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, false);
         final Utf8String nonAsciiFlaggedAscii = new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true);
@@ -219,6 +235,22 @@ public final class TestUtilsTest extends AbstractCairoTest {
     ) {
         try {
             TestUtils.assertEquals(expected, expectedMetadata, actual, actualMetadata, genericStringMatch);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), "ascii flag set to 'true' for non-ASCII value 'é'");
+            return;
+        }
+        Assert.fail("a non-ASCII value flagged ASCII must fail the comparison");
+    }
+
+    private static void assertExactOrderAsciiFlagRejected(
+            RecordCursor expected,
+            RecordMetadata expectedMetadata,
+            RecordCursor actual,
+            RecordMetadata actualMetadata,
+            boolean genericStringMatch
+    ) {
+        try {
+            TestUtils.assertEqualsExactOrder(expected, expectedMetadata, actual, actualMetadata, genericStringMatch);
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), "ascii flag set to 'true' for non-ASCII value 'é'");
             return;

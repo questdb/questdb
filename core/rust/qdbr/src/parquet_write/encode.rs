@@ -60,6 +60,30 @@ pub fn encode_column_chunk(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
+    encode_column_chunk_checking_ascii(
+        encoding,
+        parquet_type,
+        columns,
+        first_partition_start,
+        last_partition_end,
+        options,
+        bloom_set,
+    )
+    .map(|(pages, _)| pages)
+}
+
+/// [`encode_column_chunk`] that also returns whether the chunk is VARCHAR and the bytes of
+/// every value it encoded are ASCII.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_column_chunk_checking_ascii(
+    encoding: Encoding,
+    parquet_type: &ParquetType,
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<(Vec<Page>, bool)> {
     if columns.is_empty() {
         return Err(fmt_err!(
             InvalidLayout,
@@ -69,7 +93,21 @@ pub fn encode_column_chunk(
 
     let column_tag = columns[0].data_type.tag();
 
-    match parquet_type {
+    if let ParquetType::PrimitiveType(pt) = parquet_type {
+        if pt.physical_type == PhysicalType::ByteArray && column_tag == ColumnTypeTag::Varchar {
+            return encode_varchar_dispatch(
+                encoding,
+                pt,
+                columns,
+                first_partition_start,
+                last_partition_end,
+                options,
+                bloom_set,
+            );
+        }
+    }
+
+    let pages = match parquet_type {
         ParquetType::PrimitiveType(pt) => match pt.physical_type {
             PhysicalType::Boolean => encode_boolean_dispatch(
                 encoding,
@@ -154,7 +192,8 @@ pub fn encode_column_chunk(
             options,
             encoding,
         ),
-    }
+    }?;
+    Ok((pages, false))
 }
 
 fn unsupported(encoding: Encoding, tag: ColumnTypeTag, physical: &str) -> ParquetResult<Vec<Page>> {
@@ -810,6 +849,32 @@ fn encode_double_dispatch(
     }
 }
 
+/// VARCHAR pages, and whether the bytes of every value are ASCII.
+fn encode_varchar_dispatch(
+    encoding: Encoding,
+    pt: &PrimitiveType,
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<(Vec<Page>, bool)> {
+    let encode = match encoding {
+        Encoding::Plain => plain::encode_varchar,
+        Encoding::DeltaLengthByteArray => delta_length_array::encode_varchar,
+        Encoding::RleDictionary => rle_dictionary::encode_varchar,
+        _ => return unsupported(encoding, ColumnTypeTag::Varchar, "ByteArray").map(|p| (p, false)),
+    };
+    encode(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        pt,
+        options,
+        bloom_set,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn encode_byte_array_dispatch(
     encoding: Encoding,
@@ -840,14 +905,6 @@ fn encode_byte_array_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::Plain, Varchar) => plain::encode_varchar(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
 
         // DeltaLengthByteArray
         (Encoding::DeltaLengthByteArray, String) => delta_length_array::encode_string(
@@ -859,14 +916,6 @@ fn encode_byte_array_dispatch(
             bloom_set,
         ),
         (Encoding::DeltaLengthByteArray, Binary) => delta_length_array::encode_binary(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::DeltaLengthByteArray, Varchar) => delta_length_array::encode_varchar(
             columns,
             first_partition_start,
             last_partition_end,
@@ -893,14 +942,6 @@ fn encode_byte_array_dispatch(
             bloom_set,
         ),
         (Encoding::RleDictionary, Binary) => rle_dictionary::encode_binary(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::RleDictionary, Varchar) => rle_dictionary::encode_varchar(
             columns,
             first_partition_start,
             last_partition_end,
@@ -1863,5 +1904,186 @@ mod tests {
             None,
         );
         assert!(super::array_primitive_type(&group).is_none());
+    }
+
+    /// A VARCHAR column of `values` whose per-value ASCII bits all say `is_marked_ascii`, whatever
+    /// the bytes are. A value longer than 9 bytes goes to the data vector; `None` is NULL.
+    fn varchar_column_marked(
+        values: &[Option<&str>],
+        is_marked_ascii: bool,
+    ) -> (Column, Box<dyn std::any::Any>) {
+        let ascii_bit = (is_marked_ascii as u8) << 1;
+        let mut aux: Vec<[u8; 16]> = Vec::with_capacity(values.len());
+        let mut data: Vec<u8> = Vec::new();
+        for value in values {
+            let mut entry = [0u8; 16];
+            let offset = data.len();
+            match value {
+                None => entry[0] = 0b100,
+                Some(value) if value.len() <= 9 => {
+                    entry[0] = ((value.len() as u8) << 4) | 0b01 | ascii_bit;
+                    entry[1..1 + value.len()].copy_from_slice(value.as_bytes());
+                }
+                Some(value) => {
+                    let header = ((value.len() as u32) << 4) | ascii_bit as u32;
+                    entry[0..4].copy_from_slice(&header.to_le_bytes());
+                    entry[4..10].copy_from_slice(&value.as_bytes()[..6]);
+                    data.extend_from_slice(value.as_bytes());
+                }
+            }
+            entry[10..12].copy_from_slice(&(offset as u16).to_le_bytes());
+            entry[12..16].copy_from_slice(&((offset >> 16) as u32).to_le_bytes());
+            aux.push(entry);
+        }
+        let col = Column::from_raw_data(
+            0,
+            "v",
+            ColumnType::new(ColumnTypeTag::Varchar, 0).code(),
+            0,
+            aux.len(),
+            data.as_ptr(),
+            data.len(),
+            aux.as_ptr() as *const u8,
+            aux.len() * 16,
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        (col, Box::new((data, aux)))
+    }
+
+    const VARCHAR_ENCODINGS: [Encoding; 3] = [
+        Encoding::Plain,
+        Encoding::DeltaLengthByteArray,
+        Encoding::RleDictionary,
+    ];
+
+    /// Encodes rows `[first_partition_start, last_partition_end)` of `columns` and returns the
+    /// number of data pages and the ASCII flag.
+    fn encode_varchar_flag(
+        encoding: Encoding,
+        columns: &[Column],
+        first_partition_start: usize,
+        last_partition_end: usize,
+        options: WriteOptions,
+    ) -> (usize, bool) {
+        let (pages, is_ascii) = encode_column_chunk_checking_ascii(
+            encoding,
+            &parquet_type_for(ColumnTypeTag::Varchar),
+            columns,
+            first_partition_start,
+            last_partition_end,
+            options,
+            None,
+        )
+        .unwrap();
+        let data_pages = pages.iter().filter(|p| matches!(p, Page::Data(_))).count();
+        (data_pages, is_ascii)
+    }
+
+    #[test]
+    fn encode_column_chunk_flags_varchar_by_the_bytes_of_its_values() {
+        // (values, the per-value ASCII bit of every value, expected flag)
+        let cases: [(&[Option<&str>], bool, bool); 7] = [
+            (&[Some("a"), None, Some("abcdefghijk")], true, true),
+            // ASCII bytes behind a cleared bit
+            (&[Some("a"), None, Some("abcdefghijk")], false, true),
+            // non-ASCII bytes behind a set bit: inlined, then past the prefix a split value keeps
+            // in its aux entry
+            (
+                &[Some("a"), Some("\u{e9}"), Some("abcdefghijk")],
+                true,
+                false,
+            ),
+            (&[Some("a"), Some("abcdefghij\u{e9}")], true, false),
+            (&[Some("a"), Some("abcdefghij\u{e9}")], false, false),
+            // no value at all
+            (&[None, None], true, true),
+            // the last value of many
+            (
+                &[
+                    Some("a"),
+                    Some("b"),
+                    Some("c"),
+                    Some("d"),
+                    Some("e"),
+                    Some("\u{e9}"),
+                ],
+                true,
+                false,
+            ),
+        ];
+        // one page per row, so that a value on a later page counts too
+        let paged = WriteOptions { data_page_size: Some(1), ..write_options() };
+        for encoding in VARCHAR_ENCODINGS {
+            for (values, is_marked_ascii, expected) in cases {
+                let (col, _keep) = varchar_column_marked(values, is_marked_ascii);
+                for options in [write_options(), paged] {
+                    let (data_pages, is_ascii) =
+                        encode_varchar_flag(encoding, &[col], 0, values.len(), options);
+                    assert_eq!(
+                        is_ascii, expected,
+                        "{encoding:?}, {values:?} marked ASCII {is_marked_ascii}, page size {:?}",
+                        options.data_page_size
+                    );
+                    if options.data_page_size.is_some() && encoding != Encoding::RleDictionary {
+                        assert_eq!(data_pages, values.len(), "{encoding:?}, {values:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn encode_column_chunk_flags_varchar_by_the_rows_it_encodes() {
+        // a row group of rows 1..3 of the first partition and 0..1 of the second
+        let (first, _keep_first) =
+            varchar_column_marked(&[Some("\u{e9}"), Some("a"), Some("abcdefghijk")], true);
+        let (second, _keep_second) =
+            varchar_column_marked(&[Some("b"), Some("abcdefghij\u{e9}")], true);
+        for encoding in VARCHAR_ENCODINGS {
+            assert!(encode_varchar_flag(encoding, &[first, second], 1, 1, write_options()).1);
+            // the non-ASCII value of the second partition, then the one of the first
+            assert!(!encode_varchar_flag(encoding, &[first, second], 1, 2, write_options()).1);
+            assert!(!encode_varchar_flag(encoding, &[first, second], 0, 1, write_options()).1);
+        }
+    }
+
+    #[test]
+    fn encode_column_chunk_rejects_unsupported_varchar_encoding() {
+        let (col, _keep) = varchar_column_marked(&[Some("a")], true);
+        let err = encode_column_chunk_checking_ascii(
+            Encoding::DeltaByteArray,
+            &parquet_type_for(ColumnTypeTag::Varchar),
+            &[col],
+            0,
+            1,
+            write_options(),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("Varchar"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn encode_column_chunk_flags_no_other_type_ascii() {
+        let (col, _keep) = build_string_column();
+        let (_, is_ascii) = encode_column_chunk_checking_ascii(
+            Encoding::Plain,
+            &parquet_type_for(ColumnTypeTag::String),
+            &[col],
+            0,
+            col.row_count,
+            write_options(),
+            None,
+        )
+        .unwrap();
+        assert!(!is_ascii);
     }
 }

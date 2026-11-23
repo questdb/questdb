@@ -3260,20 +3260,9 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharAsciiFlagAfterRewriteWithNonAsciiAppend() throws Exception {
-        // Regression test: VARCHAR column-level ascii flag must not stay stale
-        // across a parquet rewrite that adds non-ASCII bytes.
-        //
-        // When the partition is converted to parquet while the column is
-        // all-ASCII, to_parquet_schema records ascii=Some(true) in the
-        // parquet file's QDB metadata. A later O3 insert with non-ASCII data
-        // triggers processParquetPartition, which goes through
-        // ParquetUpdater::end. Without the fix, end() reuses the old
-        // qdb_meta and preserves the stale ascii=Some(true). The new parquet
-        // file then claims the column is ASCII, and on read every aux header
-        // gets HEADER_FLAG_ASCII set, so isAscii() returns true for bytes
-        // that are not ASCII. TestUtils.println calls assertAsciiCompliance
-        // per VARCHAR row, so the assertSql below fails on the non-ASCII row
-        // without the fix.
+        // The partition converts while the column is all-ASCII; a backdated insert with a non-ASCII
+        // value then rewrites it. The row group that holds the new value must not read as ASCII:
+        // returns() checks the ASCII flag of every VARCHAR value it prints.
         assertMemoryLeak(() -> {
             execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
             execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
@@ -3283,8 +3272,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x convert partition to parquet list '2020-01-01';");
             drainWalQueue();
 
-            // Backdated insert forces an O3 rewrite through ParquetUpdater::end.
-            // 'héllo' has a non-ASCII codepoint (e-acute, U+00E9).
+            // a backdated insert rewrites the partition; 'héllo' has U+00E9
             execute("insert into x values ('héllo', '2020-01-01T06:00:00.000Z');");
             drainWalQueue();
 
@@ -3303,13 +3291,9 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharAsciiFlagOnAddColumnDowngrade() throws Exception {
-        // ADD COLUMN seeds the new VARCHAR column as `true` in the all-ASCII
-        // tracker (existing rows backfill with nulls, which is_column_ascii
-        // skips). track_new_data_ascii must still observe a non-ASCII byte
-        // in a later write and flip the tracker to `false`, so end() emits
-        // Some(false) and the read path does not falsely claim ASCII-ness.
-        // assertSql -> assertAsciiCompliance per VARCHAR row fails if the
-        // column-level flag wrongly forces isAscii() = true on non-ASCII bytes.
+        // ADD COLUMN gives the existing rows NULLs in the new VARCHAR column; a later write of a
+        // non-ASCII value into it must not read as ASCII. returns() checks the ASCII flag of every
+        // VARCHAR value it prints.
         assertMemoryLeak(() -> {
             execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
             execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
@@ -3321,9 +3305,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x add column s2 varchar;");
             drainWalQueue();
 
-            // Backdated insert with non-ASCII in the new column forces an
-            // O3 rewrite through ParquetUpdater::end and must downgrade
-            // the seeded `true` to `false`. 'héllo' has U+00E9.
+            // a backdated insert rewrites the partition; 'héllo' has U+00E9
             execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T06:00:00.000Z', 'héllo');");
             drainWalQueue();
 
@@ -3341,17 +3323,8 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharAsciiFlagOnAddColumnFastPath() throws Exception {
-        // ADD COLUMN VARCHAR with only ASCII data written into the new
-        // column must keep the column-level ascii flag set to `true` so
-        // the read fast path stays active. Existing rows backfill with
-        // nulls (skipped by is_column_ascii), so the seed in
-        // ParquetUpdater::set_target_schema starts the tracker at `true`
-        // and no scan flips it. end() emits Some(true), and the parquet
-        // reader sets HEADER_FLAG_ASCII on every non-null aux header.
-        //
-        // Without the seed, the new column has no tracker entry, end()
-        // falls back to Some(false) via unwrap_or(false), and isAscii()
-        // returns false on every value.
+        // ADD COLUMN VARCHAR, then only ASCII values written into the new column: the row groups
+        // that hold them must keep the ASCII flag, so that scans keep the fast path.
         assertMemoryLeak(() -> {
             execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
             execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
@@ -3363,8 +3336,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x add column s2 varchar;");
             drainWalQueue();
 
-            // Backdated inserts route through ParquetUpdater::end. All s2
-            // values are ASCII so the column-level flag should stay true.
+            // backdated inserts rewrite the partition; every s2 value is ASCII
             execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T03:00:00.000Z', 'first');");
             execute("insert into x (s, ts, s2) values ('bb', '2020-01-01T06:00:00.000Z', 'second');");
             drainWalQueue();
@@ -3378,7 +3350,7 @@ public class ParquetTest extends AbstractCairoTest {
                         Assert.assertNotNull(v);
                         Assert.assertTrue(
                                 "expected isAscii() = true on ASCII value '" + v
-                                        + "'; ADD COLUMN VARCHAR lost the column-level ascii fast path",
+                                        + "'; ADD COLUMN VARCHAR lost the ASCII fast path",
                                 v.isAscii()
                         );
                         nonNullCount++;

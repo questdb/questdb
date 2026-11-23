@@ -566,6 +566,34 @@ mod tests {
         assert_eq!(chunk_ascii_of_frames(4, frames), [[true], [false], [true]]);
     }
 
+    #[test]
+    fn frames_flag_varchar_chunks_by_every_slice_of_a_row_group() {
+        let frame = |column_top, values: &[Option<&str>]| Partition {
+            table: "t".to_string(),
+            columns: vec![varchar_column("v", column_top, values)],
+        };
+        // the non-ASCII value in the second frame of a row group of two whole frames
+        let frames = vec![
+            frame(0, &[Some("a"), Some("b")]),
+            frame(0, &[Some("c"), Some("\u{e9}")]),
+            frame(0, &[Some("d"), Some("e")]),
+        ];
+        assert_eq!(chunk_ascii_of_frames(4, frames), [[false], [true]]);
+        // the non-ASCII value as the last row of the part of a frame the row group takes, and
+        // in the frame after the first of the next row group
+        let frames = vec![
+            frame(0, &[Some("a"), Some("b"), Some("c")]),
+            frame(0, &[Some("d"), Some("\u{e9}"), Some("f")]),
+            frame(1, &[Some("g"), Some("\u{fc}")]),
+        ];
+        assert_eq!(chunk_ascii_of_frames(5, frames), [[false], [false]]);
+        let frames = vec![
+            frame(0, &[Some("a"), Some("b"), Some("c")]),
+            frame(0, &[Some("d"), Some("e"), Some("\u{e9}")]),
+        ];
+        assert_eq!(chunk_ascii_of_frames(5, frames), [[true], [false]]);
+    }
+
     fn long_column_with_id(
         id: i32,
         name: &'static str,

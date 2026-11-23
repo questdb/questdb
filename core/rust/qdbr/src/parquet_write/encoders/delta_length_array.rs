@@ -30,7 +30,9 @@ use crate::parquet::error::ParquetResult;
 use crate::parquet_write::encoders::helpers::{
     lock_bloom_set, partition_slice_range, rows_per_primitive_page, ChunkSlice, PartitionPageSlices,
 };
-use crate::parquet_write::encoders::plain::{binary_to_page, string_to_page, varchar_to_page};
+use crate::parquet_write::encoders::plain::{
+    binary_to_page, string_to_page, varchar_to_page_checking_ascii,
+};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::transmute_slice;
@@ -103,7 +105,8 @@ pub fn encode_binary(
     )
 }
 
-/// Encode a Varchar column as DeltaLengthByteArray pages.
+/// Encode a Varchar column as DeltaLengthByteArray pages. Also returns whether the bytes of every
+/// value are ASCII.
 pub fn encode_varchar(
     columns: &[Column],
     first_partition_start: usize,
@@ -111,9 +114,10 @@ pub fn encode_varchar(
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
-) -> ParquetResult<Vec<Page>> {
+) -> ParquetResult<(Vec<Page>, bool)> {
     let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
-    encode_per_partition(
+    let mut is_ascii = true;
+    let pages = encode_per_partition(
         columns,
         first_partition_start,
         last_partition_end,
@@ -124,7 +128,7 @@ pub fn encode_varchar(
             // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
             let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
             let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
-            varchar_to_page(
+            varchar_to_page_checking_ascii(
                 aux_slice,
                 column.primary_data,
                 chunk.adjusted_column_top,
@@ -132,9 +136,11 @@ pub fn encode_varchar(
                 primitive_type.clone(),
                 Encoding::DeltaLengthByteArray,
                 bloom,
+                &mut is_ascii,
             )
         },
-    )
+    )?;
+    Ok((pages, is_ascii))
 }
 
 fn encode_per_partition<F>(
@@ -347,7 +353,7 @@ mod tests {
         )
         .unwrap();
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let pages =
+        let (pages, _) =
             encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
@@ -434,7 +440,7 @@ mod tests {
         // Sanity: this Column has column_top=10 (set via from_raw_data) and 3 data rows.
         // We pass last_partition_end = 13 to cover top + data.
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let pages = encode_varchar(&[col], 0, 13, &pt, write_options(), None).expect("encode");
+        let (pages, _) = encode_varchar(&[col], 0, 13, &pt, write_options(), None).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, _) = v2_header(&pages[0]);
         assert_eq!(num_values, 13);
@@ -625,7 +631,7 @@ mod tests {
         let data: Vec<u8> = vec![];
         let col = build_varchar_column(&aux, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let pages =
+        let (pages, _) =
             encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
@@ -679,7 +685,7 @@ mod tests {
         let data: Vec<u8> = vec![];
         let col = build_varchar_column(&aux, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let pages =
+        let (pages, _) =
             encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, _) = v2_header(&pages[0]);
@@ -799,7 +805,7 @@ mod tests {
         let col1 = build_varchar_column(&aux1, &data);
         let col2 = build_varchar_column(&aux2, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let pages = encode_varchar(&[col1, col2], 0, aux2.len(), &pt, write_options(), None)
+        let (pages, _) = encode_varchar(&[col1, col2], 0, aux2.len(), &pt, write_options(), None)
             .expect("encode");
         assert_eq!(pages.len(), 2);
         let (nv0, nn0, _) = v2_header(&pages[0]);

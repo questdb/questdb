@@ -191,6 +191,8 @@ pub struct ParquetUpdater {
     /// them, see [`Self::set_source_parquet_meta`]. A rewrite hands them to the chunks it copies.
     /// Empty when the caller gave no `_pm`: a copied chunk then carries no flag of its own.
     source_chunk_ascii: Vec<Vec<bool>>,
+    /// The row groups of the source file an in-place update replaced; it keeps the others.
+    replaced_row_groups: HashSet<usize>,
 }
 
 fn publish_parquet_meta_with_sync<S>(
@@ -362,7 +364,7 @@ impl ParquetUpdater {
         // Columns whose old ascii was already Some(false) or None get `false`
         // here: there is no path back to Some(true) once any old data has
         // been seen as non-ASCII (or as unknown), because copied row groups
-        // carry that data through. scan_chunk_ascii() downgrades a column
+        // carry that data through. track_varchar_all_ascii() downgrades a column
         // starting at `true` to `false` on the first non-ASCII entry.
         let mut varchar_all_ascii: RapidHashMap<i32, bool> = RapidHashMap::default();
         let schema_cols = metadata.schema_descr.columns();
@@ -489,6 +491,7 @@ impl ParquetUpdater {
             is_index_row_map_dropped: false,
             chunk_ascii: RapidHashMap::default(),
             source_chunk_ascii: Vec::new(),
+            replaced_row_groups: HashSet::new(),
         })
     }
 
@@ -568,31 +571,97 @@ impl ParquetUpdater {
         self.is_index_row_map_dropped = true;
     }
 
-    /// Scans the aux of each VARCHAR column of a row group about to be written. Returns, by
-    /// column of `partition`, whether every value of the column is ASCII, and ends the
-    /// all-ASCII state of a column that holds another value. A column without aux holds no
-    /// value and gets no flag.
-    ///
-    /// The scan runs for a column that is known to hold non-ASCII values elsewhere too: `_pm`
-    /// flags each chunk on its own, so the row groups of such a column that are ASCII keep the
-    /// ASCII fast path.
-    fn scan_chunk_ascii(&mut self, partition: &Partition) -> Vec<bool> {
-        use super::varchar::is_column_ascii;
-        let mut is_chunk_ascii = vec![false; partition.columns.len()];
-        for (i, col) in partition.columns.iter().enumerate() {
-            if col.data_type.tag() != ColumnTypeTag::Varchar || col.secondary_data.is_empty() {
-                continue;
-            }
-            // SAFETY: aux originates from JNI/Java memory-mapped column data and is
-            // page-aligned. Each entry is exactly 16 bytes.
-            let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(col.secondary_data) };
-            if is_column_ascii(aux) {
-                is_chunk_ascii[i] = true;
-            } else {
+    /// Ends the all-ASCII state of each VARCHAR column of `partition` whose chunk in the row group
+    /// just encoded holds a value with non-ASCII bytes. `is_chunk_ascii` comes from the encoder,
+    /// by column of `partition`.
+    fn track_varchar_all_ascii(&mut self, partition: &Partition, is_chunk_ascii: &[bool]) {
+        for (col, &is_ascii) in partition.columns.iter().zip(is_chunk_ascii) {
+            if col.data_type.tag() == ColumnTypeTag::Varchar && !is_ascii {
                 self.varchar_all_ascii.insert(col.id, false);
             }
         }
-        is_chunk_ascii
+    }
+
+    /// The committed `_pm` bytes up to the append base, for an update that appends to it: an
+    /// in-place update of a file that has a `_pm`. A rewrite or a first-time generation creates
+    /// `_pm` anew.
+    fn read_existing_parquet_meta(&mut self) -> ParquetResult<Option<Vec<u8>>> {
+        if self.is_rewrite || self.existing_parquet_file_size <= 0 {
+            return Ok(None);
+        }
+        let Some(parquet_meta_file) = self.parquet_meta_fd.as_mut() else {
+            return Ok(None);
+        };
+        let mut existing_parquet_meta = vec![0u8; self.append_base as usize];
+        parquet_meta_file
+            .seek(SeekFrom::Start(0))
+            .map_err(ParquetError::from)?;
+        parquet_meta_file
+            .read_exact(&mut existing_parquet_meta)
+            .map_err(ParquetError::from)
+            .context("could not read existing _pm file")?;
+        Ok(Some(existing_parquet_meta))
+    }
+
+    /// For an in-place update that starts from a snapshot whose `_pm` header flags columns ASCII
+    /// but does not vouch for them (QuestDB 10.2.0 and older appended such snapshots), checks the
+    /// bytes of those columns in the row groups the update keeps. Returns whether every one is
+    /// ASCII; [`crate::parquet_metadata::update_parquet_metadata`] then vouches for the header.
+    ///
+    /// The Parquet footer's `ascii` alone cannot vouch: QuestDB 9.3.4 and 9.3.5 left it true over
+    /// non-ASCII values. It only spares the decode where the answer cannot be yes, and a column
+    /// the check finds non-ASCII has its footer flag cleared, so the next update does not decode
+    /// again. A snapshot that vouches for its header needs no check, so the decode runs at most
+    /// once per partition.
+    fn check_kept_header_ascii(&mut self, existing_parquet_meta: &[u8]) -> ParquetResult<bool> {
+        let reader = crate::parquet_metadata::ParquetMetaReader::from_file_size(
+            existing_parquet_meta,
+            self.parquet_meta_file_size,
+        )?;
+        if reader.is_header_ascii_valid() {
+            return Ok(false);
+        }
+        // An update keeps the schema: the columns of _pm, of the parquet file and of its row
+        // groups share their positions.
+        let fields = self.parquet_file.schema().fields();
+        let mut header_columns = Vec::new();
+        for col in 0..reader.column_count() as usize {
+            if reader.column_descriptor(col)?.flags().is_ascii() {
+                // still claimed ASCII by the footer and by the row groups this update wrote
+                let id = fields
+                    .get(col)
+                    .and_then(|f| f.get_field_info().id)
+                    .filter(|id| self.varchar_all_ascii.get(id).copied().unwrap_or(false));
+                let Some(id) = id else {
+                    return Ok(false);
+                };
+                header_columns.push((col, id));
+            }
+        }
+        if header_columns.is_empty() {
+            return Ok(false);
+        }
+        for (rg_idx, row_group) in self.file_metadata.row_groups.iter().enumerate() {
+            // the encoder flagged the row group that replaced it
+            if self.replaced_row_groups.contains(&rg_idx) {
+                continue;
+            }
+            let columns = row_group.columns();
+            for &(col, id) in &header_columns {
+                let is_ascii = columns
+                    .get(col)
+                    .map(|column| {
+                        is_byte_array_chunk_ascii(&mut self.reader, self.read_file_size, column)
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                if !is_ascii {
+                    self.varchar_all_ascii.insert(id, false);
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// Sets the row count below which the update keeps the old column tops: the caller
@@ -759,7 +828,6 @@ impl ParquetUpdater {
         let aligned = self.align_columns_to_schema(partition)?;
         let partition = aligned.as_ref().unwrap_or(partition);
         self.ensure_schema_matches_columns(partition)?;
-        let is_chunk_ascii = self.scan_chunk_ascii(partition);
         let row_count = partition
             .columns
             .first()
@@ -768,7 +836,7 @@ impl ParquetUpdater {
         let topped = self.with_kept_column_tops(partition, row_offset)?;
         let partition = topped.as_ref().unwrap_or(partition);
         let options = self.row_group_options();
-        let (row_group, bloom_hashes) = create_row_group(
+        let (row_group, bloom_hashes, is_chunk_ascii) = create_row_group(
             partition,
             0,
             row_count,
@@ -779,6 +847,7 @@ impl ParquetUpdater {
             &self.bloom_filter_columns,
             false,
         )?;
+        self.track_varchar_all_ascii(partition, &is_chunk_ascii);
 
         if self.is_rewrite {
             self.parquet_file
@@ -829,6 +898,7 @@ impl ParquetUpdater {
                 .replace(row_group, Some(row_group_id), &bloom_hashes)
                 .with_context(|_| format!("Failed to replace row group {row_group_id}"))
                 .map(|()| {
+                    self.replaced_row_groups.insert(rg_idx);
                     self.record_chunk_ascii(is_chunk_ascii);
                     self.check_kept_tops_against_written_row_group(partition, row_offset, row_count)
                 })
@@ -844,7 +914,6 @@ impl ParquetUpdater {
         let aligned = self.align_columns_to_schema(partition)?;
         let partition = aligned.as_ref().unwrap_or(partition);
         self.ensure_schema_matches_columns(partition)?;
-        let is_chunk_ascii = self.scan_chunk_ascii(partition);
         let row_count = partition
             .columns
             .first()
@@ -853,7 +922,7 @@ impl ParquetUpdater {
         let topped = self.with_kept_column_tops(partition, row_offset)?;
         let partition = topped.as_ref().unwrap_or(partition);
         let options = self.row_group_options();
-        let (row_group, bloom_hashes) = create_row_group(
+        let (row_group, bloom_hashes, is_chunk_ascii) = create_row_group(
             partition,
             0,
             row_count,
@@ -864,6 +933,7 @@ impl ParquetUpdater {
             &self.bloom_filter_columns,
             false,
         )?;
+        self.track_varchar_all_ascii(partition, &is_chunk_ascii);
 
         let written = if self.is_rewrite {
             self.parquet_file
@@ -1102,7 +1172,7 @@ impl ParquetUpdater {
             // Seed a fresh VARCHAR column added by ADD COLUMN as `true`:
             // existing rows backfill with nulls (which is_column_ascii
             // skips), so the column is trivially all-ASCII until a write
-            // proves otherwise. scan_chunk_ascii() will downgrade it on
+            // proves otherwise. track_varchar_all_ascii() will downgrade it on
             // the first non-ASCII aux entry. Existing columns already have
             // a tracker entry from new() and must not be overwritten here.
             if !is_existing_col && col.data_type.tag() == ColumnTypeTag::Varchar {
@@ -1415,8 +1485,6 @@ impl ParquetUpdater {
             ));
         }
 
-        let is_changed_chunk_ascii = self.scan_chunk_ascii(partition);
-
         let target_fields = self.parquet_file.schema().fields().to_vec();
         let target_descriptors = self.parquet_file.schema().columns().to_vec();
         let target_col_count = target_fields.len();
@@ -1450,10 +1518,6 @@ impl ParquetUpdater {
         // by target column: a re-encoded chunk takes the flag of its new values, a copied one
         // keeps the flag of the source chunk
         let mut is_chunk_ascii = vec![false; target_col_count];
-        for (&target_pos, &is_ascii) in changed_target_positions.iter().zip(&is_changed_chunk_ascii)
-        {
-            is_chunk_ascii[target_pos] = is_ascii;
-        }
 
         self.parquet_file.ensure_started().map_err(|e| {
             ParquetError::with_descr(
@@ -1596,7 +1660,7 @@ impl ParquetUpdater {
             })
             .collect();
         let options = self.row_group_options();
-        let (changed_iter, changed_bloom_hashes) = create_row_group(
+        let (changed_iter, changed_bloom_hashes, is_changed_chunk_ascii) = create_row_group(
             partition,
             0,
             row_count,
@@ -1607,6 +1671,11 @@ impl ParquetUpdater {
             &changed_bloom_columns,
             false,
         )?;
+        self.track_varchar_all_ascii(partition, &is_changed_chunk_ascii);
+        for (&target_pos, &is_ascii) in changed_target_positions.iter().zip(&is_changed_chunk_ascii)
+        {
+            is_chunk_ascii[target_pos] = is_ascii;
+        }
         let changed_offset = output_start + bytes_written;
         let bloom_filter_fpp = self.parquet_file.options().bloom_filter_fpp;
         let (changed_rg, changed_page_specs, changed_size, changed_blooms) = write_row_group(
@@ -1714,11 +1783,19 @@ impl ParquetUpdater {
 
         qdb_meta.seq_txn = self.seq_txn.get();
 
+        // An in-place update appends to the committed _pm; the header check needs it before the
+        // footer below takes the ascii flags of the tracker.
+        let existing_parquet_meta = self.read_existing_parquet_meta()?;
+        let is_kept_header_ascii_checked = match &existing_parquet_meta {
+            Some(existing_parquet_meta) => self.check_kept_header_ascii(existing_parquet_meta)?,
+            None => false,
+        };
+
         // Emit the VARCHAR column-level ascii flag from the tracker built
         // during writes. Each tracker entry started life as `true` for an
         // old column whose old.ascii was Some(true) or for a fresh ADD
         // COLUMN VARCHAR (existing rows backfill with nulls, which are
-        // ASCII-compatible), and as `false` otherwise. scan_chunk_ascii()
+        // ASCII-compatible), and as `false` otherwise. track_varchar_all_ascii()
         // flips it to `false` on the first non-ASCII aux entry. So the
         // tracker encodes "old data was all-ASCII (or absent) AND every new
         // write stayed all-ASCII". Columns missing from the tracker emit
@@ -1816,7 +1893,60 @@ impl ParquetUpdater {
                 })
                 .collect();
 
-            if self.is_rewrite || self.existing_parquet_file_size <= 0 {
+            if let Some(existing_pm) = existing_parquet_meta {
+                let thrift_row_groups = self.parquet_file.row_groups();
+                let bloom_bitsets = self.parquet_file.bloom_bitsets();
+
+                // Incremental update: append the new snapshot to the committed _pm. Two
+                // distinct offsets drive this, both threaded in from Java:
+                //  - parse anchor: the committed head resolved from `_txn`
+                //    (`parquet_meta_file_size`). Drives which footer is parsed,
+                //    the new footer's `prev`, and the reused row-group offsets.
+                //  - append base: the `_pm` offset-0 header (the Java reader's
+                //    getFileSize()). New bytes land there, strictly past any
+                //    orphaned dead footer a rolled-back update left in
+                //    [parse anchor, append base), so committed and reader-mapped
+                //    bytes are never overwritten. The two coincide unless a prior
+                //    update patched the header but crashed before its `_txn`
+                //    commit (the crash window). The table write lock is held, so
+                //    the header is stable between the Java read and this write.
+                let parse_anchor = self.parquet_meta_file_size;
+                let append_base = self.append_base;
+                let result = crate::parquet_metadata::update_parquet_metadata(
+                    &existing_pm,
+                    parse_anchor,
+                    append_base,
+                    thrift_row_groups,
+                    footer_offset,
+                    footer_length,
+                    bloom_bitsets,
+                    self.result_unused_bytes,
+                    self.seq_txn,
+                    self.is_index_row_map_dropped,
+                    is_kept_header_ascii_checked,
+                    &is_chunk_ascii,
+                )?;
+
+                // Write the new snapshot at the append base. The header still
+                // points at the committed footer here: commit_parquet_meta
+                // patches it after the index build. So any failure before that
+                // header patch lands leaves the committed header and footer
+                // intact, with the new bytes an invisible dead tail past the
+                // header. In sync modes commit_parquet_meta durably flushes this
+                // tail before patching the header, then flushes the header before
+                // the `_txn` commit. If that second flush throws, the tail is
+                // already durable and the committed `_txn` size is unchanged, so
+                // readers can walk the MVCC chain back to the committed footer.
+                parquet_meta_file
+                    .seek(SeekFrom::Start(append_base))
+                    .map_err(ParquetError::from)?;
+                parquet_meta_file
+                    .write_all(&result.bytes)
+                    .map_err(ParquetError::from)
+                    .context("could not write _pm file")?;
+
+                self.result_parquet_meta_size = result.new_file_size as i64;
+            } else {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
@@ -1840,78 +1970,6 @@ impl ParquetUpdater {
                     .write_all(&parquet_meta_bytes)
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
-            } else {
-                let thrift_row_groups = self.parquet_file.row_groups();
-                let bloom_bitsets = self.parquet_file.bloom_bitsets();
-
-                // Incremental update: read the committed _pm and append the new
-                // snapshot. Two distinct offsets drive this, both threaded in
-                // from Java:
-                //  - parse anchor: the committed head resolved from `_txn`
-                //    (`parquet_meta_file_size`). Drives which footer is parsed,
-                //    the new footer's `prev`, and the reused row-group offsets.
-                //  - append base: the `_pm` offset-0 header (the Java reader's
-                //    getFileSize()). New bytes land there, strictly past any
-                //    orphaned dead footer a rolled-back update left in
-                //    [parse anchor, append base), so committed and reader-mapped
-                //    bytes are never overwritten. The two coincide unless a prior
-                //    update patched the header but crashed before its `_txn`
-                //    commit (the crash window). The table write lock is held, so
-                //    the header is stable between the Java read and this write.
-                let parse_anchor = self.parquet_meta_file_size;
-                let append_base = self.append_base;
-                let mut existing_pm = vec![0u8; append_base as usize];
-                parquet_meta_file
-                    .seek(SeekFrom::Start(0))
-                    .map_err(ParquetError::from)?;
-                parquet_meta_file
-                    .read_exact(&mut existing_pm)
-                    .map_err(ParquetError::from)
-                    .context("could not read existing _pm file")?;
-
-                // The append cannot change the column flags of the _pm header, see
-                // update_parquet_metadata(). An update keeps the schema, so the columns of
-                // qdb_meta, of the parquet schema and of _pm share their positions.
-                let is_column_ascii: Vec<bool> = qdb_meta
-                    .schema
-                    .iter()
-                    .map(|col| col.ascii == Some(true))
-                    .collect();
-
-                let result = crate::parquet_metadata::update_parquet_metadata(
-                    &existing_pm,
-                    parse_anchor,
-                    append_base,
-                    thrift_row_groups,
-                    footer_offset,
-                    footer_length,
-                    bloom_bitsets,
-                    self.result_unused_bytes,
-                    self.seq_txn,
-                    self.is_index_row_map_dropped,
-                    &is_column_ascii,
-                    &is_chunk_ascii,
-                )?;
-
-                // Write the new snapshot at the append base. The header still
-                // points at the committed footer here: commit_parquet_meta
-                // patches it after the index build. So any failure before that
-                // header patch lands leaves the committed header and footer
-                // intact, with the new bytes an invisible dead tail past the
-                // header. In sync modes commit_parquet_meta durably flushes this
-                // tail before patching the header, then flushes the header before
-                // the `_txn` commit. If that second flush throws, the tail is
-                // already durable and the committed `_txn` size is unchanged, so
-                // readers can walk the MVCC chain back to the committed footer.
-                parquet_meta_file
-                    .seek(SeekFrom::Start(append_base))
-                    .map_err(ParquetError::from)?;
-                parquet_meta_file
-                    .write_all(&result.bytes)
-                    .map_err(ParquetError::from)
-                    .context("could not write _pm file")?;
-
-                self.result_parquet_meta_size = result.new_file_size as i64;
             }
         }
 
@@ -2860,6 +2918,100 @@ fn generate_required_zero_page(
     Ok(vec![0u8; row_count * value_size])
 }
 
+/// Whether the bytes of every value of a BYTE_ARRAY column chunk of the file `reader` reads, of
+/// `file_size` bytes, are ASCII. Reads the chunk and decodes its pages as a scan does; an encoding
+/// it does not know answers no.
+fn is_byte_array_chunk_ascii(
+    reader: &mut File,
+    file_size: u64,
+    column: &parquet2::metadata::ColumnChunkMetaData,
+) -> ParquetResult<bool> {
+    use crate::parquet_read::decode::{decompress_sliced_data, decompress_sliced_dict};
+    use parquet2::encoding::Encoding;
+    use parquet2::read::{SlicePageReader, SlicedPage};
+    use parquet2::schema::types::PhysicalType;
+
+    if column.descriptor().descriptor.primitive_type.physical_type != PhysicalType::ByteArray {
+        return Ok(false);
+    }
+    let (chunk_start, chunk_len) = column.byte_range();
+    if chunk_start
+        .checked_add(chunk_len)
+        .is_none_or(|end| end > file_size)
+    {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "column chunk {}..+{} exceeds the parquet file of {} bytes",
+            chunk_start,
+            chunk_len,
+            file_size
+        ));
+    }
+    let mut chunk = vec![0u8; chunk_len as usize];
+    reader.seek(SeekFrom::Start(chunk_start))?;
+    reader.read_exact(&mut chunk)?;
+    let pages = SlicePageReader::from_parts(
+        &chunk,
+        0,
+        chunk.len(),
+        column.compression(),
+        column.descriptor().descriptor.clone(),
+        column.num_values(),
+        chunk.len(),
+    )?;
+    let mut decompress_buffer = Vec::new();
+    for page in pages {
+        let is_ascii = match page? {
+            // the dictionary holds every distinct value; data pages hold only keys
+            SlicedPage::Dict(dict) => are_plain_byte_arrays_ascii(
+                decompress_sliced_dict(dict, &mut decompress_buffer)?.buffer,
+            ),
+            SlicedPage::Data(data) => match data.encoding() {
+                Encoding::RleDictionary | Encoding::PlainDictionary => true,
+                encoding @ (Encoding::Plain | Encoding::DeltaLengthByteArray) => {
+                    let page = decompress_sliced_data(&data, &mut decompress_buffer)?;
+                    let (_, _, values) = crate::parquet_read::page::split_buffer(&page)?;
+                    if encoding == Encoding::Plain {
+                        are_plain_byte_arrays_ascii(values)
+                    } else {
+                        are_delta_length_byte_arrays_ascii(values)?
+                    }
+                }
+                _ => false,
+            },
+        };
+        if !is_ascii {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether every value of PLAIN encoded byte arrays is ASCII.
+fn are_plain_byte_arrays_ascii(mut values: &[u8]) -> bool {
+    while let Some((length, rest)) = values.split_first_chunk::<4>() {
+        let Some((value, rest)) = rest.split_at_checked(u32::from_le_bytes(*length) as usize)
+        else {
+            return false;
+        };
+        if !value.is_ascii() {
+            return false;
+        }
+        values = rest;
+    }
+    values.is_empty()
+}
+
+/// Whether every value of DELTA_LENGTH_BYTE_ARRAY encoded byte arrays is ASCII: the bytes of
+/// the values follow their delta encoded lengths.
+fn are_delta_length_byte_arrays_ascii(values: &[u8]) -> ParquetResult<bool> {
+    let (lengths, _) = crate::parquet_read::decoders::MiniblockIterator::<i32>::try_new(values)?;
+    let values_offset = lengths.get_end_pointer()? as usize - values.as_ptr() as usize;
+    Ok(values
+        .get(values_offset..)
+        .is_some_and(super::varchar::are_bytes_ascii))
+}
+
 fn build_column_infos_from_qdb_meta<'a>(
     qdb_meta: &'a QdbMeta,
     schema_columns: &'a [parquet2::metadata::ColumnDescriptor],
@@ -2931,11 +3083,14 @@ mod tests {
     use std::ptr::null;
 
     use super::adjust_column_chunk_offsets;
+    use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
     use crate::parquet_write::file::DEFAULT_BLOOM_FILTER_FPP;
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
     use crate::parquet_write::schema::{
-        to_compressions, to_encodings, to_parquet_schema, Column, Partition,
+        to_compressions, to_encodings, to_parquet_schema, Column, ParquetEncodingConfig, Partition,
     };
+    use crate::parquet_write::util::transmute_slice;
+    use parquet2::metadata::FileMetaData;
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
@@ -4020,7 +4175,7 @@ mod tests {
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
-        let (row_group, bloom_hashes) = create_row_group(
+        let (row_group, bloom_hashes, _) = create_row_group(
             &new_partition,
             0,
             col1_extra.len(),
@@ -4032,7 +4187,7 @@ mod tests {
             false,
         )?;
 
-        let (replace_row_group, replace_bloom_hashes) = create_row_group(
+        let (replace_row_group, replace_bloom_hashes, _) = create_row_group(
             &new_partition,
             0,
             col1_extra.len(),
@@ -5684,7 +5839,7 @@ mod tests {
         };
 
         let compressions_rg0 = to_compressions(&partition_rg0);
-        let (rg0, bloom0) = create_row_group(
+        let (rg0, bloom0, _) = create_row_group(
             &partition_rg0,
             0,
             col0_rg0.len(),
@@ -5696,7 +5851,7 @@ mod tests {
             false,
         )?;
         let compressions_rg1 = to_compressions(&partition_rg1);
-        let (rg1, bloom1) = create_row_group(
+        let (rg1, bloom1, _) = create_row_group(
             &partition_rg1,
             0,
             col0_rg1.len(),
@@ -5796,7 +5951,7 @@ mod tests {
             ],
         };
         let compressions_new = to_compressions(&partition_new);
-        let (rg_new, bloom_new) = create_row_group(
+        let (rg_new, bloom_new, _) = create_row_group(
             &partition_new,
             0,
             col0_new.len(),
@@ -6951,6 +7106,30 @@ mod tests {
         .unwrap()
     }
 
+    /// [`make_varchar_column`] whose aux marks every value ASCII, whatever its bytes are, as a
+    /// SQL copy of a value a scan flagged wrong does.
+    fn make_varchar_column_marked_ascii(
+        id: i32,
+        name: &'static str,
+        values: &[&str],
+        encoding_config: ParquetEncodingConfig,
+    ) -> Column {
+        let mut column = make_varchar_column(id, name, values);
+        let aux: Vec<[u8; 16]> = unsafe { transmute_slice::<[u8; 16]>(column.secondary_data) }
+            .iter()
+            .map(|entry| {
+                let mut entry = *entry;
+                entry[0] |= 0b10;
+                entry
+            })
+            .collect();
+        let aux: &'static [u8] = Box::leak(aux.into_flattened().into_boxed_slice());
+        column.secondary_data = aux;
+        column.primary_data = aux;
+        column.parquet_encoding_config = encoding_config;
+        column
+    }
+
     fn make_varchar_partition(ts: &[i64], a: &[&str], b: &[&str]) -> Partition {
         let ts: &'static [i64] = Box::leak(ts.to_vec().into_boxed_slice());
         Partition {
@@ -7016,6 +7195,67 @@ mod tests {
             Ok(Self { parquet, pm, pm_size })
         }
 
+        /// A file of one row group whose Parquet footer says `a` and `b` are ASCII whatever they
+        /// hold, as 9.3.4 and 9.3.5 left a footer after an in-place merge of non-ASCII rows, with
+        /// the `_pm` an upgrade builds from the footer: one snapshot, no flag.
+        fn with_footer_claiming_ascii(a: &[&str], b: &[&str]) -> Result<Self, Box<dyn Error>> {
+            use crate::parquet_metadata::convert::convert_from_parquet;
+            use parquet2::metadata::SortingColumn;
+
+            let parquet = NamedTempFile::new()?;
+            let config = ParquetEncodingConfig::default();
+            ParquetWriter::new(parquet.reopen()?)
+                .with_sorting_columns(Some(vec![SortingColumn::new(0, false, false)]))
+                .finish(Partition {
+                    table: "t".to_string(),
+                    columns: vec![
+                        make_designated_ts_with_id(0, "ts", &[1, 2, 3, 4]),
+                        make_varchar_column_marked_ascii(1, "a", a, config),
+                        make_varchar_column_marked_ascii(2, "b", b, config),
+                    ],
+                })?;
+            let bytes = std::fs::read(parquet.path())?;
+            let footer_length =
+                u32::from_le_bytes(bytes[bytes.len() - 8..bytes.len() - 4].try_into()?);
+            let footer_offset = bytes.len() as u64 - 8 - footer_length as u64;
+            let metadata = read_metadata_with_size(&mut Cursor::new(&bytes), bytes.len() as u64)?;
+            let qdb_meta = Self::qdb_meta_of(&metadata);
+            assert_eq!(qdb_meta.schema[2].ascii, Some(true));
+            let (pm_bytes, pm_size) = convert_from_parquet(
+                &metadata,
+                Some(&qdb_meta),
+                footer_offset,
+                footer_length,
+                &NoBloomFilterSource,
+                None,
+            )?;
+            let pm = NamedTempFile::new()?;
+            std::fs::write(pm.path(), &pm_bytes)?;
+            Ok(Self { parquet, pm, pm_size })
+        }
+
+        fn qdb_meta_of(metadata: &FileMetaData) -> QdbMeta {
+            metadata
+                .key_value_metadata
+                .as_ref()
+                .and_then(|kvs| kvs.iter().find(|kv| kv.key == QDB_META_KEY))
+                .and_then(|kv| kv.value.as_deref())
+                .map(|json| QdbMeta::deserialize(json).unwrap())
+                .unwrap()
+        }
+
+        /// The `ascii` of each column in the Parquet footer.
+        fn footer_ascii(&self) -> Result<Vec<Option<bool>>, Box<dyn Error>> {
+            let mut file = self.parquet.reopen()?;
+            let size = file.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut file, size)?;
+            Ok(Self::qdb_meta_of(&metadata)
+                .schema
+                .iter()
+                .map(|col| col.ascii)
+                .collect())
+        }
+
         /// Appends a row group of four rows in place, as an O3 commit into the partition does.
         fn append_in_place(&mut self, a: &[&str], b: &[&str]) -> Result<(), Box<dyn Error>> {
             self.append_row_groups_in_place(&[(a, b)])
@@ -7026,11 +7266,29 @@ mod tests {
             &mut self,
             row_groups: &[(&[&str], &[&str])],
         ) -> Result<(), Box<dyn Error>> {
+            let mut row_count = read_footer(&self.parquet)?.num_rows;
+            self.update_in_place(|updater| {
+                for (a, b) in row_groups {
+                    updater.insert_row_group(
+                        &Self::next_rows(row_count, a, b),
+                        (row_count / 4) as i32,
+                        row_count,
+                    )?;
+                    row_count += 4;
+                }
+                Ok(())
+            })
+        }
+
+        /// Updates the file in place, as an O3 commit into the partition does.
+        fn update_in_place(
+            &mut self,
+            update: impl FnOnce(&mut super::ParquetUpdater) -> crate::parquet::error::ParquetResult<()>,
+        ) -> Result<(), Box<dyn Error>> {
             use crate::allocator::TestAllocatorState;
             use parquet2::metadata::SortingColumn;
 
             let parquet_len = self.parquet.as_file().metadata()?.len();
-            let mut row_count = read_footer(&self.parquet)?.num_rows;
             let alloc = TestAllocatorState::new();
             let mut updater = super::ParquetUpdater::new(
                 alloc.allocator(),
@@ -7052,14 +7310,7 @@ mod tests {
                 parquet_len as i64,
                 SeqTxn::UNSET,
             )?;
-            for (a, b) in row_groups {
-                updater.insert_row_group(
-                    &Self::next_rows(row_count, a, b),
-                    (row_count / 4) as i32,
-                    row_count,
-                )?;
-                row_count += 4;
-            }
+            update(&mut updater)?;
             updater.end(None)?;
             updater.commit_parquet_meta(false)?;
             self.pm_size = updater.result_parquet_meta_size() as u64;
@@ -7591,7 +7842,7 @@ mod tests {
     }
 
     #[test]
-    fn in_place_append_of_column_without_values_flags_no_chunk() -> Result<(), Box<dyn Error>> {
+    fn in_place_append_of_column_without_values_flags_its_chunk() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_metadata::reader::ParquetMetaReader;
         use parquet2::metadata::SortingColumn;
@@ -7644,13 +7895,13 @@ mod tests {
         updater.commit_parquet_meta(false)?;
         file.pm_size = updater.result_parquet_meta_size() as u64;
 
-        // a row group without values leaves a all-ASCII, so the footer still vouches for the
-        // header, and its chunk needs no flag
+        // a chunk without values holds no non-ASCII byte: the encoder flags it, and the footer
+        // still vouches for the header
         assert!(file.is_header_ascii_valid()?);
         let pm = file.pm_bytes()?;
         let reader = ParquetMetaReader::from_file_size(&pm, file.pm_size).unwrap();
         let chunks = reader.row_group(1).unwrap();
-        assert!(!chunks.column_chunk(1).unwrap().flags().is_ascii());
+        assert!(chunks.column_chunk(1).unwrap().flags().is_ascii());
         assert!(chunks.column_chunk(2).unwrap().flags().is_ascii());
         Ok(())
     }
@@ -7712,13 +7963,233 @@ mod tests {
         assert!(!file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
 
-        // the parquet footer says both columns are ASCII, so the next append vouches for the
-        // header flags
+        // the next append checks the old values of both columns and vouches for the header flags
         file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
         assert!(file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII, ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, ASCII, ASCII]);
         Ok(())
+    }
+
+    #[test]
+    fn pm_updated_in_place_by_old_version_keeps_no_stale_footer_flag() -> Result<(), Box<dyn Error>>
+    {
+        for (b, is_valid) in [
+            (["b1", "\u{fc}2", "b3", "b4"], false),
+            (["b1", "b2", "b3", "b4"], true),
+        ] {
+            // the footer says b is ASCII; an old version built _pm from it, flagged a and b in the
+            // header and appended ASCII rows in place, without saying whether the flags hold
+            let mut file =
+                VarcharAsciiFile::with_footer_claiming_ascii(&["a1", "a2", "a3", "a4"], &b)?;
+            file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
+            file.rewrite_pm_as_old_format()?;
+            assert!(!file.is_header_ascii_valid()?);
+            assert_eq!(file.footer_ascii()?, [None, Some(true), Some(true)]);
+
+            // an ASCII append: the footer alone vouches for nothing, the old values decide
+            file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
+            assert_eq!(file.is_header_ascii_valid()?, is_valid, "{b:?}");
+            let old = if is_valid { ASCII } else { NOT_ASCII };
+            assert_eq!(file.decoded_ascii_flags(1)?, [old, old, ASCII], "{b:?}");
+            assert_eq!(file.decoded_ascii_flags(2)?, [old, old, ASCII], "{b:?}");
+            // a check that fails clears the footer flag of the column, so no later append decodes
+            // the old values again
+            assert_eq!(
+                file.footer_ascii()?,
+                [None, Some(true), Some(is_valid)],
+                "{b:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_update_without_pm_writes_no_pm() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+
+        let file = VarcharAsciiFile::new()?;
+        let parquet_len = file.parquet.as_file().metadata()?.len();
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            file.parquet.reopen()?,
+            parquet_len,
+            file.parquet.reopen()?,
+            parquet_len,
+            Some(vec![SortingColumn::new(0, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            parquet_len as i64,
+            SeqTxn::UNSET,
+        )?;
+        let rows =
+            VarcharAsciiFile::next_rows(4, &["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"]);
+        updater.insert_row_group(&rows, 1, 4)?;
+        updater.end(None)?;
+        assert_eq!(updater.result_parquet_meta_size(), -1);
+        assert_eq!(read_footer(&file.parquet)?.num_rows, 8);
+        Ok(())
+    }
+
+    #[test]
+    fn header_ascii_check_skips_row_groups_the_update_replaced() -> Result<(), Box<dyn Error>> {
+        // as above, the footer claims b ASCII over the non-ASCII value of row group 0
+        let mut file = VarcharAsciiFile::with_footer_claiming_ascii(
+            &["a1", "a2", "a3", "a4"],
+            &["b1", "\u{fc}2", "b3", "b4"],
+        )?;
+        file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
+        file.rewrite_pm_as_old_format()?;
+        assert!(!file.is_header_ascii_valid()?);
+
+        // the update replaces row group 0 with ASCII values; the old bytes stay in the file, dead
+        file.update_in_place(|updater| {
+            updater.replace_row_group(
+                &make_varchar_partition(
+                    &[1, 2, 3, 4],
+                    &["c1", "c2", "c3", "c4"],
+                    &["d1", "d2", "d3", "d4"],
+                ),
+                0,
+                0,
+            )
+        })?;
+        assert!(file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, ASCII]);
+        Ok(())
+    }
+
+    #[test]
+    fn byte_array_chunk_ascii_check_reads_every_encoding() -> Result<(), Box<dyn Error>> {
+        use parquet2::encoding::Encoding;
+        use parquet2::write::Version;
+
+        // the aux marks every value ASCII; the writer gets the encodings as given
+        let cases: [(Encoding, [&str; 4], bool); 6] = [
+            (Encoding::Plain, ["a", "b", "c", "d"], true),
+            (Encoding::Plain, ["a", "b", "\u{e9}", "d"], false),
+            (Encoding::RleDictionary, ["a", "b", "a", "b"], true),
+            (Encoding::RleDictionary, ["a", "\u{e9}", "a", "b"], false),
+            (Encoding::DeltaLengthByteArray, ["a", "b", "c", "d"], true),
+            (
+                Encoding::DeltaLengthByteArray,
+                ["a", "b", "c", "\u{e9}"],
+                false,
+            ),
+        ];
+        for version in [Version::V1, Version::V2] {
+            for compression in [CompressionOptions::Uncompressed, CompressionOptions::Snappy] {
+                for (encoding, values, expected) in cases {
+                    let partition = Partition {
+                        table: "t".to_string(),
+                        columns: vec![
+                            make_designated_ts_with_id(0, "ts", &[1, 2, 3, 4]),
+                            make_varchar_column_marked_ascii(
+                                1,
+                                "v",
+                                &values,
+                                ParquetEncodingConfig::default(),
+                            ),
+                        ],
+                    };
+                    let (schema, additional_meta) =
+                        to_parquet_schema(&partition, false, -1, SeqTxn::UNSET)?;
+                    let parquet = NamedTempFile::new()?;
+                    let mut chunked = ParquetWriter::new(parquet.reopen()?)
+                        .with_version(version)
+                        .with_compression(compression)
+                        .chunked_with_compressions(
+                            schema,
+                            vec![Encoding::DeltaBinaryPacked, encoding],
+                            to_compressions(&partition),
+                        )?;
+                    chunked.write_chunk(&partition)?;
+                    chunked.finish(additional_meta)?;
+
+                    let mut file = parquet.reopen()?;
+                    let size = file.metadata()?.len();
+                    let metadata = read_metadata_with_size(&mut file, size)?;
+                    let column = &metadata.row_groups[0].columns()[1];
+                    let label = format!("{version:?} {compression:?} {encoding:?} {values:?}");
+                    let encodings = &column.column_chunk().meta_data.as_ref().unwrap().encodings;
+                    assert!(
+                        encodings.contains(&encoding.into()),
+                        "{label}: {encodings:?}"
+                    );
+                    assert_eq!(
+                        super::is_byte_array_chunk_ascii(&mut file, size, column)?,
+                        expected,
+                        "{label}"
+                    );
+                    // a column of another physical type proves nothing
+                    let ts = &metadata.row_groups[0].columns()[0];
+                    assert!(
+                        !super::is_byte_array_chunk_ascii(&mut file, size, ts)?,
+                        "{label}"
+                    );
+                    // a chunk past the end of the file is an error, not a panic
+                    assert!(
+                        super::is_byte_array_chunk_ascii(&mut file, 10, column).is_err(),
+                        "{label}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn byte_array_chunk_ascii_check_does_not_prove_an_unknown_encoding(
+    ) -> Result<(), Box<dyn Error>> {
+        use arrow::array::{ArrayRef, StringArray};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use parquet::basic::Encoding;
+        use parquet::file::properties::WriterProperties;
+        use std::sync::Arc;
+
+        // a foreign writer's DELTA_BYTE_ARRAY page of ASCII values
+        let values: ArrayRef = Arc::new(StringArray::from(vec!["abc", "abd", "abe"]));
+        let batch = RecordBatch::try_from_iter([("v", values)])?;
+        let properties = WriterProperties::builder()
+            .set_dictionary_enabled(false)
+            .set_encoding(Encoding::DELTA_BYTE_ARRAY)
+            .build();
+        let parquet = NamedTempFile::new()?;
+        let mut writer = ArrowWriter::try_new(parquet.reopen()?, batch.schema(), Some(properties))?;
+        writer.write(&batch)?;
+        writer.close()?;
+
+        let mut file = parquet.reopen()?;
+        let size = file.metadata()?.len();
+        let metadata = read_metadata_with_size(&mut file, size)?;
+        let column = &metadata.row_groups[0].columns()[0];
+        assert!(!super::is_byte_array_chunk_ascii(&mut file, size, column)?);
+        Ok(())
+    }
+
+    #[test]
+    fn plain_and_delta_length_byte_arrays_ascii_reject_truncated_values() {
+        assert!(super::are_plain_byte_arrays_ascii(&[]));
+        assert!(super::are_plain_byte_arrays_ascii(&[1, 0, 0, 0, b'a']));
+        assert!(!super::are_plain_byte_arrays_ascii(&[2, 0, 0, 0, b'a']));
+        assert!(!super::are_plain_byte_arrays_ascii(&[1, 0, 0]));
+        assert!(!super::are_plain_byte_arrays_ascii(&[1, 0, 0, 0, 0xc3]));
+        // an unterminated length header
+        assert!(!matches!(
+            super::are_delta_length_byte_arrays_ascii(&[0x80]),
+            Ok(true)
+        ));
     }
 
     /// Regression: after a DROP COLUMN shifts the surviving columns,

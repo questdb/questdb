@@ -2599,11 +2599,7 @@ public class FuzzRunner {
                         final RecordMetadata metadata = factory.getMetadata();
                         final Record record = cursor.getRecord();
                         while (cursor.hasNext()) {
-                            for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
-                                if (metadata.getColumnType(col) == ColumnType.VARCHAR) {
-                                    TestUtils.assertAsciiCompliance(record.getVarcharA(col));
-                                }
-                            }
+                            TestUtils.assertVarcharAsciiCompliance(metadata, record);
                         }
                     } catch (SqlException | CairoException | TableReferenceOutOfDateException e) {
                         // a concurrent DDL, a dropped table or a busy reader: the next round reads the table again

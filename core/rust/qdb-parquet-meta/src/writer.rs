@@ -1855,28 +1855,6 @@ mod tests {
     }
 
     #[test]
-    fn create_leaves_chunks_unflagged_without_header_ascii_flag() {
-        let (bytes, size) = make_ascii_file(1, false);
-        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
-        for column in 0..3 {
-            assert!(!is_chunk_ascii(&reader, 0, column));
-        }
-    }
-
-    #[test]
-    fn create_tolerates_row_group_narrower_than_the_header() {
-        // The flagged column is the second one; the row group block holds one chunk.
-        let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        w.add_column("a", 1, 26, ColumnFlags::new().with_ascii(), 0, 0, 0, 0);
-        let mut rg = RowGroupBlockBuilder::new(1);
-        rg.set_num_rows(3);
-        w.add_row_group(rg);
-        let (bytes, size) = w.finish().unwrap();
-        assert_eq!(bytes.len() as u64, size);
-    }
-
-    #[test]
     fn update_that_keeps_row_groups_inherits_header_ascii_validity() {
         let (original, size) = make_ascii_file(2, true);
 

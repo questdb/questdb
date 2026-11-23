@@ -105,7 +105,7 @@ fn bench_row_group(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ROW_COUNT as u64));
         group.bench_function("mixed_single_partition", |b| {
             b.iter(|| {
-                let (row_group, _bloom) = create_row_group_from_partitions(
+                let (row_group, _bloom, _) = create_row_group_from_partitions(
                     &[&partition],
                     0,
                     data.rows(),
@@ -142,7 +142,7 @@ fn bench_row_group(c: &mut Criterion) {
         group.throughput(Throughput::Elements(ROW_COUNT as u64));
         group.bench_function("mixed_4_partitions", |b| {
             b.iter(|| {
-                let (row_group, _bloom) = create_row_group_from_partitions(
+                let (row_group, _bloom, _) = create_row_group_from_partitions(
                     &partition_refs,
                     0,
                     last_end,

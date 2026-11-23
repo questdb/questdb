@@ -314,9 +314,11 @@ only when the metadata says so, and a flag that says so wrongly gives wrong quer
 The ASCII flag lives on each column chunk (the `IS_ASCII` bit of the chunk's FLAGS, see "Column
 chunk"): every value of that chunk is ASCII. A row group block never changes, so the flag holds in
 every snapshot that refers to the block. Only a writer that checked the values of the chunk sets it:
-every writer flags the chunks it writes by their values, whatever the rest of the column holds, and
-a writer that copies a row group into a new file copies the flags of its chunks from the `_pm` of
-the old file. A flag that describes a whole column, the header's `IS_ASCII` or the `ascii` of the
+every writer flags the chunks it writes by the bytes of their values, whatever the rest of the column
+holds, and a writer that copies a row group into a new file copies the flags of its chunks from the
+`_pm` of the old file. The per-value ASCII bit of QuestDB's native VARCHAR storage does not count: a
+SQL copy keeps the bit of the value it copies, which a scan of an older version could have set over
+non-ASCII bytes. A flag that describes a whole column, the header's `IS_ASCII` or the `ascii` of the
 QuestDB metadata in the parquet footer, never flags a chunk: no writer checked it chunk by chunk, and
 QuestDB 9.3.4 and 9.3.5 left the footer's true over non-ASCII values. A `_pm` built from the parquet
 file alone, without the `_pm` of the file it describes, flags no chunk.
@@ -326,16 +328,21 @@ created the file and trusted it alone; later versions do not set it. The header 
 every snapshot of the file shares it, so the flag is true for the snapshot the file was created
 with, and no later update can clear it. The `HEADER_ASCII_VALID` footer flag says that every column
 the header flags is still ASCII in all row groups of the snapshot. An update that adds or replaces
-row groups sets it only when it knows that. A footer that keeps the row groups of the previous one
-inherits its answer.
+row groups sets it only when every chunk it writes of a flagged column is flagged ASCII, and the
+previous snapshot carries the answer for the row groups it keeps: it is the first of the chain or
+carries `HEADER_ASCII_VALID`, or the update decoded the flagged columns of those row groups and found
+their values ASCII. The parquet footer's `ascii` cannot answer, for the reason above. A footer that
+keeps the row groups of the previous one inherits its answer.
 
 A reader takes a chunk for ASCII when the chunk flag is set, or when the header flags the column
 and the snapshot is the first of the chain (`PREV_PARQUET_META_FILE_SIZE` is 0) or carries
 `HEADER_ASCII_VALID`.
 
 A `_pm` that 10.2.0 or older updated in place has a later footer without `HEADER_ASCII_VALID`, so
-its header flags are unproven and its values read as not ASCII, until an update that knows the
-columns of the file sets the flag again.
+its header flags are unproven and its values read as not ASCII, until an update decodes the flagged
+columns of the row groups it keeps and sets the flag again. The update decodes only when the bit can
+follow, and clears the footer's `ascii` of a column it finds non-ASCII, so a partition pays the decode
+once.
 
 ### Sorting column (4 bytes)
 
