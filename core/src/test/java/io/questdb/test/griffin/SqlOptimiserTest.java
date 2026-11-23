@@ -463,6 +463,53 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnComputedOutputReadsNoColumnOfItsName() throws Exception {
+        // A filter on an output the SELECT computes filters the computed value, so the scan reads what the expression
+        // of the output reads, and not the column of the table named like the output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (0, 'k1', 1, 20), (0, 'k2', 3, 0), (3_600_000_000, 'k1', 2, 10)");
+
+            final String groupByQuery = "SELECT * FROM (SELECT k, count() b FROM x GROUP BY k) WHERE b > 1";
+            assertQuery(
+                    "select-choose k, b from (select-group-by [k, count() b] k, count() b from (select [k] from x timestamp (ts)) where b > 1)",
+                    groupByQuery
+            );
+            assertQuery(groupByQuery)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tb
+                            k1\t2
+                            """);
+
+            final String sampleByQuery = "SELECT * FROM (SELECT ts, sum(a) b FROM x SAMPLE BY 1h) WHERE b > 3";
+            assertQuery(
+                    "select-choose ts, b from (select-group-by [timestamp_floor_utc('1h', ts, null, '00:00', null) ts, sum(a) b] timestamp_floor_utc('1h', ts, null, '00:00', null) ts, sum(a) b from (select [ts, a] from x timestamp (ts) stride 1h) where b > 3 order by ts)",
+                    sampleByQuery
+            );
+            assertQuery(sampleByQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tb
+                            1970-01-01T00:00:00.000000Z\t4
+                            """);
+
+            final String virtualQuery = "SELECT * FROM (SELECT k, a * 10 b FROM x) WHERE b > 25";
+            assertQuery(
+                    "select-choose k, b from (select-virtual [k, a * 10 b] k, a * 10 b from (select [k, a] from x timestamp (ts)) where b > 25)",
+                    virtualQuery
+            );
+            assertQuery(virtualQuery)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tb
+                            k2\t30
+                            """);
+        });
+    }
+
+    @Test
     public void testFilterOnRenamedColumnAboveLatestOn() throws Exception {
         // A filter cannot move below LATEST ON, so it stays with the SELECT above it and filters the output of that
         // SELECT: a is the output that reads b. The scan reads b for it, and not the column a, which no output reads.
@@ -528,11 +575,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 1970-01-01T01:00:00.000000Z\tk1\t1
                                 """);
 
-                // An output the SELECT computes still gives the model under it the column of its name. The dependencies
-                // of a view account for that column, see SqlUtil.isComputedColumnNamedLikeUnreadColumn().
+                // The same for an output the SELECT computes: a reads b, and the scan reads no column a.
                 final String computedQuery = "SELECT * FROM (SELECT ts, k, b + 0 AS a FROM x LATEST ON ts PARTITION BY k) WHERE a = 1";
                 assertQuery(
-                        "select-choose ts, k, a from (select-virtual [ts, k, b + 0 a] ts, k, b + 0 a from (select [a, ts, k, b] from x latest on ts partition by k) where a = 1)",
+                        "select-choose ts, k, a from (select-virtual [ts, k, b + 0 a] ts, k, b + 0 a from (select [ts, k, b] from x latest on ts partition by k) where a = 1)",
                         computedQuery
                 );
                 assertQuery(computedQuery)

@@ -187,30 +187,40 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     public void testComputedOutputNamedLikeUnreadColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // A filter on an output the SELECT computes stays with that SELECT, which gives the model under it the column
-            // of the same name too, although the filter reads the computed output: b of x here. The view lends that
-            // column to the reads that set none of its variables.
+            // A filter on an output the SELECT computes stays with that SELECT, which applies it to the computed
+            // output: the read scans no column of the same name, b of x here, which no output of the view reads. The
+            // view lends no such column.
             assertReads(
                     "SELECT a * 10 b, k FROM (SELECT * FROM x)",
-                    "{x=[?b, a, k]}",
+                    "{x=[a, k]}",
                     "SELECT * FROM v WHERE b = 30", "SELECT k FROM v WHERE b > 20", "SELECT count() FROM v WHERE b IS NOT NULL"
             );
-            assertReads("SELECT a * 10 b, k FROM (SELECT a, b, k FROM x)", "{x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
-            assertReads("SELECT a * 10 b, k FROM x", "{x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
-            assertReads("WITH s AS (SELECT * FROM x) SELECT a * 10 b, k FROM s", "{x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
-            assertReads("SELECT k, count() b FROM (SELECT * FROM x) GROUP BY k", "{x=[?b, k]}", "SELECT * FROM v WHERE b = 2");
-            assertReads("SELECT ts, sum(a) b FROM (SELECT * FROM x) SAMPLE BY 1h", "{x=[?b, a, ts]}", "SELECT * FROM v WHERE b = 3");
+            assertReads("SELECT a * 10 b, k FROM (SELECT a, b, k FROM x)", "{x=[a, k]}", "SELECT * FROM v WHERE b = 30");
+            assertReads("WITH s AS (SELECT * FROM x) SELECT a * 10 b, k FROM s", "{x=[a, k]}", "SELECT * FROM v WHERE b = 30");
             assertReads(
                     "SELECT 'g' g, count() c FROM (SELECT * FROM x) l JOIN (SELECT * FROM y) r ON (k) GROUP BY g",
-                    "{x=[k], y=[?c, k]}",
+                    "{x=[k], y=[k]}",
                     "SELECT g FROM v WHERE c IS NOT NULL"
             );
             execute("CREATE VIEW v_all AS (SELECT * FROM x)");
             drainWalAndViewQueues();
-            assertReads("SELECT a * 10 b, k FROM v_all", "{v_all=[], x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
-            // a column the view reads anyway takes no mark
+            assertReads("SELECT a * 10 b, k FROM v_all", "{v_all=[], x=[a, k]}", "SELECT * FROM v WHERE b = 30");
+            // a column the view reads anyway is lent to every read
             assertReads("SELECT k, max(a) a FROM (SELECT * FROM x) GROUP BY k", "{x=[a, k]}", "SELECT * FROM v WHERE a > 1");
-            // a read that sets a variable of the view reads such a column as the reader, as it does any column the view marks
+            // No read of these views scans b, so a principal that may not read b records them.
+            final String[][] viewSqls = {
+                    {"SELECT a * 10 b, k FROM x", "{x=[a, k]}", "SELECT * FROM v WHERE b = 30"},
+                    {"SELECT k, count() b FROM (SELECT * FROM x) GROUP BY k", "{x=[k]}", "SELECT * FROM v WHERE b = 2"},
+                    {"SELECT ts, sum(a) b FROM (SELECT * FROM x) SAMPLE BY 1h", "{x=[a, ts]}", "SELECT * FROM v WHERE b = 3"},
+                    {"SELECT ts, k, a * 1 b FROM x LATEST ON ts PARTITION BY k", "{x=[a, k, ts]}", "SELECT * FROM v WHERE b = 3"}
+            };
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new ColumnDenyingSecurityContext("x", "b"), bindVariableService, null, -1, null)) {
+                for (String[] viewSql : viewSqls) {
+                    assertReads(viewSql[0], viewSql[1], viewSql[2]);
+                    forEachViewStatement(viewSql[0], context, statement -> Assert.assertEquals(statement + ": " + viewSql[0], viewSql[1], dependenciesOf("v")));
+                }
+            }
+            // a read that sets a variable of the view reads a column the view does not lend as the reader
             assertOverrideDenied(
                     "DECLARE OVERRIDABLE @c := a SELECT @c * 10 b, k FROM (SELECT * FROM x)",
                     "DECLARE @c := b SELECT * FROM v",
@@ -1934,48 +1944,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
-    public void testSubQueryKeptWholeByAReadFilteringOutputThatReadsNoColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            // A filter on an output the SELECT computes without reading a column stays with that SELECT, which gives
-            // the model under it the column of the same name. A read that filters on such an output gives the model
-            // that column alone: a GROUP BY then computes no aggregate, and the sub-query under it gets no column.
-            assertReads(
-                    "SELECT 'all' bucket, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket",
-                    "{x=[?*, a]}",
-                    "SELECT bucket FROM v WHERE bucket = 'all'", "SELECT count() FROM v WHERE bucket = 'all'", "SELECT bucket FROM v"
-            );
-            assertReads(
-                    "SELECT 'all' bucket, max(a) mx FROM (SELECT a, b FROM x) GROUP BY 1",
-                    "{x=[?b, a]}",
-                    "SELECT 1 FROM v WHERE bucket IS NOT NULL"
-            );
-            assertReads(
-                    "SELECT bucket, mx FROM (SELECT 'all' bucket, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket)",
-                    "{x=[?*, a]}",
-                    "SELECT bucket FROM v WHERE bucket = 'all'"
-            );
-            assertReads(
-                    "WITH s AS (SELECT * FROM x) SELECT lower('ALL') lc, max(a) mx FROM s GROUP BY lc",
-                    "{x=[?*, a]}",
-                    "SELECT count() FROM v WHERE lc IS NOT NULL"
-            );
-            // the same for a SELECT under the one that computes the output
-            assertReads(
-                    "SELECT 'k' src, a FROM (SELECT 'k' src, a, b FROM (SELECT * FROM x))",
-                    "{x=[?*, a]}",
-                    "SELECT src FROM v WHERE src = 'k'", "SELECT src FROM v"
-            );
-            // a key that reads the sub-query gives it a column in every read
-            assertReads(
-                    "SELECT 'all' bucket, k, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket, k",
-                    "{x=[a, k]}",
-                    "SELECT bucket FROM v WHERE bucket = 'all'"
-            );
-        });
-    }
-
-    @Test
     public void testSubQueryKeptWholeByAReadReadsColumnAddedLater() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2177,14 +2145,14 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
-    public void testSubQueryKeptWholePastWorkLimitByFilteredOutputs() throws Exception {
+    public void testSubQueryKeptWholePastWorkLimitByConstantSumOutputs() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE w_filtered (x LONG, b LONG)");
-            // A read that filters on one of the constants gives the sub-query under them the column of the same name
-            // alone, and each of the 2048 outputs reads all 1024 constants through m. The second compile runs out of
-            // work as it walks the outputs of the constants, and keeps whole every sub-query it decides on from then on,
-            // so the outputs of the columns of that sub-query no longer matter: the sets of the propagation hold
-            // entries in proportion to the constants and the outputs, not to their product.
+            execute("CREATE TABLE w_constants (x LONG, b LONG)");
+            // Each of the 2048 outputs reads all 1024 constants through m, and a read that names one of them alone
+            // keeps the sub-query under the constants whole. The second compile runs out of work as it walks the
+            // outputs of the constants, and keeps whole every sub-query it decides on from then on, so the outputs of
+            // the columns of that sub-query no longer matter: the sets of the propagation hold entries in proportion to
+            // the constants and the outputs, not to their product.
             final ObjList<IntHashSet> sets = new ObjList<>();
             SqlOptimiser.setKeptWholePoolListenerForTesting(object -> {
                 if (object instanceof IntHashSet set) {
@@ -2192,12 +2160,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 }
             });
             try {
-                execute("CREATE VIEW v AS (" + filteredConstants(1024, 2048) + ")");
+                execute("CREATE VIEW v AS (" + constantSumOutputs(1024, 2048) + ")");
             } finally {
                 SqlOptimiser.setKeptWholePoolListenerForTesting(null);
             }
             drainWalAndViewQueues();
-            Assert.assertEquals("{w_filtered=[?x, b]}", dependenciesOf("v"));
+            Assert.assertEquals("{w_constants=[?x, b]}", dependenciesOf("v"));
             long entryCount = 0;
             for (int i = 0, n = sets.size(); i < n; i++) {
                 entryCount += sets.getQuick(i).size();
@@ -2279,6 +2247,53 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 }
             }
             Assert.assertEquals("objects of the propagation that outlive it", 0, retainedCount);
+        });
+    }
+
+    @Test
+    public void testSubQueryNotKeptWholeByAReadFilteringOutputThatReadsNoColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A filter on an output the SELECT computes without reading a column stays with that SELECT, which applies
+            // it to the computed output and gives the model under it no column of the same name. So a read that filters
+            // on such an output gives the model under it what a read that names the output gives it: a GROUP BY still
+            // computes its aggregate, and the sub-query under it gets the column the aggregate reads.
+            assertReads(
+                    "SELECT 'all' bucket, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket",
+                    "{x=[a]}",
+                    "SELECT bucket FROM v WHERE bucket = 'all'", "SELECT count() FROM v WHERE bucket = 'all'", "SELECT bucket FROM v"
+            );
+            assertReads(
+                    "SELECT 'all' bucket, max(a) mx FROM (SELECT a, b FROM x) GROUP BY 1",
+                    "{x=[a]}",
+                    "SELECT 1 FROM v WHERE bucket IS NOT NULL"
+            );
+            assertReads(
+                    "SELECT bucket, mx FROM (SELECT 'all' bucket, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket)",
+                    "{x=[a]}",
+                    "SELECT bucket FROM v WHERE bucket = 'all'"
+            );
+            // A key the GROUP BY computes from no column, unlike a constant, is one a read that names it alone gives
+            // the GROUP BY alone, which then computes no aggregate and keeps the sub-query whole: the view lends every
+            // column of x to such reads. A filter on the key gives the GROUP BY no more.
+            assertReads(
+                    "WITH s AS (SELECT * FROM x) SELECT lower('ALL') lc, max(a) mx FROM s GROUP BY lc",
+                    "{x=[?*, a]}",
+                    "SELECT count() FROM v WHERE lc IS NOT NULL", "SELECT lc FROM v"
+            );
+            // A read that names only src gives the SELECT under the one that computes it no column, so that SELECT
+            // computes each of its columns, b included, and a filter on src does no more.
+            assertReads(
+                    "SELECT 'k' src, a FROM (SELECT 'k' src, a, b FROM (SELECT * FROM x))",
+                    "{x=[?b, a]}",
+                    "SELECT src FROM v WHERE src = 'k'", "SELECT src FROM v"
+            );
+            // a key that reads the sub-query gives it a column in every read
+            assertReads(
+                    "SELECT 'all' bucket, k, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket, k",
+                    "{x=[a, k]}",
+                    "SELECT bucket FROM v WHERE bucket = 'all'"
+            );
         });
     }
 
@@ -3195,6 +3210,27 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         return viewSql.put(", ").put(one).put(" one FROM (").put(subQuery).put(')').toString();
     }
 
+    // The SELECT of outputs that each add their number to m, the sum of the constants a1 to an of a SELECT that names
+    // them like the columns of the sub-query under it, each of which takes x of w_constants. The sum adds the constants
+    // in pairs: a chain of a thousand additions takes seconds to compile.
+    private static String constantSumOutputs(int constantCount, int outputCount) {
+        final StringSink viewSql = new StringSink();
+        for (int i = 1; i <= outputCount; i++) {
+            viewSql.put(i == 1 ? "SELECT " : ", ").put("m + ").put(i).put(" o").put(i);
+        }
+        viewSql.put(", b FROM (SELECT ");
+        balancedSum(viewSql, 1, constantCount + 1);
+        viewSql.put(" m, b FROM (SELECT ");
+        for (int i = 1; i <= constantCount; i++) {
+            viewSql.put("1 a").put(i).put(", ");
+        }
+        viewSql.put("b FROM (SELECT ");
+        for (int i = 1; i <= constantCount; i++) {
+            viewSql.put("x a").put(i).put(", ");
+        }
+        return viewSql.put("b FROM w_constants)))").toString();
+    }
+
     private static void createTables() throws Exception {
         execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE TABLE y (ts TIMESTAMP, k SYMBOL, c LONG, d LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3231,27 +3267,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             return e.getPosition() + ": " + e.getFlyweightMessage();
         }
         throw new AssertionError("the statement did not fail: " + sql);
-    }
-
-    // The SELECT of outputs that each add their number to m, the sum of the constants a1 to an of a SELECT that names
-    // them like the columns of the sub-query under it, each of which takes x of w_filtered. The sum adds the constants
-    // in pairs: a chain of a thousand additions takes seconds to compile.
-    private static String filteredConstants(int constantCount, int outputCount) {
-        final StringSink viewSql = new StringSink();
-        for (int i = 1; i <= outputCount; i++) {
-            viewSql.put(i == 1 ? "SELECT " : ", ").put("m + ").put(i).put(" o").put(i);
-        }
-        viewSql.put(", b FROM (SELECT ");
-        balancedSum(viewSql, 1, constantCount + 1);
-        viewSql.put(" m, b FROM (SELECT ");
-        for (int i = 1; i <= constantCount; i++) {
-            viewSql.put("1 a").put(i).put(", ");
-        }
-        viewSql.put("b FROM (SELECT ");
-        for (int i = 1; i <= constantCount; i++) {
-            viewSql.put("x a").put(i).put(", ");
-        }
-        return viewSql.put("b FROM w_filtered)))").toString();
     }
 
     // Records the SELECT as the definition of the view v with CREATE VIEW, ALTER VIEW and CREATE OR REPLACE
@@ -3429,7 +3444,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     // view, and each read that names one output of it alone, without a filter and with a filter on the output, which
     // between them scan every column a read of the view scans, as a read that names several outputs scans what the
     // reads of each of them scan, or less. A filter on an output the SELECT computes stays with the SELECT, which
-    // gives the model under it the column of that name. Each of the reads runs on its own and on a side of a join
+    // filters the computed output. Each of the reads runs on its own and on a side of a join
     // after the first, whose plan keeps the ORDER BY of every sub-query of
     // the view, also one the plan of a read on its own drops. The reads select from the SELECT of the view inline, so
     // that each authorizes every column it scans as the reader. A view that reads another one authorizes the columns

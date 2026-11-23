@@ -45,7 +45,6 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -149,17 +148,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 }
             }
             delegate.close();
-        }
-
-        @Override
-        public void collectFilteredReadDependencies(
-                CharSequence viewSql,
-                SqlExecutionContext executionContext,
-                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
-                SqlUtil.ViewCompileRecord compileRecord,
-                ObjList<CharSequence> outputNames
-        ) throws SqlException {
-            delegate.collectFilteredReadDependencies(viewSql, executionContext, dependencies, compileRecord, outputNames);
         }
 
         @Override
