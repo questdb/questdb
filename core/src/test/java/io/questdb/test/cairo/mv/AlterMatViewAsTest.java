@@ -4175,10 +4175,16 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                 Assert.assertEquals(definitionSeqTxns[i] - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn());
             }
             releaseAllForLogEdit();
-            final String output = runBootLoadMain(viewNames);
+            final StringSink expected = new StringSink();
             for (int i = 0; i < viewNames.length; i++) {
-                TestUtils.assertContains(output, "pending definition " + viewNames[i] + '=' + definitionSeqTxns[i] + '\n');
+                expected.put("pending definition ").put(viewNames[i]).put('=').put(definitionSeqTxns[i]).put('\n');
             }
+            // the child's println ends a line with \r\n on Windows and \n elsewhere, and lines() strips either
+            final StringSink printed = new StringSink();
+            runBootLoadMain(viewNames).lines()
+                    .filter(line -> line.startsWith("pending definition "))
+                    .forEach(line -> printed.put(line).put('\n'));
+            TestUtils.assertEquals(expected, printed);
             drainWalAndMatViewQueues();
             for (String viewName : viewNames) {
                 Assert.assertEquals(TEN_TIMES_MAX_SQL, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName(viewName)).getMatViewSql());

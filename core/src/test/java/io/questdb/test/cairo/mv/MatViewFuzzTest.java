@@ -2121,18 +2121,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         insertOperationsFuzzRows(op, oracle);
     }
 
-    // The ALTER ... AS rounds draw a boot load of the view while a definition event waits in a share of their restarts:
-    // over ten rounds and more, a tenth of the rounds at least.
+    // Each ALTER ... AS round boot-loads the view while its first definition event waits, and draws more boot loads in a
+    // share of its restarts: one per round at least.
     private static void assertBootLoadsWhileDefinitionPending(int rounds, int bootLoadsWhileDefinitionPending) {
         LOG.info().$("fuzz: boot loads while a definition event waited [count=").$(bootLoadsWhileDefinitionPending)
                 .$(", rounds=").$(rounds)
                 .I$();
-        if (rounds >= 10) {
-            Assert.assertTrue(
-                    "boot loads while a definition event waited: " + bootLoadsWhileDefinitionPending + " in " + rounds + " rounds",
-                    bootLoadsWhileDefinitionPending >= rounds / 10
-            );
-        }
+        Assert.assertTrue(
+                "boot loads while a definition event waited: " + bootLoadsWhileDefinitionPending + " in " + rounds + " rounds",
+                bootLoadsWhileDefinitionPending >= rounds
+        );
     }
 
     // A boot load of the view, as a booting server runs it before any WAL apply, with no WAL apply before it: the view
@@ -3151,7 +3149,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // other, which holds a row of each symbol, in its joins, and its ALTER ... AS SQLs take the sum, the maximum or the
     // minimum, so that a bucket of several rows tells them apart. The WAL apply runs for every table, or for the base
     // alone, as an apply run that serves the base before the view does. The round starts with an ALTER ... AS whose
-    // definition event the refresh job meets in the view's WAL, behind base rows that the base's WAL applied alone.
+    // definition event the refresh job meets in the view's WAL, behind base rows that the base's WAL applied alone, and
+    // with a boot load of the view while the event waits, whose refresh meets the event as well. Returns the number of
+    // boot loads while a definition event waited, one at least.
     private static int runAlterAsOperations(Rnd rnd, int steps, boolean isAggregating) throws Exception {
         final String timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         // the boot loads of the view while a definition event waited in its WAL
@@ -3189,7 +3189,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         boolean isFullSinceAlter = false;
         for (int step = 0; step < steps; step++) {
             // the round's first step: ALTER ... AS, base rows, the base's WAL alone, then the refresh job, which meets
-            // the definition event in the view's WAL and waits for it
+            // the definition event in the view's WAL and waits for it, then a boot load and the refresh job again
             final int pick = step == 0 ? 11 : rnd.nextInt(11);
             switch (pick) {
                 case 0, 1, 2 ->
@@ -3259,6 +3259,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         Assert.assertTrue(state.isDefinitionPending());
                         Assert.assertTrue(state.hasDeferredDefinitionRefreshForTesting());
                         Assert.assertEquals(windowViewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+                        // A boot load while the definition event waits drops the refresh that waited: the refresh the
+                        // load enqueues waits for the event that the load recorded, and writes nothing.
+                        LOG.info().$("fuzz: step ").$(step).$(" boot load of the view").$();
+                        if (bootLoadFuzzView("mv")) {
+                            bootLoadsWhileDefinitionPending++;
+                        }
+                        drainMatViewQueue(engine);
+                        final MatViewState loadedState = opsViewState("mv");
+                        Assert.assertTrue("the boot load recorded no pending definition", loadedState.isDefinitionPending());
+                        Assert.assertTrue("the refresh after the boot load did not wait", loadedState.hasDeferredDefinitionRefreshForTesting());
+                        Assert.assertEquals("the refresh after the boot load wrote", windowViewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
                     }
                 }
                 case 6 -> drainWalQueue();
