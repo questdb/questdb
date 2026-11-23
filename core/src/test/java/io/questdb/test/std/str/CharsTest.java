@@ -390,9 +390,10 @@ public class CharsTest {
             }
         }
 
-        // strings mixing ASCII, Latin-1 and other chars, some spelled in another case
+        // strings mixing ASCII, Latin-1 and other chars, some spelled in another case; U+0130, U+0131 and U+212A
+        // are the dotted capital I, the dotless small i and the Kelvin sign
         final Random rnd = new Random(42);
-        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', 'İ', 'ı', 'Ω', 'ω', 'K'};
+        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', '\u0130', '\u0131', 'Ω', 'ω', '\u212A'};
         final StringBuilder l = new StringBuilder();
         final StringBuilder r = new StringBuilder();
         for (int i = 0; i < 10_000; i++) {
