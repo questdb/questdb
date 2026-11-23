@@ -58,6 +58,11 @@ import java.util.regex.Pattern;
  * index that names files the purge of the superseded generation deleted, or files that never reached the disk. The
  * ordered flush is two disk waits: one device flush for every new value and cover file, then the {@code .pk} flush.
  * <p>
+ * A rebuild of the index from the column data into a new value file, as a WAL commit into older partitions makes, is
+ * not a seal: it flushes as before the seals took the ordered flush. Under SYNC the new value file reaches the disk
+ * before the {@code .pk} entry that names it, then the {@code .pk} does, one file at a time; the other modes make no
+ * synchronous flush for it.
+ * <p>
  * The facade reports a filesystem-wide {@code syncfs} on every platform, so the counts are the same everywhere.
  */
 @RunWith(Parameterized.class)
@@ -65,14 +70,17 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final int INCLUDE_COLUMNS = 3;
     private static final Pattern NEW_VALUE_FILE = Pattern.compile(".*[/\\\\]k\\.pv\\.[0-9]+$");
-    // Flushes by the kind of file they flush, made inside a PostingIndexWriter seal, rollback re-encode, truncate or
-    // dense rebuild into a new value file.
+    // The kinds of the files a rebuild flushed, in order.
+    private static final StringBuilder REBUILD_FLUSHES = new StringBuilder();
+    // The PostingIndexWriter methods that rebuild the index into a new value file, discardForRebuild() then
+    // commitDense(), when no seal method runs inside them.
+    private static final Set<String> REBUILD_METHODS = Set.of("discardForRebuild", "commitDense");
+    // Flushes by the kind of file they flush, made inside a PostingIndexWriter seal, rollback re-encode or truncate.
     private static final Map<String, Integer> SEAL_FLUSHES = new TreeMap<>();
-    private static final Set<String> SEAL_METHODS = Set.of(
-            "seal", "rebuildSidecarsByCopy", "rollbackToMaxValue", "truncate", "discardForRebuild", "commitDense"
-    );
+    private static final Set<String> SEAL_METHODS = Set.of("seal", "rebuildSidecarsByCopy", "rollbackToMaxValue", "truncate");
     private static final String WRITER_CLASS = PostingIndexWriter.class.getName();
-    private static int newValueFiles;
+    private static int rebuilds;
+    private static int seals;
     private final String commitMode;
     private final boolean isCovering;
 
@@ -142,7 +150,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             resetCounts();
             // Between the committed rows, so the commit rewrites each partition and rebuilds its index.
             insertAndApply(rowsOverDays(20, 20, 4, -500_000L));
-            assertSealFlushes(true, "WAL commit into older partitions");
+            assertRebuildAndSealFlushes(true, "WAL commit into older partitions");
             assertIndexMatchesScan();
         });
     }
@@ -158,7 +166,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             try {
                 resetCounts();
                 insertAndApply(rowsOverDays(20, 20, 4, -500_000L));
-                assertSealFlushes(false, "WAL commit into older partitions on a replica");
+                assertRebuildAndSealFlushes(false, "WAL commit into older partitions on a replica");
                 assertIndexMatchesScan();
             } finally {
                 engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
@@ -215,10 +223,6 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         });
     }
 
-    private static boolean isSealFrame(StackWalker.StackFrame frame) {
-        return WRITER_CLASS.equals(frame.getClassName()) && SEAL_METHODS.contains(frame.getMethodName());
-    }
-
     private static String kindOf(String path) {
         if (path == null) {
             return "unknown";
@@ -229,14 +233,36 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         return parts.length > 1 ? parts[1].replaceAll("^pc[0-9]+$", "pcN") : name;
     }
 
-    private static boolean isInSeal() {
-        return StackWalker.getInstance().walk(s -> s.anyMatch(PostingSealFlushCostTest::isSealFrame));
+    // The operation of the innermost PostingIndexWriter seal or rebuild method on the stack: a seal() that a rebuild
+    // runs is a seal.
+    private static Operation operationOnStack() {
+        return StackWalker.getInstance().walk(s -> s
+                .filter(frame -> WRITER_CLASS.equals(frame.getClassName()))
+                .map(frame -> SEAL_METHODS.contains(frame.getMethodName()) ? Operation.SEAL
+                        : REBUILD_METHODS.contains(frame.getMethodName()) ? Operation.REBUILD : Operation.NONE)
+                .filter(operation -> operation != Operation.NONE)
+                .findFirst()
+                .orElse(Operation.NONE));
     }
 
-    private static void recordSealFlush(String kind) {
-        if (isInSeal()) {
-            synchronized (SEAL_FLUSHES) {
+    private static void recordFlush(String kind) {
+        final Operation operation = operationOnStack();
+        synchronized (SEAL_FLUSHES) {
+            if (operation == Operation.SEAL) {
                 SEAL_FLUSHES.merge(kind, 1, Integer::sum);
+            } else if (operation == Operation.REBUILD) {
+                REBUILD_FLUSHES.append(kind).append(' ');
+            }
+        }
+    }
+
+    private static void recordNewValueFile() {
+        final Operation operation = operationOnStack();
+        synchronized (SEAL_FLUSHES) {
+            if (operation == Operation.SEAL) {
+                seals++;
+            } else if (operation == Operation.REBUILD) {
+                rebuilds++;
             }
         }
     }
@@ -244,7 +270,9 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
     private static void resetCounts() {
         synchronized (SEAL_FLUSHES) {
             SEAL_FLUSHES.clear();
-            newValueFiles = 0;
+            REBUILD_FLUSHES.setLength(0);
+            rebuilds = 0;
+            seals = 0;
         }
     }
 
@@ -265,6 +293,39 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         return sql.toString();
     }
 
+    // isSavePointCovered: the seal is of a commit in progress on a table that takes save points, so under ADAPTIVE the
+    // next save point makes it durable and it takes no flush
+    private void assertFlushes(boolean isSavePointCovered, String operation) {
+        Assert.assertEquals(CommitMode.fromString(commitMode), engine.getConfiguration().getCommitMode());
+        final int rebuildCount;
+        final String rebuildFlushes;
+        final int sealCount;
+        final Map<String, Integer> flushes;
+        synchronized (SEAL_FLUSHES) {
+            rebuildCount = rebuilds;
+            rebuildFlushes = REBUILD_FLUSHES.toString();
+            sealCount = seals;
+            flushes = new TreeMap<>(SEAL_FLUSHES);
+        }
+        // Under SYNC a rebuild flushes its value file, then the .pk; no other mode flushes a rebuild synchronously.
+        Assert.assertEquals(
+                "flushes of " + rebuildCount + " rebuilds under " + commitMode + ", " + operation,
+                "sync".equals(commitMode) ? "pv pk ".repeat(rebuildCount) : "",
+                rebuildFlushes
+        );
+        final boolean isFlushed = !"adaptive".equals(commitMode) || !isSavePointCovered;
+        // The ordered flush is two disk waits: the new files, then the .pk.
+        int total = 0;
+        for (int n : flushes.values()) {
+            total += n;
+        }
+        Assert.assertEquals(
+                "flushes of " + sealCount + " seals under " + commitMode + ", " + operation + ": " + flushes,
+                isFlushed ? 2 * sealCount : 0,
+                total
+        );
+    }
+
     private void assertIndexMatchesScan() throws Exception {
         for (int k = 0; k < 4; k++) {
             assertSqlCursors(
@@ -274,28 +335,25 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         }
     }
 
-    // isSavePointCovered: the seal is of a commit in progress on a table that takes save points, so under ADAPTIVE the
-    // next save point makes it durable and it takes no flush
-    private void assertSealFlushes(boolean isSavePointCovered, String operation) {
-        Assert.assertEquals(CommitMode.fromString(commitMode), engine.getConfiguration().getCommitMode());
-        final int seals;
-        final Map<String, Integer> flushes;
+    // The operation rebuilds the index of every partition it rewrites; a covering index then seals the rebuilt
+    // generation with its INCLUDE values.
+    private void assertRebuildAndSealFlushes(boolean isSavePointCovered, String operation) {
+        final int rebuildCount;
+        final int sealCount;
         synchronized (SEAL_FLUSHES) {
-            seals = newValueFiles;
-            flushes = new TreeMap<>(SEAL_FLUSHES);
+            rebuildCount = rebuilds;
+            sealCount = seals;
         }
-        Assert.assertTrue(operation + " made no seal", seals > 0);
-        final boolean isFlushed = !"adaptive".equals(commitMode) || !isSavePointCovered;
-        // The ordered flush is two disk waits: the new files, then the .pk.
-        int total = 0;
-        for (int n : flushes.values()) {
-            total += n;
+        Assert.assertTrue(operation + " made no rebuild", rebuildCount > 0);
+        Assert.assertEquals(operation + " seals after the rebuild", isCovering, sealCount > 0);
+        assertFlushes(isSavePointCovered, operation);
+    }
+
+    private void assertSealFlushes(boolean isSavePointCovered, String operation) {
+        synchronized (SEAL_FLUSHES) {
+            Assert.assertTrue(operation + " made no seal", seals > 0);
         }
-        Assert.assertEquals(
-                "flushes of " + seals + " seals under " + commitMode + ", " + operation + ": " + flushes,
-                isFlushed ? 2 * seals : 0,
-                total
-        );
+        assertFlushes(isSavePointCovered, operation);
     }
 
     private void createTable(boolean isIndexed, boolean isDedup) throws Exception {
@@ -320,29 +378,33 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    private enum Operation {
+        NONE, REBUILD, SEAL
+    }
+
     private static class CountingFacade extends TestFilesFacadeImpl {
         @Override
         public void barrierFsync(long fd) {
             super.barrierFsync(fd);
-            recordSealFlush(kindOf(Files.findPathOfFd(fd)));
+            recordFlush(kindOf(Files.findPathOfFd(fd)));
         }
 
         @Override
         public void fdatasync(long fd) {
             super.fdatasync(fd);
-            recordSealFlush(kindOf(Files.findPathOfFd(fd)));
+            recordFlush(kindOf(Files.findPathOfFd(fd)));
         }
 
         @Override
         public void fsync(long fd) {
             super.fsync(fd);
-            recordSealFlush(kindOf(Files.findPathOfFd(fd)));
+            recordFlush(kindOf(Files.findPathOfFd(fd)));
         }
 
         @Override
         public void fsyncDurable(long fd) {
             super.fsyncDurable(fd);
-            recordSealFlush(kindOf(Files.findPathOfFd(fd)));
+            recordFlush(kindOf(Files.findPathOfFd(fd)));
         }
 
         @Override
@@ -354,16 +416,14 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         public void msync(long addr, long len, boolean async) {
             super.msync(addr, len, async);
             if (!async) {
-                recordSealFlush(kindOf(Files.findPathOfMapping(addr)));
+                recordFlush(kindOf(Files.findPathOfMapping(addr)));
             }
         }
 
         @Override
         public long openRW(LPSZ name, int opts) {
-            if (NEW_VALUE_FILE.matcher(name.asAsciiCharSequence()).matches() && !exists(name) && isInSeal()) {
-                synchronized (SEAL_FLUSHES) {
-                    newValueFiles++;
-                }
+            if (NEW_VALUE_FILE.matcher(name.asAsciiCharSequence()).matches() && !exists(name)) {
+                recordNewValueFile();
             }
             return super.openRW(name, opts);
         }
@@ -371,7 +431,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         @Override
         public void syncfs(long fd) {
             super.syncfs(fd);
-            recordSealFlush("syncfs");
+            recordFlush("syncfs");
         }
     }
 }

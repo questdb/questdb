@@ -781,10 +781,11 @@ public class PostingIndexWriter implements IndexWriter {
         // flushAllPending() runs in every mode: it publishes buffered native-memory postings into the mapped
         // .pk/.pv files, and without it readers see keyCount=0 until the writer closes. Only the flush below
         // depends on the mode.
+        final boolean wasRebuildPending = pendingDiscardOldSealTxn >= 0;
         flushAllPending();
         // SYNC and ASYNC only; see IndexWriter.setCommitMode.
         final int commitMode = indexCommitMode;
-        if (CommitMode.appliesColumnSync(commitMode)) {
+        if (CommitMode.appliesColumnSync(commitMode) && !isRebuildFlushed(wasRebuildPending)) {
             sync(commitMode == CommitMode.ASYNC);
         }
     }
@@ -812,8 +813,7 @@ public class PostingIndexWriter implements IndexWriter {
     public void commitDense() {
         checkNotPoisoned();
         assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
-        // A rebuild flushes as a seal does, see flushAllPendingDense()
-        final boolean isRebuild = pendingDiscardOldSealTxn >= 0;
+        final boolean wasRebuildPending = pendingDiscardOldSealTxn >= 0;
         if (genCount > 0) {
             // flushAllPendingDense assumes it writes the first and only gen at
             // offset 0. That precondition breaks when the caller's preceding
@@ -840,7 +840,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         // Same gate as commit(); see IndexWriter.setCommitMode.
         final int commitMode = indexCommitMode;
-        if (!isRebuild && CommitMode.appliesColumnSync(commitMode)) {
+        if (CommitMode.appliesColumnSync(commitMode) && !isRebuildFlushed(wasRebuildPending)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {
                 valueMem.sync(async);
@@ -3760,9 +3760,8 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.copyMemory(flushHeaderBuf, headerAddr, headerSize);
         writeSidecarGenData((int) totalValues, genCount);
         if (pendingDiscardOldSealTxn >= 0) {
-            // The first generation of a rebuild into the value file discardForRebuild() rotated to: as a seal, the
-            // new files reach the disk before the entry that names them (see sealFlushGrade()).
-            flushSealFiles(valueMem, sealFlushGrade());
+            // The first generation of a rebuild into the value file discardForRebuild() rotated to.
+            flushRebuildFiles();
         }
 
         genCount++;
@@ -3790,7 +3789,7 @@ public class PostingIndexWriter implements IndexWriter {
         // and head.txnAtSeal = REBUILD.txnAtSeal, producing the correct
         // [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
         if (pendingDiscardOldSealTxn >= 0) {
-            flushSealKeyFile();
+            flushRebuildKeyFile();
             recordPostingSealPurge(pendingDiscardOldSealTxn);
             pendingDiscardOldSealTxn = -1L;
         }
@@ -3987,9 +3986,8 @@ public class PostingIndexWriter implements IndexWriter {
 
             writeSidecarGenData((int) totalValues, /* genIndex */ 0);
             if (pendingDiscardOldSealTxn >= 0) {
-                // A rebuild into the value file discardForRebuild() rotated to: as a seal, the new files reach the
-                // disk before the entry that names them (see sealFlushGrade()).
-                flushSealFiles(valueMem, sealFlushGrade());
+                // A rebuild into the value file discardForRebuild() rotated to.
+                flushRebuildFiles();
             }
 
             this.maxValue = maxValueAfter;
@@ -4005,7 +4003,7 @@ public class PostingIndexWriter implements IndexWriter {
             );
 
             if (pendingDiscardOldSealTxn >= 0) {
-                flushSealKeyFile();
+                flushRebuildKeyFile();
                 recordPostingSealPurge(pendingDiscardOldSealTxn);
                 pendingDiscardOldSealTxn = -1L;
             }
@@ -4022,6 +4020,35 @@ public class PostingIndexWriter implements IndexWriter {
                 Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
             }
             Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+    }
+
+    // A rebuild into the value file discardForRebuild() rotated to flushes only under SYNC, file by file: the new
+    // value file, every open cover file and the .pci reach the disk before the .pk entry that names them is
+    // published. Other modes flush nothing here; ASYNC leaves its asynchronous flush to commit() and commitDense().
+    private void flushRebuildFiles() {
+        if (indexCommitMode != CommitMode.SYNC) {
+            return;
+        }
+        if (valueMem.isOpen()) {
+            valueMem.sync(false);
+        }
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            MemoryMARW mem = sidecarMems.getQuick(c);
+            if (mem != null && mem.isOpen()) {
+                mem.sync(false);
+            }
+        }
+        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+            sidecarInfoMem.sync(false);
+        }
+    }
+
+    // The .pk flush of a SYNC rebuild, after the publish and before the purge of the superseded generation is queued,
+    // so a failed flush keeps the generation the .pk on disk may still name.
+    private void flushRebuildKeyFile() {
+        if (indexCommitMode == CommitMode.SYNC && keyMem.isOpen()) {
+            keyMem.sync(false);
         }
     }
 
@@ -4309,6 +4336,13 @@ public class PostingIndexWriter implements IndexWriter {
 
     private boolean isClosed() {
         return coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0;
+    }
+
+    // True when a rebuild pending at the start of the caller's commit published in it under SYNC: the publish flushed
+    // every file the commit would sync (see flushRebuildFiles()). A spill inside index() publishes the rebuild before
+    // the commit, which then still syncs what it wrote.
+    private boolean isRebuildFlushed(boolean wasRebuildPending) {
+        return wasRebuildPending && pendingDiscardOldSealTxn < 0 && indexCommitMode == CommitMode.SYNC;
     }
 
     /**
@@ -6299,7 +6333,7 @@ public class PostingIndexWriter implements IndexWriter {
      * </ul>
      * The ordered flush has two steps: every new value and cover file reaches the disk before the {@code .pk}
      * entry that names them is published, then the {@code .pk} does, before the superseded files are queued for
-     * deletion.
+     * deletion. A rebuild after {@link #discardForRebuild()} does not take this grade, see {@link #flushRebuildFiles()}.
      */
     private int sealFlushGrade() {
         return indexCommitMode == CommitMode.ADAPTIVE && isSealInProgress() ? SEAL_FLUSH_NONE : SEAL_FLUSH_ORDERED;
