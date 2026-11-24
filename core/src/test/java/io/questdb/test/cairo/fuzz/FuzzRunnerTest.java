@@ -405,16 +405,20 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         for (int i = 0; i < IO_FAILURE_SHAPE_SEEDS.length && (timestampFailures == 0 || switchFailures == 0 || putFailures == 0); i++) {
             final long[] seeds = IO_FAILURE_SHAPE_SEEDS[i];
             final FuzzRunner runner = newRunner();
-            runner.setFuzzCounts(false, 50_000, 20, 10, 10, 20, 100, 10, -1, 10);
+            runner.setFuzzCounts(false, 200_000, 20, 10, 10, 20, 100, 10, -1, 10);
             runner.setFuzzProbabilities(
                     0.0, 0.01, 0.01, 0.05, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
             );
             // in-order transactions, which append through newRow() rather than the O3 commit
             runner.setNoSentinelTypeChangeEnabled(true);
-            runner.setIoFailureOnAllocate(true);
+            // the even runs fail the allocate() calls of the designated timestamp column ts only: its page switches,
+            // which a row writes first, and its first page in a new partition
+            runner.setIoFailureOnAllocate(true, i % 2 == 0 ? "ts.d" : null);
             runner.setIoFailureRecoveryRnd(new Rnd(seeds[1], seeds[0]));
             final String tableName = "io_failure_shapes_" + i;
-            assertMemoryLeak(runner.getFileFacade(), () -> runner.runFuzz(tableName, new Rnd(seeds[0], seeds[1])));
+            // the seeds of the run, its schema and its apply, so the run repeats
+            final Rnd runRnd = runner.generateRandom(LOG, seeds[0], seeds[1]);
+            assertMemoryLeak(runner.getFileFacade(), () -> runner.runFuzz(tableName, runRnd));
             final ObjList<FuzzRunner.IoFailureRecovery> recoveries = runner.getIoFailureRecoveries();
             for (int j = 0, n = recoveries.size(); j < n; j++) {
                 final FuzzRunner.IoFailureRecovery recovery = recoveries.getQuick(j);

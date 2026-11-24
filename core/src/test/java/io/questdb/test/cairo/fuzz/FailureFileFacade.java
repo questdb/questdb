@@ -26,17 +26,23 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FailureFileFacade implements FilesFacade {
+    // the file name that the planted allocate()-only failures count the allocate() calls of, or null for any file
+    private volatile String allocateFileName;
     // Three arming modes, selected by armedThread / queryWorkerNamePrefix:
     //   1. Global (both null): any thread counts and fires (WAL/recovery harness).
     //   2. Single-thread (armedThread != null): only the arming thread (serial
@@ -58,6 +64,8 @@ public class FailureFileFacade implements FilesFacade {
     // when true, a planted failure counts and fails allocate() calls only: the allocation of disk space for a new
     // page of a column file, or for a file that a partition switch opens
     private volatile boolean isAllocateOnly;
+    // the names of the files that openRW() opened, by fd, for allocateFileName
+    private final ConcurrentHashMap<Long, String> openRWFileNames = new ConcurrentHashMap<>();
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
@@ -68,7 +76,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (checkForAllocateFailure()) {
+        if (checkForAllocateFailure(fd)) {
             return false;
         }
         return ff.allocate(fd, size);
@@ -76,7 +84,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long allocatedSize, long size) {
-        if (checkForAllocateFailure()) {
+        if (checkForAllocateFailure(fd)) {
             return false;
         }
         return ff.allocate(fd, allocatedSize, size);
@@ -100,6 +108,7 @@ public class FailureFileFacade implements FilesFacade {
         failureGenerated.set(0);
         failureStack = null;
         isAllocateOnly = false;
+        allocateFileName = null;
         armedThread = null;
         armingThread = null;
         queryWorkerNamePrefix = null;
@@ -108,11 +117,13 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean close(long fd) {
+        openRWFileNames.remove(fd);
         return ff.close(fd);
     }
 
     @Override
     public boolean closeRemove(long fd, LPSZ path) {
+        openRWFileNames.remove(fd);
         return ff.closeRemove(fd, path);
     }
 
@@ -264,6 +275,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void fsyncAndClose(long fd) {
+        openRWFileNames.remove(fd);
         try {
             ff.fsyncAndClose(fd);
         } catch (CairoException e) {
@@ -494,7 +506,12 @@ public class FailureFileFacade implements FilesFacade {
         if (checkForFailure()) {
             return -1;
         }
-        return ff.openRW(name, opts);
+        final long fd = ff.openRW(name, opts);
+        if (fd > -1) {
+            final String path = Utf8s.stringFromUtf8Bytes(name);
+            openRWFileNames.put(fd, path.substring(path.lastIndexOf(Files.SEPARATOR) + 1));
+        }
+        return fd;
     }
 
     @Override
@@ -600,10 +617,12 @@ public class FailureFileFacade implements FilesFacade {
 
     /**
      * When true, the failures that {@link #setToFailAfter(int)} plants count and fail allocate() calls only, until
-     * {@link #clearFailures()}.
+     * {@link #clearFailures()}: the allocate() calls of the files named fileName that openRW() opened, or of any
+     * file when fileName is null.
      */
-    public void setAllocateOnly(boolean isAllocateOnly) {
+    public void setAllocateOnly(boolean isAllocateOnly, @Nullable String fileName) {
         this.isAllocateOnly = isAllocateOnly;
+        this.allocateFileName = fileName;
     }
 
     public void setToFailAfter(int ioFailureCallCount) {
@@ -714,7 +733,11 @@ public class FailureFileFacade implements FilesFacade {
         return ff.write(fd, address, len, offset);
     }
 
-    private boolean checkForAllocateFailure() {
+    private boolean checkForAllocateFailure(long fd) {
+        final String fileName = allocateFileName;
+        if (isAllocateOnly && fileName != null && !fileName.equals(openRWFileNames.get(fd))) {
+            return false;
+        }
         return checkForFailure0();
     }
 

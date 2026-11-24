@@ -703,7 +703,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         final boolean isInOrder = rnd.nextBoolean();
         fuzzer.setNoSentinelTypeChangeEnabled(isInOrder);
         fuzzer.setFuzzCounts(!isInOrder && rnd.nextBoolean(), 50_000, 50, 20, 10, 1000, 100, 3 + rnd.nextInt(8), -1, 5 + rnd.nextInt(6));
-        fuzzer.setIoFailureOnAllocate(true);
+        // a third of the runs fail the designated timestamp column only, the first value of each row
+        fuzzer.setIoFailureOnAllocate(true, rnd.nextInt(3) == 0 ? "ts.d" : null);
         fuzzer.setIoFailureRecoveryRnd(new Rnd(rnd.nextLong(), rnd.nextLong()));
         runFuzz(rnd);
     }

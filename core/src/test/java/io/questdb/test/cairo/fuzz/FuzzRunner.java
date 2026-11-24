@@ -174,6 +174,8 @@ public class FuzzRunner {
     private boolean hasPoolColumnPurgeJob;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
+    // the file whose allocate() calls the planted IO failures fail, see setIoFailureOnAllocate(); null for any file
+    private String ioFailureFileName;
     // picks the recovery of applyNonWal() from a planted IO failure, see setIoFailureRecoveryRnd(); null keeps the
     // pool recovery
     private Rnd ioFailureRecoveryRnd;
@@ -402,7 +404,7 @@ public class FuzzRunner {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
                     if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
-                        ff.setAllocateOnly(isIoFailureOnAllocate);
+                        ff.setAllocateOnly(isIoFailureOnAllocate, ioFailureFileName);
                         ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
                         ioFailureCreatedCount++;
                     }
@@ -1098,10 +1100,12 @@ public class FuzzRunner {
 
     /**
      * When true, the IO failures that applyNonWal() plants fail allocate() calls only: the allocation of disk space
-     * for the next page of a column file, or for the files that a partition switch opens.
+     * for the next page of a column file, or for the files that a partition switch opens. With a file name, only
+     * the allocate() calls of the files of that name, e.g. ts.d for the designated timestamp column.
      */
-    public void setIoFailureOnAllocate(boolean isIoFailureOnAllocate) {
+    public void setIoFailureOnAllocate(boolean isIoFailureOnAllocate, @Nullable String ioFailureFileName) {
         this.isIoFailureOnAllocate = isIoFailureOnAllocate;
+        this.ioFailureFileName = ioFailureFileName;
     }
 
     /**
