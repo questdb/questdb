@@ -381,6 +381,49 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIlpHttpManagedZoneBackfillCommitsNoOtherView() throws Exception {
+        // Views of different bucket sizes put one row in different zones. Base max 12:00 and REFRESH LIMIT 1 HOUR put
+        // the boundary bucket floor of the 1h view v at 11:00 and that of the 1d view v_1d at 2024-09-10T00:00, so a
+        // row at 08:00 is frozen in v and in the managed zone of v_1d. A request with such a row for each view and a
+        // plain table's row between them is refused before any of its tables commits, the frozen row of v included.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                final CairoEngine engine = serverMain.getEngine();
+                createBackfillableView(serverMain, "TIMESTAMP");
+                createRefreshLimitedView(serverMain, "v_1d", "1d");
+                final long tSeqTxn = seqTxn(engine, "t");
+                final long dayViewSeqTxn = seqTxn(engine, "v_1d");
+                final long rowTs = parseFloorPartialTimestamp("2024-09-10T08:00");
+                assertIlpHttpManagedZoneRefusal(
+                        serverMain,
+                        "v_1d",
+                        "backfill row falls in or past the managed zone of materialized view [view=v_1d, maxRowTs=2024-09-10T08:00:00.000000Z, "
+                                + "rowBucket=[2024-09-10T00:00:00.000000Z, 2024-09-11T00:00:00.000000Z), boundaryBucketFloor=2024-09-10T00:00:00.000000Z]",
+                        sender -> {
+                            sender.table("v").symbol("sym", "a").doubleColumn("price", 7.0).at(rowTs, ChronoUnit.MICROS);
+                            sender.table("t").longColumn("x", 1).at(rowTs, ChronoUnit.MICROS);
+                            sender.table("v_1d").symbol("sym", "a").doubleColumn("price", 7.0).at(rowTs, ChronoUnit.MICROS);
+                        }
+                );
+                Assert.assertEquals(tSeqTxn, seqTxn(engine, "t"));
+                Assert.assertEquals(dayViewSeqTxn, seqTxn(engine, "v_1d"));
+                serverMain.assertSql("select count() from t", "count\n0\n");
+                serverMain.assertSql("select sym, price, ts from v_1d", """
+                        sym\tprice\tts
+                        a\t2.0\t2024-09-10T00:00:00.000000Z
+                        """);
+                awaitViewRows(serverMain, """
+                        sym\tprice\tts
+                        a\t1.0\t2024-09-10T09:00:00.000000Z
+                        a\t2.0\t2024-09-10T12:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testIlpHttpViewRefusedAtCommitAfterEarlyCheckIsNotRetried() throws Exception {
         // The frozen zone can shrink between the check that runs before a request's first commit and the view's own
         // commit, as when ALTER ... SET REFRESH LIMIT lands in between. The tables ahead of the view then commit
@@ -423,7 +466,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.reset();
                 }
                 capture.drain();
-                Assert.assertEquals(1, capture.countLoggedRE("LineHttpProcessorState \\[\\d+] could not commit \\[table=v, "));
+                Assert.assertEquals(1, capture.countLoggedRE(" E i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState \\[\\d+] could not commit \\[table=v, "));
                 Assert.assertEquals(0, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState "));
                 Assert.assertEquals(2, userCommitChecks.get());
                 Assert.assertEquals(tSeqTxn + 1, seqTxn(engine, "t"));
@@ -3796,7 +3839,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 sender.reset();
             }
             capture.drain();
-            Assert.assertEquals(1, capture.countLoggedRE("LineHttpProcessorState \\[\\d+] could not commit \\[table=" + lastTableName + ", "));
+            Assert.assertEquals(1, capture.countLoggedRE(" E i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState \\[\\d+] could not commit \\[table=" + lastTableName + ", "));
             Assert.assertEquals(0, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState "));
         } finally {
             capture.stop();
@@ -3841,12 +3884,22 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     // A WAL base table with rows at 09:10 and 12:00 on 2024-09-10 and a view v of its 1h buckets with REFRESH LIMIT
     // 1 HOUR: base max 12:00 puts the boundary bucket floor at 11:00. Plain WAL tables t and t2 take other rows.
     private static void createBackfillableView(TestServerMain serverMain, String timestampType) {
-        final CairoEngine engine = serverMain.getEngine();
         serverMain.execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
         serverMain.execute("INSERT INTO base_price VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
         serverMain.awaitTxn("base_price", 1);
-        serverMain.execute("CREATE MATERIALIZED VIEW v AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h)");
-        final TableToken viewToken = engine.verifyTableName("v");
+        createRefreshLimitedView(serverMain, "v", "1h");
+        serverMain.execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.awaitTable("t");
+        serverMain.awaitTable("t2");
+    }
+
+    // Creates a view of base_price's buckets of the given size and, once its first refresh applied, gives it REFRESH
+    // LIMIT 1 HOUR.
+    private static void createRefreshLimitedView(TestServerMain serverMain, String viewName, String sampleBy) {
+        final CairoEngine engine = serverMain.getEngine();
+        serverMain.execute("CREATE MATERIALIZED VIEW " + viewName + " AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY " + sampleBy + ")");
+        final TableToken viewToken = engine.verifyTableName(viewName);
         final long deadline = System.currentTimeMillis() + 60_000;
         boolean isLimitSet = false;
         while (System.currentTimeMillis() < deadline) {
@@ -3858,17 +3911,13 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         break;
                     }
                 } else {
-                    serverMain.execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 1 HOUR");
+                    serverMain.execute("ALTER MATERIALIZED VIEW " + viewName + " SET REFRESH LIMIT 1 HOUR");
                     isLimitSet = true;
                 }
             }
             Os.sleep(10);
         }
         Assert.assertTrue("the view did not refresh and take its REFRESH LIMIT in time", isLimitSet && engine.isBackfillableMatView(viewToken));
-        serverMain.execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        serverMain.execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        serverMain.awaitTable("t");
-        serverMain.awaitTable("t2");
     }
 
     private static void flushAndAssertError(Sender sender, String... errors) {
@@ -3988,7 +4037,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     }
                     capture.drain();
                     // one attempt per flush, logged at error level, not critical
-                    Assert.assertEquals(2, capture.countLoggedRE("LineHttpProcessorState \\[\\d+] could not commit \\[table=" + lastTableName + ", "));
+                    Assert.assertEquals(2, capture.countLoggedRE(" E i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState \\[\\d+] could not commit \\[table=" + lastTableName + ", "));
                     Assert.assertEquals(0, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState "));
 
                     sender.reset();

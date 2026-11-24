@@ -232,6 +232,41 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitBatchRefusesStraddlingViewBlockAtJoin() throws Exception {
+        // A view block's newest row decides: a block whose older rows sit in the frozen zone and whose newest row
+        // sits in the managed zone is refused as it joins the batch, naming that row, before the plain table ahead
+        // of it in the frame can commit.
+        assertMemoryLeak(() -> {
+            createBackfillableView();
+            final long tSeqTxn = seqTxn("t");
+            final long viewSeqTxn = seqTxn("v");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareViewFrame(
+                        state,
+                        "t",
+                        parseFloorPartialTimestamp("2024-09-10T09:00"),
+                        parseFloorPartialTimestamp("2024-09-10T10:00"),
+                        parseFloorPartialTimestamp("2024-09-10T12:45")
+                );
+                Assert.assertFalse(state.joinCommitBatch(0));
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                TestUtils.assertEquals(MANAGED_ZONE_MESSAGE, state.getErrorText());
+                Assert.assertTrue(state.isCommitBatchIntact());
+                Assert.assertEquals("t left the batch with the frame", 0, state.getCommitBatchTableCount());
+                Assert.assertFalse(state.isCommitBatchPending());
+                state.clear();
+            }
+            Assert.assertEquals(tSeqTxn, seqTxn("t"));
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertViewRowsUnchanged();
+        });
+    }
+
+    @Test
     public void testCommitBatchRefusesViewWhoseLimitWasRemovedAfterJoin() throws Exception {
         // under the suite's ADAPTIVE mode the batch prepares each table's commit first, and the prepare refuses
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
