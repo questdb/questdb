@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo.idx;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -116,8 +115,6 @@ public class PostingIndexBuildFilesTest extends AbstractCairoTest {
     // The parquet rewrite reindexes every indexed column of a parquet partition into a new directory version.
     @Test
     public void testForceReindexParquet() throws Exception {
-        // Under ADAPTIVE the rewrite's seal waits for the save point, and the purge deletes the superseded generation.
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             createTable(true, "BYPASS WAL");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01', '1970-01-02'");
