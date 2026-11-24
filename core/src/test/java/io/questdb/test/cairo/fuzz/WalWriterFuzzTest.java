@@ -965,8 +965,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // Pins a run of the fuzz test above with a fault planted on the column purge log before each run of the purge
         // job of an apply: without a worker pool, the applies run purge jobs of their own. The job of the non-WAL apply
         // cannot allocate a page for the first purge it logs, purges without the log, and reopens the log in the same
-        // run. The tables still match, and nothing leaks. The fuzz test drew the default symbol index type from other
-        // seeds.
+        // run. The tables still match, and nothing leaks. Which faults fire after that depends on timing, such as the
+        // retry delays of the log and of the purges: FuzzRunnerTest#testPurgeLogFaultShapesFire pins that every kind
+        // fires. The fuzz test drew the default symbol index type from other seeds.
         Rnd rnd = generateRandom(LOG, 7691099080043588L, 1795450685756L);
         setTestParams(rnd);
 
@@ -977,9 +978,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "BITMAP");
         fuzzer.setPurgeLogFaultProbability(1, 7691099082681958L, 1795450685759L);
         fullRandomFuzz(rnd);
-        final String logTableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
-        final int firedCount = fuzzer.getFileFacade().getTableFailuresFired(logTableName);
-        Assert.assertTrue("faults fired on the column purge log: " + firedCount, firedCount > 0);
+        final int firedCount = fuzzer.getFiredPurgeLogFaultCount(false, FailureFileFacade.TableFailureKind.PAGE_ALLOCATE);
+        Assert.assertTrue("page allocation faults fired on the column purge log: " + firedCount, firedCount > 0);
     }
 
     @Test

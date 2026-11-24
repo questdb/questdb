@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class FailureFileFacade implements FilesFacade {
@@ -61,7 +62,7 @@ public class FailureFileFacade implements FilesFacade {
     private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
-    // The tables whose partition and _txn files the facade follows, for armTableFailure(), by table name
+    // The tables whose partition files the facade follows, for armTableFailure(), by table name
     private final ConcurrentHashMap<String, WatchedTable> watchedTables = new ConcurrentHashMap<>();
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
@@ -213,10 +214,10 @@ public class FailureFileFacade implements FilesFacade {
         return failureGenerated.get();
     }
 
-    // the failures that armTableFailure() armed on the table and that fired
-    public int getTableFailuresFired(String tableName) {
+    // the failures of a kind that armTableFailure() armed on the table and that fired
+    public int getTableFailuresFired(String tableName, TableFailureKind kind) {
         final WatchedTable table = watchedTables.get(tableName);
-        return table != null ? table.firedCount.get() : 0;
+        return table != null ? table.firedCounts.get(kind.ordinal()) : 0;
     }
 
     @Override
@@ -402,16 +403,6 @@ public class FailureFileFacade implements FilesFacade {
         if (checkForFailure()) {
             throw CairoException.critical(Os.errno()).put("[failure-facade] checking file size failed");
         }
-        if (!watchedTables.isEmpty()) {
-            for (WatchedTable table : watchedTables.values()) {
-                // while a TXN_GROWTH failure is armed, the _txn file reads as empty to the extension of its mapping,
-                // which then allocates disk space and fails
-                final TableFailure failure = table.armed.get();
-                if (failure != null && failure.kind == TableFailureKind.TXN_GROWTH && table.isTxnFd(fd) && isTxnMappingExtending() && failure.isInScope()) {
-                    return 0;
-                }
-            }
-        }
         return ff.length(fd);
     }
 
@@ -546,12 +537,8 @@ public class FailureFileFacade implements FilesFacade {
             return -1;
         }
         final long fd = ff.openRW(name, opts);
-        if (fd > -1) {
-            if (isPartitionFile) {
-                table.followPartitionFd(fd);
-            } else if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
-                table.followTxnFd(fd);
-            }
+        if (fd > -1 && isPartitionFile) {
+            table.followPartitionFd(fd);
         }
         return fd;
     }
@@ -658,8 +645,8 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     /**
-     * Makes the facade follow the partition and the _txn files of a table, so that {@link #armTableFailure} can fail an
-     * operation on one that opened before the arming. Call before the table's files open.
+     * Makes the facade follow the partition files of a table, so that {@link #armTableFailure} can fail an operation on
+     * one that opened before the arming. Call before the table's files open.
      */
     public void watchTable(String tableName) {
         watchedTables.putIfAbsent(tableName, new WatchedTable(tableName));
@@ -809,28 +796,14 @@ public class FailureFileFacade implements FilesFacade {
         return dirStart > -1 && dirStart + 1 < fileStart && Character.isDigit((char) name.byteAt(dirStart + 1));
     }
 
-    // whether a commit extends the mapping of a _txn file, rather than a writer that opens the file and maps it
-    private static boolean isTxnMappingExtending() {
-        return StackWalker.getInstance().walk(
-                frames -> frames.anyMatch(frame -> "io.questdb.cairo.vm.MemoryCMARWImpl".equals(frame.getClassName()) && "extend0".equals(frame.getMethodName()))
-        );
-    }
-
     private boolean isTableAllocateFailing(long fd) {
         if (watchedTables.isEmpty()) {
             return false;
         }
         for (WatchedTable table : watchedTables.values()) {
             final TableFailure failure = table.armed.get();
-            if (failure != null) {
-                final boolean isTargetFd = switch (failure.kind) {
-                    case PAGE_ALLOCATE -> table.isPartitionFd(fd);
-                    case TXN_GROWTH -> table.isTxnFd(fd) && isTxnMappingExtending();
-                    default -> false;
-                };
-                if (isTargetFd && failure.isInScope() && table.fire(failure)) {
-                    return true;
-                }
+            if (failure != null && failure.kind == TableFailureKind.PAGE_ALLOCATE && table.isPartitionFd(fd) && failure.isInScope() && table.fire(failure)) {
+                return true;
             }
         }
         return false;
@@ -864,9 +837,7 @@ public class FailureFileFacade implements FilesFacade {
         PAGE_ALLOCATE,
         // the next open of a file in a partition directory of the table, as when the table starts a partition on a full
         // disk
-        PARTITION_OPEN,
-        // the next growth of the _txn file of the table, at a commit
-        TXN_GROWTH
+        PARTITION_OPEN
     }
 
     private static final class TableFailure {
@@ -900,14 +871,14 @@ public class FailureFileFacade implements FilesFacade {
         }
     }
 
-    // A table the facade follows: the fds of its partition and _txn files, and the failure armed on it
+    // A table the facade follows: the fds of its partition files, and the failure armed on it
     private static final class WatchedTable {
         private final AtomicReference<TableFailure> armed = new AtomicReference<>();
         // the separator and the directory name prefix of the table
         private final String dirPrefix;
-        private final AtomicInteger firedCount = new AtomicInteger();
+        // the failures that fired, by kind
+        private final AtomicIntegerArray firedCounts = new AtomicIntegerArray(TableFailureKind.values().length);
         private final LongList partitionFds = new LongList();
-        private final LongList txnFds = new LongList();
 
         private WatchedTable(String tableName) {
             this.dirPrefix = Files.SEPARATOR + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
@@ -915,7 +886,7 @@ public class FailureFileFacade implements FilesFacade {
 
         private boolean fire(TableFailure failure) {
             if (armed.compareAndSet(failure, null)) {
-                firedCount.incrementAndGet();
+                firedCounts.incrementAndGet(failure.kind.ordinal());
                 return true;
             }
             return false;
@@ -925,27 +896,15 @@ public class FailureFileFacade implements FilesFacade {
             partitionFds.add(fd);
         }
 
-        private synchronized void followTxnFd(long fd) {
-            txnFds.add(fd);
-        }
-
         private synchronized void forget(long fd) {
-            int index = partitionFds.indexOf(fd);
+            final int index = partitionFds.indexOf(fd);
             if (index > -1) {
                 partitionFds.removeIndex(index);
-            }
-            index = txnFds.indexOf(fd);
-            if (index > -1) {
-                txnFds.removeIndex(index);
             }
         }
 
         private synchronized boolean isPartitionFd(long fd) {
             return partitionFds.indexOf(fd) > -1;
-        }
-
-        private synchronized boolean isTxnFd(long fd) {
-            return txnFds.indexOf(fd) > -1;
         }
     }
 }

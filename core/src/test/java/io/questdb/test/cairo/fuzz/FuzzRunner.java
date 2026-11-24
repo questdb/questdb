@@ -190,7 +190,7 @@ public class FuzzRunner {
     // The chance that a WAL commit or rollback goes through WalWriter.prepareCommit(); 0 keeps the plain path.
     private double preparedCommitProb;
     // the chance that a run of the column purge job of an apply meets a fault of its log, and that one is planted for
-    // the posting seal purge job of a worker pool, see plantPurgeLogFaults()
+    // the posting seal purge job of a worker pool, see plantPurgeLogFault()
     private double purgeLogFaultProb;
     // the draws of the purge log faults: off the apply Rnd, so that a seed replays the same applies with or without them
     private Rnd purgeLogFaultRnd;
@@ -758,6 +758,11 @@ public class FuzzRunner {
         return ff;
     }
 
+    // the faults of a kind that the runs planted on the column purge log, or on the posting seal purge log, and that fired
+    public int getFiredPurgeLogFaultCount(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return ff.getTableFailuresFired(isPostingSealLog ? postingSealPurgeLogTableName() : columnPurgeLogTableName(), kind);
+    }
+
     // the faults of a kind that the runs planted on the column purge log, or on the posting seal purge log
     public int getPlantedPurgeLogFaultCount(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
         return plantedPurgeLogFaults.get(purgeLogFaultIndex(isPostingSealLog, kind));
@@ -1168,11 +1173,16 @@ public class FuzzRunner {
 
     /**
      * Plants a one-shot fault on the purge logs with this chance before each run of the column purge job of an apply:
-     * the failure of a row append, by a page allocation or a partition open, or of a commit, by the growth of _txn.
-     * The column purge log fault fires only in that run of the job of the apply, so this plants none when a worker
-     * pool runs the job. The posting seal purge log fault stays until the next write of a {@link PostingSealPurgeJob}
-     * to its log, not the direct persist of a TableWriter, meets it, or the next fault replaces it. The draws use a
-     * Rnd of their own, from the seeds.
+     * the failure of a page allocation or of a file open in a partition of the log, which the append of a row, the
+     * reopen of the log writer or the mark of a completed purge meets. The column purge log fault fires only in that
+     * run of the job of the apply, so this plants none when a worker pool runs the job. The posting seal purge log fault
+     * stays until the next write of a {@link PostingSealPurgeJob} to its log, not the direct persist of a TableWriter,
+     * meets it, or the next fault replaces it. The draws use a Rnd of their own, from the seeds.
+     * <p>
+     * No fault targets the commit of a log, which allocates disk space only as it grows the mapping of _txn: a log needs
+     * that only past dozens of monthly partitions, more with larger pages, and a run stamps the rows of the logs with
+     * the clock, within a month or two. ColumnPurgeJobTest and PostingSealPurgeTest step the clock month by month to
+     * fail those commits.
      */
     public void setPurgeLogFaultProbability(double purgeLogFaultProb, long seed0, long seed1) {
         this.purgeLogFaultProb = purgeLogFaultProb;

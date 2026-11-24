@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
@@ -46,7 +48,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
@@ -186,8 +190,8 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final File staleFile = createStaleColumnVersion("t", false);
             final ObjList<FuzzTransaction> transactions = new ObjList<>();
-            transactions.add(assertingTransaction(() -> Assert.assertTrue(staleFile.exists())));
-            transactions.add(assertingTransaction(() -> Assert.assertFalse(staleFile.exists())));
+            transactions.add(rolledBackTransaction(() -> Assert.assertTrue(staleFile.exists())));
+            transactions.add(rolledBackTransaction(() -> Assert.assertFalse(staleFile.exists())));
             // the first draw of the reload Rnd is false, so applyNonWal purges and reloads after every transaction
             Assert.assertFalse(new Rnd().nextBoolean());
 
@@ -485,32 +489,62 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             } finally {
                 pool.halt();
             }
-            Assert.assertEquals(1, ff.getTableFailuresFired(logTableName));
+            Assert.assertEquals(1, ff.getTableFailuresFired(logTableName, FailureFileFacade.TableFailureKind.PARTITION_OPEN));
+            Assert.assertEquals(0, ff.getTableFailuresFired(logTableName, FailureFileFacade.TableFailureKind.PAGE_ALLOCATE));
         });
     }
 
     @Test
-    public void testPurgeLogFaultShapesGenerated() throws Exception {
-        // At chance 1 each run of the column purge job of an apply plants a fault on each purge log, of a random kind:
-        // over the runs every kind lands on both logs
+    public void testPurgeLogFaultShapesFire() throws Exception {
+        // At chance 1, each run of the column purge job of an apply plants a fault of a random kind on each purge log.
+        // Each transaction sets the clock to a month of its own, queues a purge for each purge job and runs the posting
+        // seal purge job, as a worker pool does in a fuzz run, and applyNonWal runs the column purge job after it. A
+        // job writes the purge to a new partition of its log, or reopens its log writer, which opens the last
+        // partition, before it writes the purge back: either way it opens partition files and allocates their pages,
+        // so each fault fires in the next run of its job, of either kind. Two of the 42 faults do not fire: the column
+        // purge job logs nothing in the run after the last transaction, and the next fault replaces the one planted on
+        // the posting seal purge log after the last transaction.
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
         final FuzzRunner runner = newRunner();
         runner.setPurgeLogFaultProbability(1, 42L, 7L);
         assertMemoryLeak(runner.getFileFacade(), () -> {
+            final long firstMonth = MicrosTimestampDriver.floor("2024-01-01");
+            setCurrentMicros(firstMonth);
             final File staleFile = createStaleColumnVersion("t", false);
-            final ObjList<FuzzTransaction> transactions = new ObjList<>();
-            for (int i = 0; i < 20; i++) {
-                transactions.add(assertingTransaction(() -> {
-                }));
+            final TableToken goneToken = new TableToken("gone", "gone", null, 123, false, false, false);
+            try (PostingSealPurgeJob postingSealPurgeJob = new PostingSealPurgeJob(engine)) {
+                final ObjList<FuzzTransaction> transactions = new ObjList<>();
+                for (int i = 0; i < 20; i++) {
+                    final int month = i;
+                    transactions.add(rolledBackTransaction(() -> {
+                        setCurrentMicros(Micros.addMonths(firstMonth, month));
+                        publishColumnPurgeTask(goneToken);
+                        publishPostingSealPurgeTask(goneToken, "c", 1);
+                        postingSealPurgeJob.run();
+                    }));
+                }
+                // the first draw of the reload Rnd is false, so applyNonWal runs the column purge job after every transaction
+                Assert.assertFalse(new Rnd().nextBoolean());
+                runner.applyNonWal(transactions, "t", new Rnd());
+                // the posting seal purge job meets the fault planted last in the next month
+                setCurrentMicros(Micros.addMonths(firstMonth, 20));
+                publishPostingSealPurgeTask(goneToken, "c", 1);
+                postingSealPurgeJob.run();
             }
-            // the first draw of the reload Rnd is false, so applyNonWal runs the column purge job after every transaction
-            Assert.assertFalse(new Rnd().nextBoolean());
-            runner.applyNonWal(transactions, "t", new Rnd());
-            for (FailureFileFacade.TableFailureKind kind : FailureFileFacade.TableFailureKind.values()) {
-                Assert.assertTrue("column purge log " + kind, runner.getPlantedPurgeLogFaultCount(false, kind) > 0);
-                Assert.assertTrue("posting seal purge log " + kind, runner.getPlantedPurgeLogFaultCount(true, kind) > 0);
+            for (boolean isPostingSealLog : new boolean[]{false, true}) {
+                final String logName = isPostingSealLog ? "posting seal purge log " : "column purge log ";
+                int plantedCount = 0;
+                int firedCount = 0;
+                for (FailureFileFacade.TableFailureKind kind : FailureFileFacade.TableFailureKind.values()) {
+                    final int kindFiredCount = runner.getFiredPurgeLogFaultCount(isPostingSealLog, kind);
+                    Assert.assertTrue(logName + kind, kindFiredCount > 0);
+                    plantedCount += runner.getPlantedPurgeLogFaultCount(isPostingSealLog, kind);
+                    firedCount += kindFiredCount;
+                }
+                Assert.assertEquals(logName, 21, plantedCount);
+                Assert.assertEquals(logName, 20, firedCount);
             }
-            // the job purges without its log
+            // the faults of the logs leave the purges and the table intact
             Assert.assertFalse(staleFile.exists());
             assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
         });
@@ -652,17 +686,6 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         Assert.assertEquals(expectedCancellableCalls, fuzzer.cancellableCalls.get());
     }
 
-    // a transaction that checks the assertion when it applies, and rolls back
-    private static FuzzTransaction assertingTransaction(Runnable assertion) {
-        final FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
-            assertion.run();
-            return false;
-        });
-        transaction.rollback = true;
-        return transaction;
-    }
-
     // A reader pins the first version of x while UPDATE replaces it, so the writer queues its purge instead of
     // purging it, and no job of the test runs that purge.
     private static File createStaleColumnVersion(String tableName, boolean isWal) throws SqlException {
@@ -692,6 +715,24 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         return path;
     }
 
+    // queues the purge of a column version of a table, which the column purge job completes at once when the table does
+    // not exist
+    private static void publishColumnPurgeTask(TableToken token) {
+        final MPSequence pubSeq = engine.getMessageBus().getColumnPurgePubSeq();
+        long cursor;
+        while ((cursor = pubSeq.next()) == -2) {
+            Os.pause();
+        }
+        Assert.assertTrue("purge queue must accept the task", cursor >= 0);
+        try {
+            final ColumnPurgeTask task = engine.getMessageBus().getColumnPurgeQueue().get(cursor);
+            task.of(token, "c", token.getTableId(), 0, ColumnType.INT, IndexType.NONE, ColumnType.TIMESTAMP_MICRO, PartitionBy.NONE, 1);
+            task.appendColumnInfo(1, 0, -1);
+        } finally {
+            pubSeq.done(cursor);
+        }
+    }
+
     // queues the purge of a superseded sealed generation of the POSTING index of colName
     private static void publishPostingSealPurgeTask(TableToken token, String colName, long sealTxn) {
         final MPSequence pubSeq = engine.getMessageBus().getPostingSealPurgePubSeq();
@@ -707,6 +748,17 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         } finally {
             pubSeq.done(cursor);
         }
+    }
+
+    // a transaction that runs the step of the test when it applies, and rolls back
+    private static FuzzTransaction rolledBackTransaction(Runnable step) {
+        final FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+            step.run();
+            return false;
+        });
+        transaction.rollback = true;
+        return transaction;
     }
 
     // writes a POSTING index of colName in the default partition and seals it twice, returning the superseded sealTxn
