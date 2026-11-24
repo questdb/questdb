@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -79,6 +80,8 @@ public final class RestartableQwpServer implements AutoCloseable {
     private final int port;
     private final AtomicBoolean running = new AtomicBoolean();
     private final int sendBufferSize;
+    // qwp.max.uncommitted.rows of the next start(), 0 for the configuration's.
+    private long qwpMaxUncommittedRows;
     private HttpServer server;
     private TestWorkerPool workerPool;
 
@@ -236,10 +239,28 @@ public final class RestartableQwpServer implements AutoCloseable {
         return liveFds.size();
     }
 
+    /**
+     * Sets {@code qwp.max.uncommitted.rows}, the uncommitted rows at which the server
+     * commits a table on its own, for every {@link #start()} from now on. 0 keeps the
+     * configuration's.
+     */
+    public void setQwpMaxUncommittedRows(long rows) {
+        this.qwpMaxUncommittedRows = rows;
+    }
+
     public void start() throws SqlException {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("already running");
         }
+        final long maxUncommittedRows = qwpMaxUncommittedRows;
+        final LineHttpProcessorConfiguration lineConfiguration = maxUncommittedRows > 0
+                ? new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(cairoConfiguration) {
+                    @Override
+                    public long getQwpMaxUncommittedRows() {
+                        return maxUncommittedRows;
+                    }
+                }
+                : null;
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 cairoConfiguration,
                 new DefaultHttpContextConfiguration() {
@@ -257,6 +278,11 @@ public final class RestartableQwpServer implements AutoCloseable {
             @Override
             public int getBindPort() {
                 return port;
+            }
+
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return lineConfiguration != null ? lineConfiguration : super.getLineHttpProcessorConfiguration();
             }
 
             @Override

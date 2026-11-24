@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.client.TransactionTooLargeException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
@@ -334,7 +335,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // discarded one's.
         Rnd rnd = TestUtils.generateRandom(LOG);
         String mode = rnd.nextBoolean() ? "transaction=on;" : "transaction=strict;";
-        assertTransactionsAcrossBounces(rnd, mode, "", 400);
+        assertTransactionsAcrossBounces(rnd, mode, "", 400, 0);
     }
 
     @Test
@@ -345,7 +346,19 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // frame of a part and the frames behind it. A discarded transaction keeps exactly
         // the parts it committed.
         assertTransactionsAcrossBounces(TestUtils.generateRandom(LOG), "transaction=on;",
-                "sf_max_segment_bytes=16k;sf_max_total_bytes=32k;", 3_000);
+                "sf_max_segment_bytes=16k;sf_max_total_bytes=32k;", 3_000, 0);
+    }
+
+    @Test
+    public void testStrictTransactionsReachServerRowLimitWhileServerBounces() throws Exception {
+        // As testTransactionsCommitAndRollBackWhileServerBounces, with transaction=strict
+        // and a server that commits a table on its own at 300 uncommitted rows: about a
+        // quarter of the transactions reach that limit, and the sender refuses their next
+        // row, so each commits whole or not at all. The rows go to the table under three
+        // spellings of its name, which the server counts as one table. The sender used to
+        // count each spelling apart, so the server committed such a transaction in parts,
+        // and discarding it kept them.
+        assertTransactionsAcrossBounces(TestUtils.generateRandom(LOG), "transaction=strict;", "", 400, 300);
     }
 
     @Test
@@ -686,12 +699,16 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
     // A transactional sender commits, rolls back and resets transactions of up to
     // maxTransactionRows rows while another thread bounces the server. Once the server
     // is stable, the table must hold exactly the rows of every committed transaction,
-    // and of every part a discarded transaction committed before it was discarded.
+    // and of every part a discarded transaction committed before it was discarded. The
+    // rows go to the table under several spellings of its name. maxUncommittedRows sets
+    // the server's qwp.max.uncommitted.rows, 0 keeps its default; a strict transaction
+    // that reaches it holds the rows written before the sender refused one.
     private void assertTransactionsAcrossBounces(
             Rnd rnd,
             String mode,
             String clientBuffer,
-            int maxTransactionRows
+            int maxTransactionRows,
+            long maxUncommittedRows
     ) throws Exception {
         assertMemoryLeak(() -> {
             createTargetTable();
@@ -699,7 +716,8 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             int bounces = 3 + rnd.nextInt(3);
             // Store-and-forward on disk or in memory: replay works from either. The
             // tests of this class share the temporary folder, so each needs its own name.
-            String sfTag = clientBuffer.isEmpty() ? "txn-bounces" : "txn-parts-bounces";
+            String sfTag = !clientBuffer.isEmpty() ? "txn-parts-bounces"
+                    : maxUncommittedRows > 0 ? "txn-limit-bounces" : "txn-bounces";
             String sf = rnd.nextBoolean() ? "sf_dir=" + freshSfDir(sfTag) + ";" : "";
             // A small row trigger makes most transactions span several deferred frames.
             String connect = "ws::addr=localhost:" + port + ";" + sf + mode + clientBuffer
@@ -710,6 +728,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             LOG.info().$("transactions across bounces [bounces=").$(bounces).$(", connect=").$(connect).I$();
 
             try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+                server.setQwpMaxUncommittedRows(maxUncommittedRows);
                 server.start();
 
                 AtomicBoolean stopProducer = new AtomicBoolean();
@@ -721,6 +740,8 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 // Transactions committed in parts, and those of them discarded afterwards.
                 AtomicLong partedTransactions = new AtomicLong();
                 AtomicLong partedDiscards = new AtomicLong();
+                // Transactions in which the sender refused a row at the server's row limit.
+                AtomicLong refusedTransactions = new AtomicLong();
                 CountDownLatch producerDone = new CountDownLatch(1);
                 CountDownLatch bouncerDone = new CountDownLatch(1);
                 CountDownLatch firstCommitAcked = new CountDownLatch(1);
@@ -735,16 +756,21 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                             // The first transaction always commits, so the table exists and
                             // the oracle below never sees an empty sum.
                             int action = firstCommitAcked.getCount() > 0 ? 0 : producerRnd.nextInt(3);
-                            if (!clientBuffer.isEmpty() && (transactions == 1 || transactions == 2)) {
+                            if ((!clientBuffer.isEmpty() || maxUncommittedRows > 0) && (transactions == 1 || transactions == 2)) {
                                 // The two after it are as large as it gets: the first is
                                 // rolled back and the second committed, so the small client
-                                // buffer commits both in parts.
+                                // buffer commits both in parts, or both reach the server's
+                                // row limit.
                                 rows = maxTransactionRows;
                                 action = transactions == 1 ? 1 : 0;
                             }
                             transactions++;
                             long firstId = id;
-                            writeRows(sender, firstId, rows, tsBase + firstId * 1000L);
+                            int written = writeTransactionRows(sender, producerRnd, firstId, rows, tsBase + firstId * 1000L);
+                            if (written < rows) {
+                                refusedTransactions.incrementAndGet();
+                                rows = written;
+                            }
                             id += rows;
                             // A transaction=on transaction the client buffer cannot hold
                             // commits in parts as it goes: they hold its first rows.
@@ -826,12 +852,18 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 LOG.info().$("transactions across bounces done [committedRows=").$(committedRows.get())
                         .$(", discardedRows=").$(discardedRows.get())
                         .$(", partedTransactions=").$(partedTransactions.get())
-                        .$(", partedDiscards=").$(partedDiscards.get()).I$();
+                        .$(", partedDiscards=").$(partedDiscards.get())
+                        .$(", refusedTransactions=").$(refusedTransactions.get()).I$();
                 if (clientBuffer.isEmpty()) {
                     Assert.assertEquals("the default client buffer holds every transaction", 0, partedTransactions.get());
                 } else {
                     Assert.assertTrue("transactions must commit in parts", partedTransactions.get() >= 2);
                     Assert.assertTrue("a transaction committed in parts must be discarded", partedDiscards.get() >= 1);
+                }
+                if (maxUncommittedRows > 0) {
+                    Assert.assertTrue("transactions must reach the server's row limit", refusedTransactions.get() >= 2);
+                } else {
+                    Assert.assertEquals("no transaction reaches the default row limit", 0, refusedTransactions.get());
                 }
 
                 drainWalQueue();
@@ -888,6 +920,38 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             writeRows(sender, idBase, count, tsBaseNanos);
             sender.flush();
         }
+    }
+
+    // One of three spellings of the table name, which the server counts as one table.
+    private static String tableSpelling(Rnd rnd) {
+        return switch (rnd.nextInt(3)) {
+            case 0 -> TABLE_NAME;
+            case 1 -> "QWP_RESTART_FUZZ";
+            default -> "Qwp_Restart_Fuzz";
+        };
+    }
+
+    /**
+     * Writes rows as {@link #writeRows} does, each under a random spelling of the table
+     * name, until a strict transaction refuses one at the server's row limit. Returns the
+     * rows written, which the open transaction holds.
+     */
+    private int writeTransactionRows(Sender sender, Rnd rnd, long idBase, int count, long tsBaseNanos) {
+        for (int i = 0; i < count; i++) {
+            long id = idBase + i;
+            long ts = tsBaseNanos + (long) i * 1000L;
+            try {
+                sender.table(tableSpelling(rnd))
+                        .symbol("tag", "tag-" + (id % TAG_CARDINALITY))
+                        .longColumn("id", id)
+                        .doubleColumn("val", id * 1.5)
+                        .at(ts, ChronoUnit.NANOS);
+            } catch (TransactionTooLargeException e) {
+                TestUtils.assertContains(e.getMessage(), "transaction too large for the server [table=");
+                return i;
+            }
+        }
+        return count;
     }
 
     /**

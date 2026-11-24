@@ -388,6 +388,80 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testStrictTransactionRefusesRowsPastServerCapUnderEverySpelling() throws Exception {
+        // The server writes the rows of the names the engine resolves to one table to one
+        // writer, and commits it on its own once 1000 of its rows are uncommitted. The
+        // engine folds each char with Character.toLowerCase(), so "t" and "T" are one
+        // table, so are "t\u00e4" and "t\u00c4", and so are "ti" and "t\u0130", whose
+        // \u0130 folds to an ASCII i. Each spelling used to keep its own count, so 999 rows
+        // of each were accepted and the server committed 1158 of them before flush(): the
+        // transaction landed in two parts. A sender with no auto-flush trigger is strict
+        // too.
+        for (String[] spellings : new String[][]{{"t", "T"}, {"t\u00e4", "t\u00c4"}, {"ti", "t\u0130"}}) {
+            for (String mode : new String[]{"transaction=strict;", "auto_flush=off;"}) {
+                qwpMaxUncommittedRows = 1_000;
+                runInContext(port -> {
+                    try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(conf(port) + mode)) {
+                        Assert.assertTrue(mode, sender.isStrictTransactional());
+                        writeRows(sender, spellings[0], 0, 500);
+                        writeRows(sender, spellings[1], 500, 499);
+                        for (String spelling : spellings) {
+                            try {
+                                writeRows(sender, spelling, 999, 1);
+                                Assert.fail(mode + " the server would commit the 1000th row on its own");
+                            } catch (TransactionTooLargeException e) {
+                                Assert.assertEquals("transaction too large for the server [table=" + spelling
+                                        + ", rows=1000, maxUncommittedRows=1000]; the server commits a table's rows on "
+                                        + "its own once qwp.max.uncommitted.rows of them are uncommitted, which would "
+                                        + "split the transaction, so the row was not added. Rows sent under names that "
+                                        + "differ only in letter case count together: the server counts them as one "
+                                        + "table. Raise qwp.max.uncommitted.rows on the server", e.getMessage());
+                            }
+                        }
+                        TableToken token = awaitTable(spellings[0]);
+                        long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+                        sender.flush();
+                        Assert.assertTrue(sender.drain(60_000));
+                        Assert.assertEquals(mode + spellings[1] + " one transaction", txnBefore + 1,
+                                engine.getTableSequencerAPI().lastTxn(token));
+                    }
+                    drainWalQueue();
+                    assertQuery("SELECT count(), count_distinct(v), min(v), max(v) FROM \"" + spellings[1] + "\"")
+                            .noLeakCheck().noRandomAccess().expectSize()
+                            .returns("count\tcount_distinct\tmin\tmax\n999\t999\t0\t998\n");
+                    execute("DROP TABLE \"" + spellings[0] + "\"");
+                });
+            }
+        }
+    }
+
+    @Test
+    public void testStrictTransactionRollbackUnderEverySpellingKeepsNothing() throws Exception {
+        // The rows alternate between "t" and "T", one table on the server. The server
+        // used to commit the first 1158 of them on its own, and rollback() kept them.
+        qwpMaxUncommittedRows = 1_000;
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig(conf(port) + "transaction=strict;")) {
+                int refused = -1;
+                for (int i = 0; i < 1_998 && refused < 0; i++) {
+                    try {
+                        writeRows(sender, i % 2 == 0 ? "t" : "T", i, 1);
+                    } catch (TransactionTooLargeException e) {
+                        refused = i;
+                    }
+                }
+                Assert.assertEquals("the 1000th row of the table is refused", 999, refused);
+                TableToken token = awaitTable();
+                sender.rollback();
+                Assert.assertTrue(sender.drain(60_000));
+                Assert.assertEquals("nothing committed", 0, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testTransactionOverSpellingsOfOneTableCommitsOnce() throws Exception {
         // The client keeps a buffer per spelling of a table name, so the frames of one
         // transaction carry blocks for "tä" and "tÄ", which the engine resolves to one
