@@ -897,7 +897,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 // from the file column that holds it.
                 parquetColumns.reopen();
                 parquetColumns.clear();
-                parquetColumnResolver.resolve(frameCursor.getColumnMapping(), metadata, parquetDecoder, parquetColumns);
+                parquetColumnResolver.resolve(frameCursor, metadata, parquetDecoder, parquetColumns);
                 final int parquetColumnCount = (int) parquetColumns.size();
                 if (parquetDecoder.getFileAddr() != 0) {
                     // The parquet file is mapped locally, so fast-copy the row group bytes

@@ -26,7 +26,9 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,15 +40,18 @@ import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -55,6 +60,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -216,6 +222,34 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         .expectSize()
                         .returns("cnt\n0\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnIdsOtherThanPositions() throws Exception {
+        // QuestDB writes the writer index of each column as its field id and leaves dropped columns out:
+        // c, of writer index 2, sits at position 1 of the file.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x::INT a, x * 2 b, (x * 3)::INT c FROM long_sequence(5))");
+            execute("ALTER TABLE x DROP COLUMN b");
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+            Assert.assertEquals("[0,2]", parquetColumnIds("x.parquet"));
+
+            for (String query : new String[]{
+                    "SELECT c, a FROM %s",
+                    "SELECT a, c, c c2 FROM %s",
+                    "SELECT sum(a) s1, sum(c) s2, sum(c2) s3 FROM (SELECT a, c, c c2 FROM %s)"
+            }) {
+                assertSqlCursors(query.replace("%s", "x"), query.replace("%s", "read_parquet('x.parquet')"));
             }
         });
     }
@@ -690,6 +724,48 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "could not open, file does not exist");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFileReplacedWithPartialFieldIds() throws Exception {
+        // A compiled read_parquet() query reads the file anew on every run. The file that replaces the one
+        // that QuestDB wrote has the same columns, a without a field id and b with field id 0, so the
+        // query runs without a recompile. DuckDB reads a = 1, 3 and b = 2, 4 from it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT (x * 10)::INT a, (x * 100)::INT b FROM long_sequence(3))");
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("swap.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertEquals("[0,1]", parquetColumnIds("swap.parquet"));
+                final String tableRows = """
+                        a\tb
+                        10\t100
+                        20\t200
+                        30\t300
+                        """;
+                try (RecordCursorFactory factory = select("SELECT a, b FROM read_parquet('swap.parquet')")) {
+                    assertSwappedFileQuery(factory, tableRows);
+
+                    copyParquetTestFile("partial_field_ids.parquet", "swap.parquet");
+                    Assert.assertEquals("[-1,0]", parquetColumnIds("swap.parquet"));
+                    assertSwappedFileQuery(factory, """
+                            a\tb
+                            1\t2
+                            3\t4
+                            """);
+
+                    Assert.assertTrue(Files.remove(path.$()));
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encode(partitionDescriptor, path);
+                    assertSwappedFileQuery(factory, tableRows);
                 }
             }
         });
@@ -1402,6 +1478,448 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartialFieldIds() throws Exception {
+        // DuckDB wrote these files with field ids on some columns only. Both hold a at position 0 and b, of
+        // field id 0, at position 1; a has no field id in partial_field_ids.parquet and field id -3 in
+        // negative_field_id.parquet. read_parquet() finds a column by its name, whatever the field ids, and
+        // DuckDB reads a = 1, 3 and b = 2, 4 from both. partial_field_ids_empty.parquet holds the columns of
+        // partial_field_ids.parquet and no row group.
+        assertMemoryLeak(() -> {
+            copyParquetTestFile("partial_field_ids.parquet");
+            copyParquetTestFile("negative_field_id.parquet");
+            copyParquetTestFile("partial_field_ids_empty.parquet");
+            Assert.assertEquals("[-1,0]", parquetColumnIds("partial_field_ids.parquet"));
+            Assert.assertEquals("[-3,0]", parquetColumnIds("negative_field_id.parquet"));
+            Assert.assertEquals("[-1,0]", parquetColumnIds("partial_field_ids_empty.parquet"));
+            for (String fileName : new String[]{"partial_field_ids.parquet", "negative_field_id.parquet"}) {
+                final String file = "read_parquet('" + fileName + "')";
+                assertQuery("SELECT * FROM " + file)
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .withPlan(parallel ? """
+                                parquet page frame scan
+                                  columns: a,b
+                                """ : """
+                                parquet file sequential scan
+                                  columns: a,b
+                                """)
+                        .returns("""
+                                a\tb
+                                1\t2
+                                3\t4
+                                """);
+                assertFileScan("SELECT a, b FROM " + file, true, """
+                        a\tb
+                        1\t2
+                        3\t4
+                        """);
+                assertFileScan("SELECT b, a FROM " + file, true, """
+                        b\ta
+                        2\t1
+                        4\t3
+                        """);
+                assertFileScan("SELECT a FROM " + file, true, """
+                        a
+                        1
+                        3
+                        """);
+                assertFileScan("SELECT b FROM " + file, true, """
+                        b
+                        2
+                        4
+                        """);
+                assertFileScan("SELECT a, a a2, b FROM " + file, true, """
+                        a\ta2\tb
+                        1\t1\t2
+                        3\t3\t4
+                        """);
+                assertFileScan("SELECT a, b FROM " + file + " WHERE a > 1", false, """
+                        a\tb
+                        3\t4
+                        """);
+                assertFileScan("SELECT a, b FROM " + file + " WHERE b = 4", false, """
+                        a\tb
+                        3\t4
+                        """);
+                assertAggregate("SELECT sum(a) sa, sum(b) sb FROM " + file, """
+                        sa\tsb
+                        4\t6
+                        """);
+                // The GROUP BY reads the page frames of the projection, whose a and a2 share the file column.
+                assertAggregate("SELECT sum(a) s1, sum(a2) s2, sum(b) s3 FROM (SELECT a, a a2, b FROM " + file + ")", """
+                        s1\ts2\ts3
+                        4\t4\t6
+                        """);
+            }
+
+            final String empty = "read_parquet('partial_field_ids_empty.parquet')";
+            assertFileScan("SELECT * FROM " + empty, true, "a\tb\n");
+            assertFileScan("SELECT b, a FROM " + empty, true, "b\ta\n");
+            assertAggregate("SELECT count() c, sum(a) sa FROM " + empty, """
+                    c\tsa
+                    0\tnull
+                    """);
+        });
+    }
+
+    @Test
+    public void testPartialFieldIdsContexts() throws Exception {
+        // read_parquet() of files with field ids on some columns, inside other queries. DuckDB reads a = 1, 3
+        // and b = 2, 4 from partial_field_ids.parquet, and b = 0, 10, ..., 90 and a = 0, 1, ..., 9 from
+        // partial_field_ids_widths.parquet, whose BIGINT b, without a field id, sits at position 0 and INT a,
+        // of field id 0, at position 1.
+        assertMemoryLeak(() -> {
+            copyParquetTestFile("partial_field_ids.parquet");
+            copyParquetTestFile("partial_field_ids_widths.parquet");
+            final String narrow = "read_parquet('partial_field_ids.parquet')";
+            final String wide = "read_parquet('partial_field_ids_widths.parquet')";
+            execute("CREATE TABLE t AS (SELECT x::INT a, x * 100 c FROM long_sequence(3))");
+
+            assertFileScan("SELECT * FROM (SELECT b, a FROM " + wide + ") WHERE a > 7", false, """
+                    b\ta
+                    80\t8
+                    90\t9
+                    """);
+            assertFileScan("WITH q AS (SELECT a, b FROM " + narrow + ") SELECT b, a FROM q", true, """
+                    b\ta
+                    2\t1
+                    4\t3
+                    """);
+            // The serial reader's cursor has no random access, so its join is a Hash Join, which counts its rows.
+            assertQuery("SELECT x.a, x.b, y.b b2 FROM " + narrow + " x JOIN " + wide + " y ON x.a = y.a")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize(!parallel)
+                    .returns("""
+                            a\tb\tb2
+                            1\t2\t10
+                            3\t4\t30
+                            """);
+            assertQuery("SELECT x.a, x.b, y.b b2 FROM " + wide + " x JOIN " + narrow + " y ON x.a = y.a")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize(!parallel)
+                    .returns("""
+                            a\tb\tb2
+                            1\t10\t2
+                            3\t30\t4
+                            """);
+            assertQuery("SELECT t.a, t.c, r.b FROM t LEFT JOIN " + narrow + " r ON t.a = r.a")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a\tc\tb
+                            1\t100\t2
+                            2\t200\tnull
+                            3\t300\t4
+                            """);
+            assertQuery("SELECT r.a, r.b, t.c FROM " + narrow + " r LEFT JOIN t ON r.a = t.a")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a\tb\tc
+                            1\t2\t100
+                            3\t4\t300
+                            """);
+            assertQuery("SELECT a FROM " + narrow + " UNION SELECT b FROM " + narrow)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a
+                            1
+                            3
+                            2
+                            4
+                            """);
+            assertQuery("SELECT a FROM " + narrow + " EXCEPT SELECT b - 1 FROM " + narrow + " WHERE b = 2")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .returns("""
+                            a
+                            3
+                            """);
+            assertQuery("SELECT a FROM " + wide + " INTERSECT SELECT (b / 10)::INT FROM " + wide)
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .returns("""
+                            a
+                            0
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            9
+                            """);
+            bindVariableService.clear();
+            bindVariableService.setInt("a", 7);
+            assertFileScan("SELECT a, b FROM " + wide + " WHERE a = :a", false, """
+                    a\tb
+                    7\t70
+                    """);
+        });
+    }
+
+    @Test
+    public void testPartialFieldIdsOfDifferentWidths() throws Exception {
+        // DuckDB wrote these files with BIGINT b at position 0 and INT a at position 1. In
+        // partial_field_ids_widths.parquet b has no field id and a has field id 0; in
+        // repeated_field_ids.parquet both have field id 5. DuckDB reads b = 0, 10, ..., 90 and
+        // a = 0, 1, ..., 9 from both.
+        assertMemoryLeak(() -> {
+            copyParquetTestFile("partial_field_ids_widths.parquet");
+            copyParquetTestFile("repeated_field_ids.parquet");
+            Assert.assertEquals("[-1,0]", parquetColumnIds("partial_field_ids_widths.parquet"));
+            Assert.assertEquals("[5,5]", parquetColumnIds("repeated_field_ids.parquet"));
+            final String rows = """
+                    b\ta
+                    0\t0
+                    10\t1
+                    20\t2
+                    30\t3
+                    40\t4
+                    50\t5
+                    60\t6
+                    70\t7
+                    80\t8
+                    90\t9
+                    """;
+            for (String fileName : new String[]{"partial_field_ids_widths.parquet", "repeated_field_ids.parquet"}) {
+                final String file = "read_parquet('" + fileName + "')";
+                assertFileScan("SELECT * FROM " + file, true, rows);
+                assertFileScan("SELECT b, a FROM " + file, true, rows);
+                assertFileScan("SELECT a, b FROM " + file, true, """
+                        a\tb
+                        0\t0
+                        1\t10
+                        2\t20
+                        3\t30
+                        4\t40
+                        5\t50
+                        6\t60
+                        7\t70
+                        8\t80
+                        9\t90
+                        """);
+                assertFileScan("SELECT b FROM " + file, true, """
+                        b
+                        0
+                        10
+                        20
+                        30
+                        40
+                        50
+                        60
+                        70
+                        80
+                        90
+                        """);
+                assertAggregate("SELECT sum(b) sb, min(b) min_b, max(b) max_b, sum(a) sa FROM " + file, """
+                        sb\tmin_b\tmax_b\tsa
+                        450\t0\t90\t45
+                        """);
+                // The filter reads a, and the rows that pass it read b.
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    assertFileScan("SELECT a, b FROM " + file + " WHERE a > 4", false, """
+                            a\tb
+                            5\t50
+                            6\t60
+                            7\t70
+                            8\t80
+                            9\t90
+                            """);
+                }
+                assertQuery("SELECT a, b FROM " + file + " ORDER BY b DESC LIMIT 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tb
+                                9\t90
+                                8\t80
+                                7\t70
+                                """);
+                assertFileScan("SELECT a, b FROM " + file + " LIMIT -3", true, """
+                        a\tb
+                        7\t70
+                        8\t80
+                        9\t90
+                        """);
+                // QuestDB's window sum() returns DOUBLE, DuckDB's returns the integers 0, 10, 30, ..., 450.
+                assertQuery("SELECT a, b, sum(b) OVER (ORDER BY a) running FROM " + file)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tb\trunning
+                                0\t0\t0.0
+                                1\t10\t10.0
+                                2\t20\t30.0
+                                3\t30\t60.0
+                                4\t40\t100.0
+                                5\t50\t150.0
+                                6\t60\t210.0
+                                7\t70\t280.0
+                                8\t80\t360.0
+                                9\t90\t450.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPartialFieldIdsOtherTypes() throws Exception {
+        // DuckDB wrote DOUBLE[] arr, INT x, DECIMAL(38, 10) d, BIGINT y, UUID u and SMALLINT s at positions 0 to
+        // 5, with field ids 0, 2 and 4 on x, y and s: each id is the position of the column before, which has
+        // none. The expected rows are DuckDB's.
+        assertMemoryLeak(() -> {
+            copyParquetTestFile("partial_field_ids_types.parquet");
+            Assert.assertEquals("[-1,0,-1,2,-1,4]", parquetColumnIds("partial_field_ids_types.parquet"));
+            final String file = "read_parquet('partial_field_ids_types.parquet')";
+            assertFileScan("SELECT * FROM " + file, true, """
+                    arr\tx\td\ty\tu\ts
+                    [0.0,-0.25]\t-150\t-1.0000000000\tnull\t11111111-2222-3333-4444-555555555550\t-2000
+                    [1.5,-1.25]\t-50\t1234567889.0123456789\t9999999999\t\t-1000
+                    null\t50\t2469135779.0246913578\t19999999999\t11111111-2222-3333-4444-555555555552\t0
+                    [4.5,-3.25]\tnull\t-9999999999999999999999999999.9999999999\t29999999999\t11111111-2222-3333-4444-555555555553\t1000
+                    [6.0,-4.25]\t250\t\t39999999999\t11111111-2222-3333-4444-555555555554\t2000
+                    """);
+            assertFileScan("SELECT s, u, y, d, x, arr FROM " + file, true, """
+                    s\tu\ty\td\tx\tarr
+                    -2000\t11111111-2222-3333-4444-555555555550\tnull\t-1.0000000000\t-150\t[0.0,-0.25]
+                    -1000\t\t9999999999\t1234567889.0123456789\t-50\t[1.5,-1.25]
+                    0\t11111111-2222-3333-4444-555555555552\t19999999999\t2469135779.0246913578\t50\tnull
+                    1000\t11111111-2222-3333-4444-555555555553\t29999999999\t-9999999999999999999999999999.9999999999\tnull\t[4.5,-3.25]
+                    2000\t11111111-2222-3333-4444-555555555554\t39999999999\t\t250\t[6.0,-4.25]
+                    """);
+        });
+    }
+
+    @Test
+    public void testPartialFieldIdsRowGroups() throws Exception {
+        // DuckDB wrote 2_500 rows in row groups of 2_048 and 452 rows. b, s, f and n have no field id, and a,
+        // ts, d and k have field ids 0, 2, 4 and 6, each the position of the column before. Table expected
+        // holds the rows by DuckDB's formulas, with i = x - 1.
+        assertMemoryLeak(() -> {
+            copyParquetTestFile("partial_field_ids_row_groups.parquet");
+            Assert.assertEquals("[-1,0,-1,2,-1,4,-1,6]", parquetColumnIds("partial_field_ids_row_groups.parquet"));
+            execute("""
+                    CREATE TABLE expected AS (
+                        SELECT
+                            CASE WHEN i % 7 = 0 THEN NULL ELSE i * 10 END b,
+                            CASE WHEN i % 5 = 0 THEN NULL ELSE i::INT END a,
+                            CASE WHEN i % 3 = 0 THEN NULL ELSE ('v' || i)::VARCHAR END s,
+                            '2024-01-01'::TIMESTAMP + i * 1_000_000 ts,
+                            i % 2 = 0 f,
+                            i / 4.0 d,
+                            NULL::INT n,
+                            (i % 100)::INT k
+                        FROM (SELECT x - 1 i FROM long_sequence(2_500))
+                    )""");
+            final String file = "read_parquet('partial_field_ids_row_groups.parquet')";
+            // Every column, in file order and reversed, and each column with the one that has its position as id.
+            for (String columns : new String[]{
+                    "*", "k, n, d, f, ts, s, a, b",
+                    "b, a", "a, b", "s, ts", "ts, s", "f, d", "d, f", "n, k", "k, n"
+            }) {
+                assertSqlCursors("SELECT " + columns + " FROM expected", "SELECT " + columns + " FROM " + file);
+            }
+            // DuckDB's aggregates of the file.
+            assertAggregate(
+                    "SELECT count() c, count(b) cb, count(a) ca, count(s) cs, count(n) cn, sum(b) sb, sum(a) sa, sum(d) sd,"
+                            + " min(ts) min_ts, max(ts) max_ts, sum(CASE WHEN f THEN 1 ELSE 0 END) fs, sum(k) sk FROM " + file,
+                    """
+                            c\tcb\tca\tcs\tcn\tsb\tsa\tsd\tmin_ts\tmax_ts\tfs\tsk
+                            2500\t2142\t2000\t1666\t0\t26764290\t2500000\t780937.5\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:41:39.000000Z\t1250\t123750
+                            """
+            );
+            for (String query : new String[]{
+                    "SELECT k, count() c, count(a) ca, sum(a) sa, sum(b) sb, count(s) cs, sum(d) sd FROM %s GROUP BY k ORDER BY k",
+                    "SELECT ts, count() c, sum(a) sa, sum(b) sb, count(s) cs, sum(d) sd, sum(k) sk FROM (SELECT * FROM %s ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 10m",
+                    "SELECT * FROM (SELECT * FROM (SELECT * FROM %s ORDER BY ts) TIMESTAMP(ts) LATEST ON ts PARTITION BY k) ORDER BY k"
+            }) {
+                assertSqlCursors(query.replace("%s", "expected"), query.replace("%s", file));
+            }
+        });
+    }
+
+    @Test
+    public void testPartialFieldIdsVarchar() throws Exception {
+        // DuckDB wrote INT a, without a field id, at position 0 and VARCHAR b, of field id 0, at position 1, and
+        // reads a = 0, 1, ..., 9 and b = v0, v1, ..., v9.
+        assertMemoryLeak(() -> {
+            copyParquetTestFile("partial_field_ids_varchar.parquet");
+            Assert.assertEquals("[-1,0]", parquetColumnIds("partial_field_ids_varchar.parquet"));
+            final String file = "read_parquet('partial_field_ids_varchar.parquet')";
+            final String rows = """
+                    a\tb
+                    0\tv0
+                    1\tv1
+                    2\tv2
+                    3\tv3
+                    4\tv4
+                    5\tv5
+                    6\tv6
+                    7\tv7
+                    8\tv8
+                    9\tv9
+                    """;
+            assertFileScan("SELECT * FROM " + file, true, rows);
+            assertFileScan("SELECT a, b FROM " + file, true, rows);
+            assertFileScan("SELECT b, a FROM " + file, true, """
+                    b\ta
+                    v0\t0
+                    v1\t1
+                    v2\t2
+                    v3\t3
+                    v4\t4
+                    v5\t5
+                    v6\t6
+                    v7\t7
+                    v8\t8
+                    v9\t9
+                    """);
+            assertFileScan("SELECT a FROM " + file, true, """
+                    a
+                    0
+                    1
+                    2
+                    3
+                    4
+                    5
+                    6
+                    7
+                    8
+                    9
+                    """);
+            assertFileScan("SELECT b FROM " + file, true, """
+                    b
+                    v0
+                    v1
+                    v2
+                    v3
+                    v4
+                    v5
+                    v6
+                    v7
+                    v8
+                    v9
+                    """);
+            assertFileScan("SELECT a, b FROM " + file + " WHERE b = 'v3'", false, """
+                    a\tb
+                    3\tv3
+                    """);
+            assertAggregate("SELECT count() c, sum(a) sa, min(b) min_b, max(b) max_b FROM " + file, """
+                    c\tsa\tmin_b\tmax_b
+                    10\t45\tv0\tv9
+                    """);
+        });
+    }
+
+    @Test
     public void testRleDictionaryIndexBitWidthOver32() throws Exception {
         // A foreign parquet whose RLE_DICTIONARY data page declares a dictionary
         // index bit width > 32 must surface a clean SQL error, not abort the JVM
@@ -2039,6 +2557,74 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     true
             );
         }
+    }
+
+    // Copies a file of sqllogictest's data/parquet-testing directory to the input root.
+    private static void copyParquetTestFile(String fileName) throws IOException {
+        copyParquetTestFile(fileName, fileName);
+    }
+
+    private static void copyParquetTestFile(String fileName, String targetFileName) throws IOException {
+        java.nio.file.Files.copy(
+                java.nio.file.Paths.get(TestUtils.getTestResourcePath("/sqllogictest/data/parquet-testing/" + fileName)),
+                java.nio.file.Paths.get(root, targetFileName),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        );
+    }
+
+    // The field id of each column of the file in the input root, in file order, such as [-1,0]; -1 stands
+    // for a column without one.
+    private static String parquetColumnIds(String fileName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        long fd = -1;
+        long addr = 0;
+        long fileSize = 0;
+        try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
+            fd = TableUtils.openRO(ff, path.of(root).concat(fileName).$(), LOG);
+            fileSize = ff.length(fd);
+            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final StringSink ids = new StringSink();
+            ids.put('[');
+            for (int i = 0, n = decoder.metadata().getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    ids.put(',');
+                }
+                ids.put(decoder.metadata().getColumnId(i));
+            }
+            return ids.put(']').toString();
+        } finally {
+            ff.close(fd);
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+        }
+    }
+
+    // An aggregate of a read_parquet() file: one row, without random access.
+    private void assertAggregate(String query, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
+    }
+
+    // A scan of a read_parquet() file, filtered or not: the cursor of the parallel reader supports random
+    // access, and the cursor of the serial one does not.
+    private void assertFileScan(String query, boolean expectSize, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .supportsRandomAccess(parallel)
+                .expectSize(expectSize)
+                .returns(expected);
+    }
+
+    // Runs the factory of a read_parquet() query of swap.parquet, which the test replaces between runs.
+    private void assertSwappedFileQuery(RecordCursorFactory factory, String expected) throws Exception {
+        assertFactory(factory)
+                .withContext(sqlExecutionContext)
+                .supportsRandomAccess(parallel)
+                .expectSize()
+                .returns(expected);
     }
 
     private void testCursor(boolean rawArrayEncoding) throws Exception {

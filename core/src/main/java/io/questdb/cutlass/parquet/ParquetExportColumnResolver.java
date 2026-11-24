@@ -27,6 +27,7 @@ package io.questdb.cutlass.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.DirectIntList;
@@ -38,6 +39,8 @@ import io.questdb.std.IntIntHashMap;
  * and tags each with the column's writer index as its column id. The exported query reads its
  * own columns in its own order, so the file's i-th column is the query's i-th column only by
  * chance: a projection, a reordering or a DROP COLUMN after the file was written breaks it.
+ * The columns of a read_parquet() file are identified by their positions: the field ids of an
+ * external file may be set on some columns only, or repeat.
  * {@link io.questdb.cairo.sql.PageFrameMemoryPool} resolves query columns the same way.
  */
 final class ParquetExportColumnResolver {
@@ -52,20 +55,23 @@ final class ParquetExportColumnResolver {
      * Appends to {@code parquetColumns} one entry per query column: the index of the file column
      * that holds its data, or {@link #ABSENT}.
      *
-     * @param columnMapping  the writer indexes of the query columns, from the frame's cursor
+     * @param frameCursor    the cursor of the frame, which gives the writer indexes of the query columns
+     *                       and tells whether the file is external
      * @param metadata       the query columns, in the order the export writes them
      * @param decoder        the decoder of the frame's Parquet file
      * @param parquetColumns receives the file column of each query column
      */
-    void resolve(ColumnMapping columnMapping, RecordMetadata metadata, ParquetDecoder decoder, DirectIntList parquetColumns) {
+    void resolve(PageFrameCursor frameCursor, RecordMetadata metadata, ParquetDecoder decoder, DirectIntList parquetColumns) {
+        final ColumnMapping columnMapping = frameCursor.getColumnMapping();
         final int columnCount = metadata.getColumnCount();
         assert columnMapping.getColumnCount() == columnCount
                 : "column mapping must cover every query column [mapping=" + columnMapping.getColumnCount() + ", columns=" + columnCount + ']';
         columnIdToParquetIndex.clear();
+        // read_parquet() identifies the columns of its file by position, see
+        // ReadParquetRecordCursor.canProjectMetadata().
+        final boolean isExternal = frameCursor.isExternal();
         for (int parquetIndex = 0, n = decoder.getColumnCount(); parquetIndex < n; parquetIndex++) {
-            final int columnId = decoder.getColumnId(parquetIndex);
-            // A file that QuestDB did not write has no column ids; read_parquet() then
-            // identifies its columns by position, see ReadParquetRecordCursor.canProjectMetadata().
+            final int columnId = isExternal ? parquetIndex : decoder.getColumnId(parquetIndex);
             columnIdToParquetIndex.put(columnId < 0 ? parquetIndex : columnId, parquetIndex);
         }
         for (int i = 0; i < columnCount; i++) {

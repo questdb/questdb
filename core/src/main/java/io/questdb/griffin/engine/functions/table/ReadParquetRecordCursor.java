@@ -148,7 +148,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
-     * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex, originalWriterIndex) triples
+     * @param columnMapping if not null, will be populated with the file position of each column as its column,
+     *                      writer and original writer index
      * @return true if projection is possible, false otherwise
      */
     public static boolean canProjectMetadata(
@@ -198,9 +199,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 }
             }
             if (columnMapping != null) {
-                final int columnId = parquetMetadata.getColumnId(parquetIndex);
-                final int effectiveId = columnId < 0 ? parquetIndex : columnId;
-                columnMapping.addColumn(parquetIndex, effectiveId, effectiveId);
+                // read_parquet() finds a column by its name. The field ids of an external file may be set
+                // on some columns only, or repeat, so they do not identify its columns; the position does.
+                columnMapping.addColumn(parquetIndex, parquetIndex, parquetIndex);
             }
         }
 

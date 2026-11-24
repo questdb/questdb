@@ -828,6 +828,63 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExportReadParquetPartialFieldIds() throws Exception {
+        // DuckDB wrote BIGINT b, without a field id, at position 0 and INT a, of field id 0, at position 1. The
+        // export reads each column of a read_parquet() file from the file column of its name; DuckDB reads
+        // b = 0, 10, ..., 90 and a = 0, 1, ..., 9.
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    final java.nio.file.Path copyRoot = java.nio.file.Paths.get(root, "export");
+                    java.nio.file.Files.createDirectories(copyRoot);
+                    java.nio.file.Files.copy(
+                            java.nio.file.Paths.get(TestUtils.getTestResourcePath("/sqllogictest/data/parquet-testing/partial_field_ids_widths.parquet")),
+                            copyRoot.resolve("partial_field_ids_widths.parquet"),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    );
+                    final String rows = """
+                            b\ta
+                            0\t0
+                            10\t1
+                            20\t2
+                            30\t3
+                            40\t4
+                            50\t5
+                            60\t6
+                            70\t7
+                            80\t8
+                            90\t9
+                            """;
+                    final String[] queries = {
+                            "SELECT * FROM read_parquet('partial_field_ids_widths.parquet')",
+                            "SELECT b, a FROM read_parquet('partial_field_ids_widths.parquet')"
+                    };
+                    for (int i = 0; i < queries.length; i++) {
+                        final String query = queries[i];
+                        assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.DIRECT_PAGE_FRAME);
+                        try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
+                            // Row groups of 4 rows split the file's single row group.
+                            Assert.assertEquals(query, "200", requestParquetExport(httpClient, sink, query, 4));
+                            awaitEndedRequests(httpClient);
+                            final String fileName = "partial_field_ids_" + i + ".parquet";
+                            writeExportFile(engine, sink, fileName);
+                            assertQuery("SELECT * FROM read_parquet('" + fileName + "')")
+                                    .withEngine(engine)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns(rows);
+                        }
+                        assertExportLog(engine, sqlExecutionContext, """
+                                phase\tstatus\tmessage
+                                stream_sending_data\tstarted\t
+                                stream_sending_data\tfinished\t
+                                success\tfinished\t
+                                """);
+                    }
+                });
+    }
+
+    @Test
     public void testExportWithAddColumn() throws Exception {
         getExportTester()
                 .run((engine, _) -> {
@@ -3352,6 +3409,21 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    // Writes the received Parquet file to the export root.
+    private static void writeExportFile(CairoEngine engine, DirectUtf8Sink parquetData, String fileName) {
+        final int size = parquetData.size();
+        final Path path = Path.getThreadLocal(root);
+        path.concat("export").concat(fileName).$();
+        Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+        final long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
+        try {
+            Files.truncate(fd, size);
+            Assert.assertEquals(size, Files.write(fd, parquetData.ptr(), size, 0));
+        } finally {
+            Files.close(fd);
+        }
     }
 
     // Exports the query through /exp in row groups of rowGroupSize rows, and asserts that the export finished and

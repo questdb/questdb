@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -198,5 +199,48 @@ public class PGParquetTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testReadParquetPartialFieldIdsPreparedTwice() throws Exception {
+        // DuckDB wrote BIGINT b, without a field id, at position 0 and INT a, of field id 0, at position 1, and
+        // reads a = 0, 1, ..., 9 and b = 0, 10, ..., 90. The query workers turn on the parallel read_parquet().
+        final int previousWorkerCount = sharedQueryWorkerCount;
+        final String previousInputRoot = inputRoot;
+        sharedQueryWorkerCount = 2;
+        inputRoot = root;
+        try {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                java.nio.file.Files.copy(
+                        java.nio.file.Paths.get(TestUtils.getTestResourcePath("/sqllogictest/data/parquet-testing/partial_field_ids_widths.parquet")),
+                        java.nio.file.Paths.get(root, "partial_field_ids_widths.parquet"),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                );
+                final String expected = """
+                        a[INTEGER],b[BIGINT]
+                        0,0
+                        1,10
+                        2,20
+                        3,30
+                        4,40
+                        5,50
+                        6,60
+                        7,70
+                        8,80
+                        9,90
+                        """;
+                try (PreparedStatement ps = connection.prepareStatement("SELECT a, b FROM read_parquet('partial_field_ids_widths.parquet')")) {
+                    for (int i = 0; i < 2; i++) {
+                        try (ResultSet rs = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, rs);
+                        }
+                    }
+                }
+            });
+        } finally {
+            sharedQueryWorkerCount = previousWorkerCount;
+            inputRoot = previousInputRoot;
+        }
     }
 }

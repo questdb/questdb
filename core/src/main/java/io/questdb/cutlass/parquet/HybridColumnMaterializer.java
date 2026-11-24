@@ -599,7 +599,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         final ParquetDecoder decoder = frame.getParquetDecoder();
         decodeParquetColumns.reopen();
         decodeParquetColumns.clear();
-        parquetColumnResolver.resolve(cursor.getColumnMapping(), baseMetadata, decoder, decodeParquetColumns);
+        parquetColumnResolver.resolve(cursor, baseMetadata, decoder, decodeParquetColumns);
         decodeColumns.reopen();
         decodeColumns.clear();
         for (int i = 0, n = (int) decodeParquetColumns.size(); i < n; i++) {

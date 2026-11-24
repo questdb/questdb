@@ -63,6 +63,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 
 import static io.questdb.cutlass.parquet.ParquetExportMode.DIRECT_PAGE_FRAME;
 import static io.questdb.cutlass.parquet.ParquetExportMode.PAGE_FRAME_BACKED;
@@ -842,6 +843,197 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadParquetPartialFieldIds() throws Exception {
+        // DuckDB wrote these files with field ids on some columns only, each id the position of another column.
+        // The export reads each column of a read_parquet() file from the file column of its name. The expected
+        // rows are DuckDB's.
+        assertMemoryLeak(() -> {
+            // a without a field id at position 0, and b of field id 0 at position 1.
+            final String narrow = copyParquetTestFile("partial_field_ids.parquet");
+            final String narrowRows = """
+                    a\tb
+                    1\t2
+                    3\t4
+                    """;
+            copyToParquet("SELECT a, b FROM " + narrow, DIRECT_PAGE_FRAME, "narrow_ab");
+            assertParquetFile("narrow_ab", null, narrowRows);
+            copyToParquet("SELECT * FROM " + narrow, DIRECT_PAGE_FRAME, "narrow_all");
+            assertParquetFile("narrow_all", null, narrowRows);
+            copyToParquet("SELECT b, a FROM " + narrow, DIRECT_PAGE_FRAME, "narrow_ba");
+            assertParquetFile("narrow_ba", null, """
+                    b\ta
+                    2\t1
+                    4\t3
+                    """);
+            copyToParquet("SELECT a * 2 a2, b FROM " + narrow, PAGE_FRAME_BACKED, "narrow_computed");
+            assertParquetFile("narrow_computed", null, """
+                    a2\tb
+                    2\t2
+                    6\t4
+                    """);
+
+            // BIGINT b without a field id at position 0, and INT a of field id 0 at position 1, and the same
+            // columns with field id 5 on both.
+            final String wideRows = """
+                    b\ta
+                    0\t0
+                    10\t1
+                    20\t2
+                    30\t3
+                    40\t4
+                    50\t5
+                    60\t6
+                    70\t7
+                    80\t8
+                    90\t9
+                    """;
+            final String wide = copyParquetTestFile("partial_field_ids_widths.parquet");
+            copyToParquet("SELECT a, b FROM " + wide, DIRECT_PAGE_FRAME, "wide_ab");
+            assertParquetFile("wide_ab", null, """
+                    a\tb
+                    0\t0
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t40
+                    5\t50
+                    6\t60
+                    7\t70
+                    8\t80
+                    9\t90
+                    """);
+            copyToParquet("SELECT * FROM " + wide, DIRECT_PAGE_FRAME, "wide_all");
+            assertParquetFile("wide_all", null, wideRows);
+            copyToParquet("SELECT b, a FROM " + wide, DIRECT_PAGE_FRAME, "wide_ba");
+            assertParquetFile("wide_ba", null, wideRows);
+            copyToParquet("SELECT a * 2 a2, b FROM " + wide, PAGE_FRAME_BACKED, "wide_computed");
+            assertParquetFile("wide_computed", null, """
+                    a2\tb
+                    0\t0
+                    2\t10
+                    4\t20
+                    6\t30
+                    8\t40
+                    10\t50
+                    12\t60
+                    14\t70
+                    16\t80
+                    18\t90
+                    """);
+            final String repeated = copyParquetTestFile("repeated_field_ids.parquet");
+            copyToParquet("SELECT * FROM " + repeated, DIRECT_PAGE_FRAME, "repeated_all");
+            assertParquetFile("repeated_all", null, wideRows);
+
+            // INT a without a field id at position 0, and VARCHAR b of field id 0 at position 1.
+            final String varchar = copyParquetTestFile("partial_field_ids_varchar.parquet");
+            copyToParquet("SELECT b, a FROM " + varchar, DIRECT_PAGE_FRAME, "varchar_ba");
+            assertParquetFile("varchar_ba", null, """
+                    b\ta
+                    v0\t0
+                    v1\t1
+                    v2\t2
+                    v3\t3
+                    v4\t4
+                    v5\t5
+                    v6\t6
+                    v7\t7
+                    v8\t8
+                    v9\t9
+                    """);
+
+            // DOUBLE[] arr, INT x, DECIMAL(38, 10) d, BIGINT y, UUID u and SMALLINT s, with field ids 0, 2 and 4
+            // on x, y and s.
+            final String types = copyParquetTestFile("partial_field_ids_types.parquet");
+            copyToParquet("SELECT * FROM " + types, DIRECT_PAGE_FRAME, "types_all");
+            assertParquetFile("types_all", null, """
+                    arr\tx\td\ty\tu\ts
+                    [0.0,-0.25]\t-150\t-1.0000000000\tnull\t11111111-2222-3333-4444-555555555550\t-2000
+                    [1.5,-1.25]\t-50\t1234567889.0123456789\t9999999999\t\t-1000
+                    null\t50\t2469135779.0246913578\t19999999999\t11111111-2222-3333-4444-555555555552\t0
+                    [4.5,-3.25]\tnull\t-9999999999999999999999999999.9999999999\t29999999999\t11111111-2222-3333-4444-555555555553\t1000
+                    [6.0,-4.25]\t250\t\t39999999999\t11111111-2222-3333-4444-555555555554\t2000
+                    """);
+            copyToParquet("SELECT s, u, y, d, x, arr FROM " + types, DIRECT_PAGE_FRAME, "types_reversed");
+            assertParquetFile("types_reversed", null, """
+                    s\tu\ty\td\tx\tarr
+                    -2000\t11111111-2222-3333-4444-555555555550\tnull\t-1.0000000000\t-150\t[0.0,-0.25]
+                    -1000\t\t9999999999\t1234567889.0123456789\t-50\t[1.5,-1.25]
+                    0\t11111111-2222-3333-4444-555555555552\t19999999999\t2469135779.0246913578\t50\tnull
+                    1000\t11111111-2222-3333-4444-555555555553\t29999999999\t-9999999999999999999999999999.9999999999\tnull\t[4.5,-3.25]
+                    2000\t11111111-2222-3333-4444-555555555554\t39999999999\t\t250\t[6.0,-4.25]
+                    """);
+
+            // A table partition is found by writer index: its Parquet file, converted after DROP COLUMN b,
+            // holds c, of writer index 2, at position 1.
+            execute("CREATE TABLE td (a INT, b LONG, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO td SELECT x::INT, x * 10, (x * 100)::INT, timestamp_sequence('2024-01-01', 43_200_000_000) FROM long_sequence(4)");
+            execute("ALTER TABLE td DROP COLUMN b");
+            convertFirstDay("td");
+            Assert.assertEquals("[0,2,3]", parquetColumnIds(engine, "td"));
+            copyToParquet("SELECT c, a FROM td", DIRECT_PAGE_FRAME, "table_ca");
+            assertParquetFile("table_ca", null, """
+                    c\ta
+                    100\t1
+                    200\t2
+                    300\t3
+                    400\t4
+                    """);
+            copyToParquet("SELECT c * 2 c2, a FROM td", PAGE_FRAME_BACKED, "table_computed");
+            assertParquetFile("table_computed", null, """
+                    c2\ta
+                    200\t1
+                    400\t2
+                    600\t3
+                    800\t4
+                    """);
+        });
+    }
+
+    @Test
+    public void testReadParquetPartialFieldIdsRowGroups() throws Exception {
+        // DuckDB wrote 2_500 rows in row groups of 2_048 and 452 rows. b, s, f and n have no field id, and a,
+        // ts, d and k have field ids 0, 2, 4 and 6, each the position of the column before. The export reads
+        // every row group of the file; table expected holds the rows by DuckDB's formulas, with i = x - 1.
+        assertMemoryLeak(() -> {
+            final String file = copyParquetTestFile("partial_field_ids_row_groups.parquet");
+            execute("""
+                    CREATE TABLE expected AS (
+                        SELECT
+                            CASE WHEN i % 7 = 0 THEN NULL ELSE i * 10 END b,
+                            CASE WHEN i % 5 = 0 THEN NULL ELSE i::INT END a,
+                            CASE WHEN i % 3 = 0 THEN NULL ELSE ('v' || i)::VARCHAR END s,
+                            '2024-01-01'::TIMESTAMP + i * 1_000_000 ts,
+                            i % 2 = 0 f,
+                            i / 4.0 d,
+                            NULL::INT n,
+                            (i % 100)::INT k
+                        FROM (SELECT x - 1 i FROM long_sequence(2_500))
+                    )""");
+            for (String columns : new String[]{"*", "k, n, d, f, ts, s, a, b"}) {
+                assertExportMatchesQuery(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT " + columns + " FROM " + file,
+                        "SELECT " + columns + " FROM expected",
+                        DIRECT_PAGE_FRAME,
+                        "*".equals(columns) ? "row_groups_all" : "row_groups_reversed",
+                        ""
+                );
+            }
+            final String computed = "b * 2 b2, a, s, ts, f, d, n, k";
+            assertExportMatchesQuery(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT " + computed + " FROM " + file,
+                    "SELECT " + computed + " FROM expected",
+                    PAGE_FRAME_BACKED,
+                    "row_groups_computed",
+                    ""
+            );
+        });
+    }
+
+    @Test
     public void testReadParquetSource() throws Exception {
         // read_parquet() pages through a file of its own column set and order, just like a
         // Parquet partition does.
@@ -1009,6 +1201,17 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     private static void convertFirstDay(String tableName) throws Exception {
         execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
         drainWalQueue();
+    }
+
+    // Copies a file of sqllogictest's data/parquet-testing directory to the input root, and returns the
+    // read_parquet() call that reads it.
+    private static String copyParquetTestFile(String fileName) throws IOException {
+        java.nio.file.Files.copy(
+                java.nio.file.Paths.get(TestUtils.getTestResourcePath("/sqllogictest/data/parquet-testing/" + fileName)),
+                java.nio.file.Paths.get(exportRoot, fileName),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        );
+        return "read_parquet('" + fileName + "')";
     }
 
     // Two rows a day over three days. The INT columns c, d and e differ in value, so an export

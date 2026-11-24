@@ -103,8 +103,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // O(1) frameIndex lookup. LRU order is tracked separately via the
     // intrusive lruHead/lruTail doubly linked list through DecodedFrameBuffers.
     private final IntObjHashMap<DecodedFrameBuffers> byFrameIndex;
-    // Maps column ID (field_id / writer index) to parquet column index.
-    // Rebuilt each time prepareDecode() encounters a new file.
+    // Maps the key of each column of the file to its parquet column index: the writer index of a
+    // table partition's column, the position of an external file's column, as the frame cursor's
+    // ColumnMapping keys them. Rebuilt each time prepareDecode() encounters a new file.
     private final IntIntHashMap columnIdToParquetIdx;
     private final CairoConfiguration configuration;
     // Per-worker covered (posting-index sidecar) decode buffers, keyed by frame
@@ -1011,12 +1012,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     // Returns the decode slot the parquet column maps to, adding a new slot
     // (and its [parquetIdx, decodeType] entry in decodeColumns) on first sight.
-    // A repeated parquet column reuses the slot recorded by the first caller, so
-    // its decodeType wins; resolveParquetColumn() relies on this de-duplication.
+    // A repeated parquet column reuses the slot recorded by the first caller;
+    // resolveParquetColumn() relies on this de-duplication. Query columns that
+    // share a parquet column share its decoded buffer, which holds the first
+    // caller's decodeType, so a repeated parquet column must ask for that type.
     private int addDecodeSlotIfAbsent(int parquetIdx, int decodeType) {
         final int slotKey = decodeColumnToSlot.keyIndex(parquetIdx);
         final int existingSlot = decodeColumnToSlot.valueAt(slotKey);
         if (existingSlot >= 0) {
+            final int existingDecodeType = decodeColumns.get(2L * existingSlot + 1);
+            if (existingDecodeType != decodeType) {
+                throw CairoException.critical(0)
+                        .put("parquet column requested as two types [parquetColumn=").put(parquetIdx)
+                        .put(", type=").put(ColumnType.nameOf(existingDecodeType))
+                        .put(", otherType=").put(ColumnType.nameOf(decodeType))
+                        .put(']');
+            }
             return existingSlot;
         }
         final int slot = (int) (decodeColumns.size() / 2);
@@ -1030,10 +1041,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final int parquetColumnCount = decoder.getColumnCount();
         columnIdToParquetIdx.clear();
         hasFullProjectionMap = false;
+        // A table partition's file tags each column with its writer index. The field ids of an
+        // external file may be set on some columns only, or repeat, so read_parquet() keys the
+        // columns of its file by position, see ReadParquetRecordCursor.canProjectMetadata().
+        final boolean isExternal = addressCache.isExternal();
         for (int i = 0; i < parquetColumnCount; i++) {
-            final int id = decoder.getColumnId(i);
-            // External parquet files may not have field IDs (all -1).
-            // Fall back to positional index so the lookup in prepareDecode() works.
+            final int id = isExternal ? i : decoder.getColumnId(i);
             columnIdToParquetIdx.put(id < 0 ? i : id, i);
         }
     }
