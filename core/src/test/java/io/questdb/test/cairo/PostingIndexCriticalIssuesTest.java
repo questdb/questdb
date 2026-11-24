@@ -223,7 +223,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 final int plen = path.size();
                 final LongList tags = new LongList();
-                readPostingChainTags(path.trimTo(plen), "sym", columnNameTxn, tags);
+                readPostingChainEntries(path.trimTo(plen), "sym", columnNameTxn, new LongList(), tags);
                 Assert.assertTrue("the commit must have published at least one chain entry", tags.size() > 0);
                 for (int i = 0, n = tags.size(); i < n; i++) {
                     Assert.assertNotEquals(
@@ -348,7 +348,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 final int plen = path.size();
                 final LongList tags = new LongList();
-                readPostingChainTags(path.trimTo(plen), "sym2", columnNameTxn, tags);
+                readPostingChainEntries(path.trimTo(plen), "sym2", columnNameTxn, new LongList(), tags);
                 Assert.assertTrue("the commit must have published at least one chain entry", tags.size() > 0);
                 for (int i = 0, n = tags.size(); i < n; i++) {
                     Assert.assertNotEquals(
@@ -11774,7 +11774,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 final int plen = path.size();
                 final LongList tags = new LongList();
-                readPostingChainTags(path.trimTo(plen), "sym", columnNameTxn, tags);
+                readPostingChainEntries(path.trimTo(plen), "sym", columnNameTxn, new LongList(), tags);
                 Assert.assertTrue("the commit must have published at least one chain entry", tags.size() > 0);
                 for (int i = 0, n = tags.size(); i < n; i++) {
                     Assert.assertNotEquals(
@@ -12587,33 +12587,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         writer.commit();
     }
 
-    // Collects the sealTxn of every entry of the chain in the key file of index name; none when it holds no chain
-    private static void collectChainSealTxns(Path path, int plen, String name, LongList sealTxns) {
-        sealTxns.clear();
-        final FilesFacade ff = configuration.getFilesFacade();
-        try {
-            final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-            final long size = ff.length(keyFile);
-            if (size < PostingIndexUtils.KEY_FILE_RESERVED) {
-                return;
-            }
-            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, keyFile, size, MemoryTag.MMAP_DEFAULT)) {
-                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                chain.openExisting(keyMem);
-                final PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-                long offset = chain.getHeadEntryOffset();
-                for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
-                    Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
-                    PostingIndexChainEntry.read(keyMem, offset, entry);
-                    sealTxns.add(entry.sealTxn);
-                    offset = entry.prevEntryOffset;
-                }
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     // Collects the sealTxns of the purges the writer queued
     private static void collectQueuedSealTxns(PostingIndexWriter writer, LongList queuedSealTxns) {
         queuedSealTxns.clear();
@@ -12799,6 +12772,37 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     // Rows 0 to maxRow
     private static LongList postingRows(long maxRow) {
         return addPostingRows(new LongList(), 0, maxRow);
+    }
+
+    // Collects the sealTxn and the txnAtSeal of every entry of the .pk chain of (name, columnNameTxn), head first;
+    // none when the key file holds no chain
+    private static void readPostingChainEntries(Path path, CharSequence name, long columnNameTxn, LongList sealTxns, LongList txnAtSeals) {
+        sealTxns.clear();
+        txnAtSeals.clear();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int plen = path.size();
+        try {
+            final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
+            final long size = ff.length(keyFile);
+            if (size < PostingIndexUtils.KEY_FILE_RESERVED) {
+                return;
+            }
+            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, keyFile, size, MemoryTag.MMAP_DEFAULT)) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                final PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+                long offset = chain.getHeadEntryOffset();
+                for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
+                    Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
+                    PostingIndexChainEntry.read(keyMem, offset, entry);
+                    sealTxns.add(entry.sealTxn);
+                    txnAtSeals.add(entry.txnAtSeal);
+                    offset = entry.prevEntryOffset;
+                }
+            }
+        } finally {
+            path.trimTo(plen);
+        }
     }
 
     private static long readPublishedRegionLimit(FilesFacade ff, Path path, int plen, CharSequence name) {
@@ -13243,7 +13247,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     private int assertOrphanPurgesSpanEveryTxn(Path path, int plen, String name, PostingIndexWriter writer, LongList chainSealTxnsBefore, String where) {
         final LongList chainSealTxnsAfter = new LongList();
-        collectChainSealTxns(path, plen, name, chainSealTxnsAfter);
+        readPostingChainEntries(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, chainSealTxnsAfter, new LongList());
         int count = 0;
         for (int i = 0, n = writer.getPendingPurgesSizeForTesting(); i < n; i++) {
             final long sealTxn = writer.getPendingPurgeSealTxnForTesting(i);
@@ -13566,31 +13570,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return previous;
     }
 
-    // Collects the sealTxn and the txnAtSeal of every entry of the .pk chain of (name, columnNameTxn), head first
-    private void readPostingChainEntries(Path path, CharSequence name, long columnNameTxn, LongList sealTxns, LongList txnAtSeals) {
-        sealTxns.clear();
-        txnAtSeals.clear();
-        final FilesFacade ff = configuration.getFilesFacade();
-        final int plen = path.size();
-        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
-        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(), ff.length(keyFile), MemoryTag.MMAP_DEFAULT, 0)) {
-            PostingIndexChainWriter chain = new PostingIndexChainWriter();
-            chain.openExisting(pk);
-            Assert.assertTrue("chain must have a head", chain.hasHead());
-            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-            long offset = chain.getHeadEntryOffset();
-            for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
-                Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
-                PostingIndexChainEntry.read(pk, offset, entry);
-                sealTxns.add(entry.sealTxn);
-                txnAtSeals.add(entry.txnAtSeal);
-                offset = entry.prevEntryOffset;
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     // The sealTxn the chain head of the .pk of the index names
     private long readPostingSealTxn(Path path, int plen, String name) {
         try {
@@ -13598,31 +13577,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     configuration.getFilesFacade(),
                     PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)
             );
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    private void readPostingChainTags(Path path, CharSequence name, long columnNameTxn, LongList out) {
-        out.clear();
-        final FilesFacade ff = configuration.getFilesFacade();
-        final int plen = path.size();
-        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
-        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(),
-                ff.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-            PostingIndexChainWriter chain = new PostingIndexChainWriter();
-            chain.openExisting(pk);
-            Assert.assertTrue("chain must have a head", chain.hasHead());
-            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-            long offset = chain.getHeadEntryOffset();
-            // Bound the walk by entryCount, the same defence recoveryDropAbandoned
-            // uses against a corrupted prev pointer.
-            for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
-                Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
-                PostingIndexChainEntry.read(pk, offset, entry);
-                out.add(entry.txnAtSeal);
-                offset = entry.prevEntryOffset;
-            }
         } finally {
             path.trimTo(plen);
         }
@@ -14113,7 +14067,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             writer.setCommitMode(commitModes[mode]);
                             setup.run(writer, coverAddr);
                             final long liveSealTxnBefore = readPostingSealTxn(path, plen, indexName);
-                            collectChainSealTxns(path, plen, indexName, chainSealTxnsBefore);
+                            readPostingChainEntries(path.trimTo(plen), indexName, COLUMN_NAME_TXN_NONE, chainSealTxnsBefore, new LongList());
                             sweepFf.arm(failAt);
                             boolean isThrown = false;
                             try {
