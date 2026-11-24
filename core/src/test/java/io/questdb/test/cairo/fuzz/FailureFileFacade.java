@@ -175,6 +175,15 @@ public class FailureFileFacade implements FilesFacade {
         return failureGenerated.get();
     }
 
+    /**
+     * The armed countdown: the value passed to {@link #setToFailAfter(int)} minus the file
+     * system calls counted since. It keeps falling past zero after the failure fires, so the
+     * difference is the number of calls made while armed.
+     */
+    public int getOsCallsCount() {
+        return osCallsCount.get();
+    }
+
     @Override
     public long findClose(long findPtr) {
         return ff.findClose(findPtr);

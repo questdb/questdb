@@ -276,7 +276,8 @@ impl PartitionFrameWriter {
                 footer_offset,
                 footer_length,
                 self.chunked_writer.bloom_bitsets(),
-                0, // unused_bytes: new file, no dead space
+                None, // a new file: write order is final order
+                0,    // unused_bytes: new file, no dead space
                 self.squash_tracker,
                 self.seq_txn,
                 self.chunked_writer.chunk_ascii(),
