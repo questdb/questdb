@@ -8016,6 +8016,70 @@ mod tests {
     }
 
     #[test]
+    fn header_ascii_check_runs_once_per_partition() -> Result<(), Box<dyn Error>> {
+        use crate::parquet_write::varchar::ARE_BYTES_ASCII_CALLS;
+
+        // DeltaLengthByteArray, the default VARCHAR encoding: the encoder checks each page it
+        // writes with are_bytes_ascii, and so does the check of the old values
+        fn append_counting_byte_checks(
+            file: &mut VarcharAsciiFile,
+            a: &[&str],
+            b: &[&str],
+        ) -> Result<usize, Box<dyn Error>> {
+            let calls = || ARE_BYTES_ASCII_CALLS.with(|calls| calls.get());
+            let before = calls();
+            file.append_in_place(a, b)?;
+            Ok(calls() - before)
+        }
+        let a = ["a9", "a10", "a11", "a12"];
+        let b = ["b9", "b10", "b11", "b12"];
+        // the header of a _pm this version creates flags no column: the append checks only the
+        // chunks it writes
+        let encoder_checks = append_counting_byte_checks(&mut VarcharAsciiFile::new()?, &a, &b)?;
+
+        for (old_b, is_valid) in [
+            (["b1", "b2", "b3", "b4"], true),
+            (["b1", "\u{fc}2", "b3", "b4"], false),
+        ] {
+            // an old version flagged a and b in the header and appended in place, without saying
+            // whether the flags hold; the Parquet footer claims both ASCII
+            let mut file =
+                VarcharAsciiFile::with_footer_claiming_ascii(&["a1", "a2", "a3", "a4"], &old_b)?;
+            file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
+            file.rewrite_pm_as_old_format()?;
+
+            // the first append decodes the old values: it vouches for the header, or finds b
+            // non-ASCII and clears its footer flag
+            let checks = append_counting_byte_checks(&mut file, &a, &b)?;
+            assert!(checks > encoder_checks, "{old_b:?}: {checks}");
+            assert_eq!(file.is_header_ascii_valid()?, is_valid, "{old_b:?}");
+
+            // the next append decodes nothing: its snapshot vouches for the header, or the footer
+            // flag of b says the header cannot hold
+            let checks = append_counting_byte_checks(&mut file, &a, &b)?;
+            assert_eq!(checks, encoder_checks, "{old_b:?}");
+            assert_eq!(file.is_header_ascii_valid()?, is_valid, "{old_b:?}");
+            assert_eq!(
+                file.footer_ascii()?,
+                [None, Some(true), Some(is_valid)],
+                "{old_b:?}"
+            );
+            let old = if is_valid { ASCII } else { NOT_ASCII };
+            assert_eq!(
+                file.decoded_ascii_flags(1)?,
+                [old, old, ASCII, ASCII],
+                "{old_b:?}"
+            );
+            assert_eq!(
+                file.decoded_ascii_flags(2)?,
+                [old, old, ASCII, ASCII],
+                "{old_b:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn in_place_update_without_pm_writes_no_pm() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
         use parquet2::metadata::SortingColumn;
