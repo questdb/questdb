@@ -160,18 +160,18 @@ pub struct ParquetUpdater {
     seq_txn: SeqTxn,
     // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
     // Seeded at construction from the old qdb_meta's ascii flag:
-    //   old.ascii == Some(true)  -> initial value `true`  (scan new aux to verify)
+    //   old.ascii == Some(true)  -> initial value `true`  (new writes verify it)
     //   old.ascii == Some(false) -> initial value `false` (any copied old row
     //                               group already carries non-ASCII bytes, so
     //                               the final flag can only be `Some(false)`)
     //   old.ascii == None        -> initial value `false` (unknown about old,
     //                               so be conservative)
     // set_target_schema() additionally seeds fresh VARCHAR columns from
-    // ADD COLUMN as `true`: existing rows backfill with nulls, which
-    // is_column_ascii skips, so a new column is trivially all-ASCII until
-    // a write proves otherwise. Each write call scans the aux of every
-    // VARCHAR column once, for this tracker and for the per-chunk flags of
-    // `_pm` (see `chunk_ascii`).
+    // ADD COLUMN as `true`: existing rows backfill with nulls, which have
+    // no bytes to check, so a new column is trivially all-ASCII until a
+    // write proves otherwise. Each write takes the encoder's check of the
+    // bytes of every VARCHAR chunk it encodes, for this tracker and for the
+    // per-chunk flags of `_pm` (see `chunk_ascii`).
     // Columns missing from the map at end() (no old entry and no
     // set_target_schema seeding) resolve to `false` via unwrap_or(false).
     varchar_all_ascii: RapidHashMap<i32, bool>,
@@ -365,7 +365,8 @@ impl ParquetUpdater {
         // here: there is no path back to Some(true) once any old data has
         // been seen as non-ASCII (or as unknown), because copied row groups
         // carry that data through. track_varchar_all_ascii() downgrades a column
-        // starting at `true` to `false` on the first non-ASCII entry.
+        // starting at `true` to `false` on the first chunk whose bytes the
+        // encoder found non-ASCII.
         let mut varchar_all_ascii: RapidHashMap<i32, bool> = RapidHashMap::default();
         let schema_cols = metadata.schema_descr.columns();
         for (i, col) in source_qdb_meta.schema.iter().enumerate() {
@@ -1170,11 +1171,12 @@ impl ParquetUpdater {
                 });
 
             // Seed a fresh VARCHAR column added by ADD COLUMN as `true`:
-            // existing rows backfill with nulls (which is_column_ascii
-            // skips), so the column is trivially all-ASCII until a write
+            // existing rows backfill with nulls, which have no bytes to
+            // check, so the column is trivially all-ASCII until a write
             // proves otherwise. track_varchar_all_ascii() will downgrade it on
-            // the first non-ASCII aux entry. Existing columns already have
-            // a tracker entry from new() and must not be overwritten here.
+            // the first chunk whose bytes the encoder found non-ASCII.
+            // Existing columns already have a tracker entry from new() and
+            // must not be overwritten here.
             if !is_existing_col && col.data_type.tag() == ColumnTypeTag::Varchar {
                 self.varchar_all_ascii.insert(col.id, true);
             }
@@ -1796,10 +1798,10 @@ impl ParquetUpdater {
         // old column whose old.ascii was Some(true) or for a fresh ADD
         // COLUMN VARCHAR (existing rows backfill with nulls, which are
         // ASCII-compatible), and as `false` otherwise. track_varchar_all_ascii()
-        // flips it to `false` on the first non-ASCII aux entry. So the
-        // tracker encodes "old data was all-ASCII (or absent) AND every new
-        // write stayed all-ASCII". Columns missing from the tracker emit
-        // Some(false), matching the conservative default.
+        // flips it to `false` on the first chunk whose bytes the encoder found
+        // non-ASCII. So the tracker encodes "old data was all-ASCII (or
+        // absent) AND every new write stayed all-ASCII". Columns missing from
+        // the tracker emit Some(false), matching the conservative default.
         let schema_fields = self.parquet_file.schema().fields();
         for (i, col) in qdb_meta.schema.iter_mut().enumerate() {
             if col.column_type.tag() != ColumnTypeTag::Varchar {
