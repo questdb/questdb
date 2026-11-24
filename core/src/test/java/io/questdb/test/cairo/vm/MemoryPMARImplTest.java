@@ -288,6 +288,56 @@ public class MemoryPMARImplTest {
     }
 
     @Test
+    public void testFailedPageReleaseThenJumpBack() throws Exception {
+        // The page switch msyncs the full page as it releases it, and the msync fails: release() unmaps the page all
+        // the same, and nothing must point into it. A jump back into the page maps it again, and the put after the
+        // jump writes into the file, not through the unmapped page.
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = Files.PAGE_SIZE;
+            final AtomicBoolean isFailing = new AtomicBoolean();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public void msync(long addr, long len, boolean async) {
+                    if (isFailing.compareAndSet(true, false)) {
+                        throw CairoException.critical(5).put("could not msync");
+                    }
+                    super.msync(addr, len, async);
+                }
+            };
+            final File file = temp.newFile();
+            try (Path path = new Path().of(file.getAbsolutePath())) {
+                try (MemoryPMARImpl mem = new MemoryPMARImpl((CairoConfiguration) null)) {
+                    mem.of(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                    // the page release msyncs under every commit mode but NOSYNC
+                    mem.setCommitMode(CommitMode.ASYNC);
+                    fillPage(mem, pageSize - 3);
+                    isFailing.set(true);
+                    try {
+                        mem.putLong(0x0102030405060708L);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not msync");
+                    }
+                    Assert.assertFalse(isFailing.get());
+                    Assert.assertEquals(0, mem.getPageAddress(0));
+                    Assert.assertEquals(pageSize, mem.getAppendOffset());
+                    mem.jumpTo(pageSize - 3);
+                    mem.putLong(0x1112131415161718L);
+                    Assert.assertEquals(pageSize + 5, mem.getAppendOffset());
+                    mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                }
+            }
+            // the value of the put after the jump replaces the 3 bytes the failed put wrote into the page
+            final ByteBuffer expected = le((int) pageSize + 5);
+            for (int i = 0; i < pageSize - 3; i++) {
+                expected.put(patternByte(i));
+            }
+            expected.putLong(0x1112131415161718L);
+            Assert.assertArrayEquals(expected.array(), java.nio.file.Files.readAllBytes(file.toPath()));
+        });
+    }
+
+    @Test
     public void testFailedPageSwitchEveryPutKind() throws Exception {
         // Every kind of put that needs the next page, with no byte, one byte, or all bytes but one of its value left
         // in the page, under each commit mode the page release follows. The page switch fails; a jump back to the

@@ -159,6 +159,34 @@ public class AppendPageFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEarlierRowAfterFailedTimestampPage() throws Exception {
+        // The failed row leaves the max timestamp at the last committed row, so the next row, earlier than the failed
+        // one and later than the committed ones, is in order: PARTITION BY NONE, which refuses rows out of order,
+        // takes it, and the commit stores its timestamp as the max timestamp of the table.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        for (String partitionBy : new String[]{"NONE", "DAY"}) {
+            final AllocateFailingFacade ff = new AllocateFailingFacade("tab", "ts.d");
+            assertMemoryLeak(ff, () -> {
+                createTables(ROWS_PER_PAGE, partitionBy);
+                failInsert(ff, ROWS_PER_PAGE + 100);
+                insertRow(ROWS_PER_PAGE + 50);
+                assertRows(ROWS_PER_PAGE, ROWS_PER_PAGE + 50);
+                try (TableReader reader = getReader("tab")) {
+                    Assert.assertEquals(partitionBy, ROWS_PER_PAGE + 50, reader.getMaxTimestamp());
+                }
+                // the max of the designated timestamp: the first row of a backward scan of the table
+                assertQuery("SELECT max(ts) FROM tab")
+                        .noLeakCheck()
+                        .timestampDesc("max")
+                        .expectSize()
+                        .returns("max\n" + timestampOf(ROWS_PER_PAGE + 50) + "\n");
+                execute("DROP TABLE tab");
+                execute("DROP TABLE ref");
+            });
+        }
+    }
+
+    @Test
     public void testEmptyTableFirstRowFailedPage() throws Exception {
         // the first row of the table opens its partition, and the first page of ts.d cannot be allocated
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
@@ -697,8 +725,13 @@ public class AppendPageFailureTest extends AbstractCairoTest {
 
     // tab and ref with rows x = 1..n at ts = x, written by INSERT
     private static void createTables(long n) throws Exception {
-        execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("CREATE TABLE ref (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        createTables(n, "DAY");
+    }
+
+    // tab and ref, partitioned as given, with rows x = 1..n at ts = x, written by INSERT
+    private static void createTables(long n, String partitionBy) throws Exception {
+        execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY " + partitionBy + " BYPASS WAL");
+        execute("CREATE TABLE ref (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY " + partitionBy + " BYPASS WAL");
         if (n > 0) {
             execute("INSERT INTO tab SELECT x::TIMESTAMP, x FROM long_sequence(" + n + ")");
             execute("INSERT INTO ref SELECT x::TIMESTAMP, x FROM long_sequence(" + n + ")");
