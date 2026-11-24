@@ -64,17 +64,16 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
 
     @Test
     public void testAggregatesOverCaseKeepDistinctSubqueries() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT sum(CASE WHEN x = (SELECT 1L) THEN x ELSE 0 END) a, sum(CASE WHEN x = (SELECT 2L) THEN x ELSE 0 END) b
                 FROM long_sequence(3)
                 """)
-                .noLeakCheck()
                 .expectSize()
                 .noRandomAccess()
                 .returns("""
                         a\tb
                         1\t2
-                        """));
+                        """);
     }
 
     @Test
@@ -102,15 +101,14 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctKeepsDistinctSubqueries() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT DISTINCT x = (SELECT 1) p, x = (SELECT 2) q FROM long_sequence(3) ORDER BY p, q")
-                .noLeakCheck()
+        assertQuery("SELECT DISTINCT x = (SELECT 1) p, x = (SELECT 2) q FROM long_sequence(3) ORDER BY p, q")
                 .expectSize()
                 .returns("""
                         p\tq
                         false\tfalse
                         false\ttrue
                         true\tfalse
-                        """));
+                        """);
     }
 
     @Test
@@ -176,9 +174,8 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
 
     @Test
     public void testGroupingKeyOfAnotherSubqueryDoesNotCoverSelectedExpression() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT x = (SELECT 1) p, count() n FROM long_sequence(3) GROUP BY x = (SELECT 2)")
-                .noLeakCheck()
-                .fails(7, "column must appear in GROUP BY clause or aggregate function"));
+        assertQuery("SELECT x = (SELECT 1) p, count() n FROM long_sequence(3) GROUP BY x = (SELECT 2)")
+                .fails(7, "column must appear in GROUP BY clause or aggregate function");
     }
 
     @Test
@@ -382,19 +379,18 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
 
     @Test
     public void testWindowArgumentsKeepDistinctDeclaredSubqueries() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 DECLARE @q1 := (SELECT 1L x), @q2 := (SELECT 3L x)
                 SELECT x, sum(CASE WHEN x = @q1 THEN x ELSE 0 END) OVER () a, sum(CASE WHEN x = @q2 THEN x ELSE 0 END) OVER () b
                 FROM long_sequence(3)
                 """)
-                .noLeakCheck()
                 .expectSize()
                 .returns("""
                         x\ta\tb
                         1\t1.0\t3.0
                         2\t1.0\t3.0
                         3\t1.0\t3.0
-                        """));
+                        """);
     }
 
     @Test

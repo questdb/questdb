@@ -50,15 +50,14 @@ public class CastStrToStrArrayFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTextConstant() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT 'a' <> all('{a,b}'::text[]) s, 'a' <> all('{b,c}'::varchar::text[]) vc, 'a' <> all('{a}'::symbol::text[]) sym
                 FROM long_sequence(1)
                 """)
-                .noLeakCheck()
                 .expectSize()
                 .returns("""
                         s\tvc\tsym
                         false\ttrue\tfalse
-                        """));
+                        """);
     }
 }

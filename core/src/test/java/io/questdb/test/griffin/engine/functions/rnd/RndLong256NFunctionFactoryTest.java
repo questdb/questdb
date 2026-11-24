@@ -31,15 +31,14 @@ public class RndLong256NFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDrawsFromPoolOfGivenSize() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT count_distinct(a) a, count_distinct(b) b
                 FROM (SELECT rnd_long256(1) a, rnd_long256(3) b FROM long_sequence(1_000))
                 """)
-                .noLeakCheck()
                 .returnsOnce("""
                         a\tb
                         1\t3
-                        """));
+                        """);
     }
 
     @Test

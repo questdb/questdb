@@ -2139,14 +2139,14 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalVarchar() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT interval(0, 1) k UNION ALL SELECT 'a'::VARCHAR")
+        assertQuery("SELECT interval(0, 1) k UNION ALL SELECT 'a'::VARCHAR")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
                         k
                         ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')
                         a
-                        """));
+                        """);
     }
 
     @Test

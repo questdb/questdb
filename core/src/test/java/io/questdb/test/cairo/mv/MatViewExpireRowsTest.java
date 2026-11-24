@@ -2504,8 +2504,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByOverTableFunctionKeepsItsPlan() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT generate_series, count() c FROM generate_series('2024-01-01', '2024-01-03', '1d') SAMPLE BY 1d")
-                .noLeakCheck()
+        assertQuery("SELECT generate_series, count() c FROM generate_series('2024-01-01', '2024-01-03', '1d') SAMPLE BY 1d")
                 .withPlanContaining("GroupBy vectorized: false")
                 .timestamp("generate_series")
                 .expectSize()
@@ -2514,7 +2513,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                         2024-01-01T00:00:00.000000Z\t1
                         2024-01-02T00:00:00.000000Z\t1
                         2024-01-03T00:00:00.000000Z\t1
-                        """));
+                        """);
     }
 
     @Test
