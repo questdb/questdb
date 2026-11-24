@@ -68,9 +68,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink sqlText = new StringSink();
     private final CopyExportContext copyExportContext;
     private final StringSink errorMessage = new StringSink();
-    private final QueryVariablesParameter queryVariables = new QueryVariablesParameter();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
+    private final QueryVariablesParameter queryVariables = new QueryVariablesParameter();
     private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();

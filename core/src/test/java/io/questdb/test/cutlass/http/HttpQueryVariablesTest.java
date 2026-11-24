@@ -43,9 +43,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * The {@code variables} parameter of {@code /exec}: variables a client declares outside the
- * query's text, as the assignments of a DECLARE block, which the query reads as a DECLARE block
- * that opens it.
+ * The {@code variables} parameter of {@code /exec}, {@code /exp} and
+ * {@code /api/v1/sql/validate}: variables a client declares outside the query's text, as the
+ * assignments of a DECLARE block, which the query reads as a DECLARE block that opens it.
  */
 public class HttpQueryVariablesTest extends AbstractTest {
     private static final VariablesHttpClient testHttpClient = new VariablesHttpClient();
@@ -234,9 +234,21 @@ public class HttpQueryVariablesTest extends AbstractTest {
 
     @Test
     public void testErrorWhileRowsStream() throws Exception {
-        // simulate_crash('0') fails at the first row with the fixed position 222, which is no
-        // position in the variables, however long they are
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // A function from the variables fails at the first row, after the response has begun:
+            // the error points into the variables parameter. dateadd() reports a NULL stride at the
+            // stride, n here.
+            engine.execute("CREATE TABLE t2 (u CHAR, n INT, ts TIMESTAMP)", sqlExecutionContext);
+            engine.execute("INSERT INTO t2 VALUES ('d', null, '2024-01-01')", sqlExecutionContext);
+            final String variables = "@d := dateadd(u, n, ts)";
+            assertGet(
+                    "{\"query\":\"SELECT @d d FROM t2\",\"columns\":[{\"name\":\"d\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"`null` is not a valid stride\", \"errorPos\":"
+                            + variables.indexOf("n, ts") + ",\"errorSource\":\"variables\"}",
+                    "SELECT @d d FROM t2",
+                    variables
+            );
+            // simulate_crash('0') fails at the first row with the fixed position 222, which is no
+            // position in the variables, however long they are
             final String sql = "SELECT simulate_crash('0') FROM long_sequence(1)";
             final String expected = "{\"query\":\"SELECT simulate_crash('0') FROM long_sequence(1)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"simulated cairo exception\", \"errorPos\":222}";
             assertGet(expected, sql, "@pad := 1");
@@ -300,18 +312,6 @@ public class HttpQueryVariablesTest extends AbstractTest {
             TestUtils.assertEquals(
                     "{\"query\":\"SELECT @a x, nope_fn()\",\"error\":\"unknown function name: nope_fn()\",\"position\":13}",
                     sink.toString()
-            );
-            final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
-            final Utf8StringSink badUtf8 = new Utf8StringSink();
-            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
-            params.put("variables", badUtf8);
-            final Utf8StringSink sql = new Utf8StringSink();
-            sql.put("SELECT%201");
-            testHttpClient.assertGet(
-                    "/exp",
-                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
-                    sql,
-                    params
             );
         }));
     }
@@ -396,12 +396,14 @@ public class HttpQueryVariablesTest extends AbstractTest {
             // this path sends the parameters as they are, unencoded
             final Utf8StringSink sql = new Utf8StringSink();
             sql.put("SELECT%201");
-            testHttpClient.assertGet(
-                    "/query",
-                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
-                    sql,
-                    params
-            );
+            for (String url : new String[]{"/query", "/exp", "/api/v1/sql/validate"}) {
+                testHttpClient.assertGet(
+                        url,
+                        "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
+                        sql,
+                        params
+                );
+            }
         }));
     }
 
@@ -579,18 +581,6 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "{\"query\":\"UPDATE t SET v = @a\",\"error\":\"Invalid column: @a\",\"position\":17}",
                     sink.toString()
             );
-            final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
-            final Utf8StringSink badUtf8 = new Utf8StringSink();
-            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
-            params.put("variables", badUtf8);
-            final Utf8StringSink sql = new Utf8StringSink();
-            sql.put("SELECT%201");
-            testHttpClient.assertGet(
-                    url,
-                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
-                    sql,
-                    params
-            );
         }));
     }
 
@@ -642,18 +632,12 @@ public class HttpQueryVariablesTest extends AbstractTest {
 
         String get(CharSequence url, CharSequence sql, @Nullable String variables, @Nullable CharSequenceObjHashMap<String> params, Utf8StringSink sink) {
             try {
-                final HttpClient.Request req = getHttpClient().newRequest("localhost", 9001);
+                final HttpClient.Request req = getHttpClient().newRequest("localhost", port);
                 req.GET().url(url).query("query", sql);
                 if (variables != null) {
                     req.query("variables", variables);
                 }
-                if (params != null) {
-                    for (int i = 0, n = params.size(); i < n; i++) {
-                        final CharSequence name = params.keys().getQuick(i);
-                        req.query(name, params.get(name));
-                    }
-                }
-                final String status = reqToSink(req, sink, null, null, null, null);
+                final String status = reqToSink(req, sink, null, null, null, params);
                 Assert.assertTrue(sink.size() > 0);
                 return status;
             } finally {

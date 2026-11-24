@@ -395,6 +395,20 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
+    // compiles the query with the variables the client declared, see QueryVariablesParameter
+    private static CompiledQuery compile(
+            SqlCompiler compiler,
+            ExportQueryProcessorState state,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws SqlException {
+        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
+        try {
+            return compiler.compile(state.sqlText, sqlExecutionContext);
+        } finally {
+            sqlExecutionContext.setQueryVariables(null, null);
+        }
+    }
+
     private static boolean hasControlChar(CharSequence text) {
         for (int i = 0, n = text.length(); i < n; i++) {
             final char c = text.charAt(i);
@@ -417,6 +431,21 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 && (tok.byteAt(i++) | 32) == 'e'
                 && (tok.byteAt(i++) | 32) == 'x'
                 && (tok.byteAt(i) | 32) == 'p';
+    }
+
+    // In TEMP_TABLE mode the exporter creates the temp table from the query's text, which reads
+    // the variables only while the context carries them.
+    private static void process(
+            HTTPSerialParquetExporter exporter,
+            ExportQueryProcessorState state,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws Exception {
+        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
+        try {
+            exporter.process();
+        } finally {
+            sqlExecutionContext.setQueryVariables(null, null);
+        }
     }
 
     private static void putDecimal128StringValue(HttpChunkedResponse response, Decimal128 decimal128, int type) {
@@ -541,35 +570,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
                 .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
-    }
-
-    // compiles the query with the variables the client declared, see QueryVariablesParameter
-    private static CompiledQuery compile(
-            SqlCompiler compiler,
-            ExportQueryProcessorState state,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws SqlException {
-        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
-        try {
-            return compiler.compile(state.sqlText, sqlExecutionContext);
-        } finally {
-            sqlExecutionContext.setQueryVariables(null, null);
-        }
-    }
-
-    // In TEMP_TABLE mode the exporter creates the temp table from the query's text, which reads
-    // the variables only while the context carries them.
-    private static void process(
-            HTTPSerialParquetExporter exporter,
-            ExportQueryProcessorState state,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws Exception {
-        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
-        try {
-            exporter.process();
-        } finally {
-            sqlExecutionContext.setQueryVariables(null, null);
-        }
     }
 
     private void compileParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {

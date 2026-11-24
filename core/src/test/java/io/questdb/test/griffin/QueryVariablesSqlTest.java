@@ -308,17 +308,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     "CREATE OR REPLACE VIEW v AS (SELECT @a x)",
             };
             for (String sql : statements) {
-                final int position;
-                final String message;
-                try {
-                    execute(sql);
-                    throw new AssertionError("expected an error for " + sql);
-                } catch (SqlException e) {
-                    position = e.getPosition();
-                    message = e.getFlyweightMessage().toString();
-                }
-                Assert.assertEquals("Invalid column: @a", message);
-                withVariables("@a := 1", sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+                Assert.assertEquals("Invalid column: @a", assertFailsAsWithoutVariables(sql, "@a := 1"));
             }
             drainWalAndViewQueues();
             assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
@@ -641,17 +631,46 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     "WITH c AS (SELECT 1) INSERT INTO t VALUES",
             };
             for (String sql : malformed) {
-                final int position;
-                final String message;
-                try {
-                    execute(sql);
-                    throw new AssertionError("expected an error for " + sql);
-                } catch (SqlException e) {
-                    position = e.getPosition();
-                    message = e.getFlyweightMessage().toString();
-                }
-                withVariables("@a := 2", sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+                assertFailsAsWithoutVariables(sql, "@a := 2");
             }
+        });
+    }
+
+    @Test
+    public void testWithClauseReadingViewReadsVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // A WITH clause parses its CTEs before the statement's root takes the variables, and a
+            // view that a CTE reads parses its body as a top-level query. The body takes a model of
+            // its own all the same: the view reads the variables as a caller's values, and keeps its
+            // own declarations to itself. Each statement answers as it does with the assignments as
+            // a DECLARE block that opens it.
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            execute("CREATE VIEW v AS (SELECT l FROM k)");
+            execute("CREATE VIEW v_ovl AS (DECLARE OVERRIDABLE @lim := 2, @y := 42 SELECT l FROM k WHERE l <= @lim)");
+            drainWalAndViewQueues();
+
+            final String cte = "WITH c AS (SELECT l, @x x FROM v) SELECT * FROM c";
+            final String rows = """
+                    l\tx
+                    1\t1
+                    2\t1
+                    3\t1
+                    """;
+            assertQuery("DECLARE @x := 1 " + cte).noLeakCheck().expectSize().returns(rows);
+            withVariables("@x := 1", cte, () -> assertQuery(cte).noLeakCheck().expectSize().returns(rows));
+
+            // the caller's value for the view's OVERRIDABLE variable
+            final String overridden = "WITH c AS (SELECT * FROM v_ovl) SELECT * FROM c";
+            assertQuery("DECLARE @lim := 1 " + overridden).noLeakCheck().returns("l\n1\n");
+            withVariables("@lim := 1", overridden, () -> assertQuery(overridden).noLeakCheck().returns("l\n1\n"));
+
+            // the view's own @y is no variable of the statement
+            final String own = "WITH c AS (SELECT * FROM v_ovl) SELECT @y y FROM c";
+            final String undeclared = "tried to use undeclared variable `@y`";
+            final String declare = "DECLARE @lim := 1 ";
+            assertQuery(declare + own).noLeakCheck().fails(declare.length() + own.indexOf("@y"), undeclared);
+            withVariables("@lim := 1", own, () -> assertQuery(own).noLeakCheck().fails(own.indexOf("@y"), undeclared));
         });
     }
 
@@ -696,8 +715,8 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         }
     }
 
-    // the statement fails with the variables as it does without them
-    private void assertFailsAsWithoutVariables(String sql, String variables) throws Exception {
+    // The statement fails with the variables as it does without them. Returns the error message.
+    private String assertFailsAsWithoutVariables(String sql, String variables) throws Exception {
         final int position;
         final String message;
         try {
@@ -711,6 +730,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             message = container.getFlyweightMessage().toString();
         }
         withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+        return message;
     }
 
     private void assertSubQueryValueResult(String sql, String result, boolean isRandomAccess) throws Exception {

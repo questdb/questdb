@@ -2762,55 +2762,6 @@ public class SqlParser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
-    private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (isIncludeKeyword(tok)) {
-            tok = tok(lexer, "'prevailing'");
-            if (isPrevailingKeyword(tok)) {
-                return true;
-            }
-            throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
-        }
-        return false;
-    }
-
-    /**
-     * Looks past a run of {@code AUDITED} and {@code OVERRIDABLE} words, starting just after the
-     * first of them, to decide whether they mark a declaration. A variable name after them makes
-     * them markers. So does {@code SELECT}, or {@code :=} straight after them or after one more
-     * token - text that a query opening with a table name cannot continue with. There the
-     * declaration lacks its variable, or the variable its {@code @}, and the marker loop reports
-     * that. Anything else leaves the words to the query, where the first names a table and the
-     * next, if any, its alias.
-     */
-    private boolean isMarkedDeclarationAhead(CharSequence content, int from) {
-        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
-        try {
-            CharSequence tok = SqlUtil.fetchNext(lookahead);
-            while (tok != null && (isAuditedKeyword(tok) || isOverridableKeyword(tok))) {
-                tok = SqlUtil.fetchNext(lookahead);
-            }
-            if (tok == null) {
-                return false;
-            }
-            if (tok.charAt(0) == '@' || isSelectKeyword(tok) || Chars.equals(tok, ":=")) {
-                return true;
-            }
-            tok = SqlUtil.fetchNext(lookahead);
-            return tok != null && Chars.equals(tok, ":=");
-        } catch (SqlException e) {
-            // An unclosed quote, which the parse reports when it reads the same text.
-            return false;
-        } finally {
-            viewLexers.release(lookahead);
-        }
-    }
-
-    // True while the parse is in the text of the window WHEN policy that validateWindowExpiryPredicate()
-    // checks, and not in the current policy or a view body that a read of the view expands.
-    private boolean isParsingOwnExpiryPredicateText() {
-        return isParsingExpiryPredicate && viewExpansionDepth == 0 && expiringTablesBeingExpanded.size() == 0;
-    }
-
     /**
      * Whether the WITH clause whose CTEs the lexer is about to read heads a statement that ignores
      * the client's variables, see parse0(): an UPDATE, or an INSERT of the rows VALUES lists,
@@ -2872,6 +2823,55 @@ public class SqlParser {
         } finally {
             lexer.unstash();
         }
+    }
+
+    private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (isIncludeKeyword(tok)) {
+            tok = tok(lexer, "'prevailing'");
+            if (isPrevailingKeyword(tok)) {
+                return true;
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
+        }
+        return false;
+    }
+
+    /**
+     * Looks past a run of {@code AUDITED} and {@code OVERRIDABLE} words, starting just after the
+     * first of them, to decide whether they mark a declaration. A variable name after them makes
+     * them markers. So does {@code SELECT}, or {@code :=} straight after them or after one more
+     * token - text that a query opening with a table name cannot continue with. There the
+     * declaration lacks its variable, or the variable its {@code @}, and the marker loop reports
+     * that. Anything else leaves the words to the query, where the first names a table and the
+     * next, if any, its alias.
+     */
+    private boolean isMarkedDeclarationAhead(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            CharSequence tok = SqlUtil.fetchNext(lookahead);
+            while (tok != null && (isAuditedKeyword(tok) || isOverridableKeyword(tok))) {
+                tok = SqlUtil.fetchNext(lookahead);
+            }
+            if (tok == null) {
+                return false;
+            }
+            if (tok.charAt(0) == '@' || isSelectKeyword(tok) || Chars.equals(tok, ":=")) {
+                return true;
+            }
+            tok = SqlUtil.fetchNext(lookahead);
+            return tok != null && Chars.equals(tok, ":=");
+        } catch (SqlException e) {
+            // An unclosed quote, which the parse reports when it reads the same text.
+            return false;
+        } finally {
+            viewLexers.release(lookahead);
+        }
+    }
+
+    // True while the parse is in the text of the window WHEN policy that validateWindowExpiryPredicate()
+    // checks, and not in the current policy or a view body that a read of the view expands.
+    private boolean isParsingOwnExpiryPredicateText() {
+        return isParsingExpiryPredicate && viewExpansionDepth == 0 && expiringTablesBeingExpanded.size() == 0;
     }
 
     /**
