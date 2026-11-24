@@ -590,8 +590,8 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         if (!isMalformed && (TickExprTest.hasRejectedSuffix(expression) || TickExprTest.hasMisplacedDayFilter(expression))) {
             // a text after the first ';' that does not parse fails the expression after every
             // element, a range between two points in time included, unless a range that starts
-            // after it ends fails first; a malformed time part can take that text in. A range of
-            // business days that holds no day reads no such text, see
+            // after it ends fails first; a malformed time part that takes that text in fails it
+            // too. A range of business days that holds no day reads no such text, see
             // TickExprTest.hasBusinessDayRange().
             fuzzRejectedSuffixCount++;
             if (!("[]".equals(strict) && TickExprTest.hasBusinessDayRange(expression))) {

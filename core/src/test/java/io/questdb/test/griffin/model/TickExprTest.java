@@ -1950,12 +1950,12 @@ public class TickExprTest {
         // A duration with a unit that the timestamp drivers do not add makes the compiled form parse
         // the expression when it evaluates, once it built the IR in full: SQL compiling a literal
         // keeps rejecting what the IR rejects, as it does with the unit h, including parts of the
-        // expression that the parser skips. Each case gives the error of the compiled form, and the
-        // error of the parser.
+        // expression that the parser checks after the duration. Each case gives the error of the
+        // compiled form, and the error of the parser.
         final String[][] cases = {
-                // the parser ignores the time part of a range between two points in time, and checks
-                // its duration
-                {"[$now - 1h..$now]T25:00;1x", "Invalid time override: 25:00", "Invalid duration unit: x"},
+                // a range between two points in time ignores the time part, which the parser checks
+                // before the duration, as after a day
+                {"[$now - 1h..$now]T25:00;1x", "Invalid time override: 25:00", "Invalid date: 2024-01-02T25:00"},
                 {"[$today]T[25:00];1x", "Invalid time in time list: 25:00", "Invalid date: 2024-01-02T25:00"},
                 {"$today@Bogus/Zone;1x", "invalid timezone: Bogus/Zone", "Invalid duration unit: x"},
                 {"$today;h1x", "Expected number before unit 'h'", "Expected number before unit 'h'"},
@@ -2198,6 +2198,41 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2026-01-01T07:30:00.000000Z, hi=2026-01-01T07:30:59.999999Z},{lo=2026-01-02T08:00:00.000000Z, hi=2026-01-02T08:00:59.999999Z}]",
                 "[2026-01-01T09:30, 2026-01-02]T10:00@+02:00"
+        );
+    }
+
+    @Test
+    public void testDateListElementWithTimeAndMalformedListTimeFails() throws SqlException {
+        // An element with a time of its own keeps it and ignores the time part of the list, which
+        // still fails the list where it does not parse, as it fails a day: the parser reads it after
+        // the date of the element. The parser selected the element there.
+        final long now = timestampType.getDriver().parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        // the reference: the same time part after a day
+        assertParseFailsAtEveryCheckLevel("[2024-01-02]T[25:00]", now, "Invalid date: 2024-01-02T25:00");
+        for (String element : new String[]{
+                "2024-01-02T10:00", "2024-01-02T09", "2024-01-02T09:00:00.000000Z", "2024-01-02T09:00@+02:00",
+                "2024-01-02T09:00#Tue", "2024-01-02T09:00;1h"
+        }) {
+            for (String timePart : new String[]{"T[25:00]", "T25:00"}) {
+                assertParseFailsAtEveryCheckLevel("[" + element + "]" + timePart, now, "Invalid date: 2024-01-02T25:00");
+            }
+            assertParseFailsAtEveryCheckLevel("[" + element + "]T", now, "Invalid date: 2024-01-02T");
+        }
+        // the date of an element with brackets expands as a day would, and fails on its first day
+        assertParseFailsAtEveryCheckLevel("[2024-01-[01..03]T09:00]T25:00", now, "Invalid date: 2024-01-01T25:00");
+        assertParseFailsAtEveryCheckLevel("[2024-W03-1T09:00]T25:00", now, "Invalid date: 2024-W03-1T25:00");
+        // an element without a day fails on the time part of the list after its date, which no date
+        // takes, before it fails on its own time
+        assertParseFailsAtEveryCheckLevel("[2024-01T09:00]T10:00", now, "Invalid date: 2024-01T10:00");
+        assertParseFailsAtEveryCheckLevel("[2024-01T09:00]", now, "Invalid date: 2024-01T09:00");
+        // with a time part that parses, the element keeps its own time
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}]",
+                "[2024-01-[01..03]T09:00]T[10:00,14:30]"
+        );
+        assertBracketInterval(
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:59.999999Z}]",
+                "[2024-W03-1T09:00]T10:00"
         );
     }
 
@@ -3679,7 +3714,7 @@ public class TickExprTest {
             }
             for (String time : FUZZ_MALFORMED_TIMES) {
                 for (String zone : FUZZ_ZONES) {
-                    checker.check(variable + time + zone, true);
+                    checker.check(variable + time + zone, false);
                 }
             }
         }
@@ -4232,6 +4267,220 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeTimePartErrorOrder() throws SqlException {
+        // An element that keeps its own time checks the time part of the list where a day reads it:
+        // after the day filter of the element, before the timezone of the element and the one of
+        // the list, and before the text after the first ';'. A range between two points in time
+        // checks it after its order, under the range order check, and before its duration.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final String timeError = "Invalid date: 2024-01-02T25:00";
+        // the expression, the same text after a day, the reference, and the error of both
+        final String[][] cases = {
+                {"[$now#Bogus]T25:00", "[$today#Bogus]T25:00", "Invalid day name: Bogus"},
+                {"[$now@Bogus/Zone]T25:00", "[$today@Bogus/Zone]T25:00", timeError},
+                {"[$now]T25:00@Bogus/Zone", "[$today]T25:00@Bogus/Zone", timeError},
+                {"[$now]T25:00;1x", "[$today]T25:00;1x", timeError},
+                {"[$now]T[25:00]@+02:00;1h#Tue", "[$today]T[25:00]@+02:00;1h#Tue", timeError},
+                {"[$now - 1h..$now@Bogus/Zone]T25:00", "[$today..$tomorrow@Bogus/Zone]T25:00", timeError},
+                {"[$now - 1h..$now]T25:00@Bogus/Zone", "[$today..$tomorrow]T25:00@Bogus/Zone", timeError},
+                {"[$now - 1h..$now]T25:00;1x", "[$today..$tomorrow]T25:00;1x", timeError},
+                {"$now - 1h..$nowT[25:00];1h#Tue", "$today..$tomorrowT[25:00];1h#Tue", timeError}
+        };
+        for (String[] c : cases) {
+            assertParseFailsAtEveryCheckLevel(c[1], now, c[2]);
+            assertParseFailsAtEveryCheckLevel(c[0], now, c[2]);
+        }
+        // a range that starts after it ends fails on its order first under the range order check,
+        // at its '..', and on the time part without that check, whatever "now" makes it start after
+        // it ends: SQL validates a literal against the time it compiles at, and runs it at another
+        assertParseFails("[$now..$now - 1h]T25:00", now, IntervalUtils.TICK_CHECK_ALL, 11, RANGE_ORDER_ERROR);
+        assertParseFails("[$now..$now - 1h]T25:00", now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 7, timeError);
+        assertParseFails("[$now..$now - 1h]T25:00", now, 0, 7, timeError);
+        assertValidateFailsWith("[$now..$now - 1h@+00:00]T[25:00]", now, timeError);
+        final long three = timestampDriver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+        assertParseFails("[$today + 570m..$now]T25:00", three, IntervalUtils.TICK_CHECK_ALL, 20, RANGE_ORDER_ERROR);
+        assertParseFails("[$today + 570m..$now]T25:00", three, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 7, timeError);
+        assertParseFails("[$today + 570m..$now]T25:00", three, 0, 7, timeError);
+        assertValidateFailsWith("[$today + 570m..$now@+00:00]T[25:00]", three, timeError);
+        // where the text after the first ';' is a repeating interval with a count that does not
+        // parse, a day reports the count, which it reads before its time, and the element that
+        // keeps its own time reports the time part, which it checks first
+        assertParseFailsAtEveryCheckLevel("[$today]T25:00;1h;1d;x", now, "Count not a number");
+        assertParseFailsAtEveryCheckLevel("[$now]T25:00;1h;1d;x", now, timeError);
+        assertParseFailsAtEveryCheckLevel("[$now - 1h..$now]T25:00;1h;1d;x", now, timeError);
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartFailsAsAfterADay() throws SqlException {
+        // An element that keeps its own time, a point in time or a range between two points in
+        // time, ignores the time part of the list. The parser, which SQL uses for a bind variable
+        // and for a literal that the IR does not represent, skipped that time part without reading
+        // it, so it selected the element where the time part does not parse, while the literal with
+        // IR failed. The parser now fails there with the error that a day gives, on the date of the
+        // element or of the start of the range, at every check level, and keeps what the caller
+        // appended before. The compiled form rejects the expression too: building the IR fails, or
+        // the form that parses on every evaluation fails as the SQL that holds it is validated, and
+        // when it evaluates.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        // the time part, the error of the parser after the day 2024-01-02, and the error of building
+        // the IR, or null where the compiled form parses the expression on every evaluation
+        final String[][] timeParts = {
+                // a time that does not exist, or that is not one
+                {"T25:00", "Invalid date: 2024-01-02T25:00", "Invalid time override: 25:00"},
+                {"T09:99", "Invalid date: 2024-01-02T09:99", "Invalid time override: 09:99"},
+                {"T10:00:61", "Invalid date: 2024-01-02T10:00:61", "Invalid time override: 10:00:61"},
+                {"T1000", "Invalid date: 2024-01-02T1000", "Invalid time override: 1000"},
+                {"T09:00T10:00", "Invalid date: 2024-01-02T09:00T10:00", "Invalid time override: 09:00T10:00"},
+                {"T", "Invalid date: 2024-01-02T", "Invalid time override: T with no value"},
+                {"Tabc", "Invalid date: 2024-01-02Tabc", "Invalid time override: abc"},
+                {"T 10:00", "Invalid date: 2024-01-02T 10:00", "Invalid time override:  10:00"},
+                {"T]", "Invalid date: 2024-01-02T]", "Invalid time override: ]"},
+                {"TT09:00", "Invalid date: 2024-01-02TT09:00", "Invalid time override: T09:00"},
+                // a time list with a slot that does not parse, or text after it
+                {"T[25:00]", "Invalid date: 2024-01-02T25:00", "Invalid time in time list: 25:00"},
+                {"T[09:00,25:00]", "Invalid date: 2024-01-02T25:00", "Invalid time in time list: 25:00"},
+                {"T[10:00@Bogus/Zone]", "invalid timezone: Bogus/Zone", null},
+                {"T[10:00]x", "Invalid date: 2024-01-02T10:00x", null},
+                {"T[0900,1430]", "Military time format not supported in bracket expansion. Use colons: [09:00,14:30] instead of [0900,1430]", null},
+                {"T[09:[00,30]]", "Nested brackets not supported in time list. Use separate expansions: T[09:00,09:30] instead of T[09:[00,30]]", null},
+                // brackets that expand to a time that does not parse, to nothing, or do not close
+                {"T[09..10]:99", "Invalid date: 2024-01-02T09:99", null},
+                {"T[]", "Empty bracket expansion", null},
+                {"T[10:00", "Unclosed '[' in interval", "Unclosed '[' in time list"},
+                // the first ';' ends the time part, in brackets as well, so the bracket does not close
+                {"T[09:00;1h]", "Unclosed '[' in interval", "Expected number before unit ']'"}
+        };
+        // elements that keep their own time, on 2024-01-02, and ranges between two points in time
+        // that start on that day; ? stands for the time part
+        final String[] shapes = {
+                "[$now]?", "[$NOW - 1h]?", "[$today + 2h]?", "[$now - 1h..$now]?", "[$today + 2h..$NOW]?",
+                // with a timezone or a day filter of the element, which the IR does not represent
+                "[$now@+00:00]?", "[$now#Tue]?", "[$now - 1h..$now@+00:00]?",
+                // a static element with a time of its own next to a date variable
+                "[2024-01-02T09:00, $now]?",
+                // under a timezone and a duration of the list
+                "[$now]?@Europe/London;1h", "[$now - 1h..$now]?@+02:00;30m"
+        };
+        // bare date variables, which end where a 'T' starts a time with a digit or a bracket
+        final String[] bareShapes = {"$now?", "$NOW - 1h?", "$now - 1h..$now?", "$today + 2h..$NOW?;1h"};
+        for (String[] timePart : timeParts) {
+            // the reference: the same time part after a day
+            assertParseFailsAtEveryCheckLevel("[$today]" + timePart[0], now, timePart[1]);
+            for (String shape : shapes) {
+                assertParsedAndCompiledFail(shape.replace("?", timePart[0]), now, timePart[1], timePart[2]);
+            }
+            final char afterT = timePart[0].length() > 1 ? timePart[0].charAt(1) : ' ';
+            if (Character.isDigit(afterT) || afterT == '[') {
+                for (String shape : bareShapes) {
+                    assertParsedAndCompiledFail(shape.replace("?", timePart[0]), now, timePart[1], timePart[2]);
+                }
+            }
+        }
+        // the time part goes after the date of the element, or of the start of the range
+        assertParsedAndCompiledFail("[$now - 1d]T25:00", now, "Invalid date: 2024-01-01T25:00", "Invalid time override: 25:00");
+        assertParsedAndCompiledFail("[$now + 14h]T[25:00]", now, "Invalid date: 2024-01-03T25:00", "Invalid time in time list: 25:00");
+        assertParsedAndCompiledFail("[$yesterday + 30m..$now]T[25:00]", now, "Invalid date: 2024-01-01T25:00", "Invalid time in time list: 25:00");
+        assertParsedAndCompiledFail("[$now..$now + 1d]T[25:00]", now, "Invalid date: 2024-01-02T25:00", "Invalid time in time list: 25:00");
+        // a date before 1970
+        final long beforeEpoch = timestampDriver.parseFloorLiteral("1969-12-31T23:30:00.000000Z");
+        assertParsedAndCompiledFail("[$now]T25:00", beforeEpoch, "Invalid date: 1969-12-31T25:00", "Invalid time override: 25:00");
+        assertParsedAndCompiledFail("[$now..$now + 1h]T[25:00]", beforeEpoch, "Invalid date: 1969-12-31T25:00", "Invalid time in time list: 25:00");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartFailsInDynamicMode() throws SqlException {
+        // Dynamic mode keeps the intervals encoded for the runtime. It checks the time part of the
+        // list after an element that keeps its own time as static mode does: one that does not parse
+        // fails the expression, and one that parses leaves the intervals of the element as they are.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String now = "2024-01-02T10:00:00.000000Z";
+        for (String[] c : new String[][]{
+                {"[$now]T[25:00]", "Invalid date: 2024-01-02T25:00"},
+                {"$now - 1h..$nowT09:99", "Invalid date: 2024-01-02T09:99"},
+                {"[$now, $today]T[09..10]:99", "Invalid date: 2024-01-02T09:99"}
+        }) {
+            out.clear();
+            try {
+                parseTickExprWithNow(timestampDriver, c[0], 0, c[0].length(), 7, out, IntervalOperation.INTERSECT, false, timestampDriver.parseFloorLiteral(now));
+                Assert.fail("parse should fail: " + c[0]);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(c[0], c[1], e.getFlyweightMessage());
+                Assert.assertEquals(c[0], 7, e.getPosition());
+            }
+            Assert.assertEquals(c[0], 0, out.size());
+        }
+        assertEncodedIntervalWithNow("[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", "[$now]T[09:00,14:30]", now);
+        assertEncodedIntervalWithNow("[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", "$now - 1h..$nowT[09..10]:30", now);
+    }
+
+    @Test
+    public void testDateVariablePointInTimeWellFormedTimePartKeepsInterval() throws SqlException {
+        // An element that keeps its own time ignores a time part of the list that parses: with every
+        // time part that a day takes, the expression selects what it selects without one, at every
+        // check level, and the compiled form evaluates to that as well, from its IR where it has
+        // one. The parser checks the time part as it reads it after a day, but without the interval
+        // limit, as the time part adds no interval: 1,440 separate seconds take a day past the
+        // limit of 1,024 intervals, and not a point in time.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final String[] irTimeParts = {
+                "T09:00", "T09", "T09:00:30", "T09:00:00.123456", "T[09:00]", "T[09:00,14:30]", "T[ 09:00 , 14:30 ]"
+        };
+        // time parts that the compiled form parses on every evaluation
+        final String[] parsedTimeParts = {
+                "T[09..10]:30", "T[01,02]:30", "T[10:30@+02:00]", "T[09:00@Europe/London,10:00]", "T[09:00,10:00]:[15,45]",
+                "T[00..23]:[00..59]", "T[00..23]:[00..59]:00"
+        };
+        // time parts that the parser takes after a day, and the IR rejects, with its error
+        final String[][] irRejectedTimeParts = {
+                {"T09:00:00Z", "Invalid time override: 09:00:00Z"},
+                {"T[09:00,]", "Empty element in time list"}
+        };
+        final OwnTimeElement[] elements = {
+                new OwnTimeElement("[$now]?", "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", true),
+                new OwnTimeElement("$now?", "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", true),
+                new OwnTimeElement("[$NOW - 1h]?", "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z}]", true),
+                new OwnTimeElement("[$now - 1h..$now]?", NINE_TO_TEN, true),
+                new OwnTimeElement("$now - 1h..$now?", NINE_TO_TEN, true),
+                new OwnTimeElement("[$today + 2h..$NOW]?", "[{lo=2024-01-02T02:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", true),
+                new OwnTimeElement("[$now@+00:00]?", "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", false),
+                new OwnTimeElement("[$now#Tue]?", "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", false),
+                // a static element with a time of its own, the minute of 10:00, which holds $now
+                new OwnTimeElement("[2024-01-02T10:00, $now]?", "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z}]", false)
+        };
+        for (OwnTimeElement element : elements) {
+            final String expected = forTimestampType(element.intervals());
+            assertParsedAtEveryCheckLevel(expected, element.expression().replace("?", ""), now);
+            for (String timePart : irTimeParts) {
+                final String expression = element.expression().replace("?", timePart);
+                assertParsedAtEveryCheckLevel(expected, expression, now);
+                assertCompiledEvaluatesTo(expected, expression, now, element.hasIr());
+            }
+            for (String timePart : parsedTimeParts) {
+                final String expression = element.expression().replace("?", timePart);
+                assertParsedAtEveryCheckLevel(expected, expression, now);
+                assertCompiledEvaluatesTo(expected, expression, now, false);
+            }
+            for (String[] timePart : irRejectedTimeParts) {
+                final String expression = element.expression().replace("?", timePart[0]);
+                assertParsedAtEveryCheckLevel(expected, expression, now);
+                if (element.hasIr()) {
+                    assertCompileError(expression, timePart[1]);
+                } else {
+                    assertCompiledEvaluatesTo(expected, expression, now, false);
+                }
+            }
+        }
+        // the reference: a day takes the time parts that the IR rejects, and 1,440 separate seconds
+        // take it past the interval limit
+        assertParsedAtEveryCheckLevel(forTimestampType("[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z}]"), "[$today]T09:00:00Z", now);
+        assertParsedAtEveryCheckLevel(forTimestampType("[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z}]"), "[$today]T[09:00,]", now);
+        assertParseFails("[$today]T[00..23]:[00..59]:00", now, IntervalUtils.TICK_CHECK_ALL, 7, "Bracket expansion produces too many intervals (max 1024)");
+    }
+
+    @Test
     public void testDateVariablePointInTimeWithMalformedTimeFails() {
         // A point in time keeps its own time and ignores the time part of the expression, but a
         // malformed time part still fails the expression, the same as when a day takes it. The parser,
@@ -4245,7 +4494,7 @@ public class TickExprTest {
         assertParsedAndCompiledRejectedWithNow("$today+2hT[25:00]", now, "25:00");
         assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now]T[25:00]", now, "25:00");
         assertParsedAndCompiledRejectedWithNow("[$now]T09:99", now, "09:99");
-        // the compiled form parses this one at every evaluation, so both paths let it through
+        // the compiled form parses this one at every evaluation, as the parser does a bind variable
         assertParsedAndCompiledRejectedWithNow("[$now]T[09..10]:99", now, "09:99");
         // a day takes the time part, which fails on both paths
         assertParsedAndCompiledRejectedWithNow("[$now, $today]T[25:00]", now, "25:00");
@@ -8291,8 +8540,9 @@ public class TickExprTest {
             sink.put(']');
         }
         if (rnd.nextInt(10) == 0) {
+            // a time part of the list that the grammar rejects, which counts as well-formed, see
+            // DateVariableDetectionChecker
             sink.put(pick(rnd, FUZZ_MALFORMED_TIMES));
-            isMalformed = true;
         } else {
             sink.put(pick(rnd, FUZZ_TIMES));
         }
@@ -9058,6 +9308,27 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that the parser fails on the expression with exactly the error, at the position of
+     * the expression, at every check level, and that the compiled form rejects it: building the IR
+     * fails with exactly the error of the IR, or, where the IR does not represent the expression and
+     * irError is null, the form that parses it on every evaluation fails like the bind variable.
+     */
+    private void assertParsedAndCompiledFail(String expression, long now, String parserError, String irError) throws SqlException {
+        assertParseFailsAtEveryCheckLevel(expression, now, parserError);
+        final boolean isParsedOnEvaluation;
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampType.getDriver(), configuration, expression, 0, expression.length(), 7)) {
+            isParsedOnEvaluation = compiled.isParsedOnEvaluation();
+        } catch (SqlException e) {
+            TestUtils.assertEquals(expression, irError, e.getFlyweightMessage());
+            Assert.assertEquals(expression, 7, e.getPosition());
+            return;
+        }
+        Assert.assertTrue(expression, isParsedOnEvaluation);
+        assertFailsLikeBindVariable(expression, now, parserError);
+    }
+
+    /**
      * Asserts that both the parser and the compiled form reject the expression, the compiled form
      * when it compiles or when it evaluates. SQL parses a bind variable and compiles a literal with a
      * date variable, so the two must fail on the same expressions.
@@ -9248,16 +9519,17 @@ public class TickExprTest {
      * one that it compiles evaluates to the intervals of the parser at every "now", and one that it
      * rejects fails to parse at every "now".
      * <p>
-     * The two validate a malformed expression in different ways. The parser ignores the time part
-     * of a point in time, so it lets {@code $nowT[25:00]} through where the compiled form rejects
-     * it. The checker therefore only requires a detected date variable of a malformed expression.
+     * The two validate some expressions in different ways, which the checker counts as malformed,
+     * and of which it only requires a detected date variable.
      * <p>
-     * A duration with a unit that the timestamp drivers do not add counts as well-formed: the two
-     * agree on it, as the compiled form parses such an expression when it evaluates. So do a day
-     * filter after the duration, a text after the first ';' that the parser rejects after every
-     * element, such as one with a ';' more, which both reject, and a time part of an element: the
-     * compiled form parses an expression with a static element with a time part of its own under a
-     * time of the list when it evaluates. A time part of an element with a slot that has a timezone
+     * A time part of the list that the grammar rejects counts as well-formed: the two reject it, the
+     * parser also after an element that keeps its own time and ignores it. A duration with a unit
+     * that the timestamp drivers do not add counts as well-formed: the two agree on it, as the
+     * compiled form parses such an expression when it evaluates. So do a day filter after the
+     * duration, a text after the first ';' that the parser rejects after every element, such as one
+     * with a ';' more, which both reject, and a time part of an element: the compiled form parses an
+     * expression with a static element with a time part of its own under a time of the list when it
+     * evaluates. A time part of an element with a slot that has a timezone
      * of its own counts as malformed: under a timezone of the list, the compiled form converts the
      * slot by both timezones, and the parser by its own. A timezone of an element that does not
      * parse counts as well-formed: the compiled form parses an expression with an element with a
@@ -9430,6 +9702,14 @@ public class TickExprTest {
         boolean isPointInTime() {
             return firstDay == null;
         }
+    }
+
+    /**
+     * An expression with an element that keeps its own time, where ? stands for the time part of
+     * the list, the intervals that it selects at 2024-01-02T10:00Z at microsecond precision, and
+     * whether the IR of the compiled form represents it with a time part that the IR represents.
+     */
+    private record OwnTimeElement(String expression, String intervals, boolean hasIr) {
     }
 
     /**

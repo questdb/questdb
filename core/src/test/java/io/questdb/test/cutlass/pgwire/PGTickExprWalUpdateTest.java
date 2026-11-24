@@ -118,6 +118,77 @@ public class PGTickExprWalUpdateTest extends BasePGTest {
     }
 
     @Test
+    public void testPreparedPointInTimeWithMalformedTimeFails() throws Exception {
+        // An element that keeps its own time ignores the time part of the list, which still has to
+        // parse: such a time part fails a prepared statement on every run, with the bind variable
+        // until it holds a time part that parses, and with a literal that SQL parses on every
+        // evaluation. The bind variable and the literal selected the row at $now, and the UPDATE
+        // rewrote it.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE w (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.execute("""
+                        INSERT INTO w VALUES
+                        ('2024-01-02T09:30:00.000000Z', 1),
+                        ('2024-01-02T10:00:00.000000Z', 1),
+                        ('2024-01-02T10:30:00.000000Z', 1)
+                        """);
+            }
+            drainWalQueue();
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts FROM w WHERE ts IN ?")) {
+                select.setString(1, "[$now]T[25:00]");
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet ignore = select.executeQuery()) {
+                        Assert.fail("the query should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "Invalid date: 2024-01-02T25:00");
+                    }
+                }
+                // the row at $now
+                select.setString(1, "[$now]T[09:00]");
+                try (ResultSet rs = select.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP]
+                                    2024-01-02 10:00:00.0
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+            for (String sql : new String[]{"SELECT ts FROM w WHERE ts IN '[$now@+00:00]T[25:00]'", "UPDATE w SET v = 2 WHERE ts IN '[$now@+00:00]T[25:00]'"}) {
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < 2; i++) {
+                        try {
+                            statement.execute();
+                            Assert.fail("the statement should fail: " + sql);
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "Invalid date: 2024-01-02T25:00");
+                        }
+                    }
+                }
+            }
+            drainWalQueue();
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT v FROM w")) {
+                sink.clear();
+                assertResultSet(
+                        """
+                                v[INTEGER]
+                                1
+                                1
+                                1
+                                """,
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatementWithUnknownDurationUnitFails() throws Exception {
         // A duration unit that the timestamp drivers do not add fails a prepared statement on every
         // run, with the literal, and with the bind variable until it holds a unit that they add. The
