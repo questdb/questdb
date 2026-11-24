@@ -602,8 +602,7 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     // The indexes in the flush log, from `from` on, of the .pk flushes of seals: the first .pk flush after the flush of
-    // a seal's new files, a syncfs where syncfs is filesystem-wide (Linux), a flush of each file, the value file among
-    // them, elsewhere.
+    // a seal's new value file.
     private static List<Integer> sealKeyFileFlushes(List<String> log, int from) {
         final List<Integer> flushes = new ArrayList<>();
         boolean isSealFileFlushed = false;
@@ -614,7 +613,7 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                     flushes.add(i);
                 }
                 isSealFileFlushed = false;
-            } else if (flush.contains(" syncfs ") || SEAL_VALUE_FILE.matcher(flush).matches()) {
+            } else if (SEAL_VALUE_FILE.matcher(flush).matches()) {
                 isSealFileFlushed = true;
             }
         }

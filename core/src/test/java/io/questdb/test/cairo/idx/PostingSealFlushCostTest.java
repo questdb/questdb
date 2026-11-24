@@ -57,15 +57,15 @@ import java.util.regex.Pattern;
  * drops, and every seal of a table that takes no save point (a non-WAL table, a replica), takes the ordered flush.
  * Every other mode takes the ordered flush for every seal: NOSYNC and ASYNC may lose commits on a power loss, but must
  * not leave an index that names files the purge of the superseded generation deleted, or files that never reached the
- * disk. The ordered flush is two disk waits: one device flush for every new value and cover file, then the
- * {@code .pk} flush.
+ * disk. The ordered flush takes one flush of every new value and cover file, then the {@code .pk} flush: no more than
+ * the flush of each file a seal took before it followed the commit mode, and no wait for other files' dirty data.
  * <p>
  * A rebuild of the index from the column data into a new value file, as a WAL commit into older partitions makes, is
  * not a seal: it flushes as before the seals took the ordered flush. Under SYNC the new value file reaches the disk
  * before the {@code .pk} entry that names it, then the {@code .pk} does, one file at a time; the other modes make no
  * synchronous flush for it.
  * <p>
- * The facade reports a filesystem-wide {@code syncfs} on every platform, so the counts are the same everywhere.
+ * The facade takes the Linux flush path on every platform, so the counts are the same everywhere.
  */
 @RunWith(Parameterized.class)
 public class PostingSealFlushCostTest extends AbstractCairoTest {
@@ -394,15 +394,21 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
                 rebuildFlushes
         );
         final boolean isFlushed = !"adaptive".equals(commitMode) || !isSavePointCovered;
-        // The ordered flush is two disk waits: the new files, then the .pk.
-        int total = 0;
-        for (int n : flushes.values()) {
-            total += n;
+        // The ordered flush: each new file once, then the .pk.
+        final Map<String, Integer> expected = new TreeMap<>();
+        if (isFlushed && sealCount > 0) {
+            expected.put("pk", sealCount);
+            expected.put("pv", sealCount);
+            if (isCovering) {
+                // the INCLUDE columns and the designated timestamp the index includes by default
+                expected.put("pcN", (INCLUDE_COLUMNS + 1) * sealCount);
+                expected.put("pci", sealCount);
+            }
         }
         Assert.assertEquals(
-                "flushes of " + sealCount + " seals under " + commitMode + ", " + operation + ": " + flushes,
-                isFlushed ? 2 * sealCount : 0,
-                total
+                "flushes of " + sealCount + " seals under " + commitMode + ", " + operation,
+                expected,
+                flushes
         );
     }
 

@@ -30,6 +30,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
@@ -80,6 +81,19 @@ public interface FilesFacade {
     int findType(long findPtr);
 
     void fdatasync(long fd);
+
+    /**
+     * Makes every file in {@code fds} durable, as {@link #fdatasync(long)} does for one. Through {@code ring}, when not
+     * null, an implementation may issue them at once, so that they share the journal commit and the device flush; the
+     * default issues them one at a time. Returns false when the ring failed and must not be used again; the files are
+     * durable then too.
+     */
+    default boolean fdatasync(LongList fds, @Nullable IOURing ring) {
+        for (int i = 0, n = fds.size(); i < n; i++) {
+            fdatasync(fds.getQuick(i));
+        }
+        return true;
+    }
 
     /**
      * Ordering barrier only, see {@link Files#barrierFsync(long)}. A commit is not durable on this alone;

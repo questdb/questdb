@@ -50,6 +50,8 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IOURing;
+import io.questdb.std.IOURingFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -170,6 +172,8 @@ public class PostingIndexWriter implements IndexWriter {
     // How a seal makes the files it wrote durable; see sealFlushGrade().
     private static final int SEAL_FLUSH_NONE = 0;
     private static final int SEAL_FLUSH_ORDERED = 2;
+    // Enough for the value file, the .pci and 30 cover files; a seal of more takes several rounds.
+    private static final int SEAL_SYNC_RING_CAPACITY = 32;
     private final double alignedBitWidthThreshold;
     // v2 chain helper: owns the in-memory mirror of the chain header,
     // exposes append/extend/recovery primitives. Single instance per writer
@@ -226,6 +230,8 @@ public class PostingIndexWriter implements IndexWriter {
     // on every of() call to avoid leaking entries across reopens.
     private final LongList recoveryOrphanScratch = new LongList();
     private final byte rowIdEncoding;
+    // The files step 1 of a seal's ordered flush drained, for their fdatasync, see flushSealFilesSync().
+    private final LongList sealSyncFds = new LongList();
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final ObjList<MemoryMARW> sidecarMems = new ObjList<>();
     // Staging for switchToSealedValueFile: new .pv is mapped here first, then
@@ -286,6 +292,8 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isLastSealStreaming;
     private boolean isLastSidecarInfoHeaderWritten;
     private boolean isPoisoned;
+    // Set once sealSyncRing could not be created or failed: the seal files then take their fdatasync one at a time.
+    private boolean isSealSyncRingUnavailable;
     private int keyCapacity;
     private int keyCount;
     // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
@@ -325,6 +333,8 @@ public class PostingIndexWriter implements IndexWriter {
     private long[] savedSidecarBufs;
     private long[] savedSidecarSizes;
     private PostingSidecarSource sealCoverSource;
+    // Issues the fdatasyncs of a seal's files at once, see flushSealFilesSync(). Created on the first such flush.
+    private IOURing sealSyncRing;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     // sealTxn is the suffix of the .pv file the writer is currently mapped
     // to. Updated on truncate, on switchToSealedValueFile, and at writer
@@ -4120,7 +4130,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     // Step 1 of a seal's flush (see sealFlushGrade()), for the files written after the value file: starts the
-    // writeback of every open cover file and .pci, then waits for it. flushSealFilesBarrier() completes the step.
+    // writeback of every open cover file and .pci, then waits for it. flushSealFilesSync() completes the step.
     private void flushSealCoverFiles(int grade) {
         for (int c = 0, n = sidecarMems.size(); c < n; c++) {
             flushSealFileStart(sidecarMems.getQuick(c), grade);
@@ -4132,8 +4142,10 @@ public class PostingIndexWriter implements IndexWriter {
         flushSealFileWait(sidecarInfoMem, grade);
     }
 
-    // Step 1 of a seal's flush for one file: starts its writeback and waits for it.
+    // Step 1 of a seal's flush for one file: starts its writeback and waits for it. flushSealFilesSync() completes
+    // the step.
     private void flushSealFile(MemoryMARW mem, int grade) {
+        sealSyncFds.clear();
         flushSealFileStart(mem, grade);
         flushSealFileWait(mem, grade);
     }
@@ -4145,33 +4157,41 @@ public class PostingIndexWriter implements IndexWriter {
         if (ff.isSyncfsFileSystemWide()) {
             mem.syncFlushKick();
         } else {
-            // No filesystem-wide barrier: an ordering barrier per file, F_BARRIERFSYNC on macOS. Windows has no
-            // cheaper flush than a durable one per file.
-            mem.flushFile(true);
+            // Off Linux the msync each file took before the seal flushes followed the commit mode.
+            mem.sync(false);
         }
     }
 
+    // On Linux, after every file of the step started its writeback: waits for this file's writeback and queues the
+    // file for the fdatasync of flushSealFilesSync().
     private void flushSealFileWait(MemoryMARW mem, int grade) {
         if (mem != null && mem.isOpen() && grade == SEAL_FLUSH_ORDERED && ff.isSyncfsFileSystemWide()) {
             mem.syncFlushDrain();
+            sealSyncFds.add(mem.getFd());
         }
     }
 
     // Step 1 of a seal's flush, the value file and every cover file at once (see sealFlushGrade()).
     private void flushSealFiles(MemoryMARW valueFile, int grade) {
+        sealSyncFds.clear();
         flushSealFileStart(valueFile, grade);
         flushSealCoverFiles(grade);
         flushSealFileWait(valueFile, grade);
-        flushSealFilesBarrier(valueFile, grade);
+        flushSealFilesSync();
     }
 
-    // Completes step 1 of a seal's flush: where syncfs is filesystem-wide (Linux), one device flush makes every
-    // file the seal wrote back durable, with the new sizes and extents journaled. Issued on the seal's own file,
-    // so it lands on the right filesystem for a partition linked elsewhere. Elsewhere the per-file barriers of
-    // flushSealFileStart() have done it.
-    private void flushSealFilesBarrier(MemoryMARW valueFile, int grade) {
-        if (grade == SEAL_FLUSH_ORDERED && ff.isSyncfsFileSystemWide() && valueFile.isOpen()) {
-            ff.syncfs(valueFile.getFd());
+    // Completes step 1 of a seal's flush on Linux: an fdatasync of every file the step drained journals its new size
+    // and extents and flushes the device cache. Unlike a filesystem-wide syncfs it does not wait for the dirty data
+    // of other files. Through io_uring the fdatasyncs run at once, so they share the journal commit and the block
+    // layer merges their device flushes; without io_uring they run one at a time.
+    private void flushSealFilesSync() {
+        try {
+            if (sealSyncFds.size() > 0 && !ff.fdatasync(sealSyncFds, sealSyncRing())) {
+                sealSyncRing = Misc.free(sealSyncRing);
+                isSealSyncRingUnavailable = true;
+            }
+        } finally {
+            sealSyncFds.clear();
         }
     }
 
@@ -4232,6 +4252,7 @@ public class PostingIndexWriter implements IndexWriter {
             unpackBatchCapacity = 0;
         }
         unmapCoveredColumnReads();
+        sealSyncRing = Misc.free(sealSyncRing);
         // Don't null coveredColumnNames/coveredPartitionPath/coveredColumnNameTxns here —
         // those are configuration set by configureCovering(), not runtime buffers.
         // They must survive truncate() + rebuild cycles during commit.
@@ -6041,7 +6062,7 @@ public class PostingIndexWriter implements IndexWriter {
             writeSidecarsPerColumnStreaming(totalCountsAddr, keyBuffer, maxKeyCount);
             flushSealCoverFiles(flushGrade);
         }
-        flushSealFilesBarrier(valueMem, flushGrade);
+        flushSealFilesSync();
 
         Unsafe.storeFence();
         this.maxValue = maxValue;
@@ -6181,7 +6202,7 @@ public class PostingIndexWriter implements IndexWriter {
             // loss.
             flushSealCoverFiles(flushGrade);
         }
-        flushSealFilesBarrier(valueMem, flushGrade);
+        flushSealFilesSync();
 
         Unsafe.storeFence();
         // genFileOffset is 0: the seal wrote at offset 0 of a fresh .pv.
@@ -6965,6 +6986,23 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         sealFull(newSealTxn);
+    }
+
+    // The ring of flushSealFilesSync(), or null where io_uring is unavailable or disabled by configuration.
+    private IOURing sealSyncRing() {
+        if (sealSyncRing == null && !isSealSyncRingUnavailable) {
+            final IOURingFacade ringFacade = configuration.getIOURingFacade();
+            if (configuration.isIOURingEnabled() && ringFacade.isAvailable()) {
+                try {
+                    sealSyncRing = ringFacade.newInstance(SEAL_SYNC_RING_CAPACITY);
+                } catch (CairoException e) {
+                    isSealSyncRingUnavailable = true;
+                }
+            } else {
+                isSealSyncRingUnavailable = true;
+            }
+        }
+        return sealSyncRing;
     }
 
     private void spillKey(int key, int count) {

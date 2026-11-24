@@ -93,14 +93,19 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
+    public long enqueueFdatasync(long fd) {
+        return enqueueSqe(IORING_OP_FSYNC, fd, 0, 0, 0, IORING_FSYNC_DATASYNC);
+    }
+
+    @Override
     @TestOnly
     public long enqueueNop() {
-        return enqueueSqe(IORING_OP_NOP, -1, 0, 0, 0);
+        return enqueueSqe(IORING_OP_NOP, -1, 0, 0, 0, 0);
     }
 
     @Override
     public long enqueueRead(long fd, long offset, long bufAddr, int len) {
-        return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);
+        return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len, 0);
     }
 
     @Override
@@ -153,7 +158,7 @@ public class IOURingImpl implements IOURing {
         return facade.submitAndWait(ringAddr, 1);
     }
 
-    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
+    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len, int opFlags) {
         final long sqeAddr = nextSqe();
         if (sqeAddr == 0) {
             return -1;
@@ -163,6 +168,8 @@ public class IOURingImpl implements IOURing {
         Unsafe.putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
         Unsafe.putInt(sqeAddr + SQE_LEN_OFFSET, len);
+        // The union of rw_flags and fsync_flags follows len in struct io_uring_sqe.
+        Unsafe.putInt(sqeAddr + SQE_LEN_OFFSET + Integer.BYTES, opFlags);
         final long id = idSeq++;
         Unsafe.putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);
         return id;

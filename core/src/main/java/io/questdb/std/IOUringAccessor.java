@@ -33,6 +33,8 @@ public class IOUringAccessor {
     static final short CQ_KRING_ENTRIES_OFFSET;
     static final short CQ_KRING_MASK_OFFSET;
     static final short CQ_KTAIL_OFFSET;
+    static final int IORING_FSYNC_DATASYNC = 1;
+    static final byte IORING_OP_FSYNC = 3;
     static final byte IORING_OP_NOP = 0;
     static final byte IORING_OP_READ = 22;
     static final short RING_FD_OFFSET;

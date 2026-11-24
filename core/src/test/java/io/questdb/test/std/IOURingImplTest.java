@@ -55,6 +55,48 @@ public class IOURingImplTest extends AbstractTest {
     }
 
     @Test
+    public void testFdatasync() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            File file = temp.newFile();
+            TestUtils.writeStringToFile(file, "1234");
+            try (Path path = new Path()) {
+                long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+                LongList fds = new LongList();
+                try (IOURing ring = rf.newInstance(4)) {
+                    long id = ring.enqueueFdatasync(fd);
+                    long badId = ring.enqueueFdatasync(-1);
+                    Assert.assertEquals(2, ring.submit());
+                    for (int i = 0; i < 2; i++) {
+                        while (!ring.nextCqe()) {
+                            ring.submitAndWait();
+                        }
+                        // EBADF is 9 on Linux, the only platform with io_uring
+                        Assert.assertEquals(ring.getCqeId() == badId ? -9 : 0, ring.getCqeRes());
+                        Assert.assertTrue(ring.getCqeId() == id || ring.getCqeId() == badId);
+                    }
+
+                    // the facade issues them through the ring and reports a failed one with its errno
+                    fds.add(fd);
+                    Assert.assertTrue(FilesFacadeImpl.INSTANCE.fdatasync(fds, ring));
+                    fds.add(-1);
+                    try {
+                        FilesFacadeImpl.INSTANCE.fdatasync(fds, ring);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertEquals(9, e.getErrno());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not fdatasync");
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIsAvailableOn() {
         Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("6.1"));
         Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("4.0.0"));

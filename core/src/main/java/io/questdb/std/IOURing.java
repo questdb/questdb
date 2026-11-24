@@ -33,6 +33,13 @@ public interface IOURing extends Closeable {
     @Override
     void close();
 
+    /**
+     * Enqueues an {@code fdatasync} of the whole file.
+     *
+     * @return the id of the operation, or -1 when the submission queue is full.
+     */
+    long enqueueFdatasync(long fd);
+
     @TestOnly
     long enqueueNop();
 

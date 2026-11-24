@@ -28,11 +28,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IOURing;
+import io.questdb.std.LongList;
 import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -64,6 +67,15 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         }
         untrack(fd);
         return super.close(fd);
+    }
+
+    // One fdatasync per file, so that a test facade sees and models each of them.
+    @Override
+    public boolean fdatasync(LongList fds, @Nullable IOURing ring) {
+        for (int i = 0, n = fds.size(); i < n; i++) {
+            fdatasync(fds.getQuick(i));
+        }
+        return true;
     }
 
     @Override

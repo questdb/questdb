@@ -38,6 +38,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
     private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
+    private static final int ERRNO_EINTR = 4;
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     // Per-thread upgrade flags for the platforms where a durable primitive is a different syscall from the
     // overridable method it otherwise delegates to (barrierFsync and fsyncDurable on Darwin, renameDurable on
@@ -220,6 +221,17 @@ public class FilesFacadeImpl implements FilesFacade {
         }
         final int errno = errno();
         throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fdatasync", "could not fdatasync");
+    }
+
+    @Override
+    public boolean fdatasync(LongList fds, @Nullable IOURing ring) {
+        if (ring != null && fdatasyncThroughRing(fds, ring)) {
+            return true;
+        }
+        for (int i = 0, n = fds.size(); i < n; i++) {
+            fdatasync(fds.getQuick(i));
+        }
+        return ring == null;
     }
 
     @Override
@@ -714,6 +726,55 @@ public class FilesFacadeImpl implements FilesFacade {
         } else {
             return mapPageSize;
         }
+    }
+
+    // Issues the fdatasync of every file at once, as many as the ring holds per round, and waits for all of them.
+    // Returns false when the ring fails before any fdatasync failed. A failed fdatasync throws, also when the ring
+    // fails after it: Linux reports a writeback error once, so the caller's retry could see success.
+    private boolean fdatasyncThroughRing(LongList fds, IOURing ring) {
+        final int n = fds.size();
+        long failedFd = 0;
+        int failedErrno = 0;
+        boolean isRingFailed = false;
+        for (int start = 0; start < n && !isRingFailed; ) {
+            int enqueued = 0;
+            long firstId = -1;
+            while (start + enqueued < n) {
+                final long id = ring.enqueueFdatasync(fds.getQuick(start + enqueued));
+                if (id < 0) {
+                    break;
+                }
+                if (enqueued == 0) {
+                    firstId = id;
+                }
+                enqueued++;
+            }
+            if (enqueued == 0 || ring.submit() != enqueued) {
+                isRingFailed = true;
+                break;
+            }
+            for (int done = 0; done < enqueued && !isRingFailed; done++) {
+                while (!ring.nextCqe()) {
+                    final int rc = ring.submitAndWait();
+                    if (rc < 0 && rc != -ERRNO_EINTR) {
+                        isRingFailed = true;
+                        break;
+                    }
+                }
+                final long index = ring.getCqeId() - firstId;
+                if (isRingFailed || index < 0 || index >= enqueued) {
+                    isRingFailed = true;
+                } else if (ring.getCqeRes() < 0 && failedErrno == 0) {
+                    failedFd = fds.getQuick(start + (int) index);
+                    failedErrno = -ring.getCqeRes();
+                }
+            }
+            start += enqueued;
+        }
+        if (failedErrno != 0) {
+            throw CairoException.dataSyncFailureOfFd(this, failedFd, failedErrno, "fdatasync", "could not fdatasync");
+        }
+        return !isRingFailed;
     }
 
     private int runRecursive(Path src, Path dst, int dirMode, FsOperation operation) {
