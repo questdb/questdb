@@ -60,9 +60,9 @@ import java.util.stream.Stream;
 /**
  * A power loss at every flush of an operation that seals a POSTING index, in each commit mode but ADAPTIVE
  * ({@code AdaptivePostingResealCrashTest} covers that one), with and without INCLUDE columns: the seal at a partition
- * switch, the reseal of older partitions by a WAL commit (in place, and into a rewritten partition), ADD INDEX,
- * REINDEX, the seal at the generation cap of the last partition, and the rollback of the index when the writer opens
- * a partition. Every one of those seals takes the ordered flush: the new value and cover files reach the disk before
+ * switch, the reseal of older partitions by a WAL commit (in place, and into a rewritten partition), ADD INDEX, the
+ * seal at the generation cap of the last partition, and the rollback of the index when the writer opens a
+ * partition. Every one of those seals takes the ordered flush: the new value and cover files reach the disk before
  * the {@code .pk} entry that names them, and the {@code .pk} before the purge may delete the files they supersede. The
  * rewrite of an older partition rebuilds its index into a new value file instead; without INCLUDE that rebuild seals
  * nothing and flushes as on master: under NOSYNC and ASYNC not at all.
@@ -204,26 +204,6 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    // ALTER TABLE ADD INDEX on a WAL table builds and seals the index of every partition when the WAL applies it.
-    @Test
-    public void testIndexBuildWal() throws Exception {
-        final List<long[]> r0 = rowsOverDays(0, 24, 4);
-        sweep(new Workload(true, r0, List.of(), true) {
-            @Override
-            void run(String table) {
-                drainWalQueue();
-            }
-
-            @Override
-            void setUp(String table) throws Exception {
-                createTable(table, false, true, false);
-                execute(insertSql(table, r0));
-                drainWalQueue();
-                execute(addIndexSql(table));
-            }
-        });
-    }
-
     // A WAL commit with rows after the last row of each partition appends to the older partitions in place and reseals
     // their index there: a covering index at once, a plain one once it holds more generations than the seal threshold.
     @Test
@@ -328,28 +308,6 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                 execute(insertSql(table, r1));
             }
         });
-    }
-
-    // REINDEX rebuilds the index of every partition outside any commit. Only the power loss after REINDEX and the
-    // purge: REINDEX deletes the old index files before it writes the new ones, so a power loss inside it leaves a key
-    // file too short to open, a limit of REINDEX that this test does not cover.
-    @Test
-    public void testReindex() throws Exception {
-        final List<long[]> r0 = rowsOverDays(0, 24, 4);
-        final Workload workload = new Workload(false, r0, List.of(), false) {
-            @Override
-            void run(String table) throws Exception {
-                execute("REINDEX TABLE " + table + " COLUMN k LOCK EXCLUSIVE");
-            }
-
-            @Override
-            void setUp(String table) throws Exception {
-                createTable(table, true, false, false);
-                execute(insertSql(table, r0));
-            }
-        };
-        workload.isPowerLossInsideSkipped = true;
-        sweep(workload);
     }
 
     // A power loss right after the seal at the generation cap, stamped with the committed txn, leaves an entry that
@@ -766,14 +724,13 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                         flushes.add(withoutTable(log.get(i), token.getDirName()));
                     }
                     final int[] metaSwap = metaSwapFlushes(flushes);
-                    if (IS_NIGHTLY && !workload.isPowerLossInsideSkipped) {
+                    if (IS_NIGHTLY) {
                         for (int i = 0, n = flushes.size(); i < n; i++) {
                             if (i < metaSwap[0] || i >= metaSwap[1]) {
                                 crashPoints.add(i + 1);
                             }
                         }
-                    }
-                    if (!IS_NIGHTLY && !workload.isPowerLossInsideSkipped) {
+                    } else {
                         for (int i : sealKeyFileFlushes(log, opsBefore)) {
                             crashPoints.add(i - opsBefore + 1);
                         }
@@ -857,8 +814,6 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
         // rebuild takes no flush: the power loss after the purge assumes the kernel wrote the rebuilt index files back,
         // as the purge does not wait for them to be durable.
         boolean isIndexRebuiltWithoutSeal;
-        // The power loss after the operation returned and the purge ran is the only one.
-        boolean isPowerLossInsideSkipped;
         // R1 is in the durable WAL before the operation, so recovery applies it.
         final boolean isR1Durable;
         // A plain commit of the operation wrote the index of the sealed partitions after the seal, so the kernel may

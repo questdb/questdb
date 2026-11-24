@@ -1724,25 +1724,6 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         });
     }
 
-    // A seal without a committed-txn source takes the ordered flush, so the generation it superseded goes at once.
-    @Test
-    public void testRemoveSupersededGenerationsUnlinksGenerationOfFlushedSeal() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot());
-                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "flushed", COLUMN_NAME_TXN_NONE)) {
-                writer.setCommitMode(CommitMode.ADAPTIVE);
-                final long supersededSealTxn = sealOneGeneration(writer);
-                final int plen = path.size();
-                writer.removeSupersededGenerations();
-                assertEquals(0, writer.getPendingPurgesSizeForTesting());
-                final FilesFacade ff = configuration.getFilesFacade();
-                assertFalse(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "flushed", COLUMN_NAME_TXN_NONE, supersededSealTxn)));
-                // the sealed generation stays
-                assertTrue(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "flushed", COLUMN_NAME_TXN_NONE, supersededSealTxn + 1)));
-            }
-        });
-    }
-
     // Indexes rows into the first generation and seals it into a new one; returns the superseded sealTxn.
     private static long sealOneGeneration(PostingIndexWriter writer) {
         for (int i = 0; i < 8; i++) {

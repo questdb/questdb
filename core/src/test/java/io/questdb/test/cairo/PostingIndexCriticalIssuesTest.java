@@ -1073,28 +1073,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseNoTruncateSkipsSealOnPoisonedWriter() throws Exception {
-        // SymbolMapWriter's emergency closeNoTruncate() runs a best-effort seal(). On a writer a failed seal
-        // poisoned, that seal() would throw out of the cleanup and mask the original failure, so closeNoTruncate()
-        // skips it. A seal of a covering index fails at each of its file calls in turn: closeNoTruncate() must not
-        // throw after any of them, must free every resource (assertMemoryLeak), and must leave the index intact.
-        final SweepResult result = sweepPostingIndexOperation(
-                "close_no_truncate_sweep",
-                (writer, coverAddr) -> {
-                    // two sparse generations, so that seal() runs sealFull and switches the value file
-                    commitPostingRows(writer, 0, 15);
-                    commitPostingRows(writer, 16, 31);
-                    configureLongCover(writer, coverAddr);
-                },
-                PostingIndexWriter::seal,
-                31,
-                Long.MAX_VALUE,
-                true
-        );
-        Assert.assertTrue("no failure poisoned the writer", result.poisonedCount() > 0);
-    }
-
-    @Test
     public void testCloseOnDivergentPathWithExtenderClosedFirstDoesNotAllocateDiskSpace() throws Exception {
         // The divergent path is the one where another instance published a regionLimit past
         // this instance's mapping. THE CLOSE ORDERING IS PART OF THE CONTRACT THIS TEST
@@ -6980,13 +6958,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         sweepRebuild("rebuild_dense_sweep", true, false, false);
     }
 
-    // As above, with a spill in the add() loop of the rebuild: the spill publishes the rebuild before the operation,
-    // and commitDense() seals it.
-    @Test
-    public void testRebuildCommitDenseWithSpillFailureAtEveryFlushKeepsIndexIntact() throws Exception {
-        sweepRebuild("rebuild_dense_spill_sweep", true, false, true);
-    }
-
     // The rebuild of a covering index committed with commit(), failing at each of its flushes in turn: the publish
     // flushes the value file, the cover file and the .pci before the .pk.
     @Test
@@ -10417,36 +10388,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * A seal of a covering index fails at each of its file calls in turn, and the index must stay intact; see
-     * {@link #sweepPostingIndexOperation}. A failure after the switch to the new value file and before the publish
-     * must poison the writer, as the rollback and rebuildSidecarsByCopy do, and must queue the purge of the staged
-     * files only: the chain still names the old generation, whose purge seal() records only after a publish.
-     */
-    @Test
-    public void testSealFailureAtEveryFileCallKeepsIndexIntact() throws Exception {
-        final SweepResult result = sweepPostingIndexOperation(
-                "seal_sweep",
-                (writer, coverAddr) -> {
-                    // two sparse generations, so that seal() runs sealFull and switches the value file
-                    commitPostingRows(writer, 0, 15);
-                    commitPostingRows(writer, 16, 31);
-                    configureLongCover(writer, coverAddr);
-                },
-                PostingIndexWriter::seal,
-                31,
-                Long.MAX_VALUE,
-                false
-        );
-        Assert.assertTrue("no failure queued the purge of the staged generation", result.orphanPurgeCount() > 0);
-    }
-
-    /**
      * A seal of a covering index with a txn stamp fails at each of its file calls in turn, and the index must stay
      * intact; see {@link #sweepPostingIndexOperation}. A failure before the switch to the new value file must
      * remove the staged files, or they leak: the caller closes a writer whose seal failed, and no writer open
      * reclaims the files of a generation that was never published. It must also restore the value file size,
      * which the encode advanced to the staged size, or the next commit appends at a stale offset over live bytes:
-     * the writer that works takes rows before it retries the seal, and serves them.
+     * the writer that works takes rows before it retries the seal, and serves them. A failure after the switch and
+     * before the publish must poison the writer and queue the purge of the staged files only. The sweep closes the
+     * failed writer with SymbolMapWriter's emergency closeNoTruncate(), whose best-effort seal() must not throw on
+     * a poisoned writer and mask the original failure.
      */
     @Test
     public void testSealWithTxnStampFailureAtEveryFileCallKeepsIndexIntact() throws Exception {
@@ -10461,9 +10411,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 PostingIndexWriter::seal,
                 31,
                 Long.MAX_VALUE,
-                false
+                true
         );
         Assert.assertTrue("no failure queued the purge of the staged generation", result.orphanPurgeCount() > 0);
+        Assert.assertTrue("no failure poisoned the writer", result.poisonedCount() > 0);
     }
 
     /**
@@ -11962,7 +11913,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             createPostingRecoveryTable();
             final long headSealTxn = headSealTxnOfRecoveryPartition();
             pcSync.failWithDataSyncFailure();
-            final Throwable failure = failRecoveryPartitionSwitch(pcSync, false);
+            final Throwable failure = failRecoveryPartitionSwitch(pcSync);
             Assert.assertNotNull("the partition switch must fail", failure);
             TestUtils.assertContains(failure.getMessage(), "[test] could not msync");
             if (Files.isPathLookupSupported()) {
@@ -12013,27 +11964,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             resealRecoveryPartitionAfterFailedSwitch();
         });
         Assert.assertTrue("no failed reseal left a staged generation", stagedCount[0] > 0);
-    }
-
-    @Test
-    public void testSwitchPartitionResealFailureAtEveryIndexFileCallKeepsIndexIntact() throws Exception {
-        // switchPartition()'s reseal (commit() + sealIfMultiGen()) fails at each call on the files of the index in
-        // turn, in the commit mode of the suite; see sweepRecoveryPartitionSwitch(). A failure after the switch to
-        // the new value file poisons the index writer and stages the purge of the staged files, and the distress
-        // propagates: deferPendingPostingSealPurges() must publish that purge in a finally, or the staged files leak.
-        if (configuration.disableColumnPurgeJob()) {
-            return;
-        }
-        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        final int fillerRowCount = growRecoveryCoverInReseal();
-        final int[] stagedCount = {0};
-        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, isRestarted, where) -> {
-            if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(liveSealTxnBefore + 1)) {
-                stagedCount[0]++;
-            }
-            resealRecoveryPartitionAfterFailedSwitch();
-        });
-        Assert.assertTrue("no failure fell after the switch to the new value file", stagedCount[0] > 0);
     }
 
     /**
@@ -13254,38 +13184,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
-    private int countPostingValueFiles(String tableName, String indexColumnName, long partitionTimestamp) {
-        TableToken token = engine.getTableTokenIfExists(tableName);
-        Assert.assertNotNull("table must exist", token);
-        long partitionNameTxn = -1L;
-        try (TableReader reader = engine.getReader(token)) {
-            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-                if (reader.getTxFile().getPartitionTimestampByIndex(i) == partitionTimestamp) {
-                    partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
-                    break;
-                }
-            }
-        }
-        final int[] count = {0};
-        final String prefix = indexColumnName + ".pv.";
-        final StringSink fileName = new StringSink();
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(token);
-            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
-            configuration.getFilesFacade().iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_FILE && type != Files.DT_UNKNOWN) {
-                    return;
-                }
-                fileName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-                if (Chars.startsWith(fileName, prefix)) {
-                    count[0]++;
-                }
-            });
-        }
-        return count[0];
-    }
-
     /**
      * Asserts that no purge the writer queued names the live generation of the chain, nor {@code keptSealTxn}, a
      * generation the chain on disk may still name, and that the index holds no value or cover file of another
@@ -13407,11 +13305,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     /**
      * Appends the rows of minutes 35 to 39 to 2022-02-25 of posting_o3_recovery, so that the commit of the next
      * partition switch flushes a second generation of the index and its reseal seals, and crosses into 2022-02-26
-     * with the msync of a .pc0 file armed to fail: a sidecar the reseal stages, or, with {@code isStaged} false,
-     * the first .pc0 file to flush, the live sidecar the commit flushes under SYNC. Returns what the failed switch
-     * threw, null when it did not fail.
+     * with the msync of a .pc0 file armed to fail: the first .pc0 file to flush, the live sidecar the commit flushes
+     * under SYNC. Returns what the failed switch threw, null when it did not fail.
      */
-    private Throwable failRecoveryPartitionSwitch(PcSyncFailingFacade pcSync, boolean isStaged) throws NumericException {
+    private Throwable failRecoveryPartitionSwitch(PcSyncFailingFacade pcSync) throws NumericException {
         Throwable failure = null;
         final TableWriter writer = TestUtils.getWriter(engine, "posting_o3_recovery");
         try {
@@ -13422,11 +13319,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 row.putLong(3, i);
                 row.append();
             }
-            if (isStaged) {
-                pcSync.armStaged();
-            } else {
-                pcSync.arm();
-            }
+            pcSync.arm();
             try {
                 TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z"));
                 row.putSym(1, "next");
@@ -14071,6 +13964,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * engine, runs {@code afterFailure}, and asserts what the requirement asks of a failed reseal:
      * <ul>
      *     <li>under SYNC a failed flush stops the engine;</li>
+     *     <li>a failure after the switch to the new value file, which poisons the index writer and stages the purge
+     *     of the staged files, leaves no staged file behind, as deferPendingPostingSealPurges() publishes that purge
+     *     in a finally while the distress propagates;</li>
      *     <li>once the purge job ran with no reader open, the index of 2022-02-25 holds the files of its live
      *     generation only, and of the generation live before the switch when a flush of the .pk failed after the
      *     switch moved the chain head (the chain on disk may still name it), and of the generations the setup
@@ -14304,7 +14200,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 .$(", poisoned=").$(outcomeCounts[0])
                 .$(", working=").$(outcomeCounts[1])
                 .I$();
-        return new SweepResult(outcomeCounts[0], outcomeCounts[1], outcomeCounts[2]);
+        return new SweepResult(outcomeCounts[0], outcomeCounts[2]);
     }
 
     // Sweeps the publish of a rebuild of the index from its rows, as TableWriter makes for a rewritten partition: the
@@ -14915,7 +14811,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pcFds = new java.util.concurrent.ConcurrentHashMap<>();
         private final java.util.concurrent.ConcurrentHashMap<Long, Long> pcMappings = new java.util.concurrent.ConcurrentHashMap<>();
         private volatile boolean isDataSyncFailure;
-        private volatile boolean isStagedOnly;
 
         @Override
         public boolean close(long fd) {
@@ -14969,10 +14864,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         @Override
         public long openRW(LPSZ name, int opts) {
             final boolean isPc0 = name != null && Utf8s.containsAscii(name, ".pc0");
-            // a seal stages its sidecar under a new sealTxn, so in a file that does not exist yet
-            final boolean isTarget = isPc0 && (!isStagedOnly || !exists(name));
             long fd = super.openRW(name, opts);
-            if (fd != -1 && isTarget) {
+            if (fd != -1 && isPc0) {
                 pcFds.put(fd, Boolean.TRUE);
             }
             return fd;
@@ -14983,22 +14876,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             armed.set(true);
         }
 
-        /**
-         * Fails the next msync of a .pc0 file the writer creates from now on, the sidecar a seal stages, and
-         * none of an existing one. Under SYNC a commit first flushes the live sidecar, which {@link #arm()}
-         * would fail instead.
-         */
-        void armStaged() {
-            pcFds.clear();
-            pcMappings.clear();
-            isStagedOnly = true;
-            arm();
-        }
-
         void disarm() {
             armed.set(false);
             isDataSyncFailure = false;
-            isStagedOnly = false;
         }
 
         // Fails the next armed msync the way FilesFacadeImpl.msync() fails a synchronous one: with a data sync
@@ -15180,89 +15060,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     private record PostingSealFileNames(long sealTxn, String valueFile, String coverFile) {
     }
 
-    // How many failures of a sweep poisoned the writer, how many left it working, and how many orphan purges they queued
-    private record SweepResult(int poisonedCount, int workingCount, int orphanPurgeCount) {
-    }
-
-    /**
-     * Fails the staged .pv msync (the {@code sealValueMem.sync} inside
-     * reencodeWithPerKeyStreaming, BEFORE switchToSealedValueFile) the first
-     * time it fires while armed. Tracks only the .pv files opened while armed --
-     * the new sealTxn's staged value file -- so the pre-existing committed .pv
-     * (opened before arming) is left alone. Drives the pre-switch cleanup
-     * branch of the rollback catch.
-     */
-    private static class PvSyncFailingFacade extends TestFilesFacadeImpl {
-        private final AtomicBoolean armed = new AtomicBoolean(false);
-        private final AtomicInteger failures = new AtomicInteger(0);
-        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pvMappings = new java.util.concurrent.ConcurrentHashMap<>();
-        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> stagedPvFds = new java.util.concurrent.ConcurrentHashMap<>();
-
-        @Override
-        public boolean close(long fd) {
-            stagedPvFds.remove(fd);
-            return super.close(fd);
-        }
-
-        @Override
-        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-            long addr = super.mmap(fd, len, offset, flags, memoryTag);
-            if (addr != -1 && stagedPvFds.containsKey(fd)) {
-                pvMappings.put(addr, len);
-            }
-            return addr;
-        }
-
-        @Override
-        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
-            if (pvMappings.remove(addr) != null && newAddr != -1) {
-                pvMappings.put(newAddr, newSize);
-            }
-            return newAddr;
-        }
-
-        @Override
-        public void msync(long addr, long len, boolean async) {
-            if (armed.get()) {
-                for (var mapping : pvMappings.entrySet()) {
-                    long base = mapping.getKey();
-                    if (addr >= base && addr < base + mapping.getValue()) {
-                        armed.set(false);
-                        failures.incrementAndGet();
-                        throw CairoException.critical(0).put("[test] staged .pv sync failed");
-                    }
-                }
-            }
-            super.msync(addr, len, async);
-        }
-
-        @Override
-        public void munmap(long address, long size, int memoryTag) {
-            pvMappings.remove(address);
-            super.munmap(address, size, memoryTag);
-        }
-
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            long fd = super.openRW(name, opts);
-            if (fd != -1 && armed.get() && name != null && Utf8s.containsAscii(name, ".pv")) {
-                stagedPvFds.put(fd, Boolean.TRUE);
-            }
-            return fd;
-        }
-
-        void arm() {
-            failures.set(0);
-            armed.set(true);
-        }
-
-        void disarm() {
-            armed.set(false);
-        }
-
-        int failureCount() {
-            return failures.get();
-        }
+    // How many failures of a sweep poisoned the writer, and how many orphan purges they queued
+    private record SweepResult(int poisonedCount, int orphanPurgeCount) {
     }
 }

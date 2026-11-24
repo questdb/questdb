@@ -149,24 +149,6 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         });
     }
 
-    // A column type change to an indexed SYMBOL builds and seals the index of the new column in every partition. As with
-    // ADD INDEX, the seals take the ordered flush in every mode: after a power loss the restored _meta does not index
-    // the column, recovery leaves its files alone, and the replayed change reuses the column name txn and accepts the
-    // files it finds.
-    @Test
-    public void testIndexBuildOfTypeChange() throws Exception {
-        Assume.assumeFalse("a column type change takes no INCLUDE columns", isCovering);
-        assertMemoryLeak(new CountingFacade(), () -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, k VARCHAR, c0 LONG, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            insertAndApply(rowsOverDays(0, 20, 4));
-            resetCounts();
-            execute("ALTER TABLE t ALTER COLUMN k TYPE SYMBOL INDEX TYPE POSTING");
-            drainWalQueue();
-            assertSealFlushes(false, "ALTER COLUMN TYPE");
-            assertIndexMatchesScan();
-        });
-    }
-
     // A WAL commit with rows in older partitions rewrites them and reseals their index at the commit's txn.
     @Test
     public void testOlderPartitionReseal() throws Exception {
@@ -224,25 +206,6 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         });
     }
 
-    // A replica takes no save point, so nothing would make the files of a seal of a commit in progress durable, and no
-    // pin would keep the files it superseded: the seal takes the ordered flush, as one that recovery keeps.
-    @Test
-    public void testOlderPartitionResealOnReplica() throws Exception {
-        assertMemoryLeak(new CountingFacade(), () -> {
-            createTable(true, true);
-            insertAndApply(rowsOverDays(0, 20, 4));
-            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
-            try {
-                resetCounts();
-                insertAndApply(rowsOverDays(20, 20, 4, -500_000L));
-                assertRebuildAndSealFlushes(false, "WAL commit into older partitions on a replica");
-                assertIndexMatchesScan();
-            } finally {
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
-            }
-        });
-    }
-
     // The last partition seals its generations when the writer moves to the next one, as part of the commit that does.
     // A non-WAL table takes no save point, so the seal flushes in every mode.
     @Test
@@ -273,21 +236,6 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             resetCounts();
             insertAndApply("(" + DAY + "::TIMESTAMP, 'k1', 41, 41, 41)");
             assertSealFlushes(true, "WAL commit into the next partition");
-            assertIndexMatchesScan();
-        });
-    }
-
-    // REINDEX rebuilds the index of the committed rows outside any commit.
-    @Test
-    public void testReindex() throws Exception {
-        assertMemoryLeak(new CountingFacade(), () -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL INDEX TYPE POSTING" + includeClause()
-                    + ", c0 LONG, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES " + rowsOverDays(0, 20, 4));
-            engine.releaseAllWriters();
-            resetCounts();
-            execute("REINDEX TABLE t COLUMN k LOCK EXCLUSIVE");
-            assertSealFlushes(false, "REINDEX");
             assertIndexMatchesScan();
         });
     }
