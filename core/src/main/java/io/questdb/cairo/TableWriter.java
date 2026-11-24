@@ -14791,6 +14791,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                         removeAttachedPartitionsTracked(partitionTimestamp);
 
+                        // When the removed split was the last partition, the new split takes its place.
+                        // getPartitionSize() reads the last partition's size from transientRowCount, which
+                        // still counts the removed split's rows until finishPartitionSizeUpdate() runs after
+                        // this loop, so the reseal below would index, and read the covered values of, rows
+                        // past the end of the new split's column files. The compaction tail move sets it
+                        // before its reseal for the same reason.
+                        if (txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1) == newSplitPartitionTimestamp) {
+                            txWriter.transientRowCount = prevPartitionSize - newPrevPartitionSize;
+                        }
+
                         // FrameAlgebra.append indexed the copied rows without their covered values, and the
                         // new split has no block in the partition update sink, so the O3 seal sweep never
                         // reaches it. Reseal it here, as compaction and squash do after their frame copies.
