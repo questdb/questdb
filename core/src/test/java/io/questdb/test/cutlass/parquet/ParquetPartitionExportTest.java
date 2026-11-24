@@ -740,22 +740,24 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     public void testRandomProjections() throws Exception {
         // Random column subsets and orders, with computed columns mixed in, over every type. About
         // half of the queries take an interval at whole hours within days 1 to 4, whose bounds may
-        // cut the row group of a Parquet day, so that a frame starts or ends inside it. About a
-        // third hold a CASE whose branches are all NULL, which the export writes as a STRING
-        // column of NULLs, so the query engine reads that CASE cast to STRING. Half of the others
-        // compute a column whose values take no bytes in its data buffer in some frames.
+        // cut the row group of a Parquet day, so that a frame starts or ends inside it. Of the
+        // first 12 queries, about a third hold a CASE whose branches are all NULL, which the export
+        // writes as a STRING column of NULLs, so the query engine reads that CASE cast to STRING,
+        // and about a third compute no column, which the export writes in DIRECT_PAGE_FRAME mode.
+        // Each of the last 4 queries computes a single column, whose values take no bytes in its
+        // data buffer in some frames.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             createAllTypesTable("tr", rnd.nextBoolean());
             final StringSink sink = new StringSink();
-            for (int i = 0; i < 12; i++) {
+            for (int i = 0; i < 16; i++) {
                 sink.clear();
-                final boolean isComputed = rnd.nextBoolean();
+                final boolean isShortComputed = i >= 12;
+                final boolean isComputed = !isShortComputed && rnd.nextBoolean();
                 final int columnCount = 1 + rnd.nextInt(8);
                 // The NULL CASE goes before column nullCaseColumn, or after the last one when that
                 // is columnCount; -1 for none.
-                final int nullCaseColumn = rnd.nextInt(3) == 0 ? rnd.nextInt(columnCount + 1) : -1;
-                final boolean isShortComputed = !isComputed && nullCaseColumn < 0 && rnd.nextBoolean();
+                final int nullCaseColumn = !isShortComputed && rnd.nextInt(3) == 0 ? rnd.nextInt(columnCount + 1) : -1;
                 for (int c = 0; c < columnCount; c++) {
                     if (c > 0) {
                         sink.put(", ");
