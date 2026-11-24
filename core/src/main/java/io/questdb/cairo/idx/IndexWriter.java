@@ -316,8 +316,10 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Called by a one-shot index build (ADD INDEX, REINDEX) right after {@link #seal()}, while no reader can hold the
-     * index files: deletes the files of the generations the seal superseded at once, instead of queueing their purge.
+     * Called by a one-shot index build (ADD INDEX, ALTER COLUMN TYPE, REINDEX and the parquet rewrite reindex) right
+     * after {@link #seal()}: deletes the files of the build generation the seal superseded at once, instead of
+     * queueing their purge. No reader can open that generation: the build writes an index no reader opened yet, and
+     * REINDEX removed the column's index files before rebuilding them (its lock keeps only writers out).
      * See {@link io.questdb.cairo.idx.PostingIndexWriter#removeSupersededGenerations()}. An index without generations
      * has nothing to delete.
      */
