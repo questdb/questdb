@@ -36,12 +36,22 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.tools.TestUtils;
@@ -75,12 +85,18 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
+    // The key files of the POSTING columns s and k.
+    private static final Pattern KEY_FILE_S_K = Pattern.compile("[sk]\\.pk(\\..*)?");
+    private static final Pattern PARTITION_DIR = Pattern.compile("\\d{4}-\\d{2}-\\d{2}(\\.\\d+)?");
     private static final int PASSES = 4;
     private static final int ROWS_PER_PASS = 10;
     private static final Pattern SEALED_FILE = Pattern.compile("s\\.(pv|pc\\d+)\\..*");
     // The sealed posting files of the covering column s and the plain column k of the three-day table.
     private static final Pattern SEALED_FILE_S_K = Pattern.compile("[sk]\\.(pv|pc\\d+)\\..*");
     private static final int SYMBOLS = 4;
+    // Counts the listings of the directories under partitionListingRoot while it is set.
+    private int partitionListingCount;
+    private String partitionListingRoot;
 
     @Test
     public void testCrashAndReopenClosesPurgeLogWriterOpenedByWriterClose() throws Exception {
@@ -105,6 +121,18 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testKillsLeaveOnePostingGeneration() throws Exception {
         assertOnePostingGenerationAfterCrashes(false);
+    }
+
+    // See crashAfterUnrecordedSeal(). _txn stays at the save point, and the WAL holds the pass.
+    @Test
+    public void testPowerLossAfterUnrecordedSealRemovesItsFiles() throws Exception {
+        crashAfterUnrecordedSeal(false);
+    }
+
+    // See crashAfterUnrecordedSeal(). _txn reached the disk, so the start restores the save point.
+    @Test
+    public void testPowerLossAfterUnrecordedSealRemovesItsFilesOnRestore() throws Exception {
+        crashAfterUnrecordedSeal(true);
     }
 
     // A power loss at every durability operation of the apply of a pass that reseals two older partitions and the
@@ -196,6 +224,20 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    // See crashBeforeSequencerFlush(). The lost commit appends a generation to the plain indexes of each day, with no
+    // seal, and in 2024-01-01 the append grows the value files past their allocated length of one OS page.
+    @Test
+    public void testPowerLossBeforeSequencerFlushCutsAppendThatGrewValueFile() throws Exception {
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
+        crashBeforeSequencerFlush(false, (int) (10 * io.questdb.std.Files.PAGE_SIZE));
+    }
+
+    // See crashBeforeSequencerFlush(). The lost commit reseals the covering index of every day into new files.
+    @Test
+    public void testPowerLossBeforeSequencerFlushCutsUnflushedReseal() throws Exception {
+        crashBeforeSequencerFlush(true, 0);
+    }
+
     @Test
     public void testPowerLossesLeaveOneGenerationInEveryPartition() throws Exception {
         assertOneGenerationInEveryPartitionAfterCrashes(true);
@@ -285,6 +327,29 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         assertRestartClosesPurgeLogWriter(token -> simulateRestart(new TableToken[]{token}));
     }
 
+    // A start where nothing ran after the save point, as after a clean stop: recovery cuts no chain and lists no
+    // partition directory.
+    @Test
+    public void testStartAtSavePointListsNoPartitionDirectory() throws Exception {
+        setUpAdaptive();
+        runWithCrashFacade(() -> {
+            final TableToken token = createThreeDayTable("w");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            partitionListingRoot = Paths.get(root, token.getDirName()).toString();
+            partitionListingCount = 0;
+            try {
+                kill(token);
+            } finally {
+                partitionListingRoot = null;
+            }
+            Assert.assertEquals("partition directories listed", 0, partitionListingCount);
+            engine.notifyWalTxnRepublisher(token);
+            drainWalQueue();
+            assertThreeDayRowsThroughIndex("w", 0);
+        });
+    }
+
     // An adaptive kill after in-place reseals of both days. The next start runs in NOSYNC: it recovers, opens and closes
     // the writer, and dies before the WAL apply commits anything. One more start follows. Every start reads the
     // save point's rows through the index, and the apply then reads every row.
@@ -341,6 +406,31 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 }
             }
         });
+    }
+
+    @Override
+    protected CrashFaultFilesFacade newCrashFacade() {
+        return new CrashFaultFilesFacade() {
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                if (partitionListingRoot != null) {
+                    final java.nio.file.Path dir = Paths.get(path.asAsciiCharSequence().toString());
+                    if (dir.startsWith(partitionListingRoot) && PARTITION_DIR.matcher(dir.getFileName().toString()).matches()) {
+                        partitionListingCount++;
+                    }
+                }
+                super.iterateDir(path, func);
+            }
+        };
+    }
+
+    // Appends the row of value v to the three-day table: symbol v % SYMBOLS in s, v % 3 in k.
+    private static void appendThreeDayRow(WalWriter walWriter, long ts, long v) {
+        final TableWriter.Row row = walWriter.newRow(ts);
+        row.putSym(1, String.valueOf((char) ('a' + v % SYMBOLS)));
+        row.putSym(2, String.valueOf((char) ('p' + v % 3)));
+        row.putLong(3, v);
+        row.append();
     }
 
     // Every partition directory holds the save point generations of each POSTING column of the three-day table.
@@ -458,6 +548,41 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    // The key files of the table whose chain names an entry or a generation above txn. The head entry is the newest
+    // entry of a chain, and its last generation the newest generation.
+    private static List<String> indexStateAbove(String tableDir, long txn) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final List<String> above = new ArrayList<>();
+        final List<String> keyFiles = sealedFiles(tableDir, KEY_FILE_S_K);
+        Assert.assertFalse("no index key files", keyFiles.isEmpty());
+        for (int i = 0, n = keyFiles.size(); i < n; i++) {
+            final String keyFile = keyFiles.get(i);
+            final long size = ff.length(Path.getThreadLocal(keyFile).$());
+            if (size < PostingIndexUtils.KEY_FILE_RESERVED) {
+                continue;
+            }
+            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, Path.getThreadLocal(keyFile).$(), size, MemoryTag.MMAP_DEFAULT)) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                if (!chain.hasHead()) {
+                    continue;
+                }
+                final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                chain.loadHeadEntry(keyMem, head);
+                long lastGenerationTxn = head.txnAtSeal;
+                if (head.genCount > 0) {
+                    final long lastGeneration = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), head.genCount - 1, head.coveringFormat, head.coverCount);
+                    lastGenerationTxn = keyMem.getLong(lastGeneration + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+                }
+                if (head.txnAtSeal > txn || lastGenerationTxn > txn) {
+                    above.add(Paths.get(tableDir).relativize(Paths.get(keyFile)) + " [entry=" + head.txnAtSeal
+                            + ", lastGeneration=" + lastGenerationTxn + ']');
+                }
+            }
+        }
+        return above;
+    }
+
     private static void insertAndApply(String table, String values, PostingSealPurgeJob job) throws Exception {
         execute("INSERT INTO " + table + " VALUES " + values);
         drainWalQueue();
@@ -534,12 +659,17 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         final StringBuilder sql = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
         for (int i = 0; i < ROWS_PER_PASS; i++) {
             final long v = (long) pass * ROWS_PER_PASS + i;
-            final long ts = DAY1 + (i % 3) * DAY + 10L * HOUR + pass * 600_000_000L + i * 30_000_000L;
+            final long ts = threeDayTimestamp(pass, i);
             sql.append(i == 0 ? "" : ", ").append('(').append(ts).append("::timestamp, '")
                     .append((char) ('a' + v % SYMBOLS)).append("', '").append((char) ('p' + v % 3)).append("', ")
                     .append(v).append(')');
         }
         return sql.toString();
+    }
+
+    // The timestamp of row i of a pass of the three-day table: day i % 3, after every row of the earlier passes.
+    private static long threeDayTimestamp(int pass, int i) {
+        return DAY1 + (i % 3) * DAY + 10L * HOUR + pass * 600_000_000L + i * 30_000_000L;
     }
 
     // Three crashes, each after passes that reseal two older partitions and the active one in place, for a covering and
@@ -756,7 +886,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
-    private void assertThreeDayRowsThroughIndex(String table, int lastPass) throws Exception {
+    private void assertThreeDayRowsThroughIndex(String table, int lastPass, long... extraValues) throws Exception {
         final long[] count = new long[SYMBOLS + 3];
         final long[] sum = new long[SYMBOLS + 3];
         for (int pass = 0; pass <= lastPass; pass++) {
@@ -767,6 +897,12 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 count[SYMBOLS + (int) (v % 3)]++;
                 sum[SYMBOLS + (int) (v % 3)] += v;
             }
+        }
+        for (long v : extraValues) {
+            count[(int) (v % SYMBOLS)]++;
+            sum[(int) (v % SYMBOLS)] += v;
+            count[SYMBOLS + (int) (v % 3)]++;
+            sum[SYMBOLS + (int) (v % 3)] += v;
         }
         for (int k = 0; k < SYMBOLS + 3; k++) {
             final String filter = k < SYMBOLS ? "s = '" + (char) ('a' + k) + "'" : "k = '" + (char) ('p' + k - SYMBOLS) + "'";
@@ -879,10 +1015,171 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    // A pass past the save point reseals the covering index of every day. The group window is 0, so the pass's
+    // sequencer record is durable at its commit. The kernel writes the new value and cover files back, and _txn too
+    // when isTxnDurable, but not the key files: after the power loss no chain names the new files, and none needs a
+    // cut. Recovery must remove the new files before the WAL replay reseals over them, whether the start restores the
+    // save point or not.
+    private void crashAfterUnrecordedSeal(boolean isTxnDurable) throws Exception {
+        setUpAdaptive();
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        runWithCrashFacade(() -> {
+            final TableToken token = createThreeDayTable("w");
+            final String tableDir = Paths.get(root, token.getDirName()).toString();
+            final List<String> savePointFiles = sealedFiles(tableDir, SEALED_FILE_S_K);
+            final long savePointTxn = engine.getTableSequencerAPI().getTxnTracker(token).getPinnedEpochTxn();
+            Assert.assertTrue("no save point", savePointTxn > -1);
+            markDurableBaseline();
+            execute(threeDaySql("w", 1));
+            drainWalQueue();
+            final List<String> newFiles = sealedFiles(tableDir, SEALED_FILE_S_K);
+            newFiles.removeAll(savePointFiles);
+            Assert.assertFalse("the reseals made no files", newFiles.isEmpty());
+            for (int i = 0, n = newFiles.size(); i < n; i++) {
+                crashFf.markFileDurable(newFiles.get(i));
+            }
+            if (isTxnDurable) {
+                crashFf.markFileDurable(Paths.get(tableDir, TableUtils.TXN_FILE_NAME).toString());
+            }
+            fsyncTableDirs(tableDir);
+            crashFf.powerLoss();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseCrashOrphanedWriters();
+            discardPurgeQueue();
+            simulateRestart(new TableToken[]{token});
+            Assert.assertEquals("a chain names state above the save point after the power loss", "[]", indexStateAbove(tableDir, savePointTxn).toString());
+            partitionListingRoot = tableDir;
+            partitionListingCount = 0;
+            try {
+                new RecoveryCoordinator(engine).recover();
+            } finally {
+                partitionListingRoot = null;
+            }
+            Assert.assertEquals("partition directories listed", 6, partitionListingCount);
+            for (int i = 0, n = newFiles.size(); i < n; i++) {
+                Assert.assertFalse("a file no chain names is left: " + newFiles.get(i), Files.exists(Paths.get(newFiles.get(i))));
+            }
+            evictPurgeLogScoreboard();
+            engine.notifyWalTxnRepublisher(token);
+            drainWalQueue();
+            Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
+            assertThreeDayRowsThroughIndex("w", 1);
+        });
+    }
+
+    // A power loss right after the apply of the first commit past a save point, before the group flush of the commit's
+    // sequencer record. The three-day table, with a covering or a plain s, and its first save point. One WAL commit
+    // appends pass 1 in place into the three days, and extraDay1Rows more rows into 2024-01-01. Its apply writes index
+    // state above the save point into every partition. The kernel writes the index key files back, then the power loss
+    // drops the record and every other file written since the save point. Recovery restores nothing, as _txn is at
+    // the save point, and must still cut every chain back to it. The next commit reuses the lost commit's txn, which
+    // brings back what an uncut chain names above the save point, and a commit into 2024-01-01 writes over the index.
+    private void crashBeforeSequencerFlush(boolean isCovering, int extraDay1Rows) throws Exception {
+        setUpAdaptive();
+        runWithCrashFacade(() -> {
+            final TableToken token = createThreeDayTable("w", isCovering);
+            final String tableDir = Paths.get(root, token.getDirName()).toString();
+            final List<String> savePointFiles = sealedFiles(tableDir, SEALED_FILE_S_K);
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            final long[] savePointFileLengths = new long[savePointFiles.size()];
+            for (int i = 0; i < savePointFileLengths.length; i++) {
+                savePointFileLengths[i] = ff.length(Path.getThreadLocal(savePointFiles.get(i)).$());
+            }
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long savePointTxn = tracker.getPinnedEpochTxn();
+            Assert.assertTrue("no save point", savePointTxn > -1);
+            final List<String> newFiles = new ArrayList<>();
+            final List<String> cutKeyFiles;
+            markDurableBaseline();
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                for (int i = 0; i < ROWS_PER_PASS; i++) {
+                    appendThreeDayRow(walWriter, threeDayTimestamp(1, i), ROWS_PER_PASS + i);
+                }
+                for (int i = 0; i < extraDay1Rows; i++) {
+                    appendThreeDayRow(walWriter, DAY1 + 11 * HOUR + i * 1_000_000L, 1_000 + i);
+                }
+                walWriter.commit();
+                drainWalQueue();
+                Assert.assertEquals("the commit is applied", tracker.getSeqTxn(), tracker.getWriterTxn());
+                Assert.assertTrue("the sequencer record is durable before the power loss", tracker.getLocalDurableSeqTxn() < tracker.getWriterTxn());
+                cutKeyFiles = indexStateAbove(tableDir, savePointTxn);
+                Assert.assertFalse("the apply left no index state above the save point", cutKeyFiles.isEmpty());
+                newFiles.addAll(sealedFiles(tableDir, SEALED_FILE_S_K));
+                newFiles.removeAll(savePointFiles);
+                if (isCovering) {
+                    Assert.assertFalse("the reseals made no files", newFiles.isEmpty());
+                }
+                if (extraDay1Rows > 0) {
+                    boolean isGrown = false;
+                    for (int i = 0; i < savePointFileLengths.length; i++) {
+                        isGrown |= ff.length(Path.getThreadLocal(savePointFiles.get(i)).$()) > savePointFileLengths[i];
+                    }
+                    Assert.assertTrue("the append grew no value file", isGrown);
+                }
+                // A journal commit, which a flush of another table makes, keeps the names of the files the apply made.
+                fsyncTableDirs(tableDir);
+                final List<String> keyFiles = sealedFiles(tableDir, KEY_FILE_S_K);
+                for (int i = 0, n = keyFiles.size(); i < n; i++) {
+                    crashFf.markFileDurable(keyFiles.get(i));
+                }
+                powerLossDroppingPending(walWriter);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseCrashOrphanedWriters();
+            discardPurgeQueue();
+            simulateRestart(new TableToken[]{token});
+            partitionListingRoot = tableDir;
+            partitionListingCount = 0;
+            try {
+                new RecoveryCoordinator(engine).recover();
+            } finally {
+                partitionListingRoot = null;
+            }
+            Assert.assertEquals("index state above the save point after recovery", "[]", indexStateAbove(tableDir, savePointTxn).toString());
+            // Recovery looks for files no chain names only where it cut a chain.
+            Assert.assertEquals("partition directories listed", cutKeyFiles.size(), partitionListingCount);
+            for (int i = 0, n = newFiles.size(); i < n; i++) {
+                Assert.assertFalse("a file of a cut generation is left: " + newFiles.get(i), Files.exists(Paths.get(newFiles.get(i))));
+            }
+            evictPurgeLogScoreboard();
+            engine.notifyWalTxnRepublisher(token);
+            drainWalQueue();
+            Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
+            assertThreeDayRowsThroughIndex("w", 0);
+
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                appendThreeDayRow(walWriter, DAY1 + 3 * DAY + 10 * HOUR, 100);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            Assert.assertFalse("a commit into a new day suspended the table", anyTableSuspended(token));
+            try (TableReader reader = getReader(token)) {
+                Assert.assertEquals("the commit into a new day takes the lost commit's txn", savePointTxn + 1, reader.getTxn());
+            }
+            assertThreeDayRowsThroughIndex("w", 0, 100);
+
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                appendThreeDayRow(walWriter, DAY1 + 20 * HOUR, 101);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            Assert.assertFalse("a commit into 2024-01-01 suspended the table", anyTableSuspended(token));
+            assertThreeDayRowsThroughIndex("w", 0, 100, 101);
+        });
+    }
+
     // A table with a covering and a plain POSTING column over three days, and its first save point.
     private TableToken createThreeDayTable(String table) throws Exception {
-        execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), k SYMBOL INDEX TYPE POSTING, "
-                + "v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+        return createThreeDayTable(table, true);
+    }
+
+    // A table with a POSTING column s, covering v or not, and a plain POSTING column k over three days, and its first
+    // save point.
+    private TableToken createThreeDayTable(String table, boolean isCovering) throws Exception {
+        execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING" + (isCovering ? " INCLUDE (v)" : "")
+                + ", k SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
         execute(threeDaySql(table, 0));
         // The first apply takes the save point.
         drainWalQueue();

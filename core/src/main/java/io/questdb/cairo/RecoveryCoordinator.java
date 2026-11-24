@@ -299,8 +299,9 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Removes, from one partition, the value and cover files of one POSTING column version whose generation the
-     * chain does not name at or below the save point's txn. Leaves everything when the chain is absent, empty or
+     * In one partition, cuts the chain of one POSTING column version back to the save point's txn, then removes the
+     * value and cover files whose generation the chain does not name at or below that txn: always with
+     * {@code isFullScan}, otherwise only when it cut the chain. Leaves everything when the chain is absent, empty or
      * does not walk cleanly. Returns the number of files removed.
      */
     private int removeUnnamedPostingGenerations(
@@ -309,6 +310,7 @@ public class RecoveryCoordinator {
             CharSequence columnName,
             long columnNameTxn,
             long epochTxn,
+            boolean isFullScan,
             PostingIndexChainWriter chain,
             PostingIndexChainEntry.Snapshot entry,
             LongList namedSealTxns,
@@ -368,6 +370,9 @@ public class RecoveryCoordinator {
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             return 0;
         }
+        if (!trimNeeded && !isFullScan) {
+            return 0;
+        }
         final int[] removed = {0};
         PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, columnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
             @Override
@@ -393,14 +398,17 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * In every partition of the save point, removes the value and cover files of each POSTING column whose
-     * generation the column's chain does not name at or below the save point's txn. A reseal after the save point
-     * in a partition that no writer reopens with its chain walk (an older partition taking rows in place) leaves
-     * such files, and a power loss can lose their chain record while the file stays. No reader or writer exists
-     * yet, and no reader at or above the save point's txn picks an entry sealed above it. The partitions, column
-     * versions and txn come from the live files, which equal the save point's sections when this runs.
+     * In every partition of the save point, cuts the chain of each POSTING column back to the save point's txn and
+     * removes the value and cover files whose generation the chain does not name at or below it; without
+     * {@code isFullScan}, it looks for those files only where it cut a chain. A pass after the save point writes
+     * index state into every partition it touches, also one that no writer reopens with its chain walk (an older
+     * partition taking rows in place), and under adaptive it flushes none of it. A power loss can then keep a chain
+     * record and lose the file or the file size it names, or keep a file and lose its chain record. No reader or
+     * writer exists yet, and no reader at or above the save point's txn picks an entry sealed above it. The
+     * partitions, column versions and txn come from the live files, which equal the save point's sections when
+     * this runs.
      */
-    private void removeUnnamedPostingGenerations(TableToken token, Path path) {
+    private void removeUnnamedPostingGenerations(TableToken token, Path path, boolean isFullScan) {
         TableReaderMetadata metadata = null;
         TxReader txReader = null;
         ColumnVersionReader cvReader = null;
@@ -444,6 +452,7 @@ public class RecoveryCoordinator {
                                 metadata.getColumnName(c),
                                 cvReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(c)),
                                 epochTxn,
+                                isFullScan,
                                 chain,
                                 entry,
                                 namedSealTxns,
@@ -681,11 +690,11 @@ public class RecoveryCoordinator {
         // included, took the restore above, and only that counts as a recovery.
         if (!restored) {
             // A power loss usually rolls _txn and _cv back to the save point, so nothing is restored, but the passes
-            // applied after it can have left index generations behind. Those passes are in the WAL, after the save
-            // point; after a clean stop with everything applied the WAL holds nothing past it.
-            if (sequencerFrontierOrUnknown(token) > epochSeqTxn) {
-                removeUnnamedPostingGenerations(token, src);
-            }
+            // applied after it can have left index state behind. Their sequencer records need not have survived:
+            // the apply runs ahead of the group flush. So every chain is cut back to the save point. Every partition
+            // is checked for files no chain names only when the WAL holds passes after the save point, which a clean
+            // stop with everything applied does not leave.
+            removeUnnamedPostingGenerations(token, src, sequencerFrontierOrUnknown(token) > epochSeqTxn);
             pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn, selected.generation);
             LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
                     .$(", epochSeqTxn=").$(epochSeqTxn).I$();
@@ -694,7 +703,7 @@ public class RecoveryCoordinator {
 
         // Reads the live files, which equal the save point from here on. A crash before it is covered by the
         // branch above on the next start: index generations left behind come from passes after the save point.
-        removeUnnamedPostingGenerations(token, src);
+        removeUnnamedPostingGenerations(token, src, true);
         // When recovery runs in a live engine (a checkpoint recovery), pooled metadata may hold the schema from
         // before the restore; evict it before WAL replay.
         engine.resetTableMetadataForRecovery(token);
