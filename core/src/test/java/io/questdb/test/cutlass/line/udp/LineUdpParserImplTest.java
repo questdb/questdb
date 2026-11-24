@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.line.udp;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
@@ -56,10 +57,13 @@ import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
@@ -883,6 +887,73 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 system,host=linux-questdb uptime_format=" 1:18" 1575990360000000000
                 """;
         assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testPartitionSwitchFailureKeepsCommittedRows() throws Exception {
+        // The first line of 1970-01-02 cannot create the directory of its partition, which distresses the writer.
+        // The parser logs the error, keeps the writer and appends the next line with it; the commit fails. The rows
+        // committed to 1970-01-01 must stay as they are.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, "udp_switch~") && Utf8s.containsAscii(path, "1970-01-02") && isArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE udp_switch (x LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                parseDatagram(lexer, """
+                        udp_switch x=1i 1000
+                        udp_switch x=2i 2000
+                        udp_switch x=3i 3000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+                isArmed.set(true);
+                parseDatagram(lexer, """
+                        udp_switch x=21i 86400000001000
+                        udp_switch x=22i 86400000002000
+                        """);
+                lexer.parseLast();
+                Assert.assertFalse(isArmed.get());
+                try {
+                    parser.commitAll();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Table 'udp_switch' is distressed");
+                }
+            }
+            final String committed = """
+                    x\ttimestamp
+                    1\t1970-01-01T00:00:00.000001Z
+                    2\t1970-01-01T00:00:00.000002Z
+                    3\t1970-01-01T00:00:00.000003Z
+                    """;
+            assertQuery("udp_switch")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(committed);
+
+            // the next writer appends to both days
+            execute("INSERT INTO udp_switch VALUES (4, '1970-01-01T00:00:00.000004Z'), (23, '1970-01-02T00:00:00.000003Z')");
+            assertQuery("udp_switch")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(committed
+                            + "4\t1970-01-01T00:00:00.000004Z\n"
+                            + "23\t1970-01-02T00:00:00.000003Z\n");
+        });
     }
 
     @Test

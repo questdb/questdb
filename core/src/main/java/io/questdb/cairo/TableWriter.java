@@ -4712,7 +4712,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                        try {
+                            switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                        } catch (Throwable th) {
+                            // The row needs the next partition, and the switch to it failed part way: txWriter, the
+                            // partition bounds and the open column files can disagree now, so the writer must not
+                            // commit. Mark it distressed, as the steps of the switch that expect to fail already do.
+                            // newRow0() has bumped masterRef, but txWriter has not counted the row: take the bump
+                            // back. Left odd, masterRef would make the next newRow(), or a Row.cancel() by a caller
+                            // that keeps the writer, cancel the row through rowCancel(), which rewinds a row that
+                            // txWriter did count: the last one, or the first of the partition still open.
+                            distressed = true;
+                            masterRef--;
+                            throw th;
+                        }
                     }
                 }
                 if (lastOpenPartitionIsReadOnly) {
@@ -13689,8 +13702,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private Row newRowO3(long timestamp) {
         LOG.info().$("switched to o3 [table=").$(tableToken).I$();
-        txWriter.beginPartitionSizeUpdate();
-        o3OpenColumns();
+        try {
+            txWriter.beginPartitionSizeUpdate();
+            o3OpenColumns();
+        } catch (Throwable th) {
+            // The first out-of-order row of the transaction could not start, e.g. o3OpenColumns() ran out of memory
+            // for the O3 buffer of a STRING or BINARY column. The writer stays in order and usable. newRow0() has
+            // bumped masterRef, but the row is not counted: o3MasterRef is not set. Take the bump back. Left odd,
+            // masterRef would make the next newRow() or commit() cancel the row through rowCancel(), which drops
+            // the last row that txWriter did count.
+            masterRef--;
+            throw th;
+        }
         o3InError = false;
         o3MasterRef = masterRef;
         rowAction = ROW_ACTION_O3;

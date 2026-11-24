@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8String;
@@ -358,6 +359,33 @@ public class MemoryPARWImplTest {
                 Assert.assertEquals(5, mem.getPageCount());
             }
         });
+    }
+
+    @Test
+    public void testFailedPageAllocationKeepsAppendOffset() {
+        // The memory may not take a second page: a long across the end of the first one fails after its bytes that
+        // fit. The memory keeps the append offset and the page, and a jump back into the page writes there.
+        final int pageSize = 1024;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, 1, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < pageSize / Long.BYTES - 1; i++) {
+                mem.putLong(i);
+            }
+            mem.putInt(7);
+            Assert.assertEquals(pageSize - Integer.BYTES, mem.getAppendOffset());
+            try {
+                mem.putLong(-1);
+                Assert.fail();
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Maximum number of pages (1) breached");
+            }
+            Assert.assertEquals(pageSize, mem.getAppendOffset());
+            Assert.assertEquals(1, mem.getPageCount());
+            mem.jumpTo(pageSize - Long.BYTES);
+            mem.putLong(42);
+            Assert.assertEquals(pageSize, mem.getAppendOffset());
+            Assert.assertEquals(pageSize / Long.BYTES - 2, mem.getLong(pageSize - 2 * Long.BYTES));
+            Assert.assertEquals(42, mem.getLong(pageSize - Long.BYTES));
+        }
     }
 
     @Test

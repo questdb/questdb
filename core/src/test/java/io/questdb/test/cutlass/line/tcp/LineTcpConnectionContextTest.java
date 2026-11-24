@@ -50,6 +50,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assume.assumeFalse;
@@ -1954,6 +1955,56 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             } while (!disconnected);
             Assert.assertEquals(nUnread, recvBuffer.length());
         });
+    }
+
+    @Test
+    public void testPartitionSwitchFailureKeepsCommittedRows() throws Exception {
+        // The first line of 1970-01-02 cannot create the directory of its partition, which distresses the writer.
+        // ILP logs the error, keeps the writer and appends the next line with it; the commit of that line fails,
+        // and the writer closes. The rows committed to 1970-01-01 must stay as they are. The table bypasses WAL
+        // whatever the default of the run.
+        final String table = "switchFailure";
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
+        final AtomicBoolean isArmed = new AtomicBoolean(true);
+        runInContext(
+                new TestFilesFacadeImpl() {
+                    @Override
+                    public int mkdirs(Path path, int mode) {
+                        if (Utf8s.containsAscii(path, table) && Utf8s.containsAscii(path, "1970-01-02") && isArmed.compareAndSet(true, false)) {
+                            return -1;
+                        }
+                        return super.mkdirs(path, mode);
+                    }
+                },
+                () -> {
+                    execute("CREATE TABLE " + table + " (x LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+                    recvBuffer = table + " x=1i 1000\n" +
+                            table + " x=2i 2000\n" +
+                            table + " x=3i 3000\n" +
+                            table + " x=21i 86400000001000\n" +
+                            table + " x=22i 86400000002000\n";
+                    handleIO();
+                    closeContext();
+                    Assert.assertFalse(isArmed.get());
+                    final String committed = """
+                            x\ttimestamp
+                            1\t1970-01-01T00:00:00.000001Z
+                            2\t1970-01-01T00:00:00.000002Z
+                            3\t1970-01-01T00:00:00.000003Z
+                            """;
+                    assertTable(committed, table);
+
+                    // the next writer appends to both days
+                    execute("INSERT INTO " + table + " VALUES (4, '1970-01-01T00:00:00.000004Z'), (23, '1970-01-02T00:00:00.000003Z')");
+                    assertTable(
+                            committed
+                                    + "4\t1970-01-01T00:00:00.000004Z\n"
+                                    + "23\t1970-01-02T00:00:00.000003Z\n",
+                            table
+                    );
+                },
+                null
+        );
     }
 
     @Test

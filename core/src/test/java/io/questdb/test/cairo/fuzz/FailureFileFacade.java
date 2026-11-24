@@ -52,7 +52,12 @@ public class FailureFileFacade implements FilesFacade {
     // Mode 3: name of an unexpected thread that touched the armed facade, or null.
     private volatile String contaminatingThreadName;
     private final AtomicInteger failureGenerated = new AtomicInteger();
+    // the stack of the call that the last planted failure failed, or null
+    private volatile StackTraceElement[] failureStack;
     private final FilesFacade ff;
+    // when true, a planted failure counts and fails allocate() calls only: the allocation of disk space for a new
+    // page of a column file, or for a file that a partition switch opens
+    private volatile boolean isAllocateOnly;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
@@ -63,7 +68,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (checkForFailure()) {
+        if (checkForAllocateFailure()) {
             return false;
         }
         return ff.allocate(fd, size);
@@ -71,7 +76,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long allocatedSize, long size) {
-        if (checkForFailure()) {
+        if (checkForAllocateFailure()) {
             return false;
         }
         return ff.allocate(fd, allocatedSize, size);
@@ -93,6 +98,8 @@ public class FailureFileFacade implements FilesFacade {
     public void clearFailures() {
         osCallsCount.set(0);
         failureGenerated.set(0);
+        failureStack = null;
+        isAllocateOnly = false;
         armedThread = null;
         armingThread = null;
         queryWorkerNamePrefix = null;
@@ -173,6 +180,14 @@ public class FailureFileFacade implements FilesFacade {
 
     public int failureGenerated() {
         return failureGenerated.get();
+    }
+
+    /**
+     * The stack of the call that the last planted failure failed, or null when none failed since
+     * {@link #clearFailures()}.
+     */
+    public StackTraceElement[] getFailureStack() {
+        return failureStack;
     }
 
     @Override
@@ -583,6 +598,14 @@ public class FailureFileFacade implements FilesFacade {
         return ff.rmdir(name, haltOnError);
     }
 
+    /**
+     * When true, the failures that {@link #setToFailAfter(int)} plants count and fail allocate() calls only, until
+     * {@link #clearFailures()}.
+     */
+    public void setAllocateOnly(boolean isAllocateOnly) {
+        this.isAllocateOnly = isAllocateOnly;
+    }
+
     public void setToFailAfter(int ioFailureCallCount) {
         // Default (unscoped): any thread's op counts and fires. Arm only when not
         // already armed so a pending fault is not reset by a concurrent caller.
@@ -691,7 +714,15 @@ public class FailureFileFacade implements FilesFacade {
         return ff.write(fd, address, len, offset);
     }
 
+    private boolean checkForAllocateFailure() {
+        return checkForFailure0();
+    }
+
     private boolean checkForFailure() {
+        return !isAllocateOnly && checkForFailure0();
+    }
+
+    private boolean checkForFailure0() {
         final Thread current = Thread.currentThread();
         // Mode 2: single-thread scope. Ignore ops on every other thread so the
         // fault stays on the query under test and off engine background jobs.
@@ -709,6 +740,7 @@ public class FailureFileFacade implements FilesFacade {
         }
         boolean fail = osCallsCount.decrementAndGet() == 0;
         if (fail) {
+            failureStack = current.getStackTrace();
             failureGenerated.incrementAndGet();
         }
         return fail;

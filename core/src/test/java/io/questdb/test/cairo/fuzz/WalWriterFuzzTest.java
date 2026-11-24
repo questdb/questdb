@@ -667,6 +667,48 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testNonWalIoFailuresAtPageSwitches() throws Exception {
+        // Column files grow by pages of the smallest size, and the IO failures planted in the non-WAL apply fail
+        // allocate() calls, so they land on page switches of column files, the designated timestamp included, and
+        // on partition switches. After a failure, the apply keeps the writer, as ILP and CSV import do, or returns
+        // it to the pool. The non-WAL table must still match the WAL tables.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        // after setTestParams(), which can set the test up again
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.02,
+                0.02,
+                0.02,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.0,
+                0.0,
+                0.01,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+        );
+        // In-order transactions append their rows through newRow(), out-of-order ones through the O3 commit. Without
+        // type changes, the no-sentinel setting only makes the generator write in order.
+        final boolean isInOrder = rnd.nextBoolean();
+        fuzzer.setNoSentinelTypeChangeEnabled(isInOrder);
+        fuzzer.setFuzzCounts(!isInOrder && rnd.nextBoolean(), 50_000, 50, 20, 10, 1000, 100, 3 + rnd.nextInt(8), -1, 5 + rnd.nextInt(6));
+        fuzzer.setIoFailureOnAllocate(true);
+        fuzzer.setIoFailureRecoveryRnd(new Rnd(rnd.nextLong(), rnd.nextLong()));
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);

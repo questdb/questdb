@@ -147,6 +147,8 @@ public class FuzzRunner {
     private final AtomicInteger sequencedPreparedCommitCount = new AtomicInteger();
     // the native conversions of every value of a type without a NULL sentinel, by source type and target type
     private final Map<String, Map<String, String>> noSentinelConversions = new HashMap<>();
+    // the planted IO failures that applyNonWal() observed, with the recovery it picked for each
+    private final ObjList<IoFailureRecovery> ioFailureRecoveries = new ObjList<>();
     private final Map<TableReader, ReaderSnapshot> readerSnapshots = Collections.synchronizedMap(new IdentityHashMap<>());
     // the columns the generator widened from a type without a NULL sentinel, see setNoSentinelWideningChecked()
     private final ObjHashSet<String> widenedColumns = new ObjHashSet<>();
@@ -172,6 +174,10 @@ public class FuzzRunner {
     private boolean hasPoolColumnPurgeJob;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
+    // picks the recovery of applyNonWal() from a planted IO failure, see setIoFailureRecoveryRnd(); null keeps the
+    // pool recovery
+    private Rnd ioFailureRecoveryRnd;
+    private boolean isIoFailureOnAllocate;
     private boolean isNoSentinelTypeChangeEnabled;
     private boolean isNoSentinelWideningChecked;
     private boolean isO3;
@@ -396,6 +402,7 @@ public class FuzzRunner {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
                     if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
+                        ff.setAllocateOnly(isIoFailureOnAllocate);
                         ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
                         ioFailureCreatedCount++;
                     }
@@ -447,12 +454,30 @@ public class FuzzRunner {
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
                         LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
-                        writer = Misc.free(writer);
+                        final boolean isWriterKeptMode = ioFailureRecoveryRnd != null && ioFailureRecoveryRnd.nextBoolean();
+                        boolean isWriterKept = false;
+                        // a transaction that reopens the writer or recreates the table leaves no writer to keep
+                        if (isWriterKeptMode && writer != null && writer == writerCopy && !writer.isDistressed()
+                                && !(transaction.operationList.size() > 0 && transaction.operationList.getQuick(0) instanceof FuzzDropCreateTableOperation)) {
+                            try {
+                                writer.rollback();
+                                isWriterKept = true;
+                            } catch (CairoException | CairoError rollbackFailure) {
+                                // rollback() distresses a writer that a failed put left with a row in progress
+                                LOG.info().$("kept writer could not roll back: ").$((Throwable) rollbackFailure).$();
+                            }
+                        }
+                        ioFailureRecoveries.add(new IoFailureRecovery(ff.getFailureStack(), isWriterKeptMode, isWriterKept));
+                        if (!isWriterKept) {
+                            writer = Misc.free(writer);
+                        }
 
                         transaction = transactions.getQuick(i);
 
                         try {
-                            writer = TestUtils.getWriter(engine, tableName);
+                            if (writer == null) {
+                                writer = TestUtils.getWriter(engine, tableName);
+                            }
                         } catch (CairoException ex) {
                             if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation dropCreateTableOperation) {
                                 // Table is dropped, but failed to recreate.
@@ -747,6 +772,10 @@ public class FuzzRunner {
 
     public FailureFileFacade getFileFacade() {
         return ff;
+    }
+
+    public ObjList<IoFailureRecovery> getIoFailureRecoveries() {
+        return ioFailureRecoveries;
     }
 
     public int getTimestampType() {
@@ -1065,6 +1094,25 @@ public class FuzzRunner {
      */
     public void setHasPoolColumnPurgeJob(boolean hasPoolColumnPurgeJob) {
         this.hasPoolColumnPurgeJob = hasPoolColumnPurgeJob;
+    }
+
+    /**
+     * When true, the IO failures that applyNonWal() plants fail allocate() calls only: the allocation of disk space
+     * for the next page of a column file, or for the files that a partition switch opens.
+     */
+    public void setIoFailureOnAllocate(boolean isIoFailureOnAllocate) {
+        this.isIoFailureOnAllocate = isIoFailureOnAllocate;
+    }
+
+    /**
+     * With a Rnd, applyNonWal() draws from it, for each planted IO failure it observes, how it recovers: it keeps
+     * the writer, as ILP and CSV import keep the writer after a failed row, or it returns the writer to the pool.
+     * A kept writer is rolled back, unless the failure distressed it, and retries the transaction; a distressed
+     * writer, or one whose rollback fails, goes back to the pool, which closes it. Without a Rnd, the default,
+     * the writer always goes back to the pool, and the run draws nothing more from the Rnd of the apply.
+     */
+    public void setIoFailureRecoveryRnd(Rnd ioFailureRecoveryRnd) {
+        this.ioFailureRecoveryRnd = ioFailureRecoveryRnd;
     }
 
     /**
@@ -2925,5 +2973,22 @@ public class FuzzRunner {
     }
 
     private record ReaderSnapshot(String dirName, long txn, LongList rowIds, String rows) {
+    }
+
+    /**
+     * A planted IO failure that applyNonWal() observed: the stack of the call it failed, and how the apply recovered.
+     */
+    public static class IoFailureRecovery {
+        public final StackTraceElement[] failureStack;
+        // the apply kept the writer: the failure did not distress it, and the rollback succeeded
+        public final boolean isWriterKept;
+        // the apply picked to keep the writer, see setIoFailureRecoveryRnd()
+        public final boolean isWriterKeptMode;
+
+        IoFailureRecovery(StackTraceElement[] failureStack, boolean isWriterKeptMode, boolean isWriterKept) {
+            this.failureStack = failureStack;
+            this.isWriterKeptMode = isWriterKeptMode;
+            this.isWriterKept = isWriterKept;
+        }
     }
 }
