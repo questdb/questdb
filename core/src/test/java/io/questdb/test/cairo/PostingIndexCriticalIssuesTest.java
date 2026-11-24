@@ -14172,8 +14172,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return sweepPostingIndexOperation(name, setup, op, maxRowBefore, opRowCeiling, isEmergencyClose, false);
     }
 
-    // As above. With isRebuildPublish, it fails only the flushes, in the SYNC modes, where a rebuild's publish flushes
-    // most; and after any failed flush once op moved the chain head, before a flush of the .pk that names the new head
+    // As above. With isRebuildPublish, it fails only the flushes, in the SYNC modes, the only ones that flush the
+    // publish of a rebuild; and after any failed flush once op moved the chain head, before a flush of the .pk
     // succeeded, the generation live before op keeps its files, as the .pk naming the new head may not be on disk.
     private SweepResult sweepPostingIndexOperation(
             String name,
@@ -14231,11 +14231,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             } else {
                                 failureCount++;
                                 where = " [commitMode=" + modeNames[mode] + ", failed=" + failedCall + ']';
-                                final long liveSealTxn = readPostingSealTxn(path, plen, indexName);
                                 final boolean isFailedHeadFlush = isRebuildPublish
-                                        ? sweepFf.isFailedFlush() && sweepFf.flushedHeadSealTxn() != liveSealTxn
+                                        ? sweepFf.isFailedFlush() && !sweepFf.isKeyFileFlushed()
                                         : sweepFf.isFailedKeyFileFlush();
-                                if (isFailedHeadFlush && liveSealTxn != liveSealTxnBefore) {
+                                if (isFailedHeadFlush && readPostingSealTxn(path, plen, indexName) != liveSealTxnBefore) {
                                     keptSealTxn = liveSealTxnBefore;
                                 }
                                 // right after the failure, as the retry below takes the staged sealTxn again
@@ -14588,11 +14587,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         private volatile long errnoThreadId = -1;
         private volatile int failAt = -1;
         private volatile String failedCall;
-        // The head sealTxn the .pk named when a synchronous flush of it last succeeded after arm(), -1 before that
-        private volatile long flushedHeadSealTxn;
         private volatile boolean isFailedFlush;
         private volatile boolean isFailedKeyFileFlush;
         private volatile boolean isFlushOnly;
+        private volatile boolean isKeyFileFlushed;
         private volatile boolean isPerFileFlush;
 
         IndexFileCallFailingFacade(String marker) {
@@ -14787,7 +14785,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         void arm(int failAt) {
             errnoThreadId = -1;
             failedCall = null;
-            flushedHeadSealTxn = -1;
+            isKeyFileFlushed = false;
             callCount.set(0);
             this.failAt = failAt;
         }
@@ -14816,8 +14814,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             return failedCall != null && isFailedKeyFileFlush;
         }
 
-        long flushedHeadSealTxn() {
-            return flushedHeadSealTxn;
+        // Whether a synchronous flush of a .pk file succeeded after arm() and before the call that failed
+        boolean isKeyFileFlushed() {
+            return isKeyFileFlushed;
         }
 
         // Counts and fails only the flushes: fdatasync, fsync, msync, sync_file_range and syncfs
@@ -14852,9 +14851,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final boolean isKeyFile = fileName.lastIndexOf(".pk") > fileName.lastIndexOf(Files.SEPARATOR);
             if (callCount.incrementAndGet() != at) {
                 if (isFlush && isKeyFile && !call.equals("msync async") && failedCall == null) {
-                    try (Path keyFile = new Path().of(fileName)) {
-                        flushedHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(TestFilesFacadeImpl.INSTANCE, keyFile.$());
-                    }
+                    isKeyFileFlushed = true;
                 }
                 return false;
             }

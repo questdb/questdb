@@ -1023,10 +1023,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     // A pass past the save point reseals the covering index of every day. The group window is 0, so the pass's
     // sequencer record is durable at its commit. The kernel writes the new value and cover files back, and _txn too
-    // when isTxnDurable, but not the key files past the flush each reseal makes before its header names the new entry:
-    // after the power loss no chain names the new files, and recovery cuts the generation the pass appended in place.
-    // Recovery must remove the new files before the WAL replay reseals over them, whether the start restores the save
-    // point or not.
+    // when isTxnDurable, but not the key files: after the power loss no chain names the new files, and none needs a
+    // cut. Recovery must remove the new files before the WAL replay reseals over them, whether the start restores the
+    // save point or not.
     private void crashAfterUnrecordedSeal(boolean isTxnDurable) throws Exception {
         setUpAdaptive();
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
@@ -1055,11 +1054,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             engine.releaseCrashOrphanedWriters();
             discardPurgeQueue();
             simulateRestart(new TableToken[]{token});
-            final List<String> stateAbove = indexStateAbove(tableDir, savePointTxn);
-            for (int i = 0, n = stateAbove.size(); i < n; i++) {
-                Assert.assertTrue("a chain names an entry above the save point after the power loss: " + stateAbove,
-                        stateAbove.get(i).contains("[entry=" + savePointTxn + ","));
-            }
+            Assert.assertEquals("a chain names state above the save point after the power loss", "[]", indexStateAbove(tableDir, savePointTxn).toString());
             partitionListingRoot = tableDir;
             partitionListingCount = 0;
             try {
@@ -1068,7 +1063,6 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 partitionListingRoot = null;
             }
             Assert.assertEquals("partition directories listed", 6, partitionListingCount);
-            Assert.assertEquals("index state above the save point after recovery", "[]", indexStateAbove(tableDir, savePointTxn).toString());
             for (int i = 0, n = newFiles.size(); i < n; i++) {
                 Assert.assertFalse("a file no chain names is left: " + newFiles.get(i), Files.exists(Paths.get(newFiles.get(i))));
             }
