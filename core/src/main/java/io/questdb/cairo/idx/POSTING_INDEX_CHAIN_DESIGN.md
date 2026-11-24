@@ -247,6 +247,10 @@ seal():
 about to assign. If the commit fails, the entry is abandoned but
 recovery handles it (see 5.4).
 
+The fsyncs follow the commit mode: only SYNC and ADAPTIVE, the modes that
+promise to survive a power loss, make them. NOSYNC and ASYNC leave the files
+to the OS, as their commits do (`PostingIndexWriter.syncSealFile`).
+
 ### 5.2 Reader
 
 ```

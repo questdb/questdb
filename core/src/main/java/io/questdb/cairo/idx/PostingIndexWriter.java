@@ -2119,7 +2119,7 @@ public class PostingIndexWriter implements IndexWriter {
         // syncing .pk while .pv is still in mmap dirty pages would let a
         // power-loss reader see chain entries that reference unflushed data.
         if (partitionPath.size() > 0 && keyMem.isOpen()) {
-            keyMem.sync(false);
+            syncSealFile(keyMem);
         }
     }
 
@@ -2295,8 +2295,8 @@ public class PostingIndexWriter implements IndexWriter {
             // power loss after the unlink journals but before the .pk page
             // writes back recovers the old chain head pointing at a deleted
             // .pv -- readers fail hard until REINDEX. Pairs with seal()'s
-            // unconditional .pk sync.
-            keyMem.sync(false);
+            // .pk sync, and like it follows the commit mode.
+            syncSealFile(keyMem);
             recordPostingSealPurge(oldSealTxn);
         }
         // initKeyMemory just rewrote the .pk header pages; resync the chain
@@ -5086,18 +5086,8 @@ public class PostingIndexWriter implements IndexWriter {
 
             // .pv before .pk: copyData's bytes must be durable before publishing
             // a chain head that references them. Mirrors sealIncremental.
-            if (valueMem.isOpen()) {
-                valueMem.sync(false);
-            }
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            syncSealFile(valueMem);
+            syncSealCoverFiles();
 
             Unsafe.storeFence();
             this.genCount = 1;
@@ -5115,9 +5105,7 @@ public class PostingIndexWriter implements IndexWriter {
             // failure past this point (the .pk sync below) must leave the live
             // files alone -- mirrors the rollback path's isReencodePublished.
             isPublished = true;
-            if (keyMem.isOpen()) {
-                keyMem.sync(false);
-            }
+            syncSealFile(keyMem);
         } catch (Throwable th) {
             // A failure AFTER publishToChain leaves newSealTxn live and the writer
             // fully consistent; the only loss is the unsynced .pk, which the next
@@ -5501,10 +5489,8 @@ public class PostingIndexWriter implements IndexWriter {
                         // rollbackToMaxValue queues the old files for purge, a
                         // power loss cannot recover a committed chain head pointing
                         // at a deleted file. The seal path defers this to seal()'s
-                        // unconditional .pk sync; the rollback path has none.
-                        if (keyMem.isOpen()) {
-                            keyMem.sync(false);
-                        }
+                        // .pk sync; the rollback path has none.
+                        syncSealFile(keyMem);
                     }
                 } catch (Throwable th) {
                     // A throw BEFORE publishToChain (the last step of
@@ -5840,21 +5826,13 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         valueMemSize = sealTarget.getAppendOffset();
-        sealValueMem.sync(false);
+        syncSealFile(sealValueMem);
         switchToSealedValueFile(newSealTxn);
         sealTarget = null;
 
         if (coverCount > 0 && sidecarMems.size() > 0) {
             writeSidecarsPerColumnStreaming(totalCountsAddr, keyBuffer, maxKeyCount);
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            syncSealCoverFiles();
         }
 
         Unsafe.storeFence();
@@ -5982,7 +5960,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         valueMemSize = sealTarget.getAppendOffset();
-        sealValueMem.sync(false);
+        syncSealFile(sealValueMem);
         switchToSealedValueFile(newSealTxn);
         sealTarget = null;
 
@@ -5991,15 +5969,7 @@ public class PostingIndexWriter implements IndexWriter {
             // Sync covering sidecars before publishing the new sealTxn in
             // .pk so readers do not see a torn sidecar tail after a power
             // loss.
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            syncSealCoverFiles();
         }
 
         Unsafe.storeFence();
@@ -6680,21 +6650,13 @@ public class PostingIndexWriter implements IndexWriter {
             // Sync sealed file, switch writer to it, then publish metadata.
             // sealTxn must be set BEFORE the chain publish so the new
             // entry's SEAL_TXN field references the .pv just allocated.
-            sealValueMem.sync(false);
+            syncSealFile(sealValueMem);
             // Sync covering sidecars before publishing the new sealTxn in
             // .pk. Without this, power loss can leave .pk pointing at
             // sealTxn=N+1 while .pc<N>/.pci tail pages are still dirty in
             // page cache; readers built around the new sealTxn would map a
             // torn sidecar and decode garbage.
-            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    mem.sync(false);
-                }
-            }
-            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                sidecarInfoMem.sync(false);
-            }
+            syncSealCoverFiles();
             switchToSealedValueFile(newSealTxn);
             Unsafe.storeFence();
             // genCount must publish after the chain entry is appended so a
@@ -6841,6 +6803,24 @@ public class PostingIndexWriter implements IndexWriter {
         ((MemoryCMARWImpl) valueMem).swapState((MemoryCMARWImpl) stagingValueMem);
         Misc.free(stagingValueMem);
         sealTxn = newTxn;
+    }
+
+    private void syncSealCoverFiles() {
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            syncSealFile(sidecarMems.getQuick(c));
+        }
+        syncSealFile(sidecarInfoMem);
+    }
+
+    // Flushes a file that a seal, a rollback re-encode or truncate() wrote, but only under a commit mode that
+    // promises to survive a power loss. NOSYNC and ASYNC flush no commit and make no such promise, so a seal leaves
+    // its files to the OS as their commits do. ADAPTIVE flushes although its commits do not: its recovery reads each
+    // chain from the .pk to cut it back to the save point, and keeps the entries a seal stamps with the committed
+    // txn, so the files must reach the disk before the .pk that names them.
+    private void syncSealFile(MemoryMARW mem) {
+        if (mem != null && mem.isOpen() && CommitMode.isPowerLossDurable(indexCommitMode)) {
+            mem.sync(false);
+        }
     }
 
     /**
