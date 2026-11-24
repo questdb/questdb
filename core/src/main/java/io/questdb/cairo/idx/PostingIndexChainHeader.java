@@ -114,6 +114,7 @@ public final class PostingIndexChainHeader {
      * @param newRegionBase      byte offset of the oldest live entry's start
      * @param newRegionLimit     high-water byte offset past the last entry
      * @param newGenCounter      monotonic generation counter (last-assigned sealTxn)
+     * @param newHeadSealTxn     the sealTxn of the head entry, -1 if the chain is empty
      * @param anchorEntryOffset  see {@link PostingIndexUtils#V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET}
      * @param anchorSealTxn      the sealTxn of the anchor entry
      * @param savePointTxn       see {@link PostingIndexUtils#V2_HEADER_OFFSET_SAVE_POINT_TXN}
@@ -128,6 +129,7 @@ public final class PostingIndexChainHeader {
             long newRegionBase,
             long newRegionLimit,
             long newGenCounter,
+            long newHeadSealTxn,
             long anchorEntryOffset,
             long anchorSealTxn,
             long savePointTxn
@@ -156,6 +158,7 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, newRegionBase);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, newRegionLimit);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER, newGenCounter);
+        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_SEAL_TXN, newHeadSealTxn);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET, anchorEntryOffset);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_SEAL_TXN, anchorSealTxn);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SAVE_POINT_TXN, savePointTxn);
@@ -211,6 +214,7 @@ public final class PostingIndexChainHeader {
             long regionBase = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE);
             long regionLimit = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT);
             long genCounter = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER);
+            long headSealTxn = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_SEAL_TXN);
             long anchorEntryOffset = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET);
             long anchorSealTxn = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_SEAL_TXN);
             long savePointTxn = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SAVE_POINT_TXN);
@@ -231,6 +235,7 @@ public final class PostingIndexChainHeader {
             into.regionBase = regionBase;
             into.regionLimit = regionLimit;
             into.generationCounter = genCounter;
+            into.headSealTxn = headSealTxn;
             into.anchorEntryOffset = anchorEntryOffset;
             into.anchorSealTxn = anchorSealTxn;
             into.savePointTxn = savePointTxn;
@@ -281,6 +286,7 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, regionBase);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, regionLimit);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER, genCounter);
+        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_SEAL_TXN, -1L);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET, PostingIndexUtils.V2_NO_HEAD);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_SEAL_TXN, -1L);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SAVE_POINT_TXN, CommittedTxnSource.NO_SAVE_POINTS);
@@ -300,6 +306,7 @@ public final class PostingIndexChainHeader {
         public long formatVersion;
         public long generationCounter;
         public long headEntryOffset;
+        public long headSealTxn;
         public long pageOffset;
         public long regionBase;
         public long regionLimit;
@@ -317,6 +324,7 @@ public final class PostingIndexChainHeader {
         public void reset() {
             this.formatVersion = 0;
             this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            this.headSealTxn = -1;
             this.entryCount = 0;
             this.regionBase = 0;
             this.regionLimit = 0;

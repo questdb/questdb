@@ -266,7 +266,9 @@ public final class PostingIndexUtils {
     //   [72..79]    V2_HEADER_OFFSET_SAVE_POINT_TXN
     //                 the save point txn the writer of the page saw, -1 before
     //                 the first, CommittedTxnSource.NO_SAVE_POINTS: unknown.
-    //   [80..4087]  reserved
+    //   [80..87]    V2_HEADER_OFFSET_HEAD_SEAL_TXN
+    //                 the sealTxn of the head entry, -1 if the chain is empty.
+    //   [88..4087]  reserved
     //   [4088..4095] V2_HEADER_OFFSET_SEQUENCE_END
     //
     // Entry header (V2_ENTRY_HEADER_SIZE = 56 bytes; gen dir follows):
@@ -328,6 +330,7 @@ public final class PostingIndexUtils {
     public static final int V2_HEADER_OFFSET_FORMAT_VERSION = 8;
     public static final int V2_HEADER_OFFSET_GEN_COUNTER = 48;
     public static final int V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET = 16;
+    public static final int V2_HEADER_OFFSET_HEAD_SEAL_TXN = 80;
     public static final int V2_HEADER_OFFSET_REGION_BASE = 32;
     public static final int V2_HEADER_OFFSET_REGION_LIMIT = 40;
     public static final int V2_HEADER_OFFSET_SAVE_POINT_TXN = 72;

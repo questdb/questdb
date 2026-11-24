@@ -414,14 +414,15 @@ public final class PostingIndexChainWriter {
     }
 
     // Whether the entry header at offset lies in the region below limit and holds a length and a sealTxn the chain
-    // can have written: a page that never reached the disk reads back as zeros.
+    // can have written, the sealTxn the active header page names if it is the head: a page that never reached the
+    // disk reads back as zeros, or as an entry a recovery cut dropped from that space.
     public boolean isEntryReadable(MemoryR keyMem, long offset, long limit) {
         if (offset < regionBase || offset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > limit) {
             return false;
         }
         final long sealTxn = keyMem.getLong(offset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
         return keyMem.getLong(offset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN) >= PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                && sealTxn >= 0 && sealTxn <= genCounter;
+                && sealTxn >= 0 && sealTxn <= genCounter && (offset != publishedHeadOffset || sealTxn == publishedHeadSealTxn);
     }
 
     public boolean isHeadTrimmedOnLastRecovery() {
@@ -603,7 +604,8 @@ public final class PostingIndexChainWriter {
             headSealTxn = -1L;
         }
         publishedHeadOffset = headEntryOffset;
-        publishedHeadSealTxn = headSealTxn;
+        // A page with the head sealTxn names the head by it, and an entry that holds another one does not read back.
+        publishedHeadSealTxn = headerScratch.anchorEntryOffset != 0 ? headerScratch.headSealTxn : headSealTxn;
     }
 
     /**
@@ -1071,6 +1073,7 @@ public final class PostingIndexChainWriter {
                 regionBase,
                 regionLimit,
                 genCounter,
+                headSealTxn,
                 anchorEntryOffset,
                 anchorEntryOffset == PostingIndexUtils.V2_NO_HEAD ? -1L : anchorSealTxn,
                 anchorSavePointTxn

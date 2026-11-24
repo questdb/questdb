@@ -142,7 +142,8 @@ inactive page is staged with new fields, then seqlock-flipped to active.
 | 56 | 8 | `V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET` | An entry that was on disk when the page was written (a save point completed since the page before it, which named that entry as head). Adaptive recovery restarts its walk here when the entry the head names did not reach the disk. `V2_NO_HEAD`, or 0 in files of older releases: none. |
 | 64 | 8 | `V2_HEADER_OFFSET_ANCHOR_SEAL_TXN` | The anchor entry's `sealTxn`; recovery uses the anchor only when the entry there still holds it. |
 | 72 | 8 | `V2_HEADER_OFFSET_SAVE_POINT_TXN` | The save point txn the writer saw when it wrote the page, `CommittedTxnSource.NO_SAVE_POINTS` when unknown. |
-| 80 | 4008 | reserved | For future header growth. |
+| 80 | 8 | `V2_HEADER_OFFSET_HEAD_SEAL_TXN` | The head entry's `sealTxn`, -1 for an empty chain. Adaptive recovery treats a head that holds another one as not on disk. |
+| 88 | 4000 | reserved | For future header growth. |
 | 4088 | 8 | `V2_HEADER_OFFSET_SEQUENCE_END` | Seqlock close. Reader requires `start == end && (start & 1) == 0` and start non-zero. |
 
 The page is 4 KB regardless of the live data size, for OS-page alignment

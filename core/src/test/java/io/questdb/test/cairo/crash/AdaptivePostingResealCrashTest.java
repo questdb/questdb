@@ -234,8 +234,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     // See crashBeforeSequencerFlush(). The lost commit appends a generation to the plain indexes of each day, with no
-    // seal, and in 2024-01-01 the append grows the value files past their allocated length of one OS page. In one key
-    // file the power loss loses the page of the appended gen slot, and keeps the page of the entry's GEN_COUNT.
+    // seal, and in 2024-01-01 the append grows the value files past their allocated length of one OS page.
     @Test
     public void testPowerLossBeforeSequencerFlushCutsAppendThatGrewValueFile() throws Exception {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
@@ -599,34 +598,6 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         runPurgeJob(job);
     }
 
-    // A power loss kept the page of one key file that holds its head entry's GEN_COUNT, and lost the page that holds
-    // the newest gen slot, appended in place above txn: the slot reads back all zero.
-    private static void loseNewestGenSlotOfOneHead(String tableDir, long txn) throws IOException {
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final List<String> keyFiles = sealedFiles(tableDir, KEY_FILE_S_K);
-        for (int i = 0, n = keyFiles.size(); i < n; i++) {
-            final String keyFile = keyFiles.get(i);
-            long slot = -1;
-            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, Path.getThreadLocal(keyFile).$(), ff.length(Path.getThreadLocal(keyFile).$()), MemoryTag.MMAP_DEFAULT)) {
-                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                chain.openExisting(keyMem);
-                final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                chain.loadHeadEntry(keyMem, head);
-                final long newest = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), head.genCount - 1, head.coveringFormat, head.coverCount);
-                if (head.genCount > 1 && keyMem.getLong(newest + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL) > txn) {
-                    slot = newest;
-                }
-            }
-            if (slot > -1) {
-                try (FileChannel channel = FileChannel.open(Paths.get(keyFile), StandardOpenOption.WRITE)) {
-                    channel.write(ByteBuffer.allocate(PostingIndexUtils.GEN_DIR_ENTRY_SIZE), slot);
-                }
-                return;
-            }
-        }
-        Assert.fail("no head grew in place above the save point");
-    }
-
     // One WAL commit of ROWS_PER_PASS rows in day 1, from 10:00 + 10 minutes per pass, after every earlier row.
     private static String passSql(int pass) {
         final long step = HOUR / 60;
@@ -693,6 +664,48 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     // One WAL commit of ROWS_PER_PASS rows over three days, each after every earlier row of its day: with DEDUP, the two
     // older partitions and the active one take the rows in place and reseal both POSTING columns there.
+    // A power loss tore the key files whose head lies above txn, as the kernel wrote their header pages back early. In
+    // the first with a new head entry the file length did not survive; in the second the head's space holds an older
+    // entry, as space a recovery cut freed does; in the first head grown in place the newest gen slot reads back zero.
+    private static void tearKeyFiles(String tableDir, long txn) throws IOException {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final List<String> keyFiles = sealedFiles(tableDir, KEY_FILE_S_K);
+        int newHeads = 0;
+        boolean isSlotLost = false;
+        for (int i = 0, n = keyFiles.size(); i < n; i++) {
+            final String keyFile = keyFiles.get(i);
+            final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+            final ByteBuffer prevHeader = ByteBuffer.allocate(PostingIndexUtils.V2_ENTRY_HEADER_SIZE);
+            final long headOffset;
+            final long newestSlot;
+            final boolean isNewestSlotAbove;
+            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, Path.getThreadLocal(keyFile).$(), ff.length(Path.getThreadLocal(keyFile).$()), MemoryTag.MMAP_DEFAULT)) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                chain.loadHeadEntry(keyMem, head);
+                headOffset = chain.getHeadEntryOffset();
+                newestSlot = PostingIndexChainEntry.resolveGenDirOffset(headOffset, head.genCount - 1, head.coveringFormat, head.coverCount);
+                isNewestSlotAbove = keyMem.getLong(newestSlot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL) > txn;
+                for (int b = 0; head.prevEntryOffset != PostingIndexUtils.V2_NO_HEAD && b < PostingIndexUtils.V2_ENTRY_HEADER_SIZE; b++) {
+                    prevHeader.put(b, keyMem.getByte(head.prevEntryOffset + b));
+                }
+            }
+            try (FileChannel channel = FileChannel.open(Paths.get(keyFile), StandardOpenOption.WRITE)) {
+                if (head.txnAtSeal > txn) {
+                    if (++newHeads == 1) {
+                        channel.truncate(headOffset);
+                    } else if (newHeads == 2 && head.prevEntryOffset != PostingIndexUtils.V2_NO_HEAD) {
+                        channel.write(prevHeader, headOffset);
+                    }
+                } else if (head.genCount > 1 && isNewestSlotAbove && !isSlotLost) {
+                    isSlotLost = true;
+                    channel.write(ByteBuffer.allocate(PostingIndexUtils.GEN_DIR_ENTRY_SIZE), newestSlot);
+                }
+            }
+        }
+        Assert.assertTrue("no key file torn", newHeads > 0 || isSlotLost);
+    }
+
     private static String threeDaySql(String table, int pass) {
         final StringBuilder sql = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
         for (int i = 0; i < ROWS_PER_PASS; i++) {
@@ -1109,8 +1122,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // A power loss right after the apply of the first commit past a save point, before the group flush of the commit's
     // sequencer record. The three-day table, with a covering or a plain s, and its first save point. One WAL commit
     // appends pass 1 in place into the three days, and extraDay1Rows more rows into 2024-01-01. Its apply writes index
-    // state above the save point into every partition. The kernel writes the index key files back, then the power loss
-    // drops the record and every other file written since the save point. Recovery restores nothing, as _txn is at
+    // state above the save point into every partition. The kernel writes the index key files back, torn as
+    // tearKeyFiles() says, then the power loss drops the record and every other file written since the save point.
+    // Recovery restores nothing, as _txn is at
     // the save point, and must still cut every chain back to it. The next commit reuses the lost commit's txn, which
     // brings back what an uncut chain names above the save point, and a commit into 2024-01-01 writes over the index.
     private void crashBeforeSequencerFlush(boolean isCovering, int extraDay1Rows) throws Exception {
@@ -1168,9 +1182,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             engine.releaseCrashOrphanedWriters();
             discardPurgeQueue();
             simulateRestart(new TableToken[]{token});
-            if (extraDay1Rows > 0) {
-                loseNewestGenSlotOfOneHead(tableDir, savePointTxn);
-            }
+            tearKeyFiles(tableDir, savePointTxn);
             partitionListingRoot = tableDir;
             partitionListingCount = 0;
             try {

@@ -327,15 +327,30 @@ public class RecoveryCoordinator {
             LongList orphanSealTxns
     ) {
         final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(partitionLen), columnName, columnNameTxn);
-        final long keyFileSize = ff.length(keyFile);
+        long keyFileSize = ff.length(keyFile);
         if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
             return 0;
         }
         boolean trimNeeded;
         try (MemoryCMR keyMem = Vm.getCMRInstance(ff, keyFile, keyFileSize, MemoryTag.MMAP_INDEX_READER)) {
             chain.resetState();
+            final long regionLimit = chain.peekRegionLimit(keyMem);
+            if (regionLimit > keyFileSize) {
+                // A header page reached the disk and the file length did not. The writer's open zero-fills the file
+                // up to the region limit; so does this, and the walk meets the head it names as not read back.
+                final long fd = ff.openRW(keyFile, CairoConfiguration.O_NONE);
+                final boolean isExtended = fd > -1 && ff.truncate(fd, regionLimit);
+                if (fd > -1) {
+                    ff.close(fd);
+                }
+                if (!isExtended) {
+                    return 0;
+                }
+                keyFileSize = regionLimit;
+                keyMem.extend(keyFileSize);
+            }
             chain.openExisting(keyMem);
-            if (!chain.hasHead() || chain.getRegionLimit() > keyFileSize) {
+            if (!chain.hasHead()) {
                 return 0;
             }
             final int walk = walkPostingChain(keyMem, epochTxn, chain, entry, namedSealTxns);
