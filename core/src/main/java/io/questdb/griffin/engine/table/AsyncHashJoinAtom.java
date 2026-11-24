@@ -490,6 +490,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * Parquet probe rows reported to the consumer selectivity statistics, including rows left to
+     * continuations. A probe row with several matching tuples counts once.
+     */
+    @TestOnly
+    public long getConsumerProbeRowCount() {
+        long count = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            count += slots.getQuick(i).consumerRowCount;
+        }
+        return count;
+    }
+
+    /**
      * The probe columns that the last execution's tasks decoded since its cursor opened, summed over
      * the Parquet probe frames they read: for a frame decoded late, the columns the task reads, see
      * {@link #getProbeTaskColumns()}, and, if the consumer reads any of the frame's rows, the probe
@@ -638,6 +651,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             slot.probeRecord.of(symbolTableSource);
             // The stages bind their payload readers to the record when they build.
             slot.record.setOrientation(isSwapped);
+            slot.consumerRowCount = 0;
             slot.decodedColumnCount = 0;
             slot.joinedRowCount = 0;
             slot.parquetFrameCount = 0;
@@ -1290,6 +1304,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // The slot's row list of the probe input's context serves no other purpose while a task joins.
         final DirectLongList consumerRows = isLateMaterialized ? probeFilterContext.getFilteredRows(slotId) : null;
         final long consumerRowCount = collectConsumerRows(task, keptRows, consumerRows);
+        slot.consumerRowCount += consumerRowCount;
         probeFilterContext.getSelectivityStats(slotId).update(consumerRowCount, task.getFrameRowCount());
         if (consumerRows != null) {
             final IntHashSet taskColumns = probeTaskColumns;
@@ -1523,6 +1538,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // see AsyncHashJoinAtom.getStepperRunCount().
         final long[] stepperRunCounts = new long[8];
         private final ObjList<StageProbe> stageProbes = new ObjList<>();
+        // The rows reported to the Parquet consumer selectivity statistics in this execution.
+        long consumerRowCount;
         // The probe columns that the slot's tasks decoded in the open cursor's execution, summed over
         // its Parquet frames; see AsyncHashJoinAtom.getDecodedProbeColumnCount().
         long decodedColumnCount;

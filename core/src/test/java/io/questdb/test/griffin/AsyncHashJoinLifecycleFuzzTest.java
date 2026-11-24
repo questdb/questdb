@@ -191,7 +191,7 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
         // The bits of a narrow tuple slot: the server's 32, or a few, which the tables outgrow and
         // shrink back under, so that the executions of a factory switch between the layouts, and
         // the check of each narrowed value fails the run on a wrong choice.
-        final int narrowSlotBits = rnd.nextBoolean() ? Integer.SIZE : 8 + rnd.nextInt(8);
+        final int narrowSlotBits = rnd.nextBoolean() ? Integer.SIZE : 8 + rnd.nextInt(6);
         final int executions = Integer.getInteger(EXECUTIONS_PROP, DEFAULT_EXECUTIONS);
         LOG.info().$("lifecycle fuzz [mode=").$(mode.name())
                 .$(", executions=").$(executions)
@@ -233,6 +233,9 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
                     }
                     lifecycle.readEveryFactory();
                     lifecycle.logCounts();
+                    if (narrowSlotBits < Integer.SIZE) {
+                        Assert.assertTrue("no wide tuples with narrowSlotBits=" + narrowSlotBits, lifecycle.wideExecutions > 0);
+                    }
                 } finally {
                     lifecycle.close();
                 }

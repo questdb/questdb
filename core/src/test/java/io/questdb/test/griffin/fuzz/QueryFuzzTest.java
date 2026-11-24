@@ -946,6 +946,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             + " of which swapped " + runner.getParallelJoinStepperSwitchSwappedRuns()
                             + ", in the first pass " + runner.getParallelJoinStepperFirstPassSwitchRuns() + ")"
                             + ", first reads " + runner.getParallelJoinFirstReadRuns()
+                            + ", wide tuples " + runner.getParallelJoinWideRuns()
+                            + " (stacked " + runner.getParallelJoinWideStackedRuns()
+                            + ", swapped " + runner.getParallelJoinWideSwappedRuns() + ")"
                             + ", factories executed again " + runner.getParallelJoinReexecutionChecks()
                             + " (after an execution left part of the way " + runner.getParallelJoinReexecutionAbandoned() + ")";
                     Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
@@ -964,6 +967,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     Assert.assertTrue(counts, runner.getParallelJoinStepperCopySwappedStackedRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperFirstPassSwitchRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinFirstReadRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinWideStackedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinWideSwappedRuns() > 0);
                     // The factories of the joins ran again, some of them after an execution that
                     // closed with rows unread.
                     Assert.assertTrue(counts, runner.getParallelJoinReexecutionChecks() > 0);
@@ -1288,6 +1293,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
                 final ObjList<GeneratedQuery> queries = new ObjList<>();
                 final boolean[] isSerial = new boolean[config.getNumQueries()];
+                final int[] cancelAfterChecks = new int[config.getNumQueries()];
+                // Keep cancellation draws independent of query generation and the serial picks.
+                final Rnd cancelRnd = new Rnd(rnd.getSeed0() ^ 0x9E3779B97F4A7C15L, rnd.getSeed1() ^ 0xC2B2AE3D27D4EB4FL);
                 for (int q = 0; q < config.getNumQueries(); q++) {
                     final long preGenS0 = rnd.getSeed0();
                     final long preGenS1 = rnd.getSeed1();
@@ -1304,6 +1312,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     }
                     queries.add(query);
                     isSerial[q] = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
+                    // The ordered-row oracle needs deterministic queries. Use early checks so
+                    // the breaker trips even on these small tables.
+                    cancelAfterChecks[q] = isEquiJoinRun && !isSerial[q] && query.shape() == QueryShape.EQUI_JOIN
+                            && query.deterministic() && cancelRnd.nextBoolean() ? cancelRnd.nextInt(32) : -1;
                 }
 
                 final ObjList<QueryRunner> runners = new ObjList<>();
@@ -1350,7 +1362,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                                 for (int i = ownerIndex, n = queries.size(); i < n; i += ownerCount) {
                                     final GeneratedQuery query = queries.getQuick(i);
                                     runningSql.set(ownerIndex, query.sql());
-                                    final QueryRunner.Result result;
+                                    QueryRunner.Result result;
                                     if (isSerial[i]) {
                                         setParallelFlags(context, SERIAL_FLAGS);
                                         try {
@@ -1360,6 +1372,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
                                         }
                                     } else {
                                         result = runner.run(query);
+                                        if (!result.isFailed() && !result.isSkipped() && cancelAfterChecks[i] >= 0) {
+                                            result = runner.runConcurrentCancelFault(query, cancelAfterChecks[i]);
+                                        }
                                     }
                                     if (result.isFailed()) {
                                         synchronized (failures) {
@@ -1403,8 +1418,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 if (failures.size() > 0) {
                     throw QueryFuzzDriver.buildFailure(failures);
                 }
-                if (isEquiJoinRun && config.isDiffParallelJoinEnabled()) {
-                    assertConcurrentParallelJoinShares(runners);
+                if (isEquiJoinRun) {
+                    assertConcurrentCancellations(runners);
+                    if (config.isDiffParallelJoinEnabled()) {
+                        assertConcurrentParallelJoinShares(runners);
+                    }
                 }
             } finally {
                 haltQuietly(queryPool);
@@ -1522,6 +1540,25 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
         }
         return tables;
+    }
+
+    private static void assertConcurrentCancellations(ObjList<QueryRunner> runners) {
+        int armed = 0;
+        int cancelled = 0;
+        int stacked = 0;
+        int swapped = 0;
+        for (int i = 0, n = runners.size(); i < n; i++) {
+            final QueryRunner runner = runners.getQuick(i);
+            armed += runner.getFaultsArmed(FaultType.CANCEL);
+            cancelled += runner.getFaultsFired(FaultType.CANCEL);
+            stacked += runner.getParallelJoinCancelledStacked();
+            swapped += runner.getParallelJoinCancelledSwapped();
+        }
+        LOG.info().$("concurrent fuzz cancellations [armed=").$(armed).$(", cancelled=").$(cancelled)
+                .$(", stacked=").$(stacked).$(", swapped=").$(swapped).I$();
+        if (armed >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue("no cancellations among " + armed + " armed concurrent joins", cancelled > 0);
+        }
     }
 
     // Holds the planner of a concurrent equi-join run to the shares that the run of one owner holds

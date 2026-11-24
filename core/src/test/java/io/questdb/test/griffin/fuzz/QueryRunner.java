@@ -299,6 +299,8 @@ public final class QueryRunner {
     // which the ring counts in a task's cap of tuples, was narrower than the one that the probe
     // frames' rows give; see isCapBoundFirstWindow().
     private int parallelJoinCapBoundFirstWindowRuns;
+    private int parallelJoinCancelledStacked;
+    private int parallelJoinCancelledSwapped;
     // Executions of the parallel hash join, on any axis, whose rows were the query's own and whose
     // cursor opened under the rows that a client reads first; see firstReadRows().
     private int parallelJoinFirstReadRuns;
@@ -311,6 +313,9 @@ public final class QueryRunner {
     private int parallelJoinLimitFormRuns;
     // Executions of the parallel hash join, on any axis, that ended with a window of one frame.
     private int parallelJoinSingleFrameWindowRuns;
+    private int parallelJoinWideRuns;
+    private int parallelJoinWideStackedRuns;
+    private int parallelJoinWideSwappedRuns;
     // Queries whose parallel hash join's last execution ran the stages' hidden stepper copies, and
     // those of them whose factory defined the copies while it ran; see stepperWarmUpRows().
     private int parallelJoinStepperCopyRuns;
@@ -505,6 +510,26 @@ public final class QueryRunner {
 
     public int getFaultsFired(FaultType type) {
         return faultsFiredByType[type.ordinal()];
+    }
+
+    public int getParallelJoinCancelledStacked() {
+        return parallelJoinCancelledStacked;
+    }
+
+    public int getParallelJoinCancelledSwapped() {
+        return parallelJoinCancelledSwapped;
+    }
+
+    public int getParallelJoinWideRuns() {
+        return parallelJoinWideRuns;
+    }
+
+    public int getParallelJoinWideStackedRuns() {
+        return parallelJoinWideStackedRuns;
+    }
+
+    public int getParallelJoinWideSwappedRuns() {
+        return parallelJoinWideSwappedRuns;
     }
 
     public int getBuildChoiceRuns() {
@@ -837,6 +862,7 @@ public final class QueryRunner {
         // surfaces as a CursorCheckException so it can short-circuit the
         // per-axis reconciliation in runQuery; catch it here and report it as a
         // fuzz failure like any other.
+        setTupleLayout(query.sql());
         try {
             return runQuery(query);
         } catch (CursorCheckException e) {
@@ -847,6 +873,8 @@ public final class QueryRunner {
                 return Result.skipped(e.getMessage());
             }
             return Result.failed(query.sql(), e);
+        } finally {
+            HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
         }
     }
 
@@ -865,6 +893,81 @@ public final class QueryRunner {
             rnd.nextLong();
         }
         return runFault(query, FaultType.CANCEL, rnd, parallel);
+    }
+
+    /**
+     * Cancels an execution while other owners can run. Compare ordered rows and check the join
+     * slots on this factory, which must also support a clean execution immediately afterward.
+     */
+    public Result runConcurrentCancelFault(GeneratedQuery query, int checksBeforeCancel) {
+        assert query.deterministic() && cancelContext != null;
+        final String sql = query.sql();
+        final String failureLabel = "concurrent cancellation after " + checksBeforeCancel + " checks";
+        boolean armed = false;
+        setTupleLayout(sql);
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            final ObjList<AsyncHashJoinRecordCursorFactory> joins = ParallelHashJoinTestUtils.findAll(factory, executionContext);
+            if (joins.size() == 0) {
+                return Result.skipped("plan has no parallel hash join");
+            }
+            readFactoryRows(factory, rowsA);
+            boolean stacked = false;
+            boolean swapped = false;
+            for (int i = 0, n = joins.size(); i < n; i++) {
+                final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
+                stacked |= join.getSpec().getStageCount() > 1;
+                swapped |= join.getAtom().isSwapped();
+            }
+
+            final CancelAfterChecksCircuitBreaker breaker = new CancelAfterChecksCircuitBreaker(engine, checksBeforeCancel);
+            final SqlExecutionCircuitBreaker previousBreaker = executionContext.getCircuitBreaker();
+            faultsArmedByType[FaultType.CANCEL.ordinal()]++;
+            armed = true;
+            boolean cancelled = false;
+            try {
+                cancelContext.with(breaker);
+                readFactoryRows(factory, rowsB);
+            } catch (CairoException e) {
+                if (!breaker.isTripped() || !(e.isCancellation() || e.isInterruption())) {
+                    return Result.failed(sql, new AssertionError(failureLabel, e));
+                }
+                cancelled = true;
+            } finally {
+                cancelContext.with(previousBreaker);
+            }
+            for (int i = 0, n = joins.size(); i < n; i++) {
+                final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
+                if (join.getAtom().getPerWorkerLocks().getAcquiredSlotCount() != 0
+                        || join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount() != 0) {
+                    return Result.failed(sql, new AssertionError(failureLabel + " left a join slot acquired"));
+                }
+            }
+            if (!cancelled && !Chars.equals(rowsA, rowsB)) {
+                return Result.failed(sql, new AssertionError(failureLabel + " changed the ordered result"));
+            }
+            readFactoryRows(factory, rowsB);
+            if (!Chars.equals(rowsA, rowsB)) {
+                return Result.failed(sql, new AssertionError(failureLabel + " changed the ordered result on reuse"));
+            }
+            if (cancelled) {
+                faultsFired++;
+                faultsFiredByType[FaultType.CANCEL.ordinal()]++;
+                if (stacked) {
+                    parallelJoinCancelledStacked++;
+                }
+                if (swapped) {
+                    parallelJoinCancelledSwapped++;
+                }
+            }
+            return Result.ok();
+        } catch (Exception e) {
+            if (!armed && isAcceptedSkip(e)) {
+                return Result.skipped(e.getMessage());
+            }
+            return Result.failed(sql, new AssertionError(failureLabel, e));
+        } finally {
+            HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
+        }
     }
 
     /**
@@ -1485,6 +1588,15 @@ public final class QueryRunner {
         // holds no ring.
         final int entryCount = ring.getEntryCount();
         if (entryCount > 0) {
+            if (!ring.isNarrow()) {
+                parallelJoinWideRuns++;
+                if (join.getSpec().getStageCount() > 1) {
+                    parallelJoinWideStackedRuns++;
+                }
+                if (join.getAtom().isSwapped()) {
+                    parallelJoinWideSwappedRuns++;
+                }
+            }
             final int window = ring.getDispatchLimit();
             if (entryCount > 1 && join.getProbeFrameCount() > entryCount) {
                 parallelJoinAliasedRuns++;
@@ -1989,6 +2101,14 @@ public final class QueryRunner {
             case 1 -> 1;
             default -> 2 + (hash >>> 15) % 7;
         };
+    }
+
+    private static void setTupleLayout(String sql) {
+        // The ring picks its layout on first read. In the concurrent run, another owner can
+        // change this process-wide hook in the meantime. Both layouts must work for every query.
+        HashJoinTupleRing.setTupleLayoutForTesting((sql.hashCode() & 1) == 0
+                ? HashJoinTupleRing.TUPLE_LAYOUT_WIDE
+                : HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
     }
 
     private static long stepperWarmUpRows(String sql) {
@@ -3137,6 +3257,14 @@ public final class QueryRunner {
         } catch (Exception t) {
             String msg = t.getMessage();
             return Outcome.error(t, msg == null ? "" : msg, false);
+        }
+    }
+
+    private void readFactoryRows(RecordCursorFactory factory, StringSink rows) throws SqlException {
+        rows.clear();
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            materialize(cursor, metadata, metadata.getColumnCount(), rows);
         }
     }
 

@@ -237,7 +237,10 @@ public class AsyncHashJoinLateMaterializationTest extends AbstractCairoTest {
                 // The frames of a forward scan that keep rows decode every column, and the third
                 // partition's first frame is decoded late, as the two before it.
                 final int taskColumns = sql.contains("t.f") ? 3 : 2;
-                Assert.assertTrue(sql, assertDecoding(sql, taskColumns, 6).getContinuationCount() > 0);
+                // Three distinct rows match in the first two Parquet partitions. All 30 in the
+                // third either produce a tuple in their task or are left to a continuation.
+                final long consumerRows = 33;
+                Assert.assertTrue(sql, assertDecoding(sql, taskColumns, PARQUET_FRAMES, 6, consumerRows).getContinuationCount() > 0);
                 // A backward scan joins the third partition's frames first, late, the first two that
                 // its tasks join, and leaves their rest, the frames' lowest rows, to continuations.
                 final String backward = sql + " ORDER BY t.ts DESC";
@@ -247,6 +250,7 @@ public class AsyncHashJoinLateMaterializationTest extends AbstractCairoTest {
                     Assert.assertEquals(backward, ordinary(backward, sqlExecutionContext), result(factory, sqlExecutionContext));
                     Assert.assertTrue(backward, atom.getContinuationCount() > 0);
                     Assert.assertEquals(backward, PARQUET_FRAMES, atom.getParquetProbeFrameCount());
+                    Assert.assertEquals(backward, consumerRows, atom.getConsumerProbeRowCount());
                 }
                 // A count after the first row counts the rest of the frame on the owner, over the
                 // columns that its task decoded, and the cursor then reads every row again.
@@ -631,6 +635,10 @@ public class AsyncHashJoinLateMaterializationTest extends AbstractCairoTest {
     }
 
     private static AsyncHashJoinAtom assertDecoding(String sql, int taskColumns, int parquetFrames, int wholeFrames) throws SqlException {
+        return assertDecoding(sql, taskColumns, parquetFrames, wholeFrames, -1);
+    }
+
+    private static AsyncHashJoinAtom assertDecoding(String sql, int taskColumns, int parquetFrames, int wholeFrames, long consumerRows) throws SqlException {
         final SqlExecutionContext context = sqlExecutionContext;
         final String expected = ordinary(sql, context);
         try (RecordCursorFactory factory = select(sql)) {
@@ -652,6 +660,9 @@ public class AsyncHashJoinLateMaterializationTest extends AbstractCairoTest {
                         (long) wholeFrames * probeColumns + (long) (parquetFrames - wholeFrames) * taskColumns,
                         atom.getDecodedProbeColumnCount()
                 );
+                if (consumerRows >= 0) {
+                    Assert.assertEquals(sql, consumerRows, atom.getConsumerProbeRowCount());
+                }
             }
             return atom;
         }
