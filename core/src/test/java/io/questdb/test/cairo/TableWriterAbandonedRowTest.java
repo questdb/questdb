@@ -520,6 +520,32 @@ public class TableWriterAbandonedRowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoPartitionAbandonedRowAfterAppendedRowThenOutOfOrderRow() throws Exception {
+        // the cancel of the unfinished row moves the max timestamp back to the row that its transaction appended
+        // before it, not to the committed rows: newRow() refuses a row before the appended row, and takes a row after it
+        assertMemoryLeak(() -> {
+            final Rows rows = createTables("TIMESTAMP", "NONE", 10);
+            try (TableWriter writer = getWriter("tab")) {
+                appendRow(writer, rows, 20, 20);
+                abandonRow(writer, 100, 100);
+                try {
+                    writer.newRow(15);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert rows out of order to non-partitioned table");
+                }
+                // the 10 committed rows and row 20: newRow() cancelled the unfinished row
+                Assert.assertEquals(11, writer.size());
+                appendRow(writer, rows, 25, 25);
+                writer.commit();
+            }
+            assertTables(rows);
+            insertRow(rows, 26, 26);
+            assertTables(rows);
+        });
+    }
+
+    @Test
     public void testNoPartitionAbandonedRowThenEarlierRow() throws Exception {
         // the next row is out of order with the unfinished row only, not with the rows that will be committed
         assertMemoryLeak(() -> {
