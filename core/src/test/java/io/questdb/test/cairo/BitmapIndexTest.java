@@ -1957,6 +1957,50 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWriterOpenKeepsKeyFileWhenLengthFails() throws Exception {
+        // A failed length() maps an existing key file as empty. The open then rejects it as too
+        // short, and its close must not truncate the file, or every later open fails the same way.
+        final AtomicBoolean isFailingKeyLength = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long length(LPSZ name) {
+                if (isFailingKeyLength.get() && Utf8s.endsWithAscii(name, ".k")) {
+                    return -1;
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final LongList list = new LongList();
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 1000);
+                writer.add(64, 10);
+                writer.add(64, 987);
+            }
+            final long keyFileLength = ff.length(BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE));
+            Assert.assertTrue(keyFileLength >= BitmapIndexUtils.KEY_FILE_RESERVED);
+
+            isFailingKeyLength.set(true);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                writer.of(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Index file too short");
+            } finally {
+                isFailingKeyLength.set(false);
+            }
+
+            // the failed open may grow the file to its mapping size, but must not shrink it
+            Assert.assertTrue(ff.length(BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) >= keyFileLength);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                assertThat("[987,10]", writer.getCursor(64), list);
+                assertThat("[1000]", writer.getCursor(0), list);
+            }
+        });
+    }
+
     private void assertBackwardCursorLimit(BitmapIndexBwdReader reader, int min, int max, LongList tmp, int nExpectedNulls) {
         tmp.clear();
         try (RowCursor cursor = reader.getCursor(0, min, max)) {
