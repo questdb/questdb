@@ -610,11 +610,72 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testRestartPastACorruptNewestRootWhoseHealCannotWriteLogsItInTheViewsUnitOverANanosecondBase() throws Exception {
-        // The case above with the first allocation of a data segment refused, as a full disk
-        // refuses it: the heal cannot write the root it reconstructs, and logs the torn root 00:02
-        // in nanoseconds. The restore fails with it, and the restart rebuilds the view from the
-        // applied base, which still holds every row.
+    public void testRestartPastACorruptNewestRootCancelledInItsHealKeepsTheTimelineForTheNextStart() throws Exception {
+        // A DROP, an invalidation or an engine shutdown trips the breaker while the restart heals
+        // the torn root 00:02. Nothing failed, so the heal hands the cancellation on rather than
+        // return the failure the restart answers with a whole-view rebuild: the turn ends with the
+        // timeline as the build left it, and the next start heals the root and restores from it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final String day = "2026-01-01";
+        assertMemoryLeak(() -> {
+            createDepartureView(false);
+            final long generationBefore;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = commitTwoRowsAboveTheNewestRoot(job, day, false);
+                generationBefore = generation(instance);
+                corruptNewestRootDataSegment(instance);
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance cancelled = viewInstance();
+                final AtomicBoolean isCancelled = new AtomicBoolean();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    hooks(job).setSimulateCorruptRootHealScanStart(() -> {
+                        cancelled.cancelRefresh();
+                        isCancelled.set(true);
+                    });
+                    driveRefreshToQuiescence(job);
+                }
+                Assert.assertTrue("the restart must have reached the heal", isCancelled.get());
+                capture.drain();
+                capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing [view=lv, "
+                        + "predecessorMaxTs=2026-01-01T00:01:00.000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000Z]");
+                capture.assertLogged("live view refresh cancelled [view=lv");
+                capture.assertNotLogged("could not reconstruct corrupt live view checkpoint roots");
+                capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+                capture.assertNotLogged("could not restore live view from checkpoint timeline");
+                Assert.assertEquals("a cancelled heal must not start a rebuild", 0, cancelled.getCheckpointRebuildAttempts());
+                Assert.assertFalse(cancelled.isInvalid());
+                Assert.assertFalse(cancelled.isCheckpointRecoveryBlocked());
+                Assert.assertEquals("a cancelled heal must not publish a generation", generationBefore, generation(cancelled));
+                assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, false), DEPARTURE_ROWS_QUERY);
+
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("reconstructed corrupt live view checkpoint roots [view=lv, "
+                        + "predecessorMaxTs=2026-01-01T00:01:00.000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000Z, roots=");
+            } finally {
+                capture.stop();
+            }
+            assertRestoredFromTimeline("lv");
+            assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, false), DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testRestartPastACorruptNewestRootWhoseHealCannotWriteRetriesTheRestoreOverANanosecondBase() throws Exception {
+        // testRestartPastACorruptNewestRootLogsBothRootsInTheViewsUnitOverANanosecondBase with the
+        // first allocation of a data segment refused, as a full disk refuses it: the heal cannot
+        // write the root it reconstructs, and logs the torn root 00:02 in nanoseconds. A full disk
+        // says nothing about the roots, so the heal hands the fault on,
+        // and the restart retries the restore under the flush-retry budget rather than rebuild the
+        // view from the applied base. The base owes the view no commit, so the next one drives the
+        // retry, whose heal now writes, and the view restores in place.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         final String day = "2026-01-01";
         final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
@@ -624,17 +685,199 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 driveSeedToCompletion(job, "lv");
                 corruptNewestRootDataSegment(commitTwoRowsAboveTheNewestRoot(job, day, false));
             }
-            fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1);
-            final LogCapture capture = restartAndRefreshCapturingLog();
-            fault.disarm();
-            Assert.assertNotNull("the heal must reach a data segment", fault.getFailedFile());
-            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing [view=lv, "
-                    + "predecessorMaxTs=2026-01-01T00:01:00.000000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z]");
-            capture.assertLogged("could not reconstruct corrupt live view checkpoint roots [view=lv, "
-                    + "corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z, error=");
-            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+            // s sums x over the row and the two rows of 'a' below it: 9.5 + 1.0 + 2.0.
+            final String rowsWithTheNextCommit = owedRootText(
+                    PAUSE_FIXTURE_ROWS + "2026-01-01T00:05:00.000000Z\ta\t2.0\t12.5\n",
+                    day,
+                    true
+            );
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1);
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance instance = viewInstance();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    fault.disarm();
+                    Assert.assertNotNull("the heal must reach a data segment", fault.getFailedFile());
+                    capture.drain();
+                    capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing [view=lv, "
+                            + "predecessorMaxTs=2026-01-01T00:01:00.000000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z]");
+                    capture.assertLogged("could not reconstruct corrupt live view checkpoint roots, retrying [view=lv, "
+                            + "corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z, error=");
+                    capture.assertLogged("could not restore live view from checkpoint timeline, retrying [view=lv");
+                    capture.assertNotLogged("could not reconstruct corrupt live view checkpoint roots [view=");
+                    capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+                    capture.assertNotLogged("live view restart rebuilding from applied base");
+                    Assert.assertEquals("a full disk must not start a rebuild", 0, instance.getCheckpointRebuildAttempts());
+                    Assert.assertFalse(instance.isInvalid());
+                    Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                    Assert.assertTrue("the failed restore must leave the window-state debt", instance.isWindowStateDirty());
+                    Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                    assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, true), DEPARTURE_ROWS_QUERY);
+
+                    commitDeparture(job, "('" + day + "T00:05:00.000000Z', 'a', 2.0)");
+                }
+                capture.drain();
+                capture.assertLogged("reconstructed corrupt live view checkpoint roots [view=lv, "
+                        + "predecessorMaxTs=2026-01-01T00:01:00.000000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z, roots=");
+                capture.assertNotLogged("live view restart rebuilding from applied base");
+                capture.assertNotLogged("live view recomputed window state from applied base");
+                Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());
+                Assert.assertEquals("the retry must have restored from the timeline", 1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the full disk is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertFalse("the retry must have settled the window-state debt", instance.isWindowStateDirty());
+                Assert.assertFalse(instance.isInvalid());
+                assertViewRows(rowsWithTheNextCommit, DEPARTURE_ROWS_QUERY);
+            } finally {
+                capture.stop();
+            }
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(rowsWithTheNextCommit, DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testRestartPastACorruptNewestRootWhoseHealFailsLogsItInTheViewsUnitOverANanosecondBase() throws Exception {
+        // testRestartPastACorruptNewestRootLogsBothRootsInTheViewsUnitOverANanosecondBase with the
+        // heal's splice failing past its data on an error that names no cause: the heal logs the
+        // torn root 00:02 in nanoseconds and fails the restore, and the restart rebuilds the view
+        // from the applied base, which still holds every row.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final String day = "2026-01-01";
+        assertMemoryLeak(() -> {
+            createDepartureView(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                corruptNewestRootDataSegment(commitTwoRowsAboveTheNewestRoot(job, day, false));
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_DATA_PUBLISH);
+                    // The restart's turn: the heal, its failed restore and the rebuild that answers it.
+                    advanceClockToNextRefreshPass();
+                    job.run();
+                    job.setCheckpointTimelineTestFailureStage(0);
+                    driveRefreshToQuiescence(job);
+                }
+                capture.drain();
+                capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing [view=lv, "
+                        + "predecessorMaxTs=2026-01-01T00:01:00.000000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z]");
+                capture.assertLogged("could not reconstruct corrupt live view checkpoint roots [view=lv, "
+                        + "corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z, error=");
+                capture.assertLogged("test failure after live view checkpoint data publication");
+                capture.assertNotLogged("could not reconstruct corrupt live view checkpoint roots, retrying");
+                capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+            } finally {
+                capture.stop();
+            }
             assertRebuiltFromAppliedBase("lv");
             assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, true), DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testRestartPastACorruptNewestRootWhoseHealHitsABugRebuildsFromTheAppliedBase() throws Exception {
+        // A heal that fails on a throwable no CairoException stands for, a bug in its own code,
+        // fails the restore as an error naming no cause does: the heal logs it, and the restart
+        // rebuilds the view from the applied base, which still holds every row.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final String day = "2026-01-01";
+        assertMemoryLeak(() -> {
+            createDepartureView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                corruptNewestRootDataSegment(commitTwoRowsAboveTheNewestRoot(job, day, false));
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    hooks(job).setSimulateCorruptRootHealScanStart(() -> {
+                        throw new IllegalStateException("simulated corrupt-root heal bug");
+                    });
+                    driveRefreshToQuiescence(job);
+                }
+                capture.drain();
+                capture.assertLogged("could not reconstruct corrupt live view checkpoint roots [view=lv, "
+                        + "corruptCeilingMaxTs=2026-01-01T00:02:00.000000Z, "
+                        + "error=java.lang.IllegalStateException: simulated corrupt-root heal bug");
+                capture.assertNotLogged("could not reconstruct corrupt live view checkpoint roots, retrying");
+                capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+            } finally {
+                capture.stop();
+            }
+            assertRebuiltFromAppliedBase("lv");
+            assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, false), DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testRestartPastACorruptNewestRootWhoseHealMeetsABaseAlterRestoresAfterTheRecompile() throws Exception {
+        // A base ALTER lands while the restart heals the torn root 00:02, after the restart compiled
+        // the view's plan, so the heal's scan of the base refuses the newer metadata. That says
+        // nothing about the roots, so the heal hands the refusal on rather than return the failure
+        // the restart answers with a whole-view rebuild, which would run the same plan into the same
+        // refusal. The drift recovery recompiles, heals the root and restores from the timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final String day = "2026-01-01";
+        assertMemoryLeak(() -> {
+            createDepartureView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                corruptNewestRootDataSegment(commitTwoRowsAboveTheNewestRoot(job, day, false));
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance instance = viewInstance();
+                final AtomicBoolean isAltered = new AtomicBoolean();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    hooks(job).setSimulateCorruptRootHealScanStart(() -> {
+                        try {
+                            execute("ALTER TABLE base ADD COLUMN y INT");
+                        } catch (SqlException e) {
+                            throw new AssertionError(e);
+                        }
+                        drainWalQueue();
+                        isAltered.set(true);
+                    });
+                    driveRefreshToQuiescence(job);
+                }
+                Assert.assertTrue("the restart must have reached the heal", isAltered.get());
+                capture.drain();
+                capture.assertNotLogged("could not reconstruct corrupt live view checkpoint roots");
+                capture.assertNotLogged("live view restart rebuilding from applied base");
+                capture.assertNotLogged("live view recomputed window state from applied base");
+                capture.assertLogged("reconstructed corrupt live view checkpoint roots [view=lv, "
+                        + "predecessorMaxTs=2026-01-01T00:01:00.000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000Z, roots=");
+                Assert.assertEquals("a base ALTER must not start a rebuild", 0, instance.getCheckpointRebuildAttempts());
+                Assert.assertEquals("the drift recovery must have restored from the timeline", 1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the base ALTER is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                Assert.assertFalse(instance.isWindowStateDirty());
+                assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, false), DEPARTURE_ROWS_QUERY);
+            } finally {
+                capture.stop();
+            }
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, false), DEPARTURE_ROWS_QUERY);
             assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
         });
     }

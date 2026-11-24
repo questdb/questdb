@@ -85,8 +85,14 @@ public class LiveViewCheckpointFunctionRootBuilder extends AbstractLiveViewCheck
         mutations.sortAndValidate();
         for (int i = 0, n = mutations.getMutationCount(); i < n; i++) {
             final int mutationIndex = mutations.getSortedMutationIndex(i);
+            final int operation = mutations.operation(mutationIndex);
+            // This builder stages only puts and removals. A domain entry, which only the window
+            // root builder stages, would release the old entry's references below and add none,
+            // while the partition-map writer skips it and keeps the old entry: the counts would
+            // fall short of the references the new root still holds.
+            assert operation != LiveViewCheckpointMutationArena.OP_DOMAIN : "live view checkpoint function root staged a domain entry";
             partitionMapReader.adjustStateRefCounts(oldPartitionMapRoot, mutations, mutationIndex, segmentUseCounts, -1);
-            if (mutations.operation(mutationIndex) != LiveViewCheckpointMutationArena.OP_REMOVE) {
+            if (operation != LiveViewCheckpointMutationArena.OP_REMOVE) {
                 mutations.adjustRefCounts(segmentUseCounts, mutationIndex, 1);
             }
         }

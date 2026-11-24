@@ -44,6 +44,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private Runnable baseApplyDuringRederive;
     private Runnable baseCommitBetweenAheadGuardReads;
     private QuietCloseable baseMetadataCloseFault;
+    private Runnable corruptRootHealScanStart;
     private Runnable headMissFrontierStateFoldStart;
     private Runnable headMissHeadSealStart;
     private boolean isColdKeyedTimelineFaultArmed;
@@ -104,6 +105,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
             // itself on an I/O failure, and the call reads no file when the pinned generation
             // carries no row-position delta.
             throw CairoException.critical(0).put("simulated live view checkpoint row position fault");
+        }
+    }
+
+    @Override
+    public void beforeCorruptRootHealScan() {
+        final Runnable action = corruptRootHealScanStart;
+        if (action != null) {
+            corruptRootHealScanStart = null;
+            action.run();
         }
     }
 
@@ -410,6 +420,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public void setSimulateColdKeyedTimelineFault(boolean simulate) {
         isColdKeyedTimelineFaultArmed = simulate;
+    }
+
+    /**
+     * One-shot. The action runs on the refresh worker inside the corrupt-root heal, ahead of its
+     * wait for the base apply and its scan of the base, so a throw reaches the heal's own error
+     * handling, and a cancellation or a base schema change the action makes meets that scan.
+     */
+    public void setSimulateCorruptRootHealScanStart(Runnable action) {
+        corruptRootHealScanStart = action;
     }
 
     public void setSimulateForwardCommitDedupCollapse(boolean simulate) {

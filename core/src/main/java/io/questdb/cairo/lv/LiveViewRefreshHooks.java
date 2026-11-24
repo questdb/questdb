@@ -51,6 +51,15 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by the corrupt-root heal once it has checked the view's table against the roots it
+     * heals, immediately before it waits for the base apply, restores the predecessor root and
+     * scans the base. Inside the heal's try, so whatever the call throws reaches the heal's own
+     * error handling.
+     */
+    default void beforeCorruptRootHealScan() {
+    }
+
+    /**
      * Called by a zero-row end-of-table head-miss rebuild that derives the window state at the
      * view's new frontier, ahead of its replacement commit, once it has read that frontier and
      * found its replay does not already hold the state there: immediately before it looks up the

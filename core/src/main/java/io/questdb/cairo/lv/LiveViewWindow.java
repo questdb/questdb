@@ -1541,7 +1541,6 @@ public class LiveViewWindow implements QuietCloseable {
      * own gate and additionally demands the dirty map, which the first processed row
      * allocates; this reads the flag on its own
      */
-    @TestOnly
     public boolean isCheckpointFullScanRequired() {
         return isCheckpointFullScanRequired;
     }

@@ -13631,7 +13631,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Reconstructs unreadable roots from a safe predecessor, preserving logical ids and
      * row positions. Replay writes no view rows; it freezes corrected boundaries and
-     * publishes one splice. Failure returns false for an applied-base rebuild.
+     * publishes one splice. Failure returns false for an applied-base rebuild, except
+     * for three failures that say nothing about the roots, which propagate for the
+     * caller to sort as it sorts any other failed restore: a cancellation, a base schema
+     * change that landed after the caller compiled {@code windowFactory}, and a fault a
+     * retry may get past ({@link #isTransientRestoreFailure}). Answering any of them
+     * with the rebuild would replace the view's output where a retry heals the roots,
+     * and over a base that lost rows the view retains, the restatement guard refuses
+     * that rebuild and stops the view.
      * <p>
      * If the ceiling's timestamp group grew, publish at durableBaseSeqTxn to prevent
      * restore from folding those ties twice. When the durable frontier is higher, continue
@@ -13647,6 +13654,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @param durableBaseSeqTxn        base seqTxn applied to the view table
      * @param durableFrontierTimestamp newest timestamp held by the view table
      * @return true when the roots were reconstructed and republished
+     * @throws CairoException                    a cancellation, or a fault a retry may get past
+     * @throws TableReferenceOutOfDateException the base metadata moved past the compiled plan
      */
     private boolean reconstructCorruptCheckpointRoots(
             LiveViewInstance instance,
@@ -13805,6 +13814,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             final long durableFrontierGroupRows = isFrontierScanned ? frontierDurableRows - belowFrontierDurableRows : 0;
             long foldedFrontierGroupRows = 0;
+            hooks.beforeCorruptRootHealScan();
             baseReader = waitForApply(baseToken, durableBaseSeqTxn);
             // The predecessor's state is the replay's warm start. Clear the maps the
             // failed floor restore may have partially filled, then restore it: the
@@ -14011,6 +14021,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", sealedFrontier=").$(isFrontierSealed).I$();
             return true;
         } catch (Throwable t) {
+            if (t instanceof CairoException ce && ce.isCancellation()) {
+                // DROP, invalidation or engine shutdown tripped the breaker: no failed heal to
+                // rebuild over, and the rebuild would only meet the same breaker.
+                throw ce;
+            }
+            if (t instanceof TableReferenceOutOfDateException drift) {
+                // The base metadata moved past the plan the caller compiled, and the rebuild
+                // would run the same plan into the same refusal. The caller hands the drift to
+                // handleRefreshFailure, whose drift recovery recompiles and restores again.
+                throw drift;
+            }
+            if (t instanceof CairoException fault && isTransientRestoreFailure(fault)) {
+                // Says nothing about the roots: the caller retries the restore, and this heal
+                // with it, under the flush-retry budget.
+                LOG.error().$("could not reconstruct corrupt live view checkpoint roots, retrying [view=")
+                        .$(viewName)
+                        .$(", corruptCeilingMaxTs=").$ts(driver, corruptCeilingMaxTs)
+                        .$(", error=").$(t).I$();
+                throw fault;
+            }
             LOG.critical().$("could not reconstruct corrupt live view checkpoint roots [view=")
                     .$(viewName)
                     .$(", corruptCeilingMaxTs=").$ts(driver, corruptCeilingMaxTs)
@@ -15194,7 +15224,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // directly instead of falling back again, then restore cleanly from the
             // healed generation. A heal that cannot complete throws to the rebuild
             // the caller falls back to, which still derives a correct view from the
-            // applied base.
+            // applied base. A cancellation, a base schema change and a fault a retry
+            // may get past propagate from the heal as they would from the restore.
             LOG.error().$("live view checkpoint restore fell back past corrupt roots, reconstructing [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", predecessorMaxTs=").$ts(driver, restored.maxTimestamp)
