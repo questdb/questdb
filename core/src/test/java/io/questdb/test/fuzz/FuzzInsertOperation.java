@@ -120,6 +120,43 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
 
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
+        applyRow(rnd, tableWriter, virtualTimestampIndex, excludedTsIntervals, false);
+        return false;
+    }
+
+    /**
+     * Applies the operation to the writer of a non-WAL table, and leaves the row that {@link #apply} cancels in
+     * progress instead: neither appended nor cancelled, as ILP UDP leaves the row of a line with a value it cannot
+     * put. The next newRow() or commit() of the writer cancels it.
+     *
+     * @return true when the row stays in progress
+     */
+    public boolean applyAbandoningCancelledRow(Rnd rnd, TableWriter writer, LongList excludedTsIntervals) {
+        return applyRow(rnd, writer, -1, excludedTsIntervals, true);
+    }
+
+    @Override
+    public void close() {
+    }
+
+    public double getNullSet() {
+        return nullSet;
+    }
+
+    public int getStrLen() {
+        return (int) strLen;
+    }
+
+    public String[] getSymbols() {
+        return symbols;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    // returns true when the row stays in progress
+    private boolean applyRow(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals, boolean isCancelledRowAbandoned) {
         if (excludedTsIntervals != null && IntervalUtils.isInIntervals(excludedTsIntervals, timestamp)) {
             return false;
         }
@@ -168,31 +205,14 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         }
 
         if (columnCount < metadata.getColumnCount()) {
+            if (isCancelledRowAbandoned) {
+                return true;
+            }
             row.cancel();
         } else {
             row.append();
         }
         return false;
-    }
-
-    @Override
-    public void close() {
-    }
-
-    public double getNullSet() {
-        return nullSet;
-    }
-
-    public int getStrLen() {
-        return (int) strLen;
-    }
-
-    public String[] getSymbols() {
-        return symbols;
-    }
-
-    public long getTimestamp() {
-        return timestamp;
     }
 
     private int nextVariableColumnLen(Rnd rnd) {

@@ -27,8 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.CompiledQuery;
@@ -39,19 +41,24 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -62,9 +69,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * committed rows as they are. A failed out-of-order start leaves the writer usable; a failed partition switch
  * distresses it. After a failed partition switch, the tests send the writer rows of the new partition only.
  */
+@RunWith(Parameterized.class)
 public class TableWriterNewRowFailureTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
+    // The type of column s of the tables of createStringTables(). The first out-of-order row of a transaction
+    // allocates the O3 buffer of a STRING column in o3OpenColumns(), and none for a VARCHAR column before the O3
+    // buffer of the designated timestamp. The tests that do not use createStringTables() do not depend on it.
+    private final String stringColumnType;
+
+    public TableWriterNewRowFailureTest(String stringColumnType) {
+        this.stringColumnType = stringColumnType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{{"STRING"}, {"VARCHAR"}});
+    }
 
     @Test
     public void testO3StartFailureAfterAbandonedRow() throws Exception {
@@ -73,13 +94,52 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
             final StringRows rows = createStringTables();
             try (TableWriter writer = getWriter("tab")) {
                 final TableWriter.Row abandoned = writer.newRow(11);
-                abandoned.putStr(1, "s11");
+                putString(abandoned, "s11");
                 abandoned.putLong(2, 11);
                 failO3Start(writer, 5);
                 appendStringRow(writer, rows, 12, 12);
                 writer.commit();
             }
             assertStringTable(rows);
+        });
+    }
+
+    @Test
+    public void testO3StartFailureArrayColumn() throws Exception {
+        // an array column allocates no O3 buffer before the designated timestamp does
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, a DOUBLE[], x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE ref (ts TIMESTAMP, a DOUBLE[], x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab SELECT x::TIMESTAMP, ARRAY[x::DOUBLE, x + 0.5], x FROM long_sequence(10)");
+            execute("INSERT INTO ref SELECT x::TIMESTAMP, ARRAY[x::DOUBLE, x + 0.5], x FROM long_sequence(10)");
+            try (
+                    TableWriter writer = getWriter("tab");
+                    DirectArray array = new DirectArray()
+            ) {
+                failO3Start(writer, 5);
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                array.setDimLen(0, 2);
+                array.applyShape();
+                array.putDouble(0, 11.0);
+                array.putDouble(1, 11.5);
+                final TableWriter.Row row = writer.newRow(11);
+                row.putArray(1, array);
+                row.putLong(2, 11);
+                row.append();
+                writer.commit();
+            }
+            execute("INSERT INTO ref VALUES (11::TIMESTAMP, ARRAY[11.0, 11.5], 11)");
+
+            final StringBuilder expected = new StringBuilder("ts\ta\tx\n");
+            for (int x = 1; x <= 11; x++) {
+                expected.append(timestampOf(x)).append("\t[").append(x).append(".0,").append(x).append(".5]\t").append(x).append('\n');
+            }
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertSqlCursors("ref", "tab");
         });
     }
 
@@ -137,6 +197,53 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
                 writer.commit();
             }
             assertStringTable(rows);
+        });
+    }
+
+    @Test
+    public void testO3StartFailureFixedColumns() throws Exception {
+        // no column of the table allocates an O3 buffer before the designated timestamp does
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE ref (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab SELECT x::TIMESTAMP, x FROM long_sequence(2048)");
+            execute("INSERT INTO ref SELECT x::TIMESTAMP, x FROM long_sequence(2048)");
+            try (TableWriter writer = getWriter("tab")) {
+                failO3Start(writer, 1024);
+                TableWriter.Row row = writer.newRow(2050);
+                row.putLong(1, 2050);
+                row.append();
+                writer.commit();
+                execute("INSERT INTO ref VALUES (2050::TIMESTAMP, 2050)");
+                assertQuery("SELECT count(), sum(x) FROM tab")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\tsum\n2049\t" + (2048L * 2049 / 2 + 2050) + "\n");
+                assertQuery("SELECT * FROM tab WHERE x >= 2047")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\tx\n"
+                                + timestampOf(2047) + "\t2047\n"
+                                + timestampOf(2048) + "\t2048\n"
+                                + timestampOf(2050) + "\t2050\n");
+                assertSqlCursors("ref", "tab");
+
+                // the row of the next transaction holds its own value
+                row = writer.newRow(2051);
+                row.putLong(1, 2051);
+                row.append();
+                writer.commit();
+            }
+            execute("INSERT INTO ref VALUES (2051::TIMESTAMP, 2051)");
+            assertQuery("SELECT * FROM tab WHERE x >= 2048")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\tx\n"
+                            + timestampOf(2048) + "\t2048\n"
+                            + timestampOf(2050) + "\t2050\n"
+                            + timestampOf(2051) + "\t2051\n");
+            assertSqlCursors("ref", "tab");
         });
     }
 
@@ -248,6 +355,10 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final StringRows rows = createStringTables();
             final String sql = "INSERT INTO tab VALUES (5::TIMESTAMP, 's5', 5)";
+            final TableWriter pooledWriter;
+            try (TableWriter writer = getWriter("tab")) {
+                pooledWriter = writer;
+            }
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
                 try (InsertOperation insert = cq.popInsertOperation()) {
@@ -265,6 +376,11 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
                         } finally {
                             Unsafe.setRssMemLimit(rssMemLimit);
                         }
+                    }
+                    // the pool keeps the writer: its rollback found no row in progress
+                    try (TableWriter writer = getWriter("tab")) {
+                        Assert.assertSame(pooledWriter, writer);
+                        Assert.assertFalse(writer.isDistressed());
                     }
                     insertStringRow(rows, 11, 11);
                     assertStringTable(rows);
@@ -377,12 +493,12 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
             final StringRows rows = createStringTables();
             try (TableWriter writer = getWriter("tab")) {
                 final TableWriter.Row row = writer.newRow(11);
-                row.putStr(1, "s11");
+                putString(row, "s11");
                 row.putLong(2, 11);
                 row.append();
                 for (long x = 12; x <= 13; x++) {
                     final TableWriter.Row next = writer.newRow(x);
-                    next.putStr(1, "s" + x);
+                    putString(next, "s" + x);
                     next.putLong(2, x);
                     next.append();
                 }
@@ -586,17 +702,6 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
         });
     }
 
-    // appends a row to tab through the writer, and writes the same row to ref
-    private static TableWriter.Row appendStringRow(TableWriter writer, StringRows rows, long timestamp, long x) throws Exception {
-        final TableWriter.Row row = writer.newRow(timestamp);
-        row.putStr(1, "s" + x);
-        row.putLong(2, x);
-        row.append();
-        execute("INSERT INTO ref VALUES (" + timestamp + "::TIMESTAMP, 's" + x + "', " + x + ")");
-        rows.add(timestamp, x);
-        return row;
-    }
-
     private static void assertDistressedCommit(TableWriter writer) {
         Assert.assertTrue(writer.isDistressed());
         try {
@@ -615,26 +720,10 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
         execute("INSERT INTO ref SELECT x::TIMESTAMP, x FROM long_sequence(10)");
     }
 
-    private static StringRows createStringTables() throws Exception {
-        return createStringTables(10);
-    }
-
-    // tab and ref with rows ts = x, s = 's' || x for x = 1..n, written by INSERT; the STRING column makes the first
-    // out-of-order row allocate the O3 buffer of the column
-    private static StringRows createStringTables(int n) throws Exception {
-        execute("CREATE TABLE tab (ts TIMESTAMP, s STRING, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("CREATE TABLE ref (ts TIMESTAMP, s STRING, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("INSERT INTO tab SELECT x::TIMESTAMP, 's' || x, x FROM long_sequence(" + n + ")");
-        execute("INSERT INTO ref SELECT x::TIMESTAMP, 's' || x, x FROM long_sequence(" + n + ")");
-        final StringRows rows = new StringRows();
-        for (long x = 1; x <= n; x++) {
-            rows.add(x, x);
-        }
-        return rows;
-    }
-
-    // newRow() of the first out-of-order row of the transaction with no native memory to spare: o3OpenColumns()
-    // cannot allocate the O3 buffer of the STRING or BINARY column
+    // newRow() of the first out-of-order row of the transaction with no native memory to spare: o3OpenColumns() cannot
+    // allocate the O3 buffer of a STRING or BINARY column, or, in a table without one, o3TimestampSetter() cannot
+    // allocate the O3 buffer of the designated timestamp. Each test fails the first out-of-order row of its
+    // transaction.
     private static void failO3Start(TableWriter writer, long timestamp) {
         final long uncommittedRowCount = writer.getUncommittedRowCount();
         final long rssMemLimit = Unsafe.getRssMemLimit();
@@ -685,6 +774,17 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
         return TIMESTAMP_FORMAT.format(Instant.EPOCH.plus(micros, ChronoUnit.MICROS));
     }
 
+    // appends a row to tab through the writer, and writes the same row to ref
+    private TableWriter.Row appendStringRow(TableWriter writer, StringRows rows, long timestamp, long x) throws Exception {
+        final TableWriter.Row row = writer.newRow(timestamp);
+        putString(row, "s" + x);
+        row.putLong(2, x);
+        row.append();
+        execute("INSERT INTO ref VALUES (" + timestamp + "::TIMESTAMP, 's" + x + "', " + x + ")");
+        rows.add(timestamp, x);
+        return row;
+    }
+
     private void assertCountAndSum(StringRows rows) throws Exception {
         assertQuery("SELECT count(), sum(x) FROM tab")
                 .noLeakCheck()
@@ -721,6 +821,32 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(rows.toString());
         assertSqlCursors("ref", "tab");
+    }
+
+    private StringRows createStringTables() throws Exception {
+        return createStringTables(10);
+    }
+
+    // tab and ref with rows ts = x, s = 's' || x for x = 1..n, written by INSERT; s is of stringColumnType
+    private StringRows createStringTables(int n) throws Exception {
+        execute("CREATE TABLE tab (ts TIMESTAMP, s " + stringColumnType + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("CREATE TABLE ref (ts TIMESTAMP, s " + stringColumnType + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO tab SELECT x::TIMESTAMP, 's' || x, x FROM long_sequence(" + n + ")");
+        execute("INSERT INTO ref SELECT x::TIMESTAMP, 's' || x, x FROM long_sequence(" + n + ")");
+        final StringRows rows = new StringRows();
+        for (long x = 1; x <= n; x++) {
+            rows.add(x, x);
+        }
+        return rows;
+    }
+
+    // puts the value of column s
+    private void putString(TableWriter.Row row, String value) {
+        if ("VARCHAR".equals(stringColumnType)) {
+            row.putVarchar(1, new Utf8String(value));
+        } else {
+            row.putStr(1, value);
+        }
     }
 
     /**

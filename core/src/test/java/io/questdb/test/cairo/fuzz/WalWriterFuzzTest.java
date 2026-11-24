@@ -667,6 +667,42 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testNonWalAbandonedRows() throws Exception {
+        // The non-WAL apply leaves the rows that the fuzz cancels in progress, as ILP UDP leaves the row of a line with a
+        // value it cannot put, and the next newRow() or the commit cancels them. Out-of-order writes over several
+        // partitions of tables that start empty: the cancel of the first out-of-order row of a transaction, and of the
+        // only row of a table, changes the path of the next row. The non-WAL table must still match the WAL tables.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.3,
+                0.1,
+                0.1,
+                0.05,
+                0.02,
+                0.02,
+                0.02,
+                0.01,
+                1.0,
+                0.01,
+                0.01,
+                0.0,
+                0.0,
+                0.05,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+        );
+        // no planted IO failure
+        fuzzer.setFuzzCounts(true, 50_000, 100, 20, 10, 1000, 0, 3 + rnd.nextInt(8), -1, 0);
+        fuzzer.setAbandonedRowsEnabled(true);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testNonWalIoFailuresAtPageSwitches() throws Exception {
         // Column files grow by pages of the smallest size, and the IO failures planted in the non-WAL apply fail
         // allocate() calls, so they land on page switches of column files, the designated timestamp included, and

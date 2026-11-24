@@ -68,6 +68,44 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
+    public void testAbandonedFirstLineOfEmptyTable() throws Exception {
+        // The first line of an empty table has a BYTE value out of range. The parser logs the error and leaves the
+        // row of the line unfinished, the only row of the table. The next line, of the next day or of the same day,
+        // lands, and the table reads.
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    // the next line, its timestamp as the table shows it
+                    {"udp_empty x=2i,b=2i 86400000001000", "1970-01-02T00:00:00.000001Z"},
+                    {"udp_empty x=2i,b=2i 2000", "1970-01-01T00:00:00.000002Z"},
+            };
+            for (String[] nextLine : cases) {
+                execute("CREATE TABLE udp_empty (x LONG, b BYTE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+                try (
+                        LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                        LineUdpLexer lexer = new LineUdpLexer(4096)
+                ) {
+                    lexer.withParser(parser);
+                    parseDatagram(lexer, "udp_empty x=1i,b=1000i 1000\n" + nextLine[0] + "\n");
+                    lexer.parseLast();
+                    parser.commitAll();
+                }
+                assertQuery("udp_empty")
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns("x\tb\ttimestamp\n2\t2\t" + nextLine[1] + "\n");
+
+                execute("INSERT INTO udp_empty VALUES (3, 3, '1970-01-01T00:00:00.000003Z')");
+                assertQuery("SELECT x, b, timestamp FROM udp_empty ORDER BY x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("x\tb\ttimestamp\n2\t2\t" + nextLine[1] + "\n3\t3\t1970-01-01T00:00:00.000003Z\n");
+                execute("DROP TABLE udp_empty");
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnDefaultByte() throws Exception {
         testAddColumnInteger(ColumnType.BYTE, "0");
     }
@@ -887,6 +925,55 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 system,host=linux-questdb uptime_format=" 1:18" 1575990360000000000
                 """;
         assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testOutOfOrderLineWithBadValueKeepsNextLines() throws Exception {
+        // The first out-of-order line of the batch has a BYTE value out of range. The parser logs the error and
+        // leaves the row of the line unfinished. The next lines land with their own values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE udp_o3 (x LONG, b BYTE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                parseDatagram(lexer, """
+                        udp_o3 x=1i,b=1i 1000
+                        udp_o3 x=2i,b=2i 2000
+                        udp_o3 x=3i,b=3i 3000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+                parseDatagram(lexer, """
+                        udp_o3 x=4i,b=1000i 1500
+                        udp_o3 x=5i,b=5i 4000
+                        udp_o3 x=6i,b=6i 5000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+            }
+            final String expected = """
+                    x\tb\ttimestamp
+                    1\t1\t1970-01-01T00:00:00.000001Z
+                    2\t2\t1970-01-01T00:00:00.000002Z
+                    3\t3\t1970-01-01T00:00:00.000003Z
+                    5\t5\t1970-01-01T00:00:00.000004Z
+                    6\t6\t1970-01-01T00:00:00.000005Z
+                    """;
+            assertQuery("udp_o3")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
+
+            execute("INSERT INTO udp_o3 VALUES (7, 7, '1970-01-01T00:00:00.000006Z')");
+            assertQuery("udp_o3")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected + "7\t7\t1970-01-01T00:00:00.000006Z\n");
+        });
     }
 
     @Test

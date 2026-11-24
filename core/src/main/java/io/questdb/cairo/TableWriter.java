@@ -4673,20 +4673,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
         }
+        if ((masterRef & 1) != 0) {
+            // The caller left its previous row unfinished: no append() or cancel(), or its newRow() failed after the
+            // row started. Cancel it before choosing the path of this row, because the cancel restores what the path
+            // depends on: rowAction - the cancel of the first out-of-order row of the transaction leaves O3 mode, the
+            // cancel of the only row of an empty table removes its partition - and the max timestamp of txWriter.
+            rowCancel();
+        }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
                 if (timestamp < txWriter.getMaxTimestamp()) {
                     throw CairoException.nonCritical()
                             .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
-                bumpMasterRef();
+                masterRef++;
                 updateMaxTimestamp(timestamp);
                 break;
             case ROW_ACTION_NO_TIMESTAMP:
-                bumpMasterRef();
+                masterRef++;
                 break;
             case ROW_ACTION_O3:
-                bumpMasterRef();
+                masterRef++;
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
@@ -4705,7 +4712,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
-                bumpMasterRef();
+                masterRef++;
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
                         return newRowO3(timestamp);
@@ -7692,14 +7699,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
-    private void bumpMasterRef() {
-        if ((masterRef & 1) == 0) {
-            masterRef++;
-        } else {
-            cancelRowAndBump();
-        }
-    }
-
     private void bumpMetadataAndColumnStructureVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -7769,11 +7768,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return blockSize;
-    }
-
-    private void cancelRowAndBump() {
-        rowCancel();
-        masterRef++;
     }
 
     private void checkColumnName(CharSequence name) {
@@ -13705,19 +13699,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             txWriter.beginPartitionSizeUpdate();
             o3OpenColumns();
+            o3InError = false;
+            o3MasterRef = masterRef;
+            rowAction = ROW_ACTION_O3;
+            o3TimestampSetter(timestamp);
         } catch (Throwable th) {
-            // The first out-of-order row of the transaction could not start, e.g. o3OpenColumns() ran out of memory
-            // for the O3 buffer of a STRING or BINARY column. The writer stays in order and usable. newRow0() has
-            // bumped masterRef, but the row is not counted: o3MasterRef is not set. Take the bump back. Left odd,
-            // masterRef would make the next newRow() or commit() cancel the row through rowCancel(), which drops
-            // the last row that txWriter did count.
+            // The first out-of-order row of the transaction could not start: o3OpenColumns() ran out of memory for
+            // the O3 buffer of a STRING or BINARY column, or o3TimestampSetter() for the O3 buffer of the designated
+            // timestamp (fixed-size, VARCHAR and array columns allocate nothing before it). Take the start back whole,
+            // so that the writer stays in order and usable and no row is in progress: the masterRef bump of
+            // newRow0(), and the switch to O3 mode once made; before it, clearO3() changes nothing. Left in progress,
+            // the row would make rollback() distress the writer, as it does for a row whose put failed, and before
+            // o3MasterRef is set, commit() would cancel it as an in-order row, which drops the last row that txWriter
+            // did count.
             masterRef--;
+            clearO3();
             throw th;
         }
-        o3InError = false;
-        o3MasterRef = masterRef;
-        rowAction = ROW_ACTION_O3;
-        o3TimestampSetter(timestamp);
         return row;
     }
 

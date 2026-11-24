@@ -89,6 +89,7 @@ import io.questdb.test.fuzz.FuzzConvertPartitionToNativeOperation;
 import io.questdb.test.fuzz.FuzzConvertPartitionToParquetOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropIndexOperation;
+import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -137,10 +138,16 @@ public class FuzzRunner {
     // Columns a covering index on sym2 / sym_top may INCLUDE; sym_top's add the column-top columns.
     private static final String[] SYM2_INCLUDE_CANDIDATES = {"c1", "c2", "c3", "rnd_str", "bool1"};
     private static final String[] SYM_TOP_INCLUDE_CANDIDATES = {"c1", "c3", "bool1", "long_top", "str_top"};
+    // what cancels a row that applyNonWal() leaves in progress, see rowCancelStepAfter()
+    private static final int ROW_CANCEL_STEP_COMMIT = 2;
+    private static final int ROW_CANCEL_STEP_NEW_ROW = 1;
+    private static final int ROW_CANCEL_STEP_NONE = 0;
     // the largest local row id stands for the partition size line of a snapshot
     private static final long ROW_ID_PARTITION_SIZE = Rows.toLocalRowID(-1L);
     private static final int SNAPSHOT_SAMPLE_ROWS = 16;
     private static final int SNAPSHOT_TAIL_ROWS = 16;
+    // the rows that applyNonWal() left in progress, see setAbandonedRowsEnabled()
+    private final ObjList<AbandonedRow> abandonedRows = new ObjList<>();
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     // Prepared commits that the WAL apply paths abandoned and sequenced, see commitWal() and rollbackWal().
     private final AtomicInteger abandonedPreparedCommitCount = new AtomicInteger();
@@ -179,6 +186,7 @@ public class FuzzRunner {
     // picks the recovery of applyNonWal() from a planted IO failure, see setIoFailureRecoveryRnd(); null keeps the
     // pool recovery
     private Rnd ioFailureRecoveryRnd;
+    private boolean isAbandonedRowsEnabled;
     private boolean isIoFailureOnAllocate;
     private boolean isNoSentinelTypeChangeEnabled;
     private boolean isNoSentinelWideningChecked;
@@ -423,6 +431,19 @@ public class FuzzRunner {
                     int size = transaction.operationList.size();
                     for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                        if (isAbandonedRowsEnabled && operation instanceof FuzzInsertOperation insertOperation) {
+                            final int rowCancelStep = rowCancelStepAfter(transaction, operationIndex);
+                            if (rowCancelStep != ROW_CANCEL_STEP_NONE) {
+                                if (insertOperation.applyAbandoningCancelledRow(rnd, writerCopy, transaction.getNoCommitIntervals())) {
+                                    abandonedRows.add(new AbandonedRow(
+                                            writerCopy.hasO3() && writerCopy.getO3RowCount() == 0,
+                                            !writerCopy.hasO3() && writerCopy.size() == 1,
+                                            rowCancelStep == ROW_CANCEL_STEP_COMMIT
+                                    ));
+                                }
+                                continue;
+                            }
+                        }
                         // Non-wal tables don't support replace range commits
                         // we simulate it by excluding from the commit all the rows that will be replaced
                         // in the future commits.
@@ -772,6 +793,10 @@ public class FuzzRunner {
         }
     }
 
+    public ObjList<AbandonedRow> getAbandonedRows() {
+        return abandonedRows;
+    }
+
     public FailureFileFacade getFileFacade() {
         return ff;
     }
@@ -815,6 +840,17 @@ public class FuzzRunner {
         } else {
             return (int) (20 * randomDriver);
         }
+    }
+
+    /**
+     * When true, applyNonWal() leaves a row that the fuzz cancels in progress instead - neither appended nor
+     * cancelled, as ILP UDP leaves the row of a line with a value it cannot put - when the next newRow() of its
+     * transaction or the commit cancels it; before a rollback or a reopen it still cancels the row. The WAL applies
+     * cancel every such row. Off by default; it draws nothing more from the Rnd of the apply, so a seed repeats the
+     * rest of its run either way.
+     */
+    public void setAbandonedRowsEnabled(boolean isAbandonedRowsEnabled) {
+        this.isAbandonedRowsEnabled = isAbandonedRowsEnabled;
     }
 
     public void setBackfillProb(double backfillProb) {
@@ -1282,6 +1318,23 @@ public class FuzzRunner {
             return "TYPE POSTING DELTA";
         }
         return "TYPE POSTING EF";
+    }
+
+    // What cancels a row that the insert at operationIndex leaves in progress: the newRow() of a later insert of the
+    // transaction, or the commit. None when a step of another kind comes first, or when the transaction ends with a
+    // rollback, which distresses a writer that holds a row in progress, or a reopen.
+    private static int rowCancelStepAfter(FuzzTransaction transaction, int operationIndex) {
+        final LongList excludedTsIntervals = transaction.getNoCommitIntervals();
+        for (int i = operationIndex + 1, n = transaction.operationList.size(); i < n; i++) {
+            if (!(transaction.operationList.getQuick(i) instanceof FuzzInsertOperation insertOperation)) {
+                return ROW_CANCEL_STEP_NONE;
+            }
+            // an insert of an excluded timestamp calls no newRow()
+            if (excludedTsIntervals == null || !IntervalUtils.isInIntervals(excludedTsIntervals, insertOperation.getTimestamp())) {
+                return ROW_CANCEL_STEP_NEW_ROW;
+            }
+        }
+        return transaction.rollback || transaction.reopenTable ? ROW_CANCEL_STEP_NONE : ROW_CANCEL_STEP_COMMIT;
     }
 
     private static String timestampToString(TimestampDriver driver, long timestamp) {
@@ -2977,6 +3030,25 @@ public class FuzzRunner {
     }
 
     private record ReaderSnapshot(String dirName, long txn, LongList rowIds, String rows) {
+    }
+
+    /**
+     * A row that applyNonWal() left in progress, see {@link #setAbandonedRowsEnabled(boolean)}: what the row was, and
+     * what cancels it.
+     */
+    public static class AbandonedRow {
+        // the first out-of-order row of its transaction
+        public final boolean isFirstO3Row;
+        // the commit of the transaction cancels the row; otherwise the newRow() of the next row does
+        public final boolean isFollowedByCommit;
+        // the only row of the table
+        public final boolean isOnlyRow;
+
+        AbandonedRow(boolean isFirstO3Row, boolean isOnlyRow, boolean isFollowedByCommit) {
+            this.isFirstO3Row = isFirstO3Row;
+            this.isOnlyRow = isOnlyRow;
+            this.isFollowedByCommit = isFollowedByCommit;
+        }
     }
 
     /**

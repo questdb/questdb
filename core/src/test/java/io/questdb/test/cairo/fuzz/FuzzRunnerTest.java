@@ -56,6 +56,13 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 public class FuzzRunnerTest extends AbstractCairoTest {
+    // the seeds of the runs of testAbandonedRowShapes(), which stops once it has seen every shape
+    private static final long[][] ABANDONED_ROW_SHAPE_SEEDS = {
+            {9333702510506263L, 433236069235L},
+            {7671341247540589L, 1560157888921L},
+            {7009904662764774L, 8536842657280L},
+            {4873215889450118L, 6757842895306L},
+    };
     // Ample budget: a couple of 100ms backoffs recover well within it even under a slow sleep, so the
     // retry-then-succeed tests never flake on timing.
     private static final long AMPLE_RETRY_TIMEOUT_MILLIS = 10_000;
@@ -99,6 +106,49 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     private static final long RETRY_TIMEOUT_MILLIS = 300;
     private final FuzzRunner fuzzer = new FuzzRunner();
     private final Rnd rnd = TestUtils.generateRandom(LOG);
+
+    @Test
+    public void testAbandonedRowShapes() throws Exception {
+        // The non-WAL apply leaves the rows that the fuzz cancels in progress, and the next newRow() or the commit
+        // cancels them. The cancel of the first out-of-order row of a transaction, and of the only row of a table,
+        // changes the path of the next row, so the runs must leave both in progress before a newRow(), and a row
+        // before the commit. runFuzz() compares the non-WAL table with the WAL tables.
+        int firstO3Rows = 0;
+        int onlyRows = 0;
+        int commitCancelledRows = 0;
+        for (int i = 0; i < ABANDONED_ROW_SHAPE_SEEDS.length && (firstO3Rows == 0 || onlyRows == 0 || commitCancelledRows == 0); i++) {
+            final long[] seeds = ABANDONED_ROW_SHAPE_SEEDS[i];
+            final FuzzRunner runner = newRunner();
+            // out-of-order transactions of tables that start empty, and no planted IO failure
+            runner.setFuzzCounts(true, 5_000, 20, 10, 10, 20, 0, 5, -1, 0);
+            runner.setFuzzProbabilities(
+                    0.3, 0.1, 0.1, 0.05, 0.0, 0.0, 0.0, 0.0, 1.0, 0.01, 0.0, 0.05, 0.0, 0.0, 0.0, 0.0
+            );
+            runner.setAbandonedRowsEnabled(true);
+            final String tableName = "abandoned_rows_" + i;
+            // the seeds of the run, its schema and its apply, so the run repeats
+            final Rnd runRnd = runner.generateRandom(LOG, seeds[0], seeds[1]);
+            assertMemoryLeak(runner.getFileFacade(), () -> runner.runFuzz(tableName, runRnd));
+            final ObjList<FuzzRunner.AbandonedRow> abandonedRows = runner.getAbandonedRows();
+            for (int j = 0, n = abandonedRows.size(); j < n; j++) {
+                final FuzzRunner.AbandonedRow row = abandonedRows.getQuick(j);
+                if (row.isFollowedByCommit) {
+                    commitCancelledRows++;
+                } else if (row.isFirstO3Row) {
+                    firstO3Rows++;
+                } else if (row.isOnlyRow) {
+                    onlyRows++;
+                }
+            }
+        }
+        LOG.info().$("abandoned row shapes [firstO3Row=").$(firstO3Rows)
+                .$(", onlyRow=").$(onlyRows)
+                .$(", commit=").$(commitCancelledRows)
+                .I$();
+        Assert.assertTrue(firstO3Rows > 0);
+        Assert.assertTrue(onlyRows > 0);
+        Assert.assertTrue(commitCancelledRows > 0);
+    }
 
     @Test
     public void testApplyLeavesColumnPurgeToPoolJob() throws Exception {
