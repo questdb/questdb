@@ -201,6 +201,18 @@ public class LiveViewInstance implements QuietCloseable {
     private RecordCursorFactory storedRowScanFactory;
     private RecordToRowCopier storedRowCopier;
     private long storedRowCopierMetadataVersion = -1;
+    // The last point at which the view's stored rows matched its base by construction: a seed
+    // or a whole-range repair that read the base at baseMatchTruncateVersion and wrote every
+    // row at and above baseMatchFloorTs from that read. Every stored row up there has come
+    // since from that read or from a base commit the view consumed after it, so any base row
+    // up there the view never consumed - an attached partition's - arrived through an ATTACH
+    // PARTITION after it, which SeqTxnTracker.getPartitionAttachTruncateVersion() reports.
+    // The open-segment keyed repairs prove their row arithmetic with a count that such rows
+    // can balance; see LiveViewRefreshJob.isOpenSegmentStoredSuffixIntact. LONG_NULL until a
+    // match lands: a view loaded at startup consumed its rows in an earlier process, where an
+    // attach left no trace this process can read. Refresh worker only, under the refresh latch.
+    private long baseMatchFloorTs = Numbers.LONG_NULL;
+    private long baseMatchTruncateVersion = Numbers.LONG_NULL;
     // Wall-clock (micros) at which this view's current apply-lag wait began, and the field that
     // says the view is in one at all. The back-off floor below cannot say it: the floor ends
     // every APPLY_LAG_DEFER_BACKOFF_US whether or not the base has applied anything, so a view
@@ -1304,6 +1316,25 @@ public class LiveViewInstance implements QuietCloseable {
         return keyedScanGate;
     }
 
+    /**
+     * @return the floor at and above which the view's stored rows last matched its base by
+     * construction. Meaningful only while {@link #getBaseMatchTruncateVersion()} is not
+     * {@link Numbers#LONG_NULL}: a view starting from the beginning of time matches from
+     * {@link Numbers#LONG_NULL} itself.
+     */
+    public long getBaseMatchFloorTs() {
+        return baseMatchFloorTs;
+    }
+
+    /**
+     * @return the base truncate version of the read the view's stored rows last matched, or
+     * {@link Numbers#LONG_NULL} when no seed or whole-range repair in this process has
+     * matched them to the base
+     */
+    public long getBaseMatchTruncateVersion() {
+        return baseMatchTruncateVersion;
+    }
+
     public long getBelowLowerBoundCount() {
         return belowLowerBoundCount;
     }
@@ -2072,6 +2103,19 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long incrementAndGetSealsSincePurge() {
         return ++sealsSincePurge;
+    }
+
+    /**
+     * Whether no base row at or above {@code floorTs} can be one the view never consumed: a
+     * match covers the floor, and no partition was attached to the base after it.
+     *
+     * @param attachTruncateVersion the base's
+     *                              {@code SeqTxnTracker.getPartitionAttachTruncateVersion()}
+     */
+    public boolean isBaseMatchedFrom(long floorTs, long attachTruncateVersion) {
+        return baseMatchTruncateVersion != Numbers.LONG_NULL
+                && attachTruncateVersion <= baseMatchTruncateVersion
+                && floorTs >= baseMatchFloorTs;
     }
 
     /**
@@ -2973,6 +3017,25 @@ public class LiveViewInstance implements QuietCloseable {
         if (isRepairRoot) {
             checkpointRepairRootIds.add(checkpointId);
         }
+    }
+
+    /**
+     * Records a seed or a whole-range repair that wrote every stored row at and above
+     * {@code floorTs} from one read of the base at {@code truncateVersion}. The match it
+     * replaces still covers its own floor when no partition was attached after it: any attach
+     * at or below {@code truncateVersion} was on record before that read began. So the floor
+     * falls to the lower of the two then, and moves to {@code floorTs} otherwise.
+     *
+     * @param attachTruncateVersion the base's
+     *                              {@code SeqTxnTracker.getPartitionAttachTruncateVersion()}
+     */
+    public void recordBaseMatch(long truncateVersion, long floorTs, long attachTruncateVersion) {
+        if (isBaseMatchedFrom(Long.MAX_VALUE, attachTruncateVersion)) {
+            baseMatchFloorTs = Math.min(baseMatchFloorTs, floorTs);
+        } else {
+            baseMatchFloorTs = floorTs;
+        }
+        baseMatchTruncateVersion = truncateVersion;
     }
 
     /**

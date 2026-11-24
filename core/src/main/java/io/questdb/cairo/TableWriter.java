@@ -1733,6 +1733,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.bumpTruncateVersion();
+            if (tableToken.isWal()) {
+                // Ahead of the commit that publishes the partition: a live view over this table
+                // never consumes the attached rows, and must know they are there by the time a
+                // reader can see them. A commit that fails afterwards leaves an attach on record
+                // that never landed, which costs such a view a keyed repair and nothing else.
+                engine.getTableSequencerAPI().getTxnTracker(tableToken).recordPartitionAttach(txWriter.getTruncateVersion());
+            }
 
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());

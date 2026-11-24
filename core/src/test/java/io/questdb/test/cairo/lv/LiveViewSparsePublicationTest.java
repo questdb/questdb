@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -534,14 +535,125 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAColdKeyedHeadMissOverADropAndAnAttachOfAsManyRowsReplacesItsRange() throws Exception {
+        // The drop takes the acct-1 row at 10:00, which the view keeps, and the attach brings
+        // in an acct-2 row at 11:00, detached before the view existed, which the view never
+        // consumed. One row out and one in leave the count above the correction at 05:00
+        // balanced, so the count cannot tell the stored acct-1 row at 10:00 from one whose
+        // base row is still there, and the cold route would upsert acct-1's recomputed rows
+        // beside it. The attach has to decline the route, and the replacement drops the stale
+        // row and picks the attached one up.
+        assertOpenDayCorrectionOverADropAndAnAttachRepairsByReplacement(false, "timestamp");
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverADropAndAnAttachLogsItsFloorInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision: the floor the
+        // decline logs and the floor the replacement's match records are in nanoseconds.
+        assertOpenDayCorrectionOverADropAndAnAttachRepairsByReplacement(false, "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverADropAndAnAttachTheWalNeverCarriedReplacesItsRange() throws Exception {
+        // The case above with the attach forced onto the suspended base, past its WAL: the view
+        // walks no commit for it, and only the base's table writer sees it happen.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertOpenDayCorrectionOverADropAndAnAttachRepairsByReplacement(true, "timestamp");
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverAPartitionReplacedByAnImageOfAsManyRowsReplacesItsRange() throws Exception {
+        // The hour 11 the view consumed holds an acct-1 row. DROP and ATTACH swap it for an
+        // image detached before the view existed, which holds an acct-2 row instead. The
+        // partition and its row count stay as they were, so neither the count above the
+        // correction nor a count per partition can see that the view's acct-1 row at 11:00
+        // lost its base row, and the cold route would upsert acct-1's rows beside it.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBase(seedAnOpenDayWithALoneRowAtTen() + ", " + row(5, 11, 0, 0, "acct-2", 16.0));
+            execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-05T11'");
+            drainWalQueue();
+            execute("INSERT INTO tx VALUES " + row(5, 11, 0, 0, "acct-1", 3.0));
+            drainWalQueue();
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-05T11'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                attachDetached("2026-01-05T11");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the view keeps the row it derived from the dropped hour", 1, rowsAt("2026-01-05T11:00:00.000000Z", "acct-1"));
+                Assert.assertEquals("and never consumed the attached one", 0, rowsAt("2026-01-05T11:00:00.000000Z", "acct-2"));
+                Assert.assertEquals(
+                        "the replacement keeps the hour's row count",
+                        1,
+                        count("select count() from tx where created_at in '2026-01-05T11'")
+                );
+
+                commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T05:00:00.000000Z\tacct-1\t101.0
+                                2026-01-05T10:00:00.000000Z\tacct-1\t103.0
+                                2026-01-05T12:00:00.000000Z\tacct-1\t107.0
+                                """,
+                        dumpRowsOf("acct-1")
+                );
+                Assert.assertEquals(1, rowsAt("2026-01-05T11:00:00.000000Z", "acct-2"));
+                assertViewMatchesRecompute();
+                assertColdKeyedRouteDeclined(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+            assertRestartRestoresFromTimeline(row(5, 14, 0, 0, "acct-2"));
+        });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverAnAttachTheSeedReadStillPublishesSparsely() throws Exception {
+        // The base detached and re-attached hour 10 before the view existed, so its truncate
+        // version is off zero, yet the seed read the attached row like any other. The match
+        // the seed records stands at that version and no partition was attached since, so
+        // the count is trusted, and the cold route keeps its keyed read.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBase(seedAnOpenDayWithALoneRowAtTen());
+            execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-05T10'");
+            drainWalQueue();
+            attachDetached("2026-01-05T10");
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = instanceOf("lv");
+                Assert.assertEquals("the detach and the attach", 2, instance.getBaseMatchTruncateVersion());
+                Assert.assertEquals("from the view's START FROM BEGINNING", Numbers.LONG_NULL, instance.getBaseMatchFloorTs());
+                Assert.assertEquals(1, rowsAt("2026-01-05T10:00:00.000000Z", "acct-1"));
+
+                commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
     public void testAColdKeyedHeadMissOverAnAttachedPartitionReplacesItsRange() throws Exception {
-        // The count has to balance in both directions, not only when the view holds more rows
-        // than the base. The acct-1 row at 10:00 was detached before the view existed, so the
-        // view never derived a row from it, and ATTACH PARTITION brings it back as a non-DATA
-        // commit the view walks past. The cold route would recompute acct-1 with it and add
-        // one row more than its insert delta says, which only its post-apply row count would
-        // notice, after the commit. The count has to decline first, and the replacement picks
-        // the row up.
+        // The acct-1 row at 10:00 was detached before the view existed, so the view never
+        // derived a row from it, and ATTACH PARTITION brings it back as a non-DATA commit the
+        // view walks past. The cold route would recompute acct-1 with it and add one row more
+        // than its insert delta says, which only its post-apply row count would notice, after
+        // the commit. The attach declines the route before the count is taken, and the
+        // replacement picks the row up.
         armSparseRepair();
         assertMemoryLeak(() -> {
             createBase(seedAnOpenDayWithALoneRowAtTen());
@@ -550,16 +662,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             createViewOverBase("100ms");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-                final TableToken baseToken = engine.verifyTableName("tx");
-                try (Path detached = new Path(); Path attachable = new Path()) {
-                    detached.of(configuration.getDbRoot()).concat(baseToken).concat("2026-01-05T10")
-                            .put(TableUtils.DETACHED_DIR_MARKER).$();
-                    attachable.of(configuration.getDbRoot()).concat(baseToken).concat("2026-01-05T10")
-                            .put(configuration.getAttachPartitionSuffix()).$();
-                    Assert.assertTrue(Files.rename(detached.$(), attachable.$()) > -1);
-                }
-                execute("ALTER TABLE tx ATTACH PARTITION LIST '2026-01-05T10'");
-                drainWalQueue();
+                attachDetached("2026-01-05T10");
                 driveRefreshToQuiescence(job);
                 Assert.assertEquals(1, count("select count() from tx where created_at = '2026-01-05T10:00:00.000000Z'"));
                 Assert.assertEquals(
@@ -573,9 +676,236 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, rowsAt("2026-01-05T10:00:00.000000Z", "acct-1"));
                 assertViewMatchesRecompute();
                 assertColdKeyedRouteDeclined(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
                 assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
             }
             assertRestartRestoresFromTimeline(row(5, 14, 0, 0, "acct-2"));
+        });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissAfterARestartOverABaseWithAPartitionHistoryReplacesItsRangeOnce() throws Exception {
+        // A restart leaves the view without a match: the rows it holds came in an earlier
+        // process, where an attach left nothing this one can read. Over a base whose truncate
+        // version is off zero, the first cold repair after it therefore replaces its range,
+        // and the match that replacement records is what the next one stands on - from its
+        // floor up, and only from there.
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createBase(seedAnOpenDayWithALoneRowAtTen());
+                execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-05T10'");
+                drainWalQueue();
+                attachDetached("2026-01-05T10");
+                createViewOverBase("100ms");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                }
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    commit(row(5, 14, 0, 0, "acct-2"), job);
+                    assertRestoredFromTimeline("lv");
+                    final LiveViewInstance instance = instanceOf("lv");
+                    Assert.assertEquals(Numbers.LONG_NULL, instance.getBaseMatchTruncateVersion());
+
+                    capture.start();
+                    commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+                    capture.drain();
+                    capture.stop();
+
+                    assertColdKeyedRouteDeclined(job);
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                    capture.assertLogged("live view open segment keyed replay declined, the base may hold attached rows at or above"
+                            + " its floor [view=lv, outputLowTs=2026-01-05T05:00:00.000000Z, truncateVersion=2,"
+                            + " attachTruncateVersion=2, matchTruncateVersion=null, matchFloorTs=]");
+                    assertViewMatchesRecompute();
+                    Assert.assertEquals(2, instance.getBaseMatchTruncateVersion());
+                    Assert.assertEquals(ts("2026-01-05T05:00:00.000000Z"), instance.getBaseMatchFloorTs());
+
+                    // At the match's floor and above it, the cold route keeps its keyed read.
+                    commit(row(5, 6, 0, 0, "acct-1", 10.0), job);
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                    assertViewMatchesRecompute();
+
+                    // A whole-range repair above the floor, with no attach since the match,
+                    // leaves the floor where it was: the rows between the two came off the
+                    // first replay and the drain since, as before.
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "false");
+                    commit(row(5, 7, 0, 0, "acct-1", 10.0), job);
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                    Assert.assertEquals(ts("2026-01-05T05:00:00.000000Z"), instance.getBaseMatchFloorTs());
+                    assertViewMatchesRecompute();
+
+                    // Below the floor the count is not trusted again until a replacement
+                    // reaches there.
+                    commit(row(5, 4, 0, 0, "acct-1", 10.0), job);
+                    Assert.assertEquals(2, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                    Assert.assertEquals(ts("2026-01-05T04:00:00.000000Z"), instance.getBaseMatchFloorTs());
+                    assertViewMatchesRecompute();
+                    assertLadderCountsRowsAtOrBelowEachBoundary("after the repairs");
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissAfterASeedResumedAcrossARestartReplacesItsRange() throws Exception {
+        // A sweep that resumes over rows an earlier process wrote read them off a snapshot it
+        // no longer holds, so its finished output matches no one read of the base, and the
+        // seed records no match. Over a base with a partition history, the first cold repair
+        // after it then replaces its range, as it does after any restart.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBase(seedAnOpenDayWithALoneRowAtTen());
+            execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-05T10'");
+            drainWalQueue();
+            attachDetached("2026-01-05T10");
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // One sweep turn, which at one row a turn yields with rows on disk.
+                job.run();
+                drainWalQueue();
+                final LiveViewInstance instance = instanceOf("lv");
+                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                Assert.assertTrue("the sweep must have written rows, or the case covers nothing", durableRows() > 0);
+                Assert.assertEquals("the sweep's own snapshot", 2, instance.getBaseMatchTruncateVersion());
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = instanceOf("lv");
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getBaseMatchTruncateVersion());
+                assertViewMatchesRecompute();
+
+                commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+
+                assertColdKeyedRouteDeclined(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testAColdKeyedRepairThatAbandonsItsSparsePublicationRecordsNoMatch() throws Exception {
+        // The repeated pair turns the cold route's upsert into a replacement whose rows of every
+        // other key are the view's own, copied forward rather than read off the base, so the
+        // replacement matches the view to nothing. Run after a restart, which leaves no match
+        // to keep, over a base whose truncate version is zero, where the route needs none.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAnOpenDayWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(row(5, 14, 0, 0, "acct-2"), job);
+                assertRestoredFromTimeline("lv");
+
+                commit(row(5, 10, 0, 0, "acct-1", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertEquals(2, rowsAt("2026-01-05T10:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(Numbers.LONG_NULL, instanceOf("lv").getBaseMatchTruncateVersion());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAClosedSegmentReplacementRecordsNoMatch() throws Exception {
+        // A closed segment's whole read replaces its rows up to the next segment's start and no
+        // further, so the rows above that bound match no read of the base. As above, after a
+        // restart over a base whose truncate version is zero.
+        armSparseRepair();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createView(seedWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // The head, which closes 2026-01-02 below it.
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(row(5, 2, 0, 0, "acct-2"), job);
+                assertRestoredFromTimeline("lv");
+
+                commit(correction("acct-1"), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD));
+                Assert.assertEquals(Numbers.LONG_NULL, instanceOf("lv").getBaseMatchTruncateVersion());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeThatAbandonsItsSparsePublicationRecordsNoMatch() throws Exception {
+        // The keyed resume's counterpart of the cold case above: its fallback writes every other
+        // key's stored rows back rather than reading them off the base.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(hoursOfFourAccounts(2, 0, 10) + ", " + hoursOfFourAccounts(3, 0, 10));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                for (int hour = 0; hour < 10; hour++) {
+                    commit(hoursOfFourAccounts(4, hour, hour + 1), job);
+                }
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(row(4, 10, 10, 0, "acct-1"), job);
+                assertRestoredFromTimeline("lv");
+
+                // acct-1's 02:10 row already holds this instant.
+                commit(row(4, 2, 10, 0, "acct-1"), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertEquals(2, rowsAt("2026-01-04T02:10:00.000000Z", "acct-1"));
+                Assert.assertEquals(Numbers.LONG_NULL, instanceOf("lv").getBaseMatchTruncateVersion());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissAfterARestartOverAPristineBaseStillPublishesSparsely() throws Exception {
+        // The control for the case above: a base whose truncate version is still zero has never
+        // removed or attached a partition, so no base row can be one the view never consumed,
+        // and the restart costs the cold route nothing, match or none.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAnOpenDayWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(row(5, 14, 0, 0, "acct-2"), job);
+                assertRestoredFromTimeline("lv");
+                Assert.assertEquals(Numbers.LONG_NULL, instanceOf("lv").getBaseMatchTruncateVersion());
+
+                commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
         });
     }
 
@@ -761,6 +1091,65 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // 05, one row of each account, after the view had derived rows from it.
         armSparseRepair();
         assertOpenDayResumeAfter("ALTER TABLE tx DROP PARTITION LIST '2026-01-04T05'");
+    }
+
+    @Test
+    public void testAKeyedResumeOverADropAndAnAttachOfAsManyRowsReplacesItsRange() throws Exception {
+        // The anchored sibling of the cold drop-and-attach case. The drop takes hour 05 of the
+        // open day, one row of each account, after the view derived rows from it, and the
+        // attach brings in hour 12, four rows the base detached before the view existed. The
+        // count above the root at 01:40 balances, so a keyed resume of the acct-1 correction
+        // at 02:35 would upsert acct-1's rows beside its stale one at 05:10. The attach has to
+        // decline it, and the resume reads every key above the root instead.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBase(hoursOfFourAccounts(2, 0, 10) + ", " + hoursOfFourAccounts(3, 0, 10)
+                    + ", " + hoursOfFourAccounts(4, 12, 13) + ", " + row(4, 13, 0, 0, "acct-1"));
+            // Hour 13 only keeps hour 12 from being the partition the base appends to, which
+            // DETACH refuses; dropped, it leaves the base ending on 2026-01-03.
+            execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-04T12'");
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-04T13'");
+            drainWalQueue();
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                for (int hour = 0; hour < 10; hour++) {
+                    commit(hoursOfFourAccounts(4, hour, hour + 1), job);
+                }
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-04T05'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                attachDetached("2026-01-04T12");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the view keeps the rows it derived from the dropped hour", 1, rowsAt("2026-01-04T05:10:00.000000Z", "acct-1"));
+                Assert.assertEquals("and never consumed the attached ones", 0, count("select count() from lv where created_at in '2026-01-04T12'"));
+
+                commit(row(4, 2, 35, 0, "acct-1"), job);
+
+                Assert.assertEquals(0, rowsAt("2026-01-04T05:10:00.000000Z", "acct-1"));
+                Assert.assertEquals(4, count("select count() from lv where created_at in '2026-01-04T12'"));
+                assertViewMatchesRecompute();
+                Assert.assertEquals(
+                        "the keyed resume must have priced cheaper, or the case covers nothing",
+                        1,
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
+                );
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertNull(
+                        "a declined resume must not build the isolated runtime a keyed one replays in",
+                        instanceOf("lv").getRepairRuntime()
+                );
+                Assert.assertFalse(
+                        "the declined resume must leave its keyed replay unarmed",
+                        job.isKeyedReplayArmedForTest()
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+            assertRestartRestoresFromTimeline(row(4, 13, 10, 0, "acct-1"));
+        });
     }
 
     @Test
@@ -2362,6 +2751,25 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Takes back the image of {@code partition} the base detached: renames it to the name
+     * ATTACH PARTITION looks for and attaches it, which the base applies as a commit that
+     * carries no row. Over a suspended base whose writes are denied, the attach goes past
+     * the WAL straight to the table writer instead.
+     */
+    private void attachDetached(String partition) throws Exception {
+        final TableToken baseToken = engine.verifyTableName("tx");
+        try (Path detached = new Path(); Path attachable = new Path()) {
+            detached.of(configuration.getDbRoot()).concat(baseToken).concat(partition)
+                    .put(TableUtils.DETACHED_DIR_MARKER).$();
+            attachable.of(configuration.getDbRoot()).concat(baseToken).concat(partition)
+                    .put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(detached.$(), attachable.$()) > -1);
+        }
+        execute("ALTER TABLE tx ATTACH PARTITION LIST '" + partition + "'");
+        drainWalQueue();
+    }
+
+    /**
      * Holds a correction in the open day to the whole-range replacement a cold keyed route
      * declines to: the route priced cheaper, so it was the one the repair would have taken,
      * and yet it replayed nothing by key, derived no checkpoint position from the insert
@@ -2594,6 +3002,110 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             }
             assertRestartRestoresFromTimeline(row(5, 14, 0, 0, "acct-2"));
         });
+    }
+
+    /**
+     * The drop-and-attach cases over {@link #seedAnOpenDayWithALoneRowAtTen()} plus an acct-2
+     * row at 11:00, which the base detaches before the view exists. Once the view has drained,
+     * DROP PARTITION takes the acct-1 row at 10:00, which the view keeps, and the attach
+     * brings the acct-2 row back, which the view never consumes. The acct-1 correction at
+     * 05:00 then has to decline the cold keyed route and replace its range: the stale row
+     * gone, the attached one in, and the view equal to a from-base recompute.
+     *
+     * @param isAttachForced whether the attach goes past the WAL of a suspended base, which
+     *                       the case has to have denied writes to
+     * @param timestampType  the type of the base's created_at
+     */
+    private void assertOpenDayCorrectionOverADropAndAnAttachRepairsByReplacement(
+            boolean isAttachForced,
+            String timestampType
+    ) throws Exception {
+        armSparseRepair();
+        final boolean isNanos = ColumnType.isTimestampNano(ColumnType.typeOf(timestampType));
+        // The view's timestamps print in the base's unit, and its match floor counts in it.
+        final String fraction = isNanos ? ".000000000Z" : ".000000Z";
+        final long unitsPerMicro = isNanos ? 1000 : 1;
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createBase("tx", seedAnOpenDayWithALoneRowAtTen() + ", " + row(5, 11, 0, 0, "acct-2", 16.0), "", timestampType);
+                execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-05T11'");
+                drainWalQueue();
+                createViewOverBase("100ms");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    final LiveViewInstance instance = instanceOf("lv");
+                    Assert.assertEquals("the seed read the base after the detach", 1, instance.getBaseMatchTruncateVersion());
+                    execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-05T10'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    if (isAttachForced) {
+                        execute("ALTER TABLE tx SUSPEND WAL");
+                        attachDetached("2026-01-05T11");
+                        Assert.assertEquals(
+                                "the attach must have gone past the WAL, or the case covers nothing",
+                                1,
+                                count("select count() from tx where created_at in '2026-01-05T11'")
+                        );
+                        execute("ALTER TABLE tx RESUME WAL");
+                        drainWalQueue();
+                    } else {
+                        attachDetached("2026-01-05T11");
+                    }
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals("the view keeps the row it derived from the dropped hour", 1, rowsAt("2026-01-05T10:00:00.000000Z", "acct-1"));
+                    Assert.assertEquals("and never consumed the attached one", 0, rowsAt("2026-01-05T11:00:00.000000Z", "acct-2"));
+                    Assert.assertEquals(
+                            "one row out and one in leave the base as many rows as the view holds",
+                            count("select count() from tx"),
+                            durableRows()
+                    );
+
+                    capture.start();
+                    commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+                    capture.drain();
+                    capture.stop();
+
+                    TestUtils.assertEquals(
+                            """
+                                    created_at\taccount_id\tcumulative_sum
+                                    2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                    2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                    2026-01-05T05:00:00.000000Z\tacct-1\t101.0
+                                    2026-01-05T12:00:00.000000Z\tacct-1\t105.0
+                                    """.replace(".000000Z", fraction),
+                            dumpRowsOf("acct-1")
+                    );
+                    TestUtils.assertEquals(
+                            """
+                                    created_at\taccount_id\tcumulative_sum
+                                    2026-01-02T01:10:00.000000Z\tacct-2\t1.0
+                                    2026-01-05T02:00:00.000000Z\tacct-2\t8.0
+                                    2026-01-05T11:00:00.000000Z\tacct-2\t24.0
+                                    2026-01-05T13:00:00.000000Z\tacct-2\t56.0
+                                    """.replace(".000000Z", fraction),
+                            dumpRowsOf("acct-2")
+                    );
+                    assertViewMatchesRecompute();
+                    assertColdKeyedRouteDeclined(job);
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                    // The detach, the drop and the attach each moved the truncate version.
+                    capture.assertLogged("live view open segment keyed replay declined, the base may hold attached rows at or above"
+                            + " its floor [view=lv, outputLowTs=2026-01-05T05:00:00" + fraction + ", truncateVersion=3,"
+                            + " attachTruncateVersion=3, matchTruncateVersion=1, matchFloorTs=]");
+                    Assert.assertEquals("the replacement matched the view to the base again", 3, instance.getBaseMatchTruncateVersion());
+                    Assert.assertEquals(
+                            "from its own floor up",
+                            ts("2026-01-05T05:00:00.000000Z") * unitsPerMicro,
+                            instance.getBaseMatchFloorTs()
+                    );
+                    assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+                }
+                assertRestartRestoresFromTimeline(row(5, 14, 0, 0, "acct-2"));
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     /**

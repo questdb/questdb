@@ -6535,15 +6535,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The routes' own gate turns the question into a count. An insert-only, unfiltered
      * correction over a base that does not deduplicate gives one output row per consumed
      * base row, and the forward path keeps both rows of a repeated pair. So the base rows at
-     * and above the floor are the ones the view consumed there plus the ones the insert
-     * delta counts, and the equality below holds exactly when no base row the view consumed
-     * at or above the floor is gone. A removal below the floor does not matter, because
-     * neither route touches a stored row below it.
+     * and above the floor are the ones the view consumed there, less the ones a removal
+     * retired, plus the ones the insert delta counts and the ones an ATTACH PARTITION brought
+     * in. No WAL commit carries an attached row, so the view never consumes one. Without
+     * attached rows the equality below holds exactly when no base row the view consumed at or
+     * above the floor is gone. With them, a removal and an attach of as many rows balance it
+     * - one partition dropped and another attached, or one partition replaced by an image of
+     * itself - and the upsert leaves the removed row's output in place.
      * <p>
-     * A mismatch, a floor inside a partition this cannot search, or a count that throws
-     * declines the route, and the repair replaces the range whole, which drops such a row.
-     * The cost is the partition metadata of both tables plus one binary search in each, once
-     * per repair.
+     * So the count is trusted only where no attached row can sit: over a base whose truncate
+     * version is still zero, which no partition-level change has ever touched, or at and
+     * above the floor of a match this process recorded, with no partition attached to the
+     * base since; see {@link LiveViewInstance#isBaseMatchedFrom}. A view loaded at startup
+     * holds no match until its first seed or whole-range repair, so over a base with a
+     * partition history the first such repair after a restart reads the range whole. A
+     * removal below the floor does not matter, because neither route touches a stored row
+     * below it, and nor does an attach below a match's floor.
+     * <p>
+     * A possible attached row, a mismatch, a floor inside a partition this cannot search, or
+     * a count that throws declines the route, and the repair replaces the range whole, which
+     * drops such a row. The cost is the partition metadata of both tables plus one binary
+     * search in each, once per repair.
      *
      * @param baseReader  the repair's pinned base reader
      * @param outputLowTs R, the lowest output row the route emits
@@ -6554,6 +6566,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableReader baseReader,
             long outputLowTs
     ) {
+        final long truncateVersion = baseReader.getTxFile().getTruncateVersion();
+        if (truncateVersion != 0) {
+            final long attachTruncateVersion = engine.getTableSequencerAPI()
+                    .getTxnTracker(baseReader.getTableToken())
+                    .getPartitionAttachTruncateVersion();
+            if (!instance.isBaseMatchedFrom(outputLowTs, attachTruncateVersion)) {
+                stats.inc(OPEN_SEGMENT_ATTACH_DECLINE_COUNT);
+                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+                // A version of LONG_NULL, which prints as null, is no match or no attach, and a
+                // floor of LONG_NULL, which prints empty, is START FROM BEGINNING's.
+                LOG.info().$("live view open segment keyed replay declined, the base may hold attached rows"
+                                + " at or above its floor [view=").$(instance.getDefinition().getViewName())
+                        .$(", outputLowTs=").$ts(driver, outputLowTs)
+                        .$(", truncateVersion=").$(truncateVersion)
+                        .$(", attachTruncateVersion=").$(attachTruncateVersion)
+                        .$(", matchTruncateVersion=").$(instance.getBaseMatchTruncateVersion())
+                        .$(", matchFloorTs=").$ts(driver, instance.getBaseMatchFloorTs())
+                        .I$();
+                return false;
+            }
+        }
         final long insertedRowDelta = segmentChangeSet.getResidualRowCount();
         final long baseRowsBelow;
         final long storedRowsBelow;
@@ -6592,6 +6625,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", insertedRowDelta=").$(insertedRowDelta)
                 .I$();
         return false;
+    }
+
+    /**
+     * Records on {@code instance} that its stored rows at and above {@code floorTs} match what
+     * its query makes of the base rows there, as {@code reader} read them: a seed or a
+     * whole-range repair writes every one of them from that read. See
+     * {@link #isOpenSegmentStoredSuffixIntact}.
+     */
+    private void recordBaseMatch(LiveViewInstance instance, TableReader reader, long floorTs) {
+        instance.recordBaseMatch(
+                reader.getTxFile().getTruncateVersion(),
+                floorTs,
+                engine.getTableSequencerAPI().getTxnTracker(reader.getTableToken()).getPartitionAttachTruncateVersion()
+        );
     }
 
     /**
@@ -9145,6 +9192,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         commitLiveViewWithUpsertFenced(instance, walWriter, committedSeqTxn);
                     } else {
                         commitLiveViewWithReplaceRangeFenced(instance, walWriter, committedSeqTxn, replaceLowTs, Long.MAX_VALUE);
+                        if (!isKeyed) {
+                            // Every row the view holds at and above R now comes from this
+                            // replay of the pinned snapshot, which read every key there. A
+                            // keyed resume's fallback copies the other keys' stored rows
+                            // forward instead.
+                            recordBaseMatch(instance, reader, replaceLowTs);
+                        }
                     }
                     openSegmentRepairPhases.commitNanos += System.nanoTime() - commitStart;
                     replayCompleted = true;
@@ -10987,6 +11041,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             replaceLowTs,
                                             replaceHighTs
                                     );
+                                    if (replaceHighTs == Long.MAX_VALUE && !route.hasKeyedReplay()) {
+                                        // Every row the view holds at and above the floor now
+                                        // comes from this replay of the pinned snapshot, which
+                                        // read every key there. A keyed route copies the other
+                                        // keys' stored rows forward instead, and a finite H
+                                        // leaves the rows above it as they were.
+                                        recordBaseMatch(instance, reader, replaceLowTs);
+                                    }
                                 }
                                 repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
                             }
@@ -12580,6 +12642,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // ApplyWal2TableJob caught up further while waitForApply was running;
             // sweepSeqTxn pins the deferred drain to resume from after the snapshot.
             instance.setSeedSweepSeqTxn(Math.max(seedTargetSeqTxn, reader.getSeqTxn()));
+            if (skipWriteUntil == 0) {
+                // Every row this sweep leaves in the view's table comes off this snapshot, and
+                // every row after it off a base commit the drain consumes from sweepSeqTxn + 1.
+                // A sweep that resumed over rows on disk read some of them off an earlier
+                // snapshot, maybe in an earlier process, and records nothing. A filtered view
+                // can resume past rows that wrote nothing, but no keyed repair serves a filtered
+                // view. Recorded at the pin rather than at the sweep's end: a re-pin in this
+                // process over rows already written records nothing, and leaves this match to
+                // stand for rows read off two snapshots. A partition attached between them is on
+                // record above this one's truncate version, which is what voids the match.
+                recordBaseMatch(instance, reader, viewLowerBoundTimestamp);
+            }
         }
         final long sweepSeqTxn = instance.getSeedSweepSeqTxn();
 
