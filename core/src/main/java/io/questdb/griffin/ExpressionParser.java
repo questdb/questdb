@@ -390,6 +390,9 @@ public class ExpressionParser {
             int prevBranch,
             boolean exprStackUnwind
     ) throws SqlException {
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            sqlParser.checkLiveViewSelectBindVariable(node);
+        }
         if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, ':') &&
                 (argStackDepth == 1 || prevBranch == BRANCH_OPERATOR)
         ) {

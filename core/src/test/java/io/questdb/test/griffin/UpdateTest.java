@@ -252,6 +252,48 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResumeWalAppliesAllNullCaseUpdate() throws Exception {
+        // The WAL keeps the UPDATE's SQL, and the apply job compiles it again when RESUME WAL applies
+        // the transactions a suspension held back, here after a restart. A version whose all-NULL
+        // CASE threw on read suspended the table again on every RESUME WAL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (ts TIMESTAMP, c INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO u VALUES ('2026-04-01T00:00:00.000000Z', 7), ('2026-04-01T00:01:00.000000Z', -7)");
+            drainWalQueue();
+            execute("ALTER TABLE u SUSPEND WAL");
+            execute("UPDATE u SET c = CASE WHEN c > 0 THEN NULL END");
+            execute("INSERT INTO u VALUES ('2026-04-01T00:02:00.000000Z', 8)");
+            drainWalQueue();
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseAllWalWriters();
+            engine.releaseInactiveTableSequencers();
+            engine.clear();
+
+            execute("ALTER TABLE u RESUME WAL");
+            drainWalQueue();
+            assertQuery("SELECT ts, c FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tc
+                            2026-04-01T00:00:00.000000Z\tnull
+                            2026-04-01T00:01:00.000000Z\tnull
+                            2026-04-01T00:02:00.000000Z\t8
+                            """);
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'u'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            suspended
+                            false
+                            """);
+        });
+    }
+
+    @Test
     public void testStringToIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -2264,6 +2306,49 @@ public class UpdateTest extends AbstractCairoTest {
                             2022-02-24T05:01:00.000000Z\ta\tabc\ti\tnull
                             """);
 
+        });
+    }
+
+    @Test
+    public void testUpdateSetsAllNullCase() throws Exception {
+        // UPDATE copies the all-NULL CASE into an INT column. On a WAL table the apply job runs the
+        // copy, so a CASE that threw on read suspended the table and left the next INSERT unapplied.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (String value : new String[]{"CASE WHEN c > 0 THEN NULL END", "(CASE WHEN c > 0 THEN NULL END)::int"}) {
+                    execute("CREATE TABLE u (ts TIMESTAMP, c INT) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                    execute("""
+                            INSERT INTO u VALUES
+                              ('2026-04-01T00:00:00.000000Z', 7),
+                              ('2026-04-01T00:01:00.000000Z', -7),
+                              ('2026-04-01T00:02:00.000000Z', NULL)""");
+                    drainWalQueue();
+                    execute("UPDATE u SET c = " + value);
+                    execute("INSERT INTO u VALUES ('2026-04-01T00:03:00.000000Z', 8)");
+                    drainWalQueue();
+                    assertQuery("SELECT ts, c FROM u")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tc
+                                    2026-04-01T00:00:00.000000Z\tnull
+                                    2026-04-01T00:01:00.000000Z\tnull
+                                    2026-04-01T00:02:00.000000Z\tnull
+                                    2026-04-01T00:03:00.000000Z\t8
+                                    """);
+                    if ("WAL".equals(walMode)) {
+                        assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'u'")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns("""
+                                        suspended
+                                        false
+                                        """);
+                    }
+                    execute("DROP TABLE u");
+                }
+            }
         });
     }
 

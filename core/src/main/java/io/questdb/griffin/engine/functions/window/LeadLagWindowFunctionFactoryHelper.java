@@ -450,6 +450,15 @@ public class LeadLagWindowFunctionFactoryHelper {
             }
         }
 
+        /**
+         * False: lag supplies no {@code newCompactionScratch()}, so the ANCHOR window's
+         * dispatch builds it no dirty set and every seal images its whole map.
+         */
+        @Override
+        public boolean isCheckpointDirtyTracked() {
+            return false;
+        }
+
         @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;

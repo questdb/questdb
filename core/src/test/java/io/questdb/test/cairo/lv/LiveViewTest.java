@@ -28,42 +28,56 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.WalSegmentPageFrameCursor;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Lifecycle and catalogue tests for live views. Complements
@@ -80,6 +94,71 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  */
 public class LiveViewTest extends AbstractLiveViewTest {
+    private static final String APPLY_RETRY_LINE = "live view has committed but unapplied WAL, retrying apply [view=lv";
+    // Past FLUSH EVERY and past the 60 s flush-retry duration budget.
+    private static final long PAUSE_PASS_MICROS = 61_000_000L;
+    private static final String PAUSE_RN = "count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
+    private static final int PAUSE_SHAPE_DEDUP = 1;
+    private static final int PAUSE_SHAPE_LEAD = 0;
+    // The rows the pause fixtures commit before a pause.
+    private static final String PAUSED_ROWS = "(SELECT * FROM base WHERE wave = 0)";
+
+    // One row per symbol value s<lo>..s<hi - 1>, a second apart from midnight.
+    private static String insertDistinctSymbols(int lo, int hi) {
+        final StringBuilder sql = new StringBuilder("INSERT INTO base (ts, sym, v) VALUES ");
+        for (int i = lo; i < hi; i++) {
+            if (i > lo) {
+                sql.append(", ");
+            }
+            sql.append("('2026-01-01T00:00:").append(i < 10 ? "0" : "").append(i).append(".000000Z', 's")
+                    .append(i).append("', ").append(i).append(')');
+        }
+        return sql.toString();
+    }
+
+    // One refresh pass with the clock moved past FLUSH EVERY and past the 60 s flush-retry budget, so a
+    // paused view would flush, and a refused one would run its budget out, if anything drove it.
+    private static boolean drivePausePass(LiveViewRefreshJob job) {
+        setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+        drainWalQueue();
+        final boolean isWork = drainJob(job);
+        drainWalQueue();
+        return isWork;
+    }
+
+    private static void insertPauseRow(String ts, int x, int wave) throws SqlException {
+        execute("INSERT INTO base (ts, x, wave) VALUES ('" + ts + "', " + x + ", " + wave + ")");
+    }
+
+    // Inserts (ts, x, wave) rows into base and into shadow, a table that gets every insert and no removal.
+    private static void insertWithShadow(String values) throws SqlException {
+        execute("INSERT INTO base (ts, x, wave) VALUES " + values);
+        execute("INSERT INTO shadow (ts, x, wave) VALUES " + values);
+    }
+
+    private static LiveViewInstance lvInstance() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' must be registered", instance);
+        return instance;
+    }
+
+    private static SeqTxnTracker lvTracker() {
+        return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("lv"));
+    }
+
+    // The view SELECT of the pause fixtures over the rows of fromSql. Over a deduplicating base the same
+    // SELECT takes the coupled applied-base drain instead of the lead path.
+    private static String pauseViewSelect(String fromSql) {
+        return "SELECT ts, x, " + PAUSE_RN + " FROM " + fromSql + " WHERE x > 0";
+    }
+
+    private static void suspendLiveViewWal(String withClause) {
+        try {
+            execute("ALTER LIVE VIEW lv SUSPEND WAL" + withClause);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
 
     // Pin the test clock below all test data before each test. A non-SEED
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
@@ -216,6 +295,155 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    private void assertLiveViewProgress(String label, long lastProcessedSeqTxn, long lvConsumedSeqTxn, long lagSeqTxn) throws Exception {
+        try {
+            assertQuery("SELECT view_status, last_processed_seqtxn, lv_consumed_seqtxn, lag_seqtxn FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tlast_processed_seqtxn\tlv_consumed_seqtxn\tlag_seqtxn\n"
+                            + "active\t" + lastProcessedSeqTxn + '\t' + lvConsumedSeqTxn + '\t' + lagSeqTxn + '\n');
+        } catch (AssertionError e) {
+            throw new AssertionError(label + ": " + e.getMessage(), e);
+        }
+    }
+
+    private void assertLiveViewWalReport(String label, String expectedRow) throws Exception {
+        try {
+            assertQuery("SELECT name, suspended, writerTxn, sequencerTxn, errorTag, errorMessage FROM wal_tables() WHERE name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("name\tsuspended\twriterTxn\tsequencerTxn\terrorTag\terrorMessage\n" + expectedRow);
+        } catch (AssertionError e) {
+            throw new AssertionError(label + ": " + e.getMessage(), e);
+        }
+    }
+
+    // Every read context of the plan over the view and over the recompute of its SELECT from fromSql: the
+    // rows, count(), LIMIT -1, a filter, a descending order, a CTE, a join with the base, UNION ALL and a
+    // GROUP BY. A paused view must answer each as its SELECT does over the rows committed before the pause.
+    private void assertPauseReads(String label, String fromSql) throws Exception {
+        final String recompute = "(" + pauseViewSelect(fromSql) + ")";
+        final String[] reads = {
+                "SELECT * FROM %s",
+                "SELECT count() FROM %s",
+                "SELECT * FROM %s LIMIT -1",
+                "SELECT * FROM %s WHERE x > 1",
+                "SELECT * FROM %s ORDER BY ts DESC",
+                "WITH c AS (SELECT * FROM %s) SELECT ts, x, rn FROM c",
+                "SELECT v.ts, v.x, v.rn, b.wave FROM %s v JOIN base b ON v.ts = b.ts",
+                "SELECT ts, x, rn FROM %1$s UNION ALL SELECT ts, x, rn FROM %1$s",
+                "SELECT x, count() FROM %s GROUP BY x ORDER BY x"
+        };
+        for (String read : reads) {
+            try {
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, String.format(read, recompute), String.format(read, "lv"), LOG);
+            } catch (AssertionError e) {
+                throw new AssertionError(label + " [read=" + read + "]: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    // SUSPEND WAL with withClause, two base commits, passes past FLUSH EVERY and the retry budget, then
+    // RESUME: the view serves the pre-suspension rows throughout the pause, its WAL does not move, and
+    // wal_tables() reports the operator's suspension, until RESUME, after which it holds every row.
+    private void assertSuspendWalPausesUntilResume(
+            boolean isWriteDenied,
+            String timestampType,
+            int shape,
+            boolean isEmpty,
+            String withClause,
+            String tag,
+            String message
+    ) throws Exception {
+        final String label = "[writeDenied=" + isWriteDenied + ", ts=" + timestampType + ", shape=" + shape
+                + ", empty=" + isEmpty + ", with=" + withClause + ']';
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(isWriteDenied));
+        setCurrentMicros(0);
+        createPauseView(shape, timestampType);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            if (!isEmpty) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+            }
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            final LiveViewInstance instance = lvInstance();
+            final SeqTxnTracker tracker = lvTracker();
+            final long writerTxn = tracker.getWriterTxn();
+            Assert.assertEquals(label, writerTxn, tracker.getSeqTxn());
+            final long lastProcessed = instance.getLastProcessedSeqTxn();
+            final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+            execute("ALTER LIVE VIEW lv SUSPEND WAL" + withClause);
+
+            insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 1);
+            drivePausePass(job);
+            insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+            // The pass that dequeues the commit's notification reports it; nothing after reports work.
+            drivePausePass(job);
+            Assert.assertFalse(label + ": a paused view must report no work", drivePausePass(job));
+            Assert.assertFalse(label + ": a paused view must report no work", drivePausePass(job));
+
+            assertPauseReads(label, PAUSED_ROWS);
+            assertLiveViewWalReport(label, "lv\ttrue\t" + writerTxn + '\t' + writerTxn + '\t' + tag + '\t' + message + '\n');
+            assertLiveViewProgress(label, lastProcessed, lvConsumed, 2);
+            Assert.assertEquals(label, 0, instance.getRefreshFaultCount());
+            // The view's WAL does not grow while it is paused, so a wait for its applied head ends at once.
+            assertQuery("SELECT wait_wal_table('lv')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("wait_wal_table\ntrue\n");
+
+            execute("ALTER LIVE VIEW lv RESUME WAL");
+            driveRefreshToQuiescence(job);
+            assertPauseReads(label, "base");
+            final long seqTxn = tracker.getSeqTxn();
+            Assert.assertTrue(label + ": the view must have flushed the commits it owed", seqTxn > writerTxn);
+            assertLiveViewWalReport(label, "lv\tfalse\t" + seqTxn + '\t' + seqTxn + "\t\t\n");
+            assertNoRefreshFaults("lv");
+        }
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Creates base (ts, x, wave) and the pause fixture's view over it. Rows tagged wave = 0 are the ones
+    // committed before a pause, so PAUSED_ROWS selects what a paused view must keep serving.
+    private void createPauseView(int shape, String timestampType) throws SqlException {
+        execute("CREATE TABLE base (ts " + timestampType + ", x INT, wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                + (shape == PAUSE_SHAPE_DEDUP ? " DEDUP UPSERT KEYS(ts)" : ""));
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + pauseViewSelect("base"));
+    }
+
+    // base (ts, x, wave) with 500 rows over 2026-04-01..04 and a START FROM BEGINNING view over it, whose sweep
+    // seals and yields every cairo.live.view.checkpoint.rows = 50 rows, driven until one seed turn committed.
+    private LiveViewInstance createSeedingView(LiveViewRefreshJob job) throws SqlException {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base SELECT timestamp_sequence('2026-04-01', 600_000_000L), x::INT, 0 FROM long_sequence(500)");
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " + pauseViewSelect("base"));
+        final LiveViewInstance instance = lvInstance();
+        for (int i = 0; i < 100 && instance.getSeedDataOffset() < 50; i++) {
+            job.run();
+            drainWalQueue();
+        }
+        Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+        Assert.assertTrue("a seed turn must have committed its rows", lvTracker().getSeqTxn() > 0);
+        return instance;
+    }
+
+    // driveRefreshToQuiescence with the clock moved past FLUSH EVERY first, until lv has consumed every commit
+    // the base applied. FLUSH EVERY gates both the lead's flush and the coupled cycle of a view over a
+    // deduplicating base, which driveRefreshToQuiescence alone reads as quiescence.
+    private void drivePastFlushEvery(LiveViewRefreshJob job) {
+        final long baseHead = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("base")).getWriterTxn();
+        for (int i = 0; i < 16; i++) {
+            setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+            driveRefreshToQuiescence(job);
+            if (lvInstance().getLastProcessedSeqTxn() >= baseHead) {
+                return;
+            }
+        }
+        Assert.fail("live view 'lv' did not consume the base up to " + baseHead);
     }
 
     @Test
@@ -361,6 +589,43 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDropPrunesCheckpointPurgeState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) n FROM base");
+            final TableToken token = engine.verifyTableName("lv");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            final long lifecycleIdentity = instance.getLifecycleIdentity();
+            final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+            final LongList retired = new LongList();
+            retired.add(11);
+            state.markReconciled(lifecycleIdentity);
+            state.replacePendingRetirements(lifecycleIdentity, retired);
+            Assert.assertEquals(1, state.getActiveGenerationCountForTest());
+
+            execute("DROP LIVE VIEW lv");
+
+            Assert.assertEquals("real DROP must prune purge state", 0, state.getActiveGenerationCountForTest());
+            Assert.assertEquals("real DROP must pool pending retirement shells", 1,
+                    state.getRetirementPoolSizeForTest());
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) n FROM base");
+            final TableToken recreatedToken = engine.verifyTableName("lv");
+            final LiveViewInstance recreated = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotEquals("recreated view must have a fresh lifecycle identity",
+                    lifecycleIdentity, recreated.getLifecycleIdentity());
+            Assert.assertNotEquals("recreated view must have a fresh table identity",
+                    token.getTableId(), recreatedToken.getTableId());
+            Assert.assertFalse("recreated path must not inherit reconciliation",
+                    state.isReconciled(recreated.getLifecycleIdentity()));
+            Assert.assertEquals("recreated path owns only its fresh generation", 1,
+                    state.getActiveGenerationCountForTest());
+        });
+    }
+
+    @Test
     public void testDropLiveViewIfExists() throws Exception {
         assertMemoryLeak(() -> {
             // No view exists yet — IF EXISTS must swallow the error.
@@ -492,6 +757,100 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     .returns("ts\tlo_sym\thi_sym\tc1\trn\n" +
                             "2026-01-01T00:00:01.000000Z\taa\t\t10\t1\n" +
                             "2026-01-01T00:00:02.000000Z\tbb\t\t20\t2\n");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testQueryOverAViewWhoseTableGrowsItsSymbolCapacityPlansAgainstThePooledReader() throws Exception {
+        // The view's table starts at cairo.default.symbol.capacity whatever the base declares, so
+        // the WAL apply that takes it past the auto-scale threshold rewrites its SYMBOL column.
+        // TableWriter.changeSymbolCapacity swaps _meta first, then copies and rebuilds the symbol
+        // files, and only then bumps the metadata version in _txn, so a pooled reader stays one
+        // version behind _meta until the rebuild ends. A query compiled in that window must plan
+        // against the pooled reader it runs on: planning against _meta read from disk failed every
+        // recompile with "too many cached query plan cannot be used because table schema has changed".
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 16);
+        final String[] viewDir = new String[1];
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger midRewriteQueries = new AtomicInteger();
+        final AtomicReference<Throwable> queryError = new AtomicReference<>();
+        final StringSink midRewriteResult = new StringSink();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                // The writer copies the symbol offset file after the _meta swap and before the bump.
+                if (viewDir[0] != null
+                        && Utf8s.containsAscii(from, viewDir[0])
+                        && Utf8s.containsAscii(from, "sym.o")
+                        && isArmed.compareAndSet(true, false)) {
+                    midRewriteQueries.incrementAndGet();
+                    final Thread reader = new Thread(() -> {
+                        try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                            TestUtils.printSql(engine, ctx, "SELECT count(), count_distinct(sym) FROM lv", midRewriteResult);
+                        } catch (Throwable th) {
+                            queryError.set(th);
+                        } finally {
+                            clearWorkerThreadLocals();
+                        }
+                    });
+                    reader.start();
+                    try {
+                        reader.join();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.copy(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL CAPACITY 1024, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, v, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            viewDir[0] = engine.verifyTableName("lv").getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Eight values stay below the 0.8 auto-scale threshold of a 16-value capacity.
+                execute(insertDistinctSymbols(0, 8));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                drainWalQueue();
+                // Leaves an idle reader at the current metadata version in the pool.
+                assertQuery("SELECT count(), count_distinct(sym) FROM lv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tcount_distinct
+                                8\t8
+                                """);
+
+                // Twenty values cross the threshold: applying the view's commit grows its capacity.
+                isArmed.set(true);
+                execute(insertDistinctSymbols(8, 20));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                drainWalQueue();
+            }
+
+            Assert.assertEquals("the query must run while the view's table rewrites its symbol capacity", 1, midRewriteQueries.get());
+            final Throwable th = queryError.get();
+            if (th != null) {
+                throw new AssertionError("a query over the view failed while its table grew the SYMBOL column", th);
+            }
+            TestUtils.assertEquals("""
+                    count\tcount_distinct
+                    20\t20
+                    """, midRewriteResult);
+            assertQuery("SELECT count(), count_distinct(sym) FROM lv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tcount_distinct
+                            20\t20
+                            """);
             assertNoRefreshFaults("lv");
         });
     }
@@ -712,6 +1071,1181 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testAlterLiveViewSuspendWalPausesUntilResume() throws Exception {
+        // ALTER LIVE VIEW ... SUSPEND WAL pauses the whole view, in both write-denial modes: no refresh turn,
+        // no inline apply, reads frozen on the rows committed before the pause, the view's WAL not growing,
+        // and wal_tables() reporting the operator's suspension until RESUME WAL, which continues the view
+        // from where it stopped. Covers the lead path and the applied-base drain of a deduplicating base,
+        // over micro and nano designated timestamps, and every WITH clause form.
+        final String[] withClauses = {" WITH 'DISK FULL', 'manual halt'", " WITH 999, 'диск полон ✓ 𝄞'", ""};
+        final String[] tags = {"DISK FULL", "", ""};
+        final String[] messages = {"manual halt", "диск полон ✓ 𝄞", ""};
+        assertMemoryLeak(() -> {
+            int row = 0;
+            for (int denied = 0; denied < 2; denied++) {
+                for (String timestampType : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                    for (int shape = PAUSE_SHAPE_LEAD; shape <= PAUSE_SHAPE_DEDUP; shape++) {
+                        final int with = row++ % withClauses.length;
+                        assertSuspendWalPausesUntilResume(denied == 1, timestampType, shape, false, withClauses[with], tags[with], messages[with]);
+                    }
+                }
+                // SUSPEND before the view holds any row.
+                assertSuspendWalPausesUntilResume(denied == 1, "TIMESTAMP", PAUSE_SHAPE_LEAD, true, withClauses[0], tags[0], messages[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testApplyRetryOfSuspendedLiveViewWaits() throws Exception {
+        // A forward block the inline apply could not land - the view's writer was held - waits for the apply
+        // retry. A view listed in cairo.wal.apply.suspended.tables keeps its suspended state running, so the
+        // retry itself has to see the listing: it must not apply the block while the view is paused.
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final TableToken lvToken = engine.verifyTableName("lv");
+                final SeqTxnTracker tracker = lvTracker();
+                insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 0);
+                drainWalQueue();
+                setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                try (TableWriter ignored = engine.getWriter(lvToken, "held by the test")) {
+                    job.run();
+                }
+                final long appliedTxn = tracker.getWriterTxn();
+                Assert.assertTrue("the held writer must leave the block unapplied", appliedTxn < tracker.getSeqTxn());
+                // An idle save point request leaves the block to the apply retry too.
+                tracker.requestIdleEpoch(currentMicros / 1000L);
+                job.takeIdleSavePointForTest(lvInstance());
+                Assert.assertEquals(appliedTxn, tracker.getWriterTxn());
+                Assert.assertTrue(tracker.isIdleEpochRequested());
+
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, lvToken.getDirName());
+                capture.drain();
+                final int retriesBefore = capture.countOccurrences(APPLY_RETRY_LINE);
+                Assert.assertFalse("the retry must not run on a paused view", job.retryPendingLiveViewApplyForTest(lvInstance()));
+                Assert.assertEquals(appliedTxn, tracker.getWriterTxn());
+                capture.drain();
+                Assert.assertEquals(retriesBefore, capture.countOccurrences(APPLY_RETRY_LINE));
+
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertPauseReads("unlisted", "base");
+            } finally {
+                capture.stop();
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testConfigListedLiveViewPausesUntilUnlisted() throws Exception {
+        // A live view listed in cairo.wal.apply.suspended.tables pauses as one an operator suspended does, in
+        // both write-denial modes. The list never sets the suspended state, so wal_tables() reports the view
+        // running, as it reports a listed table, and its WAL does not grow. RESUME WAL does not lift a
+        // listing; unlisting does, and the view continues from where it stopped.
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            for (int denied = 0; denied < 2; denied++) {
+                final String label = "[writeDenied=" + (denied == 1) + ']';
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(denied == 1));
+                setCurrentMicros(0);
+                createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+                capture.start();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    final LiveViewInstance instance = lvInstance();
+                    final SeqTxnTracker tracker = lvTracker();
+                    final long writerTxn = tracker.getWriterTxn();
+                    final long lastProcessed = instance.getLastProcessedSeqTxn();
+                    final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+                    setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, engine.verifyTableName("lv").getDirName());
+
+                    insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 1);
+                    drivePausePass(job);
+                    insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+                    drivePausePass(job);
+                    Assert.assertFalse(label, drivePausePass(job));
+                    assertPauseReads(label, PAUSED_ROWS);
+                    assertLiveViewWalReport(label, "lv\tfalse\t" + writerTxn + '\t' + writerTxn + "\t\t\n");
+                    assertLiveViewProgress(label, lastProcessed, lvConsumed, 2);
+
+                    // RESUME WAL lifts a SUSPEND WAL, not a listing.
+                    execute("ALTER LIVE VIEW lv RESUME WAL");
+                    Assert.assertFalse(label, drivePausePass(job));
+                    assertPauseReads(label, PAUSED_ROWS);
+                    capture.drain();
+                    capture.assertNotLogged(APPLY_RETRY_LINE);
+                    Assert.assertEquals(label, 0, instance.getRefreshFaultCount());
+
+                    setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                    driveRefreshToQuiescence(job);
+                    assertPauseReads(label, "base");
+                    Assert.assertEquals(label, tracker.getSeqTxn(), tracker.getWriterTxn());
+                    assertNoRefreshFaults("lv");
+                } finally {
+                    capture.stop();
+                }
+                execute("DROP LIVE VIEW lv");
+                execute("DROP TABLE base");
+            }
+        });
+    }
+
+    @Test
+    public void testIdleRequestDoesNotSkipInlineApply() throws Exception {
+        // A failed inline apply suspends the view, a fault rather than an operator's SUSPEND WAL, and the next
+        // flush's inline apply lands the stranded block. An idle save point request pending at that flush must
+        // not make the apply return early: that early return is for the queue-driven apply of a suspended table,
+        // not for the refresh worker applying what it just committed. Otherwise reads miss the flushed rows until
+        // another flush comes.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-02")
+                        && failApply.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                insertPauseRow("2026-04-02T00:00:00.000000Z", 2, 0);
+                drainWalQueue();
+                failApply.set(true);
+                drainJob(job);
+                final SeqTxnTracker tracker = lvTracker();
+                Assert.assertTrue("the failed inline apply must suspend the view", tracker.isSuspended());
+                Assert.assertFalse("a fault suspension is not an operator's", engine.isWalApplySuspended(lvToken));
+                Assert.assertTrue(tracker.getWriterTxn() < tracker.getSeqTxn());
+
+                tracker.requestIdleEpoch(currentMicros / 1000L);
+                final boolean isSlotA = tracker.isPinnedEpochSlotA();
+                setCurrentMicros(4_000_000L);
+                insertPauseRow("2026-04-02T01:00:00.000000Z", 3, 0);
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("the flush's inline apply must land every committed block", tracker.getSeqTxn(), tracker.getWriterTxn());
+                Assert.assertFalse(tracker.isSuspended());
+                Assert.assertFalse("the apply consumes the request", tracker.isIdleEpochRequested());
+                Assert.assertNotEquals("the apply takes one save point", isSlotA, tracker.isPinnedEpochSlotA());
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                2026-04-01T00:00:00.000000Z\t1\t1
+                                2026-04-02T00:00:00.000000Z\t2\t2
+                                2026-04-02T01:00:00.000000Z\t3\t3
+                                """);
+                assertPauseReads("after the flush", "base");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInFlightTurnWhenSuspendLandsKeepsTheSuspension() throws Exception {
+        // SUSPEND WAL lands after a refresh turn passed every gate ahead of its latch. With write denial off
+        // that turn finishes as an apply in flight does - its block commits and lands - and the apply's
+        // progress must leave the operator's suspension standing. From then on the view is paused until
+        // RESUME. With an idle save point request pending as well, the turn's inline apply still lands.
+        assertMemoryLeak(() -> {
+            for (int idle = 0; idle < 2; idle++) {
+                final boolean isIdleRequested = idle == 1;
+                final String label = "[idleRequest=" + isIdleRequested + ']';
+                setCurrentMicros(0);
+                createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    final SeqTxnTracker tracker = lvTracker();
+                    Assert.assertEquals(label, 1, tracker.getWriterTxn());
+                    hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
+                        if (isIdleRequested) {
+                            tracker.requestIdleEpoch(currentMicros / 1000L);
+                        }
+                        suspendLiveViewWal(" WITH 'DISK FULL', 'manual halt'");
+                    });
+                    setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                    insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 0);
+                    drainWalQueue();
+                    job.run();
+                    Assert.assertTrue(label + ": the hook must have run", engine.isWalApplySuspended(engine.verifyTableName("lv")));
+                    assertLiveViewWalReport(label, "lv\ttrue\t2\t2\tDISK FULL\tmanual halt\n");
+                    assertPauseReads(label, "base");
+
+                    insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+                    drivePausePass(job);
+                    insertPauseRow("2026-04-01T03:00:00.000000Z", 4, 1);
+                    drivePausePass(job);
+                    Assert.assertFalse(label, drivePausePass(job));
+                    assertLiveViewWalReport(label, "lv\ttrue\t2\t2\tDISK FULL\tmanual halt\n");
+                    assertPauseReads(label, PAUSED_ROWS);
+
+                    execute("ALTER LIVE VIEW lv RESUME WAL");
+                    driveRefreshToQuiescence(job);
+                    assertPauseReads(label, "base");
+                    assertLiveViewWalReport(label, "lv\tfalse\t" + tracker.getSeqTxn() + '\t' + tracker.getSeqTxn() + "\t\t\n");
+                    assertNoRefreshFaults("lv");
+                }
+                execute("DROP LIVE VIEW lv");
+                execute("DROP TABLE base");
+            }
+        });
+    }
+
+    @Test
+    public void testPublishedLeadSurvivesThePause() throws Exception {
+        // A drain published an un-flushed lead into the in-memory tier before SUSPEND WAL. The paused view
+        // must keep serving it - the lead stays in RAM under its stamp, as under a memory-pressure back-off -
+        // and must not flush it, however long the pause outlasts FLUSH EVERY. RESUME flushes it.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 10s START FROM NOW AS " + pauseViewSelect("base"));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = lvInstance();
+                final SeqTxnTracker tracker = lvTracker();
+                final long flushedSeqTxn = tracker.getSeqTxn();
+                // FLUSH EVERY is not due, so the drain publishes the row as a lead.
+                instance.setLastFlushTimeUs(currentMicros);
+                insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 0);
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("the drain must publish a lead", 1, instance.getLeadRowCount());
+                Assert.assertEquals(flushedSeqTxn, tracker.getSeqTxn());
+                assertPauseReads("lead published", "base");
+
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+                for (int pass = 0; pass < 3; pass++) {
+                    drivePausePass(job);
+                }
+                Assert.assertFalse(drivePausePass(job));
+                Assert.assertEquals("a paused view must not flush its lead", flushedSeqTxn, tracker.getSeqTxn());
+                Assert.assertEquals(1, instance.getLeadRowCount());
+                assertPauseReads("paused", PAUSED_ROWS);
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(0, instance.getLeadRowCount());
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertPauseReads("resumed", "base");
+                assertNoRefreshFaults("lv");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDropLiveViewDuringSuspension() throws Exception {
+        // DROP LIVE VIEW of a paused view, in every shape a pause can hold: a SEEDING view with its sweep's
+        // base reader pinned, and a view whose forward block a held writer left unapplied before SUSPEND WAL.
+        // The DROP succeeds, frees what the view held and unregisters it, and a view created again under the
+        // same name holds the recompute.
+        assertMemoryLeak(() -> {
+            for (int shape = 0; shape < 2; shape++) {
+                final String label = shape == 0 ? "[seeding]" : "[unapplied block]";
+                setCurrentMicros(0);
+                execute("CREATE TABLE base (ts TIMESTAMP, x INT, wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    if (shape == 0) {
+                        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 50);
+                        execute("INSERT INTO base SELECT timestamp_sequence('2026-04-01', 600_000_000L), x::INT, 0 FROM long_sequence(500)");
+                        drainWalQueue();
+                        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " + pauseViewSelect("base"));
+                        final LiveViewInstance instance = lvInstance();
+                        for (int i = 0; i < 100 && instance.getSeedDataOffset() < 50; i++) {
+                            job.run();
+                            drainWalQueue();
+                        }
+                        Assert.assertEquals(label, LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                    } else {
+                        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + pauseViewSelect("base"));
+                        insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                        drainWalQueue();
+                        driveRefreshToQuiescence(job);
+                        insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 0);
+                        drainWalQueue();
+                        setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                        try (TableWriter ignored = engine.getWriter(engine.verifyTableName("lv"), "held by the test")) {
+                            job.run();
+                        }
+                        Assert.assertTrue(label, lvTracker().getWriterTxn() < lvTracker().getSeqTxn());
+                    }
+                    final LiveViewInstance instance = lvInstance();
+                    execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                    insertPauseRow("2026-04-10T00:00:00.000000Z", 7, 1);
+                    drivePausePass(job);
+                    Assert.assertFalse(label, drivePausePass(job));
+
+                    execute("DROP LIVE VIEW lv");
+                    Assert.assertTrue(label, instance.isDropped());
+                    Assert.assertNull(label, engine.getLiveViewRegistry().getViewInstance("lv"));
+                    assertQuery("SELECT count() FROM live_views()")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n0\n");
+                    drivePausePass(job);
+
+                    execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " + pauseViewSelect("base"));
+                    driveSeedToCompletion(job, "lv");
+                    driveRefreshToQuiescence(job);
+                    assertPauseReads(label, "base");
+                    assertNoRefreshFaults("lv");
+                }
+                execute("DROP LIVE VIEW lv");
+                execute("DROP TABLE base");
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, null);
+            }
+        });
+    }
+
+    @Test
+    public void testPausedLiveViewCatchesUpABacklogAcrossTurns() throws Exception {
+        // 200 base commits over 10,000 distinct keys and three day partitions land during the pause. After
+        // RESUME WAL the catch-up spans many turns of a small turn budget and page frames, the keyed window
+        // maps grow, and the view ends on the recompute. Then a failing apply during a second catch-up
+        // suspends the view as a fault, not a pause, which a further RESUME WAL clears.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-05")
+                        && failApply.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        final String viewSelect = "SELECT ts, sym, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS rn, "
+                + "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS sx FROM ";
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + viewSelect + "base");
+            lvDir[0] = engine.verifyTableName("lv").getDirName();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 's0', 1)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = lvInstance();
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                // 200 commits of 50 rows, each row a new key, spread over 2026-04-01..03.
+                final long firstTs = MicrosTimestampDriver.floor("2026-04-01T00:00:01.000000Z");
+                for (int c = 0; c < 200; c++) {
+                    execute("INSERT INTO base SELECT timestamp_sequence(" + (firstTs + c * 1_296_000_000L)
+                            + "L, 25_920_000L), 's' || (" + (c * 50) + " + x), x::INT FROM long_sequence(50)");
+                }
+                drainWalQueue();
+                // The passes that dequeue the commits' notifications report them; nothing after reports work.
+                for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && drivePausePass(job); pass++) {
+                }
+                Assert.assertFalse(drivePausePass(job));
+                final long baseHead = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("base")).getWriterTxn();
+                Assert.assertTrue(instance.getLastProcessedSeqTxn() < baseHead - 100);
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                job.run();
+                Assert.assertTrue("one turn must not catch the whole backlog up", instance.getRefreshedUpToSeqTxn() < baseHead);
+                drivePastFlushEvery(job);
+                Assert.assertEquals(baseHead, instance.getLastProcessedSeqTxn());
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSelect + "base", "lv", LOG);
+                assertQuery("SELECT count(), count_distinct(sym) FROM lv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tcount_distinct\n10001\t10001\n");
+
+                // A fault, not a pause: the apply of the view's next block fails once and suspends it.
+                execute("INSERT INTO base VALUES ('2026-04-05T00:00:00.000000Z', 's0', 2)");
+                drainWalQueue();
+                failApply.set(true);
+                setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                drainJob(job);
+                Assert.assertTrue(lvTracker().isSuspended());
+                Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("lv")));
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveRefreshToQuiescence(job);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSelect + "base", "lv", LOG);
+                Assert.assertFalse(instance.isInvalid());
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testPausedLiveViewSharedByTwoWorkers() throws Exception {
+        // Two refresh workers split the fallback scan by table id and both serve the notification queue.
+        // Neither drives a paused view, whichever of them owns it, and once RESUME WAL lands the owner
+        // catches it up.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            try (
+                    LiveViewRefreshJob job0 = new LiveViewRefreshJob(0, engine, 2);
+                    LiveViewRefreshJob job1 = new LiveViewRefreshJob(1, engine, 2)
+            ) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job0);
+                driveRefreshToQuiescence(job1);
+                assertPauseReads("before", "base");
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 1);
+                drainWalQueue();
+                drainJob(job0);
+                drainJob(job1);
+                insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+                drainWalQueue();
+                drainJob(job1);
+                drainJob(job0);
+                for (int pass = 0; pass < 2; pass++) {
+                    setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                    Assert.assertFalse("worker 0 must not drive a paused view", drainJob(job0));
+                    Assert.assertFalse("worker 1 must not drive a paused view", drainJob(job1));
+                }
+                assertPauseReads("paused", PAUSED_ROWS);
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                for (int pass = 0; pass < 4; pass++) {
+                    driveRefreshToQuiescence(job0);
+                    driveRefreshToQuiescence(job1);
+                }
+                assertPauseReads("resumed", "base");
+                assertNoRefreshFaults("lv");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testResumeWalFromTxnOnPausedLiveViewSkipsNothing() throws Exception {
+        // Nothing reaches the view's WAL during a pause, so RESUME WAL FROM TXN has nothing to skip at any
+        // transaction it accepts, which ends at the next one; a later transaction is refused at the view's
+        // name, and the view stays paused.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final long appliedTxn = lvTracker().getWriterTxn();
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 1);
+                insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+
+                assertExceptionNoLeakCheck(
+                        "ALTER LIVE VIEW lv RESUME WAL FROM TXN " + (appliedTxn + 2),
+                        16,
+                        "resume txn is higher than next available transaction [resumeFromTxn=" + (appliedTxn + 2) + ", nextTxn=" + (appliedTxn + 1) + ']'
+                );
+                Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("lv")));
+                Assert.assertFalse(drivePausePass(job));
+                assertPauseReads("paused", PAUSED_ROWS);
+
+                execute("ALTER LIVE VIEW lv RESUME WAL FROM TXN " + (appliedTxn + 1));
+                driveRefreshToQuiescence(job);
+                assertPauseReads("resumed", "base");
+                assertNoRefreshFaults("lv");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRowsOfAPartitionDroppedDuringThePauseFollowTheShadowBase() throws Exception {
+        // Rows committed to a new day during the pause, then that day's partition dropped, and a one-shot
+        // mid-drain fault armed: after RESUME WAL the drain reads the rows from the base WAL, as a view that
+        // lagged by the same commits does, and the fault's recovery restores rather than rebuilds. The view
+        // keeps the rows (freeze-and-continue): it matches its SELECT over a shadow base that got every insert
+        // and no removal, stays valid and is not stopped.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "x");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(fault.facade(), () -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            execute("CREATE TABLE shadow (ts TIMESTAMP, x INT, wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            fault.of(engine.verifyTableName("base").getDirName());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertWithShadow("('2026-04-01T00:00:00.000000Z', 1, 0), ('2026-04-01T01:00:00.000000Z', 2, 0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                insertWithShadow("('2026-04-02T00:00:00.000000Z', 3, 1)");
+                insertWithShadow("('2026-04-02T01:00:00.000000Z', 4, 1)");
+                execute("ALTER TABLE base DROP PARTITION LIST '2026-04-02'");
+                drainWalQueue();
+                fault.arm(1);
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the drain after RESUME must meet the armed fault", fault.hasFired());
+                final LiveViewInstance instance = lvInstance();
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, pauseViewSelect("shadow"), "lv", LOG);
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedLiveViewBaseSchemaChangeAndMidDrainFault() throws Exception {
+        // A base ADD COLUMN, rows with and without the new column, and a one-shot mid-drain fault all land
+        // while the view is paused. No turn runs, so nothing meets them, until the first drain after RESUME WAL
+        // meets the schema drift and the fault together, as a view that lagged by the same commits does: it
+        // stays valid and ends on the recompute. Over the raw-WAL lead view and a deduplicating base, and again
+        // with the base's oldest partition dropped during the pause, where the view keeps that day's rows
+        // (freeze-and-continue), follows a shadow base that got every insert and no removal, and is not
+        // stopped by a rebuild the lost rows would refuse.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "x");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(fault.facade(), () -> {
+            for (int shape = PAUSE_SHAPE_LEAD; shape <= PAUSE_SHAPE_DEDUP; shape++) {
+                for (int drop = 0; drop < 2; drop++) {
+                    final String label = "[shape=" + shape + ", dropOldestPartition=" + (drop == 1) + ']';
+                    setCurrentMicros(0);
+                    createPauseView(shape, "TIMESTAMP");
+                    execute("CREATE TABLE shadow (ts TIMESTAMP, x INT, wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    fault.of(engine.verifyTableName("base").getDirName());
+                    try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                        insertWithShadow("('2026-04-01T00:00:00.000000Z', 1, 0)");
+                        insertWithShadow("('2026-04-02T00:00:00.000000Z', 2, 0)");
+                        drainWalQueue();
+                        drivePastFlushEvery(job);
+                        execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                        if (drop == 1) {
+                            execute("ALTER TABLE base DROP PARTITION LIST '2026-04-01'");
+                        }
+                        execute("ALTER TABLE base ADD COLUMN note INT");
+                        execute("ALTER TABLE shadow ADD COLUMN note INT");
+                        execute("INSERT INTO base (ts, x, wave, note) VALUES ('2026-04-03T00:00:00.000000Z', 3, 1, 30)");
+                        execute("INSERT INTO shadow (ts, x, wave, note) VALUES ('2026-04-03T00:00:00.000000Z', 3, 1, 30)");
+                        insertWithShadow("('2026-04-03T01:00:00.000000Z', 4, 1)");
+                        drainWalQueue();
+                        // A deduplicating base whose WAL holds a data-shaped non-DATA commit - the DROP PARTITION -
+                        // drains the applied base over it rather than the raw WAL.
+                        final boolean isAppliedScan = shape == PAUSE_SHAPE_DEDUP && drop == 1;
+                        if (isAppliedScan) {
+                            fault.armAppliedScan("2026-04-03");
+                        } else {
+                            fault.arm(1);
+                        }
+                        drivePausePass(job);
+                        Assert.assertFalse(label, drivePausePass(job));
+                        final LiveViewInstance instance = lvInstance();
+                        Assert.assertFalse(label, instance.isInvalid());
+                        Assert.assertEquals(label + ": no turn ran, so nothing met the fault", 0, instance.getRefreshFaultCount());
+                        TestUtils.assertSqlCursors(engine, sqlExecutionContext, pauseViewSelect("(SELECT * FROM shadow WHERE wave = 0)"), "lv", LOG);
+
+                        execute("ALTER LIVE VIEW lv RESUME WAL");
+                        drivePastFlushEvery(job);
+                        Assert.assertTrue(label + ": the drain after RESUME must meet the armed fault",
+                                isAppliedScan ? fault.hasAppliedScanFired() : fault.hasFired());
+                        Assert.assertFalse(label, instance.isInvalid());
+                        Assert.assertFalse(label, instance.isCheckpointRecoveryBlocked());
+                        TestUtils.assertSqlCursors(engine, sqlExecutionContext, pauseViewSelect("shadow"), "lv", LOG);
+
+                        insertWithShadow("('2026-04-03T02:00:00.000000Z', 5, 1)");
+                        drainWalQueue();
+                        drivePastFlushEvery(job);
+                        TestUtils.assertSqlCursors(engine, sqlExecutionContext, pauseViewSelect("shadow"), "lv", LOG);
+                        Assert.assertFalse(label, instance.isInvalid());
+                    } finally {
+                        fault.disarmAll();
+                    }
+                    execute("DROP LIVE VIEW lv");
+                    execute("DROP TABLE base");
+                    execute("DROP TABLE shadow");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendedLiveViewDoesNotTouchItsWriters() throws Exception {
+        // A paused view acquires neither its TableWriter nor its WalWriter, whatever the base commits and
+        // however many passes run, in both write-denial modes: no turn, no apply retry, no idle save point.
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            for (int denied = 0; denied < 2; denied++) {
+                final String label = "[writeDenied=" + (denied == 1) + ']';
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(denied == 1));
+                setCurrentMicros(0);
+                createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+                capture.start();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                    final AtomicInteger tableWriterAcquisitions = new AtomicInteger();
+                    final AtomicInteger walWriterAcquisitions = new AtomicInteger();
+                    engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                        if (tableToken != null
+                                && "lv".equals(tableToken.getTableName())
+                                && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)) {
+                            if (factoryType == PoolListener.SRC_WRITER) {
+                                tableWriterAcquisitions.incrementAndGet();
+                            } else if (factoryType == PoolListener.SRC_WAL_WRITER) {
+                                walWriterAcquisitions.incrementAndGet();
+                            }
+                        }
+                    });
+                    try {
+                        for (int c = 0; c < 3; c++) {
+                            insertPauseRow("2026-04-01T0" + (c + 1) + ":00:00.000000Z", c + 2, 1);
+                            drivePausePass(job);
+                        }
+                        Assert.assertFalse(label, drivePausePass(job));
+                    } finally {
+                        engine.setPoolListener(null);
+                    }
+                    Assert.assertEquals(label + ": TableWriter acquisitions of the paused view", 0, tableWriterAcquisitions.get());
+                    Assert.assertEquals(label + ": WalWriter acquisitions of the paused view", 0, walWriterAcquisitions.get());
+                    capture.drain();
+                    capture.assertNotLogged("unsolicited table lock");
+                    execute("ALTER LIVE VIEW lv RESUME WAL");
+                    driveRefreshToQuiescence(job);
+                    assertPauseReads(label, "base");
+                } finally {
+                    capture.stop();
+                }
+                execute("DROP LIVE VIEW lv");
+                execute("DROP TABLE base");
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendedLiveViewLateRowMatchesRecompute() throws Exception {
+        // A late base row committed while the view is paused is first read by the drain after RESUME WAL,
+        // over a view table that holds every committed block, so the out-of-order repair runs as for a view
+        // that lagged by the same commits. Rows only, against the recompute: during the pause, after RESUME
+        // and after a restart.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int i = 0; i < 3; i++) {
+                    insertPauseRow("2026-04-01T0" + i + ":00:00.000000Z", i + 1, 0);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                insertPauseRow("2026-04-01T03:00:00.000000Z", 4, 1);
+                insertPauseRow("2026-04-01T01:30:00.000000Z", 5, 1);
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+                assertPauseReads("paused", PAUSED_ROWS);
+                Assert.assertFalse(lvInstance().isInvalid());
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveRefreshToQuiescence(job);
+                assertPauseReads("resumed", "base");
+            }
+            restartLiveViewsAndRecover();
+            assertPauseReads("restarted", "base");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedLiveViewSymbolsAndVarSizeAcrossResume() throws Exception {
+        // A paused view keeps serving SYMBOL, VARCHAR and DOUBLE[] output as it was: symbol values first
+        // committed to the base during the pause, empty, NULL, multi-byte, 4-byte and 10 KB VARCHARs and
+        // arrays all wait for RESUME WAL, after which the view holds them.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, s SYMBOL, v VARCHAR, arr DOUBLE[], wave INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String viewSelect = "SELECT ts, s, v, arr, count(*) OVER (PARTITION BY s ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM ";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + viewSelect + "base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2026-04-01T00:00:00.000000Z', 'a', 'plain', ARRAY[1.0, 2.0], 0), "
+                        + "('2026-04-01T00:01:00.000000Z', NULL, NULL, NULL, 0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                execute("INSERT INTO base VALUES "
+                        + "('2026-04-01T00:02:00.000000Z', 'new_during_pause', '', ARRAY[-0.0, 3.5], 1), "
+                        + "('2026-04-01T00:03:00.000000Z', 'a', 'привет мир', ARRAY[0.5], 1), "
+                        + "('2026-04-01T00:04:00.000000Z', 'другой', '𝄞 four bytes 😀', NULL, 1), "
+                        + "('2026-04-01T00:05:00.000000Z', 'a', rpad('x', 10_240, 'y'), ARRAY[1.0, NULL], 1)");
+                drainWalQueue();
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+                final String paused = "(SELECT * FROM base WHERE wave = 0)";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSelect + paused, "lv", LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT count() FROM (" + viewSelect + paused + ")", "SELECT count() FROM lv", LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM (" + viewSelect + paused + ") LIMIT -1", "SELECT * FROM lv LIMIT -1", LOG);
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveRefreshToQuiescence(job);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSelect + "base", "lv", LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM (" + viewSelect + "base) LIMIT -1", "SELECT * FROM lv LIMIT -1", LOG);
+                assertNoRefreshFaults("lv");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testConfigListedLiveViewHeldAcrossRestart() throws Exception {
+        // A view listed in cairo.wal.apply.suspended.tables stays paused across a restart, in both write-denial
+        // modes: the restart's recovery waits unattempted, the job reports no work, the view stays active with
+        // its consumed watermark, and the WAL purge keeps the base WAL above it. Unlisting runs the restart's
+        // recovery from the timeline the view sealed, and the view continues to the recompute.
+        configureWalPurge();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            for (int denied = 0; denied < 2; denied++) {
+                final String label = "[writeDenied=" + (denied == 1) + ']';
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(denied == 1));
+                setCurrentMicros(0);
+                createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                    insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 0);
+                    drainWalQueue();
+                    drivePastFlushEvery(job);
+                }
+                final long lvConsumed = lvInstance().getStateReader().getLvConsumedSeqTxn();
+                final long lastProcessed = lvInstance().getLastProcessedSeqTxn();
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, engine.verifyTableName("lv").getDirName());
+                insertPauseRow("2026-04-01T02:00:00.000000Z", 3, 1);
+                insertPauseRow("2026-04-01T03:00:00.000000Z", 4, 1);
+                drainWalQueue();
+                final long baseHead = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("base")).getWriterTxn();
+
+                engine.getLiveViewRegistry().clear();
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseInactive();
+                engine.buildViewGraphs();
+                final LiveViewInstance instance = lvInstance();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drivePausePass(job);
+                    Assert.assertFalse(label, drivePausePass(job));
+                    Assert.assertFalse(label + ": the restart's recovery waits for the unlisting", instance.isCheckpointRestoreAttempted());
+                    assertLiveViewProgress(label, lastProcessed, lvConsumed, baseHead - lastProcessed);
+                    Assert.assertTrue(
+                            label + ": the WAL purge must keep every base segment above the view's consumed watermark",
+                            purgeBaseWalAndCountSegments() >= baseHead - lvConsumed
+                    );
+                    assertPauseReads(label, PAUSED_ROWS);
+
+                    setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                    drivePastFlushEvery(job);
+                    assertRestoredFromTimeline("lv");
+                    assertPauseReads(label, "base");
+                    assertNoRefreshFaults("lv");
+                }
+                execute("DROP LIVE VIEW lv");
+                execute("DROP TABLE base");
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendWalDoesNotSurviveAnEngineRestart() throws Exception {
+        // SUSPEND WAL is not persisted, so a restart of the engine lifts it from a live view as it lifts it from
+        // a table: the restarted engine reports the view running, restores it from its timeline and catches it
+        // up with the base commits of the pause.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                drainWalQueue();
+                drivePastFlushEvery(job);
+                execute("ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'manual halt'");
+                insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 1);
+                drainWalQueue();
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+            }
+            assertLiveViewWalReport("before the restart", "lv\ttrue\t1\t1\tDISK FULL\tmanual halt\n");
+            // The process stops: nothing of this engine holds the view or its base any more.
+            engine.getLiveViewRegistry().clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseAllWalWriters();
+            engine.releaseInactive();
+            engine.releaseInactiveTableSequencers();
+            final StringSink sink = new StringSink();
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext context = new SqlExecutionContextImpl(restarted, 1).with(securityContext)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                TestUtils.printSql(restarted, context, "SELECT name, suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 'lv'", sink);
+                TestUtils.assertEquals("name\tsuspended\terrorTag\terrorMessage\nlv\tfalse\t\t\n", sink);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, restarted, 1)) {
+                    boolean isWork = true;
+                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && isWork; pass++) {
+                        setCurrentMicros(currentMicros + PAUSE_PASS_MICROS);
+                        drainWalQueue(restarted);
+                        isWork = drainJob(job);
+                        drainWalQueue(restarted);
+                    }
+                    Assert.assertFalse("the restarted view must quiesce", isWork);
+                    final LiveViewInstance instance = restarted.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull(instance);
+                    assertRestoredFromTimeline("lv", instance);
+                    Assert.assertEquals(0, instance.getRefreshFaultCount());
+                }
+                TestUtils.assertSqlCursors(restarted, context, pauseViewSelect("base"), "lv", LOG);
+                TestUtils.printSql(restarted, context, "SELECT name, suspended, writerTxn, sequencerTxn FROM wal_tables() WHERE name = 'lv'", sink);
+                TestUtils.assertEquals("name\tsuspended\twriterTxn\tsequencerTxn\nlv\tfalse\t2\t2\n", sink);
+                restarted.getLiveViewRegistry().clear();
+                restarted.releaseAllReaders();
+                restarted.releaseAllWriters();
+                restarted.releaseAllWalWriters();
+                restarted.releaseInactive();
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendedSeedingViewConfigListedAcrossRestartWithCommittedBlock() throws Exception {
+        // A seed turn committed a block its inline apply could not land (the view's writer was held), and then
+        // the view was listed in cairo.wal.apply.suspended.tables and restarted. The listed view holds its
+        // sweep: nothing applies the block, the job reports no work, the view stays SEEDING. Unlisting lets the
+        // sweep's resume apply the block first and complete without a duplicate row.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 50);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                createSeedingView(job);
+                try (TableWriter ignored = engine.getWriter(engine.verifyTableName("lv"), "held by the test")) {
+                    job.run();
+                }
+            }
+            final SeqTxnTracker tracker = lvTracker();
+            final long appliedTxn = tracker.getWriterTxn();
+            Assert.assertTrue("the held writer must leave the seed block unapplied", appliedTxn < tracker.getSeqTxn());
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, engine.verifyTableName("lv").getDirName());
+            engine.getLiveViewRegistry().clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseInactive();
+            engine.buildViewGraphs();
+            final LiveViewInstance instance = lvInstance();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+                Assert.assertEquals(appliedTxn, tracker.getWriterTxn());
+                Assert.assertTrue(tracker.getWriterTxn() < tracker.getSeqTxn());
+                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                driveSeedToCompletion(job, "lv");
+                drivePastFlushEvery(job);
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+                Assert.assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertPauseReads("unlisted", "base");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedSeedingViewFaultInTheTurnSuspendLandsIn() throws Exception {
+        // A seed turn faults, and SUSPEND WAL lands while that turn handles its fault. The fault is handled as
+        // without the suspension - the sweep's resume re-arms and the fault is charged once - and from the next
+        // pass the pause holds the view: no seed turn, no work. RESUME WAL lets the sweep complete.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "x");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 50);
+        assertMemoryLeak(fault.facade(), () -> {
+            setCurrentMicros(0);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = createSeedingView(job);
+                fault.of(engine.verifyTableName("base").getDirName());
+                final AtomicBoolean isSuspendArmed = new AtomicBoolean(true);
+                hooks(job).setRefreshFaultObserver(t -> {
+                    if (isSuspendArmed.compareAndSet(true, false)) {
+                        suspendLiveViewWal("");
+                    }
+                });
+                fault.armAppliedScan("2026-04-02");
+                for (int i = 0; i < SEED_COMPLETION_PASSES && isSuspendArmed.get(); i++) {
+                    job.run();
+                    drainWalQueue();
+                }
+                Assert.assertTrue(fault.hasAppliedScanFired());
+                Assert.assertFalse("the fault observer must have suspended the view", isSuspendArmed.get());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertEquals("the fault is charged once", 1, instance.getFlushRetryCount());
+                Assert.assertFalse("the fault re-arms the sweep's resume", instance.isSeedResumeAttempted());
+                final long offset = instance.getSeedDataOffset();
+                final long seqTxn = lvTracker().getSeqTxn();
+
+                drivePausePass(job);
+                Assert.assertFalse(drivePausePass(job));
+                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                Assert.assertEquals(offset, instance.getSeedDataOffset());
+                Assert.assertEquals(seqTxn, lvTracker().getSeqTxn());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveSeedToCompletion(job, "lv");
+                drivePastFlushEvery(job);
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+                assertPauseReads("resumed", "base");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedSeedingViewPausesUntilResume() throws Exception {
+        // A view still sweeping the base's history when SUSPEND WAL lands holds the sweep: no seed turn runs,
+        // its offset and the view's WAL stay put, it stays SEEDING, and the job reports no work. RESUME WAL
+        // continues the sweep to ACTIVE.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 50);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = createSeedingView(job);
+                final long offset = instance.getSeedDataOffset();
+                final long seqTxn = lvTracker().getSeqTxn();
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                for (int pass = 0; pass < 3; pass++) {
+                    Assert.assertFalse("a paused seeding view must report no work", drivePausePass(job));
+                }
+                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                Assert.assertEquals(offset, instance.getSeedDataOffset());
+                Assert.assertEquals(seqTxn, lvTracker().getSeqTxn());
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveSeedToCompletion(job, "lv");
+                drivePastFlushEvery(job);
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+                assertPauseReads("resumed", "base");
+                assertNoRefreshFaults("lv");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedSeedingViewPausesUntilResumeWithMidSeedFault() throws Exception {
+        // A one-shot fault armed for a partition the sweep has yet to reach, while the seeding view is paused,
+        // fires only in the first seed turn after RESUME WAL. That turn re-arms the sweep's resume as without a
+        // pause, and the sweep completes on the recompute with its retry budget cleared.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "x");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 50);
+        assertMemoryLeak(fault.facade(), () -> {
+            setCurrentMicros(0);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = createSeedingView(job);
+                fault.of(engine.verifyTableName("base").getDirName());
+                execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                fault.armAppliedScan("2026-04-03");
+                for (int pass = 0; pass < 3; pass++) {
+                    Assert.assertFalse(drivePausePass(job));
+                }
+                Assert.assertFalse("no seed turn ran, so nothing met the fault", fault.hasAppliedScanFired());
+                Assert.assertEquals(0, instance.getRefreshFaultCount());
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                driveSeedToCompletion(job, "lv");
+                drivePastFlushEvery(job);
+                Assert.assertTrue(fault.hasAppliedScanFired());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+                assertPauseReads("resumed", "base");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testEndWalSuspensionPauseShiftsTheStreak() throws Exception {
+        // The pause's stamp moves a running flush-retry streak's start forward by the pause, measured from
+        // the first pass that saw the suspension to the first turn after it, so the pause does not count
+        // toward the duration budget. Driven directly on a registered view's instance, since only two workers
+        // racing a stamp against a turn reach the clamp.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+            final LiveViewInstance instance = lvInstance();
+            // No stamp: nothing moves.
+            instance.recordRefreshFailure(10_000_000L);
+            instance.endWalSuspensionPause(1_000_000_000L);
+            Assert.assertEquals(10_000_000L, instance.getFlushRetryStartUs());
+            instance.recordRefreshSuccess();
+
+            // A stamp with no streak running: cleared, nothing to shift, so a later end shifts nothing.
+            instance.markWalSuspensionPause(20_000_000L);
+            instance.endWalSuspensionPause(1_000_000_000L);
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            instance.recordRefreshFailure(1_001_000_000L);
+            instance.endWalSuspensionPause(2_000_000_000L);
+            Assert.assertEquals(1_001_000_000L, instance.getFlushRetryStartUs());
+            instance.recordRefreshSuccess();
+
+            // A stamp after the streak began: the start moves by the pause exactly. The first stamp counts.
+            instance.recordRefreshFailure(10_000_000L);
+            instance.markWalSuspensionPause(20_000_000L);
+            instance.markWalSuspensionPause(30_000_000L);
+            instance.endWalSuspensionPause(1_001_000_000L);
+            Assert.assertEquals(10_000_000L + (1_001_000_000L - 20_000_000L), instance.getFlushRetryStartUs());
+            Assert.assertEquals("the count term is untouched", 1, instance.getFlushRetryCount());
+            instance.recordRefreshSuccess();
+
+            // A stamp left before the streak began: the shift is capped at the turn's own time.
+            instance.markWalSuspensionPause(5_000_000L);
+            instance.recordRefreshFailure(10_000_000L);
+            instance.endWalSuspensionPause(1_001_000_000L);
+            Assert.assertEquals(1_001_000_000L, instance.getFlushRetryStartUs());
+            instance.recordRefreshSuccess();
+
+            // A clock behind the stamp shifts nothing.
+            instance.recordRefreshFailure(10_000_000L);
+            instance.markWalSuspensionPause(20_000_000L);
+            instance.endWalSuspensionPause(15_000_000L);
+            Assert.assertEquals(10_000_000L, instance.getFlushRetryStartUs());
+            instance.recordRefreshSuccess();
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSuspensionPauseDoesNotSpendTheRetryBudget() throws Exception {
+        // A drain fault starts a flush-retry streak, and SUSPEND WAL pauses the view long past the duration
+        // budget. RESUME WAL continues from where the view stopped: the first turn after it finds the streak
+        // as old as it was when the pause began, so a fault there is charged as the streak's next retry
+        // instead of spending the budget and invalidating the view. Without a streak, a fault after RESUME
+        // starts one of its own. At the default budget and at a short one.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "x");
+        fault.reportReadErrno(LiveViewMidDrainFault.ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            final long defaultBudget = configuration.getLiveViewFlushRetryMaxDurationMicros();
+            for (long budget : new long[]{defaultBudget, 1_000_000L}) {
+                for (int streak = 0; streak < 2; streak++) {
+                    final boolean isStreakRunning = streak == 1;
+                    final String label = "[budget=" + budget + ", streak=" + isStreakRunning + ']';
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, budget);
+                    // The part of the streak before the pause, well inside the budget.
+                    final long beforePause = budget / 6;
+                    setCurrentMicros(0);
+                    createPauseView(PAUSE_SHAPE_LEAD, "TIMESTAMP");
+                    fault.of(engine.verifyTableName("base").getDirName());
+                    try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                        insertPauseRow("2026-04-01T00:00:00.000000Z", 1, 0);
+                        drainWalQueue();
+                        drivePastFlushEvery(job);
+                        final LiveViewInstance instance = lvInstance();
+                        final long faultUs = currentMicros + 10_000_000L;
+                        insertPauseRow("2026-04-01T01:00:00.000000Z", 2, 0);
+                        drainWalQueue();
+                        if (isStreakRunning) {
+                            fault.arm(0);
+                            setCurrentMicros(faultUs);
+                            job.run();
+                            Assert.assertTrue(label, fault.hasFired());
+                            Assert.assertEquals(label, faultUs, instance.getFlushRetryStartUs());
+                            Assert.assertEquals(label, 1, instance.getFlushRetryCount());
+                        }
+                        execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                        // The first pass that sees the suspension; it dequeues the commit's notification when no
+                        // faulting turn did.
+                        final long heldUs = faultUs + beforePause;
+                        setCurrentMicros(heldUs);
+                        drainWalQueue();
+                        drainJob(job);
+                        setCurrentMicros(faultUs + 1_000_000_000L);
+                        Assert.assertFalse(label, drainJob(job));
+                        execute("ALTER LIVE VIEW lv RESUME WAL");
+
+                        // The first turn after RESUME faults again.
+                        final long turnUs = faultUs + 1_000_000_000L + beforePause;
+                        fault.arm(0);
+                        setCurrentMicros(turnUs);
+                        job.run();
+                        Assert.assertTrue(label, fault.hasFired());
+                        Assert.assertFalse(label + " [reason=" + instance.getInvalidationReason() + ']', instance.isInvalid());
+                        if (isStreakRunning) {
+                            Assert.assertEquals(label, 2, instance.getFlushRetryCount());
+                            Assert.assertEquals(label, faultUs + (turnUs - heldUs), instance.getFlushRetryStartUs());
+                        } else {
+                            Assert.assertEquals(label, 1, instance.getFlushRetryCount());
+                            Assert.assertEquals(label, turnUs, instance.getFlushRetryStartUs());
+                        }
+
+                        // The fault clears.
+                        driveRefreshToQuiescence(job);
+                        drivePastFlushEvery(job);
+                        Assert.assertFalse(label, instance.isInvalid());
+                        Assert.assertEquals(label, Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+                        Assert.assertEquals(label, 0, instance.getFlushRetryCount());
+                        assertPauseReads(label, "base");
+                    } finally {
+                        fault.disarmAll();
+                    }
+                    execute("DROP LIVE VIEW lv");
+                    execute("DROP TABLE base");
+                }
+            }
         });
     }
 
@@ -1185,6 +2719,91 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCatalogueReportsNoDedupOnLiveView() throws Exception {
+        // A view with a single SYMBOL PARTITION BY key, created while sparse publication is
+        // on (the default), carries (ts, key) dedup keys in its own metadata so that a
+        // repair publication can upsert on them. Its forward commits keep rows that share
+        // (ts, key), so the catalogue does not present the view as deduplicating:
+        // tables().dedup and the upsertKey column of SHOW COLUMNS and table_columns() read
+        // false. A plain DEDUP table keeps reporting true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dedup_t (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, sym, x, row_number() OVER w AS rn FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')
+                    """);
+            // The view's table metadata keeps the keys a sparse repair publication upserts on;
+            // only the catalogue's answer differs.
+            try (TableReader reader = engine.getReader("lv")) {
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("ts")));
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("sym")));
+            }
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2026-01-01T00:00:00.000000Z', 'a', 2),
+                    ('2026-01-01T00:00:00.000000Z', 'b', 3)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+            // The view holds two rows at ('2026-01-01T00:00:00.000000Z', 'a').
+            assertQuery("lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tx\trn
+                            2026-01-01T00:00:00.000000Z\ta\t1\t1
+                            2026-01-01T00:00:00.000000Z\ta\t2\t2
+                            2026-01-01T00:00:00.000000Z\tb\t3\t1
+                            """);
+
+            assertQuery("SELECT table_name, dedup, table_type FROM tables() WHERE table_name IN ('lv', 'dedup_t') ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdedup\ttable_type
+                            dedup_t\ttrue\tT
+                            lv\tfalse\tL
+                            """);
+            final String expectedViewColumns = """
+                    column\tupsertKey
+                    ts\tfalse
+                    sym\tfalse
+                    x\tfalse
+                    rn\tfalse
+                    """;
+            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM lv)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedViewColumns);
+            assertQuery("SELECT \"column\", upsertKey FROM table_columns('lv')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedViewColumns);
+            final String expectedTableColumns = """
+                    column\tupsertKey
+                    ts\ttrue
+                    sym\ttrue
+                    x\tfalse
+                    """;
+            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM dedup_t)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedTableColumns);
+            assertQuery("SELECT \"column\", upsertKey FROM table_columns('dedup_t')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedTableColumns);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInformationSchemaTablesShowsLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1282,6 +2901,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             final LiveViewRegistry registry = engine.getLiveViewRegistry();
             final LiveViewInstance instance = registry.getViewInstance("lv_pending");
             Assert.assertNotNull(instance);
+            final long lifecycleIdentity = instance.getLifecycleIdentity();
             final String lvDirName;
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1296,6 +2916,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 // The real name finds the same instance, re-pointed at the renamed token,
                 // and the pending name is dead.
                 Assert.assertSame("the real name must find the renamed instance", instance, registry.getViewInstance("lv"));
+                Assert.assertEquals("rename must retain lifecycle identity", lifecycleIdentity, instance.getLifecycleIdentity());
                 Assert.assertEquals("lv", instance.getLiveViewToken().getTableName());
                 Assert.assertEquals("lv", instance.getDefinition().getViewName());
                 Assert.assertNull("the pending name must be dead", registry.getViewInstance("lv_pending"));
@@ -1526,6 +3147,99 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateTableLikeLiveViewKeepsRowsSharingUpsertKey() throws Exception {
+        // A live view's upsert keys name the pair a sparse repair publication upserts on,
+        // not a uniqueness guarantee: the view emits two rows with the same (ts, sym)
+        // whenever its base does, and its own forward commits do not deduplicate them.
+        // A plain table copied from the view must not inherit the keys, or copying the
+        // view's rows into it collapses those rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, sym, x, row_number() OVER w AS rn FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')
+                    """);
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2026-01-01T00:00:00.000000Z', 'a', 2),
+                    ('2026-01-01T00:00:00.000000Z', 'b', 3),
+                    ('2026-01-01T00:01:00.000000Z', 'a', 4)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            // The view's table metadata still carries (ts, sym) as its dedup keys; the catalogue
+            // does not report them (see testCatalogueReportsNoDedupOnLiveView).
+            try (TableReader reader = engine.getReader("lv")) {
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("ts")));
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("sym")));
+                Assert.assertFalse(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("x")));
+                Assert.assertFalse(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("rn")));
+            }
+            final String expectedRows = """
+                    ts\tsym\tx\trn
+                    2026-01-01T00:00:00.000000Z\ta\t1\t1
+                    2026-01-01T00:00:00.000000Z\ta\t2\t2
+                    2026-01-01T00:00:00.000000Z\tb\t3\t1
+                    2026-01-01T00:01:00.000000Z\ta\t4\t3
+                    """;
+            assertQuery("lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            execute("CREATE TABLE t (LIKE lv)");
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL,
+                            \tx LONG,
+                            \trn LONG
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+            execute("INSERT INTO t SELECT * FROM lv");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            // CREATE TABLE AS SELECT takes its dedup keys from its own DEDUP clause only.
+            execute("CREATE TABLE t2 AS (SELECT * FROM lv) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertQuery("SHOW CREATE TABLE t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't2' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL,
+                            \tx LONG,
+                            \trn LONG
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -2617,6 +4331,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            // upsertKey is false on every column. A live view created while
+            // cairo.live.view.checkpoint.repair.sparse.publication.enabled is true carries the
+            // designated timestamp and the projected partition key as dedup keys in its own
+            // _meta, the identity a sparse repair publication upserts on, but its forward
+            // commits keep rows that share them, so SHOW COLUMNS does not report them.
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
                     "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +

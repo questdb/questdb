@@ -486,6 +486,39 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAllNullCase() throws Exception {
+        // INSERT writes an all-NULL CASE into an INT column, which reads the CASE as an INT; before
+        // the CASE folded to the NULL literal that read threw.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO src VALUES
+                      ('2026-04-01T01:00:00.000000Z', 1),
+                      ('2026-04-01T02:00:00.000000Z', -1),
+                      ('2026-04-01T03:00:00.000000Z', NULL)""");
+            drainWalQueue();
+            execute("CREATE TABLE dst (ts TIMESTAMP, c INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dst VALUES ('2026-04-01T00:00:00.000000Z', CASE WHEN true THEN NULL END)");
+            execute("INSERT INTO dst SELECT ts, CASE WHEN x > 0 THEN NULL END FROM src");
+            drainWalQueue();
+            assertQuery("SELECT ts, c FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tc
+                            2026-04-01T00:00:00.000000Z\tnull
+                            2026-04-01T01:00:00.000000Z\tnull
+                            2026-04-01T02:00:00.000000Z\tnull
+                            2026-04-01T03:00:00.000000Z\tnull
+                            """);
+            // a NULL designated timestamp is refused at the value, as for the NULL literal
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES (NULL, 1)", 24, "designated timestamp column cannot be NULL");
+            assertExceptionNoLeakCheck("INSERT INTO dst VALUES (CASE WHEN true THEN NULL END, 1)", 24, "designated timestamp column cannot be NULL");
+        });
+    }
+
+    @Test
     public void testInsertAsSelectISODateStringToDesignatedTimestampColumn() throws Exception {
         final String expected = """
                 seq\tts

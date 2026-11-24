@@ -569,7 +569,9 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread: this override keeps no checkpoint dirty set, so every seal
+            // full-scans it.
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }

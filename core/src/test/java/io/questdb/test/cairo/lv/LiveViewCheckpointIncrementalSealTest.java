@@ -28,8 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointCaptureLedger;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -42,11 +45,15 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
@@ -55,19 +62,29 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.cairo.lv.LiveViewRefreshStats.OPEN_SEGMENT_KEYED_RESUME_COUNT;
 
 /**
  * Coverage for the touched-key cadence seal: a seal that freezes the partitions the
@@ -94,6 +111,14 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest {
 
+    // 2026-01-01T00:00:00Z, the day every row of the duration-cadence cases lands on, so their
+    // views' one ANCHOR bucket holds the whole run and the plain window recomputes them.
+    private static final long DURATION_CADENCE_CLOCK_MICROS = 1_767_225_600_000_000L;
+    // An anchored window whose frame excludes the current row. It keeps its ANCHOR, and the frame
+    // end the exclusion folds below the current row sends count, first_value, last_value,
+    // nth_value and the DECIMAL sum and avg to their RANGE rings.
+    private static final String EXCLUDE_CURRENT_ROW_WINDOW = "PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW ANCHOR DAILY '00:00'";
     // Midnight. ANCHOR DAILY '00:00' is the only daily form the frontier sweep
     // accepts: it desugars into the two-argument timestamp_floor, and
     // LiveViewRefreshJob.isProvablyMonotoneAnchor takes that form and no other.
@@ -101,6 +126,12 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     // Noon, so a bucket crossing lands in the middle of a day rather than on the
     // calendar boundary a careless oracle would agree with by accident.
     private static final String NOON_ANCHOR = "12:00";
+    // Keys per batch of testRingShapedCallsKeepNoCheckpointDirtySet: past the initial capacity of
+    // every map a dirty set could be built as, so a set would have had to grow.
+    private static final int RING_KEYS = 2_000;
+    // Room for anything the window allocates, so a tracker a case has already tripped once
+    // stops standing in the way of the retry that case is really about.
+    private static final long ROOMY_TRACKER_LIMIT_BYTES = 64 * 1024 * 1024L;
     // Four accounts in one anchor bucket. Every sweep case starts here: the trigger
     // demands at least half the map be reclaimable, so three of these have to fall
     // behind the frontier before anything fires.
@@ -109,6 +140,14 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
                     + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
                     + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)";
+    // Six accounts sealed one per row: every key's state is in the first root.
+    private static final String SEED_SIX_ACCOUNTS =
+            "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                    + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                    + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                    + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0), "
+                    + "('2026-01-01T11:00:04.000000Z', 'acct-5', 50.0), "
+                    + "('2026-01-01T11:00:05.000000Z', 'acct-6', 60.0)";
     // Enough accounts that a sweep's evicted set dwarfs what one cadence touches, which is
     // the only shape in which the dirty sets' retained capacity is observable at all.
     private static final int SWEEP_CAPACITY_ACCOUNTS = 2_000;
@@ -175,6 +214,367 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
                 driveRefreshToQuiescence(job);
                 assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedKeyEntersEveryFunctionDirtySetOncePerCadence() throws Exception {
+        // Four rows per boundary, as in testARepeatedKeyEntersTheDirtySetOncePerCadence, so
+        // a commit smaller than that refreshes without sealing and the cadence's marks
+        // stay readable.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createUnfusedView(NOON_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // Three rows, one key, one cadence. The residual sum's dirty set names the
+                // key once, and the anchor's mark count says the second and third rows
+                // stopped at the stamp rather than reaching either map.
+                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T11:00:05.000000Z', 'acct-1', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-1', 3.0)", job);
+                assertFunctionDirtySize(1);
+                Assert.assertEquals(
+                        "a repeat row must not enter its key into any dirty set again",
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
+                );
+
+                commit("('2026-01-01T11:00:07.000000Z', 'acct-1', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testAnAnchorCrossAfterTheCadenceMarkStillNamesTheKey() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createUnfusedView(NOON_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // First row of the cadence names acct-1 while it is still in the pre-noon
+                // bucket. The second crosses noon on the same key in the same cadence:
+                // resetPartition empties the accumulator and this row starts it again,
+                // with no fresh mark anywhere.
+                final long marksBefore = anchorWindow().getCheckpointDirtyMarkCount();
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0), "
+                        + "('2026-01-01T12:00:00.000000Z', 'acct-1', 7.0)", job);
+                assertFunctionDirtySize(1);
+                Assert.assertEquals(
+                        "an anchor cross on an already-named key must not mark it twice",
+                        1,
+                        anchorWindow().getCheckpointDirtyMarkCount() - marksBefore
+                );
+
+                // Seal the cadence, then read the restored accumulator back.
+                commit("('2026-01-01T12:00:01.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T12:00:02.000000Z', 'acct-3', 3.0)", job);
+                assertDirtySetsClearedByPublish();
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+
+                // A follow-up row in the restored bucket accumulates on top of what came
+                // back, so a stale pre-cross image shows up here as an inflated sum.
+                commit("('2026-01-01T12:30:00.000000Z', 'acct-1', 5.0)", job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testASweptResidualKeyRevivedInOneCadenceIsNamedAgain() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            createUnfusedView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+                final long generation = publishedGeneration();
+                final long sealFailuresBefore = viewInstance().getCheckpointSealFailures();
+
+                commit("('2026-01-02T01:00:00.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 2.0)", job);
+                Assert.assertEquals(1, anchorWindow().getCompactionCount());
+                assertEvictionMarkerCount(3);
+
+                // acct-2 is back inside the same cadence. The sweep dropped its anchor
+                // entry, so this row is a first touch again and re-names the key in every
+                // dirty set - the function's marker has to go back to 0 with the anchor's.
+                commit("('2026-01-03T02:00:00.000000Z', 'acct-2', 3.0)", job);
+                assertEvictionMarkerCount(2);
+                assertIncrementalGateOpen(generation);
+
+                commit("('2026-01-03T03:00:00.000000Z', 'acct-1', 4.0)", job);
+                Assert.assertEquals(
+                        "the re-created key must not have produced a duplicate mutation",
+                        sealFailuresBefore,
+                        viewInstance().getCheckpointSealFailures()
+                );
+                assertDirtySetsClearedByPublish();
+                assertUnfusedViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(MIDNIGHT_ANCHOR);
+
+                commit("('2026-01-03T05:00:00.000000Z', 'acct-2', 6.0)", job);
+                assertUnfusedViewMatchesRecompute(MIDNIGHT_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testTheCadenceCounterWrappingStillNamesEveryFunctionKey() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
+        assertMemoryLeak(() -> {
+            createUnfusedView(NOON_ANCHOR, SEED_FOUR_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertDirtySetsClearedByPublish();
+
+                // Stamp acct-1 with the cadence the counter's turn lands back on.
+                anchorWindow().setCheckpointDirtyEpoch((short) 1);
+                commit("('2026-01-01T11:00:04.000000Z', 'acct-1', 1.0)", job);
+                assertFunctionDirtySize(1);
+
+                // Stand the counter one cadence below its turn and seal on OTHER keys, so
+                // acct-1 carries a stale stamp rather than a fresh one.
+                anchorWindow().setCheckpointDirtyEpoch(Short.MAX_VALUE);
+                commit("('2026-01-01T11:00:05.000000Z', 'acct-2', 2.0), "
+                        + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
+                assertDirtySetsClearedByPublish();
+
+                commit("('2026-01-01T11:00:08.000000Z', 'acct-1', 5.0)", job);
+                assertFunctionDirtySize(1);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertUnfusedViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testAFailedFunctionMarkLeavesTheCadenceStampUnwritten() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final MarkCountingFunctionStub marking = new MarkCountingFunctionStub();
+            final MarkCountingFunctionStub failing = new MarkCountingFunctionStub();
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(marking);
+            functions.add(failing);
+            record.value = 1;
+            try (LiveViewWindow window = standaloneWindow(functions)) {
+                failing.isFailing = true;
+                try {
+                    window.processRow(record);
+                    Assert.fail("the failing function's mark must not be swallowed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "mark refused");
+                }
+                Assert.assertEquals(1, marking.markedCount);
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+                Assert.assertEquals(1, window.getCheckpointDirtyMarkCount());
+
+                // The retry has to find the row unmarked, or the function that threw never
+                // names the key at all.
+                failing.isFailing = false;
+                window.processRow(record);
+                Assert.assertEquals(
+                        "the retry must re-raise the flag for every function",
+                        2,
+                        marking.markedCount
+                );
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(2, window.getCheckpointDirtyMarkCount());
+
+                // ...and only then does the stamp stand, which is the whole point of the
+                // gate: a further row of the same cadence reaches no dirty map at all.
+                window.processRow(record);
+                Assert.assertEquals(2, marking.markedCount);
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(2, window.getCheckpointDirtyMarkCount());
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+            } finally {
+                marking.reset();
+                failing.reset();
+            }
+        });
+    }
+
+    @Test
+    public void testARetryFindsANewKeyUnmarkedWhenItsStampSlotHeldTheLiveCadence() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final MarkCountingFunctionStub marking = new MarkCountingFunctionStub();
+            final MarkCountingFunctionStub failing = new MarkCountingFunctionStub();
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(marking);
+            functions.add(failing);
+            record.value = 1;
+            try (LiveViewWindow window = standaloneWindow(
+                    functions,
+                    LongKeyRecordStub.PAIR_KEY_TYPES,
+                    LongKeyRecordStub.PAIR_SINK
+            )) {
+                // The poisoning below rests on the anchor map keeping its heap across a
+                // clear(), which is OrderedMap's contract and not the memsetting one every
+                // unordered implementation holds to. Asserted rather than assumed: a
+                // single-column key of this width lands on Unordered8Map at the default
+                // cairo.sql.unordered.map.max.entry.size, and this case would pass on the
+                // memset rather than on the fix.
+                Assert.assertEquals("OrderedMap", window.getAnchorMapImplementation());
+
+                // Cadence 1 stamps the key's slot at the head of the anchor map's heap.
+                window.processRow(record);
+                Assert.assertEquals(1, marking.markedCount);
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+
+                // The replay rewinds every function and this window, which empties both
+                // dirty sets and the anchor map - and leaves the stamp lying in the heap
+                // the next entry at that offset will land on.
+                marking.toTop();
+                failing.toTop();
+                window.toTop();
+                window.setCheckpointDirtyEpoch((short) 1);
+                Assert.assertEquals(0, window.getCheckpointDirtyAnchorMapSize());
+                Assert.assertEquals(0, failing.getCheckpointDirtyPartitionMap().size());
+
+                // The replay's first row creates the key again, onto those same bytes, and
+                // the second function's mark throws before the stamp goes in.
+                failing.isFailing = true;
+                try {
+                    window.processRow(record);
+                    Assert.fail("the failing function's mark must not be swallowed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "mark refused");
+                }
+                Assert.assertEquals(2, marking.markedCount);
+                Assert.assertEquals(1, failing.markedCount);
+                Assert.assertEquals(0, failing.getCheckpointDirtyPartitionMap().size());
+
+                // The retry has to find the row unmarked. It reads the stamp slot rather
+                // than isNew(), so a slot the creating row left holding the live cadence
+                // has every set on this view finish the cadence one key short.
+                failing.isFailing = false;
+                window.processRow(record);
+                Assert.assertEquals(
+                        "the retry must re-enter the key into the dirty set of the function that threw",
+                        1,
+                        failing.getCheckpointDirtyPartitionMap().size()
+                );
+                Assert.assertEquals(2, failing.markedCount);
+                Assert.assertEquals(3, marking.markedCount);
+                Assert.assertEquals(1, marking.getCheckpointDirtyPartitionMap().size());
+                Assert.assertEquals(1, window.getCheckpointDirtyAnchorMapSize());
+
+                // ...and only then does the stamp stand: a further row of the same cadence
+                // reaches no dirty map at all.
+                window.processRow(record);
+                Assert.assertEquals(2, failing.markedCount);
+                Assert.assertEquals(3, marking.markedCount);
+            } finally {
+                marking.reset();
+                failing.reset();
+            }
+        });
+    }
+
+    @Test
+    public void testAThrownWindowMarkLeavesNoStaleFlagOnTheKeyItCreated() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongKeyRecordStub record = new LongKeyRecordStub();
+            final MarkCountingFunctionStub marking = new MarkCountingFunctionStub();
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(marking);
+            record.value = 1;
+            try (
+                    // One byte, so the dirty set breaches on its first malloc: the map that
+                    // owns it closes and unwinds before it holds anything, and the anchor
+                    // map - which this test supplies with no tracker bound, and the window
+                    // owns from there - is untouched.
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(1);
+                    LiveViewWindow window = standaloneWindow(
+                            functions,
+                            LongKeyRecordStub.PAIR_KEY_TYPES,
+                            LongKeyRecordStub.PAIR_SINK,
+                            poisonedAnchorMap(record),
+                            tracker
+                    );
+                    MemoryCARWImpl sink = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                // The poison only lands on the next entry if the map keeps the heap it wrote
+                // it into. Asserted rather than assumed - see the case above.
+                Assert.assertEquals("OrderedMap", window.getAnchorMapImplementation());
+
+                // The row publishes the entry onto the poisoned bytes, and the window's own
+                // mark throws before any function is reached.
+                try {
+                    window.processRow(record);
+                    Assert.fail("the tracker breach must not be swallowed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+                Assert.assertEquals(0, marking.markedCount);
+                Assert.assertEquals("the throw leaves the entry published", 1, window.getAnchorMapSize());
+                Assert.assertEquals(0, window.getCheckpointDirtyAnchorMapSize());
+
+                // The retry has room, and has to find the key both unmarked and alive.
+                tracker.setLimit(ROOMY_TRACKER_LIMIT_BYTES);
+                window.processRow(record);
+                Assert.assertEquals(
+                        "the retry must name the key its failed attempt never did",
+                        1,
+                        window.getCheckpointDirtyAnchorMapSize()
+                );
+                Assert.assertEquals(1, marking.markedCount);
+                Assert.assertEquals(1, marking.getCheckpointDirtyPartitionMap().size());
+
+                // The tombstone slot decides whether the partition reaches a root at all.
+                window.snapshot(sink);
+                window.restore(sink);
+                Assert.assertEquals(
+                        "the snapshot must carry the partition the failed row created",
+                        1,
+                        window.getAnchorMapSize()
+                );
+            } finally {
+                marking.reset();
             }
         });
     }
@@ -337,6 +737,14 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             createUnfusedAvgView(MIDNIGHT_ANCHOR, SEED_FOUR_ACCOUNTS);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
+                // The whole case rests on both calls staying residual. Every per-function
+                // assertion below falls back to the anchor's own numbers for a fused
+                // group, so a plan that learned to accept an expression argument would
+                // leave this passing against state it no longer describes.
+                Assert.assertFalse(
+                        "both calls must decline the fused plan",
+                        isWindowStateFused()
+                );
                 assertDirtySetsClearedByPublish();
                 assertHeadRootPartitionCount(4);
                 final long generation = publishedGeneration();
@@ -436,6 +844,67 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * A ring crossing its ANCHOR bucket still takes back the tombstone its reset set, with no
+     * dirty set to mark. {@code resetPartition} tombstones the crossing key and the crossing
+     * row's own {@code markPartitionAlive} clears it. A ring's seal walks its whole map and skips
+     * a tombstoned key, so a tombstone left standing would drop the key from the root, and the
+     * restart would bring the key back with no state.
+     * <p>
+     * {@code count(x)} over a frame that excludes the current row is a ring. The row after the
+     * restart counts the one row before it in its bucket - 1 - only if the root carried the key.
+     */
+    @Test
+    public void testARingCrossingItsAnchorBucketClearsItsTombstoneWithoutADirtySet() throws Exception {
+        // One boundary per commit, so the crossing commit seals.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, x, count(x) OVER w AS v FROM base WINDOW w AS (" + EXCLUDE_CURRENT_ROW_WINDOW + ")");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitBase("('2026-01-01T10:00:00.000000Z', 'a', 1.0)", job);
+                // The next day's bucket: the anchor resets the ring's partition, tombstoning 'a'.
+                commitBase("('2026-01-02T01:00:00.000000Z', 'a', 2.0)", job);
+                final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+                Assert.assertEquals(1, functions.size());
+                final WindowFunction ring = functions.getQuick(0);
+                Assert.assertTrue("count over a frame excluding the current row must be a ring", ring.supportsCheckpointRingState());
+                Assert.assertEquals("the crossing row must clear the tombstone its reset set", 0, ring.getTombstoneCount());
+                Assert.assertNull("a ring keeps no checkpoint dirty set", ring.getCheckpointDirtyPartitionMap());
+                Assert.assertFalse("a ring claims no checkpoint dirty set", ring.isCheckpointDirtyTracked());
+                assertNoRefreshFaults("lv");
+            }
+
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitBase("('2026-01-02T02:00:00.000000Z', 'a', 3.0)", job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT ts, sym, x, v FROM lv ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tx\tv
+                                2026-01-01T10:00:00.000000Z\ta\t1.0\t0
+                                2026-01-02T01:00:00.000000Z\ta\t2.0\t0
+                                2026-01-02T02:00:00.000000Z\ta\t3.0\t1
+                                """);
+                // The anchor's own definition: a partition per key and day bucket.
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT ts, sym, x, count(x) OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts "
+                                + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS v FROM base ORDER BY ts",
+                        "SELECT ts, sym, x, v FROM lv ORDER BY ts",
+                        LOG,
+                        true
+                );
+            }
+        });
+    }
+
     @Test
     public void testDirtyKeyMissingWithoutASweepStillFails() throws Exception {
         // Four rows per boundary, so the three rows below leave the dirty sets standing
@@ -473,6 +942,16 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 );
             }
         });
+    }
+
+    @Test
+    public void testExcludeCurrentRowViewKeepsOnlyTheTrackedSetFused() throws Exception {
+        assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet(true);
+    }
+
+    @Test
+    public void testExcludeCurrentRowViewKeepsOnlyTheTrackedSetUnfused() throws Exception {
+        assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet(false);
     }
 
     @Test
@@ -780,6 +1259,402 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testRepeatedCorrectionsReplayABoundedRangeRatherThanAGrowingOne() throws Exception {
+        // One boundary per commit, so the ladder below is dense enough for a correction
+        // to land within a cadence of a boundary - if the repair before it left the
+        // boundaries standing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // What this case measures is the range a resume replays, so it pins the resume to
+        // one route. A keyed resume reads its own keys rather than every row above the
+        // anchor, so a run that switched routes mid-way would compare two different
+        // measurements; the route switch itself belongs to the open-segment pricing cases.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 1.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 1.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                // A ladder deep enough to hold a boundary under every correction below.
+                for (int second = 10; second < 30; second++) {
+                    commit(row("acct-1", second), job);
+                }
+
+                // Then a run of corrections at a fixed lateness - ten seconds under the
+                // head, which is what makes this the case it is. Each late row sits below
+                // the frontier the repair before it reached, so the only boundary that can
+                // anchor it is one that repair had to decide the fate of.
+                //
+                // That decision is the whole point. A repair used to truncate every
+                // boundary above its floor and seal exactly one new one, at the frontier -
+                // which the next late row, being below the frontier by definition, could
+                // not use. The newest usable anchor stayed pinned where the ladder ended
+                // before the first correction, and the replayed range grew by one commit
+                // per correction, without bound and regardless of how late the rows were.
+                final LongList replayed = new LongList();
+                long previous = viewInstance().getO3ResumeReplayRows();
+                for (int i = 0; i < 6; i++) {
+                    final int head = 30 + i * 2;
+                    commit(row("acct-1", head), job);
+                    commit(row("acct-2", head - 10), job);
+                    final long now = viewInstance().getO3ResumeReplayRows();
+                    Assert.assertTrue("correction " + i + " must repair through a resume", now > previous);
+                    replayed.add(now - previous);
+                    previous = now;
+                }
+                Assert.assertEquals(
+                        "the route is pinned, so nothing here may resume by key",
+                        0,
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                );
+
+                // Bounded, not growing. Every correction resumes from a boundary the
+                // repair before it re-versioned in place, so what it replays is its own
+                // depth plus a cadence rather than everything the view has emitted since
+                // the ladder was last intact. The run may drift downwards as corrections
+                // climb out of the dense ladder; what it must never do is climb.
+                for (int i = 1, n = replayed.size(); i < n; i++) {
+                    Assert.assertTrue(
+                            "repair " + i + " must not replay more than the first one did [replayed="
+                                    + replayed + ']',
+                            replayed.getQuick(i) <= replayed.getQuick(0)
+                    );
+                }
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // The ladder those repairs kept is only worth keeping if it restores, so the
+            // restart reads every root they re-versioned rather than the runtime's memory.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testTheSealAboveASplicedLadderStaysIncremental() throws Exception {
+        // One boundary per commit, so the repair below crosses two of them and still has
+        // a frontier above the newest to seal.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0), "
+                            + "('2026-01-01T11:00:04.000000Z', 'acct-5', 50.0), "
+                            + "('2026-01-01T11:00:05.000000Z', 'acct-6', 60.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row("acct-1", 10), job);
+                commit(row("acct-2", 11), job);
+
+                // One commit carrying both a late row and a forward one, so the replay
+                // runs past the newest boundary it re-versions and the repair owes a seal
+                // above the ladder it just spliced.
+                commit(row("acct-1", 6) + ", " + row("acct-3", 20), job);
+
+                // That seal stands on the newest spliced boundary and images only what
+                // the replay moved above it - acct-3's single row - rather than the six
+                // keys the domain holds.
+                //
+                // It is the batch-minimum window that decides which of those two it does.
+                // A seal shares its predecessor's chunks only against a batch it can prove
+                // sits strictly above that predecessor, and the replay's own minimum sits
+                // well below it: the freeze cursor restarts the window at every boundary
+                // it publishes, which is what a cadence seal gets from setHeadCheckpoint
+                // and a truncating repair from the head it clears. Without the restart
+                // this reads six.
+                Assert.assertEquals(
+                        "the seal above a spliced ladder must image only what the replay moved above it",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                // The replay ran past every root it kept, so nothing above the frontier is
+                // truncated, which would demote the seal to a complete one.
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertHeadRootPartitionCount(6);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                commit(row("acct-5", 30) + ", " + row("acct-6", 31), job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testAZeroRowResumeOnTheReusedRuntimeWithTheChainDeclinedKeepsTheNextSealIncremental() throws Exception {
+        // A commit wholly above the frontier, out of order within itself, whose rows the filter
+        // rejects: the drain hands it to a resume from the head's own root, which reuses the
+        // runtime standing there, declines the chain and replays no row. The root at the frontier
+        // goes back on the head at the commit with no new root, and the runtime's incremental
+        // baseline moves with it, so the next seal images only the key its row touched.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
+            execute("insert into tx values " + SEED_SIX_ACCOUNTS);
+            drainWalQueue();
+            final String filteredView = "select created_at, account_id, "
+                    + "sum(amount) over w as cumulative_sum, "
+                    + "count(account_id) over w as cumulative_count "
+                    + "from tx where amount > 0 window w as (partition by account_id order by created_at anchor daily '"
+                    + NOON_ANCHOR + "')";
+            execute("create live view lv flush every 100ms start from beginning as " + filteredView);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row("acct-1", 10), job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals(instance.getHeadCheckpointMaxTs(), instance.getLatestSeenTs());
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMaxTs = instance.getHeadCheckpointMaxTs();
+                commit("('2026-01-01T11:02:10.000000Z', 'acct-1', -1.0), ('2026-01-01T11:01:10.000000Z', 'acct-2', -1.0)", job);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.RUNTIME_ANCHOR_REUSE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals("the truncate and the watermark", generationBefore + 2, publishedCheckpointGeneration(instance));
+                Assert.assertEquals(headMaxTs, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(
+                        "at the repair commit",
+                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tx")),
+                        instance.getHeadCheckpointBaseSeqTxn()
+                );
+                assertFilteredViewMatchesRecompute();
+
+                commit(row("acct-3", 20), job);
+                Assert.assertEquals(
+                        "the seal after the zero-row resume must image only the key its row touched",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertFilteredViewMatchesRecompute();
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drainJob(job);
+                    Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                    driveRefreshToQuiescence(job);
+                    assertFilteredViewMatchesRecompute();
+                    commit(row("acct-" + (5 + restart), 30 + restart), job);
+                    assertFilteredViewMatchesRecompute();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTheSealAfterAZeroRowResumeWithTheChainDeclinedStaysIncremental() throws Exception {
+        // A REPLACE_RANGE deletes the newest row, and the resume repairing it declines the chain,
+        // truncates at its anchor and replays no row: the anchor is the view's new frontier, and a
+        // watermark publishes it at the repair commit, carrying the runtime's incremental baseline
+        // over it. The next seal then images only the key its row touched, where a retired
+        // timeline would have left a first checkpoint imaging every key.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(NOON_ANCHOR, SEED_SIX_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row("acct-1", 10), job);
+                commit(row("acct-2", 11), job);
+                try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("tx"))) {
+                    walWriter.commitWithParams(
+                            ts("2026-01-01T11:00:11.000000Z"),
+                            ts("2026-01-01T11:00:12.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(ts("2026-01-01T11:00:10.000000Z"), viewInstance().getHeadCheckpointMaxTs());
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                commit(row("acct-3", 20), job);
+                Assert.assertEquals(
+                        "the seal after the zero-row resume must image only the key its row touched",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertHeadRootPartitionCount(6);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drainJob(job);
+                    Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                    driveRefreshToQuiescence(job);
+                    assertViewMatchesRecompute(NOON_ANCHOR);
+                    commit(row("acct-" + (5 + restart), 30 + restart), job);
+                    assertViewMatchesRecompute(NOON_ANCHOR);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResumeDeclinedTheChainFallsBackToTheTruncate() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // Zero declines the chain for every repair, whatever its depth. It is what a
+        // correction reaching further back than the budget takes in the field, and the
+        // case exists because that fallback still has to produce a correct view: the
+        // repair truncates the ladder above its floor and seals one fresh head, which is
+        // what every out-of-order repair did before the chain.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit("('2026-01-01T11:00:10.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-01T11:00:11.000000Z', 'acct-2', 2.0)", job);
+                final LongList idsBefore = logicalCheckpointIds();
+
+                final long resumeBefore = viewInstance().getO3ResumeReplayRows();
+                commit("('2026-01-01T11:00:06.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertTrue(
+                        "a late row with a boundary below it must repair through a resume",
+                        viewInstance().getO3ResumeReplayRows() > resumeBefore
+                );
+
+                // The discriminator: a truncate drops the logical entries above its floor
+                // where the chain would have re-versioned them in place.
+                final LongList ids = logicalCheckpointIds();
+                Assert.assertTrue(
+                        "the declined chain must truncate rather than splice [before=" + idsBefore
+                                + ", after=" + ids + ']',
+                        ids.size() < idsBefore.size()
+                );
+                assertHeadRootPartitionCount(3);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+                commit("('2026-01-01T11:00:20.000000Z', 'acct-3', 3.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
+    public void testResumeFromAnchorImagesOnlyTheKeysItsReplayTouched() throws Exception {
+        // One boundary per commit, so the late row below has an anchor strictly under it
+        // and the seal that closes the repair has a predecessor root to build on.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(
+                    NOON_ANCHOR,
+                    "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                            + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                            + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                            + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0), "
+                            + "('2026-01-01T11:00:04.000000Z', 'acct-5', 50.0), "
+                            + "('2026-01-01T11:00:05.000000Z', 'acct-6', 60.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertHeadRootPartitionCount(6);
+
+                // Two forward commits, so the timeline carries boundaries above the seed's
+                // and the repair below has one to drop as well as one to keep.
+                commit("('2026-01-01T11:00:10.000000Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-01T11:00:11.000000Z', 'acct-2', 2.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                final long resumeBefore = viewInstance().getO3ResumeReplayRows();
+                final long imagedBefore = anchorWindow().getCheckpointFreezeKeyCountTotal();
+                final LongList idsBefore = logicalCheckpointIds();
+                // A late row above the seed's boundary and below both commits. The repair
+                // resumes from that boundary, so its replay reads the three rows above it -
+                // which move acct-1 and acct-2 and no other account.
+                commit("('2026-01-01T11:00:06.000000Z', 'acct-1', 5.0)", job);
+                Assert.assertTrue(
+                        "a late row with a boundary below it must repair through a resume",
+                        viewInstance().getO3ResumeReplayRows() > resumeBefore
+                );
+
+                // The repair re-versions the two boundaries its replay crosses rather than
+                // dropping them, and freezes each against the one below it: the first
+                // images acct-1, whose two rows sit at or below it, and the second images
+                // acct-2. Two key images for the whole repair.
+                //
+                // What this is written against is the freeze that walks the live domain
+                // instead. Restoring the anchor without a baseline made every repair seal
+                // do that once; re-versioning a ladder without chaining would make it do
+                // that once per boundary. Either reads as six here, and as twenty million
+                // per boundary in the workload this is written for.
+                Assert.assertEquals(
+                        "the repair must image the keys its replay touched, once, not the live domain",
+                        2,
+                        anchorWindow().getCheckpointFreezeKeyCountTotal() - imagedBefore
+                );
+                Assert.assertEquals(
+                        "no boundary of the chain may fall back to a complete freeze",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+
+                // The ladder survives the repair, in place: the next late row below the
+                // frontier then resumes from a boundary within one cadence of itself
+                // instead of from wherever the last in-order commit left one.
+                final LongList ids = logicalCheckpointIds();
+                Assert.assertEquals("the repair must drop no logical entry", idsBefore.size(), ids.size());
+                for (int i = 0, n = ids.size(); i < n; i++) {
+                    Assert.assertEquals("the ladder keeps its ids in place", idsBefore.getQuick(i), ids.getQuick(i));
+                }
+
+                // The other four accounts keep the entries the anchor root already holds,
+                // so the root the repair published must still name all six.
+                assertHeadRootPartitionCount(6);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+
+            // An incremental seal that dropped or staled an untouched key is invisible
+            // while the runtime serves from memory; the restart is what reads the root.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                // Rows for accounts the repair seal left alone. A root that lost their
+                // accumulators shows up here as a cumulative sum restarting from this row
+                // rather than as a missing key.
+                commit("('2026-01-01T11:00:20.000000Z', 'acct-3', 3.0), "
+                        + "('2026-01-01T11:00:21.000000Z', 'acct-6', 6.0)", job);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+        });
+    }
+
+    @Test
     public void testRestoreFromANonHeadRootDoesNotAdoptAnIncrementalBaseline() throws Exception {
         // One boundary per commit, so the timeline below holds several of them and the
         // head has a predecessor to restore instead.
@@ -908,6 +1783,30 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         final RetainingFunctionStub fullScan = new RetainingFunctionStub(true);
         fullScan.retainPartitions(null, null, false);
         Assert.assertTrue(fullScan.isRetained);
+    }
+
+    /**
+     * A ring keeps no checkpoint dirty set, however many keys its cadences touch. Every call here
+     * sits on an anchored window whose frame excludes the current row, which makes it a RANGE
+     * ring, and {@code LiveViewCheckpointTimelineStoreWriter.freezeFunction} walks a ring's whole
+     * state map whatever a dirty set names. A set would cost each key's first row of a cadence a
+     * key serialization and a map insert, and hold up to the state map's key count between seals,
+     * charged to {@code cairo.live.view.refresh.memory.limit.bytes}, for nothing a seal reads.
+     * <p>
+     * Over three partition keys: a SYMBOL, a LONG and a (SYMBOL, INT) pair. Rows never seal here,
+     * the duration does: the first refresh seals one row, two batches of {@link #RING_KEYS} keys
+     * follow inside one cadence, and a row six minutes later seals again, walking each ring's
+     * keys whole.
+     */
+    @Test
+    public void testRingShapedCallsKeepNoCheckpointDirtySet() throws Exception {
+        setDurationOnlyCheckpointCadence();
+        assertMemoryLeak(() -> {
+            setCurrentMicros(DURATION_CADENCE_CLOCK_MICROS);
+            assertRingShapedCallsKeepNoCheckpointDirtySet("symbol_key", "ks");
+            assertRingShapedCallsKeepNoCheckpointDirtySet("long_key", "kl");
+            assertRingShapedCallsKeepNoCheckpointDirtySet("pair_key", "ps, pi");
+        });
     }
 
     @Test
@@ -1056,7 +1955,12 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                         + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
                         + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
                 assertDirtySetsClearedByPublish();
-                assertHeadRootPartitionCount(0);
+                assertHeadFunctionRootPartitionCount(0);
+                // The window root is untouched by the poke above, which writes the
+                // functions' own tombstone slots and not the anchor map's. Its four keys
+                // are still live, which is what says the removal branch under test is the
+                // per-function one rather than something that emptied every root at once.
+                assertHeadWindowRootPartitionCount(4);
             }
         });
     }
@@ -1191,6 +2095,29 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * Asserts what the function roots of the seals since {@code before} add up to: how many the
+     * seals published, how many of them froze incrementally, and the keys they walked and imaged.
+     */
+    private static void assertFunctionCaptureDelta(
+            String what,
+            long[] before,
+            LiveViewInstance instance,
+            long captures,
+            long incrementalCaptures,
+            long keysVisited,
+            long keysImaged
+    ) {
+        final long[] after = functionCaptureLedger(instance);
+        Assert.assertEquals(
+                what,
+                "captures=" + captures + ", incremental=" + incrementalCaptures
+                        + ", visited=" + keysVisited + ", imaged=" + keysImaged,
+                "captures=" + (after[0] - before[0]) + ", incremental=" + (after[1] - before[1])
+                        + ", visited=" + (after[2] - before[2]) + ", imaged=" + (after[3] - before[3])
+        );
+    }
+
     private static void assertPartitionCount(
             String what,
             int expected,
@@ -1202,10 +2129,45 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         Assert.assertEquals(what + " partition count", expected, count[0]);
     }
 
+    /**
+     * Asserts every function of {@code rings} is a ring holding {@code liveKeys} keys of state,
+     * with no checkpoint dirty set and no claim to one.
+     */
+    private static void assertRingsKeepNoCheckpointDirtySet(ObjList<WindowFunction> rings, long liveKeys) {
+        for (int i = 0, n = rings.size(); i < n; i++) {
+            final WindowFunction ring = rings.getQuick(i);
+            final String name = ring.getName() + "#" + i;
+            Assert.assertTrue(name + " must be a ring", ring.supportsCheckpointRingState());
+            Assert.assertEquals(name + " live keys", liveKeys, ring.getPartitionMap().size());
+            Assert.assertNull(name + " is a ring, which keeps no checkpoint dirty set", ring.getCheckpointDirtyPartitionMap());
+            Assert.assertFalse(name + " is a ring, which claims no checkpoint dirty set", ring.isCheckpointDirtyTracked());
+        }
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    // The view's function-root capture counters: captures, incremental captures, keys visited
+    // and keys imaged, each cumulative over the view instance's life.
+    private static long[] functionCaptureLedger(LiveViewInstance instance) {
+        final LiveViewCheckpointCaptureLedger ledger = instance.getCheckpointCaptureLedgerForTest();
+        return new long[]{
+                ledger.getFunctionCaptures(),
+                ledger.getFunctionIncrementalCaptures(),
+                ledger.getFunctionKeysVisited(),
+                ledger.getFunctionKeysImaged()
+        };
+    }
+
+    // Rows never seal: a seal comes from the first refresh, and then only once the clock has
+    // moved five minutes past the previous one.
+    private static void setDurationOnlyCheckpointCadence() {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000_000L);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5 * Micros.MINUTE_MICROS);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
     }
 
     /**
@@ -1231,6 +2193,106 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         final LiveViewWindow window = viewInstance().getAnchorWindow();
         Assert.assertNotNull("the view must carry an anchored window", window);
         return window;
+    }
+
+    /**
+     * An anchor map whose heap already carries a full set of value bytes at the offset the
+     * first entry lands on - the state a live map leaves behind once {@code clear()} has
+     * rewound the append pointer back over the entries it wrote. The stamp is the cadence
+     * the counter starts on, which is what a stamped entry leaves; the tombstone byte is a
+     * 1 the region can carry from anything the allocator recycled into it, since the window
+     * writes that slot only as 0. The anchor value is one no row here computes, so the
+     * partition still crosses into its own bucket.
+     */
+    private Map poisonedAnchorMap(Record record) {
+        final Map map = MapFactory.createUnorderedMap(
+                configuration,
+                LongKeyRecordStub.PAIR_KEY_TYPES,
+                LiveViewWindow.anchorMapValueTypes()
+        );
+        try {
+            final MapKey key = map.withKey();
+            key.put(record, LongKeyRecordStub.PAIR_SINK);
+            final MapValue value = key.createValue();
+            // The anchor value layout in slot order: anchor LONG, initialized BYTE,
+            // tombstone BYTE, dirty-cadence SHORT. See LiveViewWindow.anchorMapValueTypes().
+            value.putLong(0, 42L);
+            value.putByte(1, (byte) 1);
+            value.putByte(2, (byte) 1);
+            value.putShort(3, (short) 1);
+            map.clear();
+            return map;
+        } catch (Throwable th) {
+            map.close();
+            throw th;
+        }
+    }
+
+    /**
+     * An anchored window over a single LONG partition key, with a constant anchor so every
+     * row of one key stays in one bucket and the frontier sweep never fires. Enough to
+     * drive {@link LiveViewWindow#processRow} without a compiled live view, which is what
+     * a case needs to fail one function's mark and not another's.
+     */
+    private LiveViewWindow standaloneWindow(ObjList<WindowFunction> functions) {
+        return standaloneWindow(functions, new SingleColumnType(ColumnType.LONG), LongKeyRecordStub.SINK);
+    }
+
+    /**
+     * The same window over a caller-chosen partition-key shape, which is what a case that
+     * turns on the anchor map's implementation needs: MapFactory picks that implementation
+     * off the key shape and the value width, so the key is the only handle a test has on
+     * it. See {@link LongKeyRecordStub#PAIR_KEY_TYPES}.
+     */
+    private LiveViewWindow standaloneWindow(
+            ObjList<WindowFunction> functions,
+            ColumnTypes keyTypes,
+            RecordSink keySink
+    ) {
+        return standaloneWindow(
+                functions,
+                keyTypes,
+                keySink,
+                MapFactory.createUnorderedMap(configuration, keyTypes, LiveViewWindow.anchorMapValueTypes()),
+                null
+        );
+    }
+
+    /**
+     * The same window over a caller-supplied anchor map and per-view tracker, which is what
+     * a case that seeds the map's heap or fails one of the window's own allocations needs.
+     * The window takes ownership of the map and frees it on close, as it does the one the
+     * other overloads hand it.
+     */
+    private LiveViewWindow standaloneWindow(
+            ObjList<WindowFunction> functions,
+            ColumnTypes keyTypes,
+            RecordSink keySink,
+            Map anchorMap,
+            MemoryTracker memoryTracker
+    ) {
+        return new LiveViewWindow(
+                configuration,
+                "w",
+                new LongConstant(1_000L),
+                ColumnType.LONG,
+                keyTypes,
+                anchorMap,
+                keySink,
+                // The anchor is not monotone, so no sweep runs and the anchor-key sink is
+                // never reached.
+                keySink,
+                // No compiled group at all: these functions keep the private maps the
+                // cases read, and the window has neither a storage plan nor a fused one.
+                null,
+                null,
+                null,
+                null,
+                functions,
+                false,
+                null,
+                memoryTracker
+        );
     }
 
     private void assertDirtySetsClearedByPublish() {
@@ -1313,6 +2375,183 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * One anchored window whose frame excludes the current row, carrying row_number - which the
+     * window's root holds, fused or not - an EMA, which keeps a dirty set, and two rings: count
+     * and a DECIMAL first_value. Only the EMA keeps a set. Its seals stay incremental over the
+     * keys its rows moved, and a seal walks each ring whole whatever a set would name, so the
+     * rings keep none: before and after a restart, and through the repair a late row takes.
+     * <p>
+     * The frame sits on {@code w} itself. A call refining {@code w} with a frame of its own,
+     * {@code count(x) OVER (w RANGE ... EXCLUDE CURRENT ROW)}, is refused at CREATE with advice
+     * to add the ANCHOR the window already has - a separate bug.
+     */
+    private void assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet(boolean isFused) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, String.valueOf(isFused));
+        setDurationOnlyCheckpointCadence();
+        assertMemoryLeak(() -> {
+            setCurrentMicros(DURATION_CADENCE_CLOCK_MICROS);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, d64 DECIMAL(18,2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String select = "SELECT ts, sym, row_number() OVER w AS rn, avg(x, 'period', 5) OVER w AS e, "
+                    + "count(x) OVER w AS c, first_value(d64) OVER w AS f FROM base WINDOW w AS ("
+                    + EXCLUDE_CURRENT_ROW_WINDOW + ")";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+            // One day's rows, so the plain window over the same frame recomputes the anchored one.
+            final String recompute = select.replace(" ANCHOR DAILY '00:00'", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Eight keys, which the first refresh seals.
+                commitBase("('2026-01-01T11:00:01.000000Z', 'k1', 10.0, 1.5m), ('2026-01-01T11:00:02.000000Z', 'k2', 20.0, 2.5m), "
+                        + "('2026-01-01T11:00:03.000000Z', 'k3', 30.0, 3.5m), ('2026-01-01T11:00:04.000000Z', 'k4', 40.0, 4.5m), "
+                        + "('2026-01-01T11:00:05.000000Z', 'k5', 50.0, 5.5m), ('2026-01-01T11:00:06.000000Z', 'k6', 60.0, 6.5m), "
+                        + "('2026-01-01T11:00:07.000000Z', 'k7', 70.0, 7.5m), ('2026-01-01T11:00:08.000000Z', 'k8', 80.0, 8.5m)", job);
+                assertOnlyTheEmaKeepsADirtySet(0);
+
+                // One row each on k3, k4 and k5 inside the cadence: the EMA's set names the three.
+                final long[] beforeSeal = functionCaptureLedger(viewInstance());
+                commitBase("('2026-01-01T11:00:20.000000Z', 'k3', 31.0, 3.25m), "
+                        + "('2026-01-01T11:00:21.000000Z', 'k4', 41.0, 4.25m), "
+                        + "('2026-01-01T11:00:22.000000Z', 'k5', 51.0, 5.25m)", job);
+                assertOnlyTheEmaKeepsADirtySet(3);
+                assertFunctionCaptureDelta("no seal inside the cadence", beforeSeal, viewInstance(), 0, 0, 0, 0);
+
+                // Six minutes on, one more row on k5 seals: the EMA's root over the three keys it
+                // names, each ring's over all eight - three roots and 3 + 2 x 8 keys.
+                setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+                commitBase("('2026-01-01T11:00:40.000000Z', 'k5', 52.0, 5.75m)", job);
+                assertFunctionCaptureDelta("the duration seal", beforeSeal, viewInstance(), 3, 1, 3 + 2 * 8, 3 + 2 * 8);
+                assertOnlyTheEmaKeepsADirtySet(0);
+                assertNoRefreshFaults("lv");
+            }
+
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // 15 seconds below the head, between the two roots: a repair.
+                commitBase("('2026-01-01T11:00:25.000000Z', 'k6', 61.0, 6.25m)", job);
+                assertNoRefreshFaults("lv");
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM (" + recompute + ") ORDER BY ts, sym",
+                        "SELECT * FROM lv ORDER BY ts, sym",
+                        LOG,
+                        true
+                );
+                assertRingsKeepNoCheckpointDirtySet(viewRings(), 8);
+
+                // The seal after the repair: the EMA's root incremental again, each ring's whole.
+                final long[] beforeSeal = functionCaptureLedger(viewInstance());
+                setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+                commitBase("('2026-01-01T11:00:50.000000Z', 'k7', 71.0, 7.25m)", job);
+                assertFunctionCaptureDelta("the seal after the repair", beforeSeal, viewInstance(), 3, 1, 1 + 2 * 8, 1 + 2 * 8);
+                assertOnlyTheEmaKeepsADirtySet(0);
+                assertNoRefreshFaults("lv");
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM (" + recompute + ") ORDER BY ts, sym",
+                        "SELECT * FROM lv ORDER BY ts, sym",
+                        LOG,
+                        true
+                );
+            }
+        });
+    }
+
+    /**
+     * Asserts {@link #assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet}'s view holds one dirty
+     * set, the EMA's, naming {@code emaDirtyKeys} keys: row_number keeps none, and neither ring
+     * keeps or claims one over its eight keys.
+     */
+    private void assertOnlyTheEmaKeepsADirtySet(long emaDirtyKeys) {
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        Assert.assertEquals(4, functions.size());
+        int emaCount = 0;
+        int rowNumberCount = 0;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (function.supportsCheckpointRingState()) {
+                continue;
+            }
+            final Map dirty = function.getCheckpointDirtyPartitionMap();
+            if ("avg".equals(function.getName())) {
+                emaCount++;
+                Assert.assertTrue("the EMA claims a checkpoint dirty set", function.isCheckpointDirtyTracked());
+                Assert.assertNotNull("the EMA keeps a checkpoint dirty set", dirty);
+                Assert.assertEquals("the EMA's dirty keys", emaDirtyKeys, dirty.size());
+            } else {
+                rowNumberCount++;
+                Assert.assertEquals("RowNumberFunction", function.getClass().getSimpleName());
+                Assert.assertNull("row_number keeps no checkpoint dirty set", dirty);
+                Assert.assertFalse("row_number claims no checkpoint dirty set", function.isCheckpointDirtyTracked());
+            }
+        }
+        Assert.assertEquals(1, emaCount);
+        Assert.assertEquals(1, rowNumberCount);
+        final ObjList<WindowFunction> rings = viewRings();
+        Assert.assertEquals("count and first_value are the rings", 2, rings.size());
+        assertRingsKeepNoCheckpointDirtySet(rings, 8);
+    }
+
+    /**
+     * Builds {@link #testRingShapedCallsKeepNoCheckpointDirtySet}'s view partitioned by
+     * {@code partitionBy}, drives it through two duration seals and drops it. Four rings: count,
+     * first_value, nth_value over a TIMESTAMP and a DECIMAL sum.
+     */
+    private void assertRingShapedCallsKeepNoCheckpointDirtySet(String suffix, String partitionBy) throws Exception {
+        final String base = "base_" + suffix;
+        final String lv = "lv_" + suffix;
+        execute("CREATE TABLE " + base + " (ts TIMESTAMP, ks SYMBOL, kl LONG, ps SYMBOL, pi INT, x DOUBLE, t TIMESTAMP, "
+                + "d64 DECIMAL(18,2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final String select = "SELECT ts, ks, kl, ps, pi, count(x) OVER w AS c, first_value(x) OVER w AS f, "
+                + "nth_value(t, 2) OVER w AS n, sum(d64) OVER w AS s FROM " + base + " WINDOW w AS (PARTITION BY "
+                + partitionBy + " ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW "
+                + "ANCHOR DAILY '00:00')";
+        execute("CREATE LIVE VIEW " + lv + " FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, lv);
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(lv);
+            Assert.assertNotNull(instance);
+            final String tag = "PARTITION BY " + partitionBy + ": ";
+
+            // One key, which the first refresh seals: four roots of one key each.
+            long[] beforeSeal = functionCaptureLedger(instance);
+            commitRingKeys(base, "2026-01-01T11:00:00.000000Z", 1, job);
+            final ObjList<WindowFunction> rings = instance.getCompiledPlan().getWindowFactory().getAnchorableWindowFunctions();
+            Assert.assertEquals(tag + "the ANCHOR window dispatches to every call", 4, rings.size());
+            assertFunctionCaptureDelta(tag + "the first seal", beforeSeal, instance, 4, 0, 4, 4);
+            assertRingsKeepNoCheckpointDirtySet(rings, 1);
+
+            // Every key in one commit, then every key again, inside the cadence.
+            beforeSeal = functionCaptureLedger(instance);
+            commitRingKeys(base, "2026-01-01T11:01:00.000000Z", RING_KEYS, job);
+            assertRingsKeepNoCheckpointDirtySet(rings, RING_KEYS);
+            commitRingKeys(base, "2026-01-01T11:02:00.000000Z", RING_KEYS, job);
+            assertRingsKeepNoCheckpointDirtySet(rings, RING_KEYS);
+            assertFunctionCaptureDelta(tag + "no seal inside the cadence", beforeSeal, instance, 0, 0, 0, 0);
+
+            // Six minutes on, one row seals: each of the four rings walked whole.
+            setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+            commitRingKeys(base, "2026-01-01T11:05:00.000000Z", 1, job);
+            assertFunctionCaptureDelta(tag + "the duration seal", beforeSeal, instance, 4, 0, 4 * RING_KEYS, 4 * RING_KEYS);
+            assertRingsKeepNoCheckpointDirtySet(rings, RING_KEYS);
+            assertNoRefreshFaults(lv);
+            // One day's rows, so the plain window over the same frame recomputes the anchored one.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM (" + select.replace(" ANCHOR DAILY '00:00'", "") + ") ORDER BY ts",
+                    "SELECT * FROM " + lv + " ORDER BY ts",
+                    LOG,
+                    true
+            );
+            execute("DROP LIVE VIEW " + lv);
+            drainJob(job);
+        }
+        execute("DROP TABLE " + base);
+        drainWalQueue();
+    }
+
+    /**
      * Asserts every function that keeps a dirty set of its own holds exactly
      * {@code expected} keys.
      * <p>
@@ -1373,10 +2612,51 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
+     * Whether the view's anchored window owns any grouped accumulator, and so holds state
+     * the functions would otherwise each keep. The per-function assertions below have
+     * nothing to read for such a function; the window's own are what carry them.
+     * <p>
+     * A plan with no component at all does not count. Every anchored window has a storage
+     * plan - that is what its window root is laid out by - and one the compiler admitted
+     * no projection into leaves every function exactly where it was, on its own map and
+     * its own root, which is what the residual cases here need.
+     */
+    private boolean isWindowStateFused() {
+        final LiveViewWindowStatePlan plan = anchorWindow().getCheckpointWindowStatePlan();
+        return plan != null && plan.getComponentCount() > 0;
+    }
+
+    /**
      * Asserts every per-partition state root at the head boundary names exactly
      * {@code expected} partitions.
+     * <p>
+     * This view's two calls fuse, so the head's state root is one window root holding
+     * both of them and the function directory is empty. The legacy arm is kept because
+     * the shape is a property of the compiled plan rather than of the assertion: a view
+     * the plan declines still seals one root per function, and the count means the same
+     * thing either way.
      */
     private void assertHeadRootPartitionCount(int expected) {
+        assertHeadRootPartitionCount(expected, true, true);
+    }
+
+    /**
+     * As {@link #assertHeadRootPartitionCount(int)}, for the function roots alone. A case
+     * that moves state out from under the functions without touching the anchor map wants
+     * the two halves counted separately.
+     */
+    private void assertHeadFunctionRootPartitionCount(int expected) {
+        assertHeadRootPartitionCount(expected, false, true);
+    }
+
+    /**
+     * As {@link #assertHeadRootPartitionCount(int)}, for the window root alone.
+     */
+    private void assertHeadWindowRootPartitionCount(int expected) {
+        assertHeadRootPartitionCount(expected, true, false);
+    }
+
+    private void assertHeadRootPartitionCount(int expected, boolean isWindowRootRead, boolean isFunctionRootRead) {
         final LiveViewInstance instance = viewInstance();
         try (
                 Path dir = checkpointsDir(instance);
@@ -1390,6 +2670,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
                     LiveViewCheckpointFunctionDirectory functions = new LiveViewCheckpointFunctionDirectory(configuration);
                     LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
+                    LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
                     LiveViewCheckpointPartitionMapReader partitions = new LiveViewCheckpointPartitionMapReader(configuration)
             ) {
                 timeline.of(dir);
@@ -1399,16 +2680,25 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
                 root.of(dir, head.rootRef);
+                root.getStateRootRef(stateRootRef);
                 int stateRoots = 0;
-                root.getFunctionDirectoryRef(functionDirectoryRef);
-                functions.of(dir, functionDirectoryRef);
-                for (int i = 0, n = functions.size(); i < n; i++) {
-                    functions.getRootRef(i, functionRootRef);
-                    functionRoot.of(dir, functionRootRef);
-                    functionRoot.getPartitionMapRootRef(partitionMapRoot);
-                    assertPartitionCount("function " + i + " root", expected, partitions, partitionMapRoot);
+                if (isWindowRootRead && !stateRootRef.isNull() && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
+                    windowRoot.getPartitionMapRootRef(partitionMapRoot);
+                    assertPartitionCount("window state root", expected, partitions, partitionMapRoot);
                     stateRoots++;
+                }
+                if (isFunctionRootRead) {
+                    root.getFunctionDirectoryRef(functionDirectoryRef);
+                    functions.of(dir, functionDirectoryRef);
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        functions.getRootRef(i, functionRootRef);
+                        functionRoot.of(dir, functionRootRef);
+                        functionRoot.getPartitionMapRootRef(partitionMapRoot);
+                        assertPartitionCount("function " + i + " root", expected, partitions, partitionMapRoot);
+                        stateRoots++;
+                    }
                 }
                 Assert.assertTrue("the view declares per-partition checkpoint state", stateRoots > 0);
             }
@@ -1463,7 +2753,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     dirty == null || dirty.size() == 0
             );
         }
-        Assert.assertTrue("no window function carries partition state", checked > 0);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1501,7 +2791,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     function.getCheckpointBaselineGeneration()
             );
         }
-        Assert.assertTrue("no window function tracks dirty partitions", checked > 0);
+        Assert.assertTrue("no window function tracks dirty partitions", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1554,7 +2844,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     function.getCheckpointBaselineGeneration()
             );
         }
-        Assert.assertTrue("no window function carries partition state", checked > 0);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || checked > 0);
     }
 
     /**
@@ -1564,16 +2854,58 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private void assertUnfusedAvgViewMatchesRecompute(String anchorTime) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
                 + anchorTime + ":00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "avg(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "avg(amount + 0.0) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_avg, "
-                + "ksum(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+                + "ksum(amount + 0.0) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_ksum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
                 "(" + recompute + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * The {@link #createUnfusedView} shape's oracle, built the same way
+     * {@link #recompute(String)} builds the fused view's.
+     */
+    private void assertUnfusedViewMatchesRecompute(String anchorTime) throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
+                + anchorTime + ":00.000000Z'::timestamp)";
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount + 0.0) over (partition by account_id, bucket order by created_at "
+                + "rows between unbounded preceding and current row) as cumulative_sum "
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recompute + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
+    // The view over the rows of tx with a positive amount, recomputed as recompute(NOON_ANCHOR)
+    // recomputes the unfiltered one.
+    private void assertFilteredViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T" + NOON_ANCHOR + ":00.000000Z'::timestamp)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, account_id, "
+                        + "sum(amount) over (partition by account_id, bucket order by created_at "
+                        + "rows between unbounded preceding and current row) as cumulative_sum, "
+                        + "count(account_id) over (partition by account_id, bucket order by created_at "
+                        + "rows between unbounded preceding and current row) as cumulative_count "
+                        + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx where amount > 0)) order by 2, 1",
                 "(lv) order by 2, 1",
                 LOG,
                 true
@@ -1647,6 +2979,26 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         driveRefreshToQuiescence(job);
     }
 
+    private void commitBase(String values, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Commits one row for each of keys 1 to {@code keys}, a millisecond apart from
+     * {@code fromTimestamp}. Key x is the same under every PARTITION BY the ring case takes:
+     * {@code ks} is 'kx', {@code kl} is x, and ({@code ps}, {@code pi}) is ('s' || x % 20, x / 20).
+     */
+    private void commitRingKeys(String base, String fromTimestamp, int keys, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO " + base + " SELECT ('" + fromTimestamp + "'::timestamp + x * 1_000)::timestamp, "
+                + "('k' || x)::symbol, x, ('s' || (x % 20))::symbol, (x / 20)::int, x * 1.5, "
+                + "('2025-06-01T00:00:00.000000Z'::timestamp + x)::timestamp, (x % 100)::decimal(18,2) "
+                + "FROM long_sequence(" + keys + ")");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
     /**
      * The unfused view again, over the two accumulators whose own markPartitionAlive
      * used to skip the dirty marking. Both arguments are expressions, so the fused
@@ -1654,15 +3006,15 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * and root the case reads - see {@link #createUnfusedView}.
      */
     private void createUnfusedAvgView(String anchorTime, String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "avg(amt_txn + 0.0) over w as cumulative_avg, "
-                + "ksum(amt_txn + 0.0) over w as cumulative_ksum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "avg(amount + 0.0) over w as cumulative_avg, "
+                + "ksum(amount + 0.0) over w as cumulative_ksum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
@@ -1678,27 +3030,27 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * tombstone or eviction bit there describes a state nothing in that path reads.
      */
     private void createUnfusedView(String anchorTime, String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn + 0.0) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "sum(amount + 0.0) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
     private void createView(String anchorTime, String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
@@ -1709,17 +3061,52 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * accounts a case asks for.
      */
     private void createViewWithGeneratedSeed(String anchorTime, int accounts) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("INSERT INTO tx SELECT ('2026-01-01T11:00:00.000000Z'::timestamp + x * 1_000)::timestamp, "
                 + "('acct-' || x)::symbol, x * 1.0 FROM long_sequence(" + accounts + ")");
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
+    }
+
+    /**
+     * One row of {@code account} at {@code second} past 11:00, as an INSERT tuple. The
+     * cases that drive a run of corrections read as a sequence of timestamps rather than
+     * as string concatenation this way.
+     */
+    private String row(String account, int second) {
+        return "('2026-01-01T11:00:" + String.format("%02d", second) + ".000000Z', '" + account + "', 1.0)";
+    }
+
+    /**
+     * The checkpoint ids the published timeline holds, oldest first. What it reports on
+     * is which publication a repair took: a splice re-versions a boundary's payload and
+     * keeps its logical coordinate, so the list comes back unchanged, while a truncate
+     * drops every entry above the repair floor.
+     */
+    private LongList logicalCheckpointIds() {
+        final LongList ids = new LongList();
+        final LiveViewInstance instance = viewInstance();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the view must have published a generation", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration)
+            ) {
+                timeline.of(dir);
+                timeline.iterateAll(pin.getTimelineRootRef(), entry -> ids.add(entry.checkpointId));
+            }
+        }
+        return ids;
     }
 
     private long publishedGeneration() {
@@ -1755,7 +3142,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             }
             out.add(dirty.getKeyCapacity());
         }
-        Assert.assertTrue("no window function tracks dirty partitions", out.size() > 1);
+        Assert.assertTrue("no window function tracks dirty partitions", isWindowStateFused() || out.size() > 1);
         return out;
     }
 
@@ -1807,7 +3194,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             }
             out.add(function.getCheckpointLogicalStateBytes());
         }
-        Assert.assertTrue("no window function carries partition state", out.size() > 1);
+        Assert.assertTrue("no window function carries partition state", isWindowStateFused() || out.size() > 1);
         return out;
     }
 
@@ -1822,12 +3209,12 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private String recompute(String anchorTime) {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
                 + anchorTime + ":00.000000Z'::timestamp)";
-        return "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        return "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
-                + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                + "count(account_id) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_count "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
     }
 
     private void restartCycle() {
@@ -1887,6 +3274,18 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         Assert.assertTrue("no window function carries a tombstone slot", tombstoned > 0);
     }
 
+    // The ring-shaped window functions of the view, in projection order.
+    private ObjList<WindowFunction> viewRings() {
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        final ObjList<WindowFunction> rings = new ObjList<>();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (functions.getQuick(i).supportsCheckpointRingState()) {
+                rings.add(functions.getQuick(i));
+            }
+        }
+        return rings;
+    }
+
     private LiveViewInstance viewInstance() {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
@@ -1898,6 +3297,27 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * case can move the key between calls.
      */
     private static final class LongKeyRecordStub implements Record {
+        /**
+         * A two-column partition key, which is the shape that puts the anchor map on
+         * OrderedMap: MapFactory falls back to it for every multi-column key whatever the
+         * value width, and OrderedMap is the one implementation whose clear() leaves the
+         * value bytes it wrote standing rather than memsetting the region. Both columns
+         * read the stub's one field, so a key is still one long.
+         */
+        private static final ArrayColumnTypes PAIR_KEY_TYPES = new ArrayColumnTypes()
+                .add(ColumnType.LONG)
+                .add(ColumnType.LONG);
+        private static final RecordSink PAIR_SINK = new RecordSink() {
+            @Override
+            public void copy(Record r, RecordSinkSPI w) {
+                w.putLong(r.getLong(0));
+                w.putLong(r.getLong(1));
+            }
+
+            @Override
+            public void setFunctions(ObjList<Function> keyFunctions) {
+            }
+        };
         private static final RecordSink SINK = new RecordSink() {
             @Override
             public void copy(Record r, RecordSinkSPI w) {
@@ -1913,6 +3333,68 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         @Override
         public long getLong(int col) {
             return value;
+        }
+    }
+
+    /**
+     * A partitioned window function that marks exactly as the base class does and counts
+     * the marks, with a switch that makes one refuse. The refusal stands in for the
+     * per-view memory tracker tripping inside the dirty set's first allocation, which is
+     * the realistic way a mark throws.
+     */
+    private static final class MarkCountingFunctionStub extends BasePartitionedWindowFunction {
+        private static final ArrayColumnTypes KEY_TYPES = new ArrayColumnTypes().add(ColumnType.LONG);
+        private static final ArrayColumnTypes VALUE_TYPES = new ArrayColumnTypes().add(ColumnType.BYTE);
+        private boolean isFailing;
+        private int markedCount;
+
+        private MarkCountingFunctionStub() {
+            super(null, new VirtualRecord(keyFunctions()), LongKeyRecordStub.SINK, null);
+            this.tombstoneValueIndex = 0;
+        }
+
+        @Override
+        public String getName() {
+            return "mark_counting";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            throw new UnsupportedOperationException();
+        }
+
+        /**
+         * Counts what the base class's gate lets through, and refuses when the switch is on.
+         * The stub inherits {@link BasePartitionedWindowFunction#markPartitionAlive(Record, boolean)}
+         * rather than reimplementing its {@code isFirstCadenceTouch} test, so every count this
+         * case asserts on observes the production gate itself. The refusal sits at the entry to
+         * {@code markCheckpointPartitionDirty}, the method that lazily allocates the dirty set
+         * under the per-view tracker, so it throws out of the same call and leaves that set
+         * untouched - what a tracker breach on the allocation leaves behind.
+         */
+        @Override
+        protected void markCheckpointPartitionDirty(Record record) {
+            if (isFailing) {
+                throw CairoException.critical(0).put("mark refused");
+            }
+            super.markCheckpointPartitionDirty(record);
+            markedCount++;
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, KEY_TYPES, VALUE_TYPES);
+        }
+
+        private static ObjList<Function> keyFunctions() {
+            final ObjList<Function> functions = new ObjList<>();
+            functions.add(LongColumn.newInstance(0));
+            return functions;
         }
     }
 
@@ -1942,7 +3424,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
         }
 
         @Override

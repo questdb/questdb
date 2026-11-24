@@ -1473,6 +1473,50 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCtasCopiesAllNullCaseCast() throws Exception {
+        // The cast an all-NULL CASE takes is the follow-up the NULL-column refusal suggests. The copy
+        // read the CASE as an INT, which threw before the CASE folded to the NULL literal.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                      ('2026-04-01T00:00:00.000000Z', 1),
+                      ('2026-04-01T00:30:00.000000Z', -1),
+                      ('2026-04-01T01:00:00.000000Z', NULL)""");
+            drainWalQueue();
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                execute("CREATE TABLE t2 AS (SELECT ts, (CASE WHEN x > 0 THEN NULL END)::int c FROM t) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                drainWalQueue();
+                assertQuery("SELECT \"column\", type FROM table_columns('t2')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                column\ttype
+                                ts\tTIMESTAMP
+                                c\tINT
+                                """);
+                assertQuery("SELECT ts, c FROM t2")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tc
+                                2026-04-01T00:00:00.000000Z\tnull
+                                2026-04-01T00:30:00.000000Z\tnull
+                                2026-04-01T01:00:00.000000Z\tnull
+                                """);
+                execute("DROP TABLE t2");
+            }
+            // without the cast the CASE stays of the NULL type, which no column can store
+            assertExceptionNoLeakCheck(
+                    "CREATE TABLE t4 AS (SELECT ts, (CASE WHEN x > 0 THEN NULL END) c FROM t)",
+                    0,
+                    "cannot create NULL-type column, please use type cast, e.g. c::type"
+            );
+        });
+    }
+
+    @Test
     public void testDropIndexPosting() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");

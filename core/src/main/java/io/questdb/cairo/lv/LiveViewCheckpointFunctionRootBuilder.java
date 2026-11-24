@@ -26,13 +26,12 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 import java.util.Arrays;
 
 /**
@@ -51,101 +50,68 @@ import java.util.Arrays;
  * most one file, in exactly one of {@code data/} and {@code meta/} - so they
  * share the list without ambiguity.
  */
-public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
+public class LiveViewCheckpointFunctionRootBuilder extends AbstractLiveViewCheckpointStateRootBuilder {
 
-    private static final long NO_SEGMENT = -1;
-    private final Path checkpointsDir = new Path();
     private byte[] functionIdentity = new byte[0];
     private byte[] keySchema = new byte[0];
     private final LiveViewCheckpointFunctionRoot oldFunctionRoot;
-    private final LiveViewCheckpointPageRef oldPartitionMapRoot = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointStatePageRef oldScalarStateRef = new LiveViewCheckpointStatePageRef();
-    private final LiveViewCheckpointPartitionMapEntry oldEntry = new LiveViewCheckpointPartitionMapEntry();
-    private final LiveViewCheckpointPartitionMapReader partitionMapReader;
-    private final LiveViewCheckpointPartitionMapWriter partitionMapWriter;
     private final LiveViewCheckpointFunctionRoot resultFunctionRoot;
-    private final LongList segmentUseCounts = new LongList();
-    private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private final LiveViewCheckpointStatePageRef scalarStateRef = new LiveViewCheckpointStatePageRef();
-    private LiveViewCheckpointPartitionMapWriter.Mutation[] mutations = new LiveViewCheckpointPartitionMapWriter.Mutation[8];
-    private boolean initialized;
-    private long lastSegmentBytes;
-    private int mutationCount;
-    /**
-     * Metadata segment holding the function-root page this build supersedes, or
-     * {@link #NO_SEGMENT} for the first root of a function.
-     */
-    private long oldRootPageSegmentId = NO_SEGMENT;
     private int stateFormatVersion;
 
     public LiveViewCheckpointFunctionRootBuilder(@NotNull CairoConfiguration configuration) {
+        this(configuration, new LiveViewCheckpointPartitionMapObjectPool());
+    }
+
+    LiveViewCheckpointFunctionRootBuilder(
+            @NotNull CairoConfiguration configuration,
+            @NotNull LiveViewCheckpointPartitionMapObjectPool objectPool
+    ) {
+        super(configuration, objectPool, "function root");
         oldFunctionRoot = new LiveViewCheckpointFunctionRoot(configuration);
-        partitionMapReader = new LiveViewCheckpointPartitionMapReader(configuration);
-        partitionMapWriter = new LiveViewCheckpointPartitionMapWriter(configuration);
         resultFunctionRoot = new LiveViewCheckpointFunctionRoot(configuration);
-        segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
     }
 
     @Override
     public void close() {
         Misc.free(oldFunctionRoot);
-        Misc.free(partitionMapReader);
-        Misc.free(partitionMapWriter);
         Misc.free(resultFunctionRoot);
-        Misc.free(segmentWriter);
-        Misc.free(checkpointsDir);
+        super.close();
     }
 
-    public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
-        ensureInitialized();
-        final LongList candidateCounts = new LongList(segmentUseCounts);
-        for (int i = 0; i < mutationCount; i++) {
-            final LiveViewCheckpointPartitionMapWriter.Mutation mutation = mutations[i];
-            final boolean hadOld = partitionMapReader.find(oldPartitionMapRoot, mutation.entry().getKey(), oldEntry);
-            if (hadOld) {
-                adjustRefs(candidateCounts, oldEntry, -1);
-            }
-            if (!mutation.isRemove()) {
-                adjustRefs(candidateCounts, mutation.entry(), 1);
+    @Override
+    protected void stageMutations() {
+        mutations.sortAndValidate();
+        for (int i = 0, n = mutations.getMutationCount(); i < n; i++) {
+            final int mutationIndex = mutations.getSortedMutationIndex(i);
+            partitionMapReader.adjustStateRefCounts(oldPartitionMapRoot, mutations, mutationIndex, segmentUseCounts, -1);
+            if (mutations.operation(mutationIndex) != LiveViewCheckpointMutationArena.OP_REMOVE) {
+                mutations.adjustRefCounts(segmentUseCounts, mutationIndex, 1);
             }
         }
+    }
 
-        segmentWriter.of(checkpointsDir, metadataSegmentId);
-        final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
-        partitionMapWriter.applyToOpenSegment(
-                oldPartitionMapRoot,
-                mutations,
-                mutationCount,
-                segmentWriter,
-                partitionMapRoot
-        );
-        // The metadata closure moves by exactly what the path copy took away and
-        // what this segment gains: every superseded map page, the root page this
-        // build replaces, and the pages written here - the map's copied path plus
-        // the root page about to follow it.
-        final LongList releasedSegmentIds = partitionMapWriter.getLastReleasedSegmentIds();
-        for (int i = 0, n = releasedSegmentIds.size(); i < n; i++) {
-            LiveViewCheckpointMetadata.adjustSegmentUseCount(candidateCounts, releasedSegmentIds.getQuick(i), -1);
-        }
-        if (oldRootPageSegmentId != NO_SEGMENT) {
-            LiveViewCheckpointMetadata.adjustSegmentUseCount(candidateCounts, oldRootPageSegmentId, -1);
-        }
-        LiveViewCheckpointMetadata.adjustSegmentUseCount(candidateCounts, metadataSegmentId, partitionMapWriter.getLastSegmentPageCount() + 1);
+    @Override
+    protected void writeRoot(
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef partitionMapRoot,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
         resultFunctionRoot.ofBuilder(
                 functionIdentity,
                 stateFormatVersion,
                 keySchema,
                 scalarStateRef,
                 partitionMapRoot,
-                candidateCounts
+                segmentUseCounts
         );
-        resultFunctionRoot.writeTo(segmentWriter, out);
-        lastSegmentBytes = segmentWriter.commit();
-        segmentUseCounts.clear();
-        segmentUseCounts.add(candidateCounts);
-        oldPartitionMapRoot.of(partitionMapRoot.getSegmentId(), partitionMapRoot.getOffset(), partitionMapRoot.getLength());
-        oldRootPageSegmentId = metadataSegmentId;
-        mutationCount = 0;
+        resultFunctionRoot.writeTo(writer, out);
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
+        return this.functionIdentity == functionIdentity && this.keySchema == keySchema;
     }
 
     public void of(
@@ -155,58 +121,117 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
             int stateFormatVersion,
             @NotNull byte[] keySchema
     ) {
-        initialized = false;
+        of0(checkpointsDir, oldFunctionRootRef, functionIdentity, stateFormatVersion, keySchema, false);
+    }
+
+    /**
+     * Borrows compiler-owned arrays through the synchronous {@link #build} call.
+     * The caller must keep them immutable and alive until build returns.
+     */
+    void ofBorrowedCompiled(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointPageRef oldFunctionRootRef,
+            @NotNull byte[] functionIdentity,
+            int stateFormatVersion,
+            @NotNull byte[] keySchema
+    ) {
+        of0(checkpointsDir, oldFunctionRootRef, functionIdentity, stateFormatVersion, keySchema, true);
+    }
+
+    private void of0(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointPageRef oldFunctionRootRef,
+            @NotNull byte[] functionIdentity,
+            int stateFormatVersion,
+            @NotNull byte[] keySchema,
+            boolean isBorrowed
+    ) {
+        clearBorrowedCompiled();
         if (functionIdentity.length == 0 || stateFormatVersion <= 0) {
             throw CairoException.critical(0).put("live view checkpoint function identity or state version invalid");
         }
         LiveViewCheckpointMetadata.validateByteArrayLength(functionIdentity.length, "function identity");
         LiveViewCheckpointMetadata.validateByteArrayLength(keySchema.length, "function key schema");
-        this.checkpointsDir.of(checkpointsDir);
-        partitionMapReader.of(checkpointsDir);
-        partitionMapWriter.of(checkpointsDir);
-        this.functionIdentity = Arrays.copyOf(functionIdentity, functionIdentity.length);
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
+        ofCheckpointsDir(checkpointsDir);
+        this.functionIdentity = isBorrowed ? functionIdentity : functionIdentity.clone();
+        this.keySchema = isBorrowed ? keySchema : keySchema.clone();
         this.stateFormatVersion = stateFormatVersion;
-        mutationCount = 0;
-        segmentUseCounts.clear();
-        oldRootPageSegmentId = oldFunctionRootRef.isNull() ? NO_SEGMENT : oldFunctionRootRef.getSegmentId();
-        if (oldFunctionRootRef.isNull()) {
-            oldPartitionMapRoot.clear();
-            oldScalarStateRef.clear();
-            scalarStateRef.clear();
-        } else {
-            oldFunctionRoot.of(checkpointsDir, oldFunctionRootRef);
-            if (!Arrays.equals(functionIdentity, oldFunctionRoot.getFunctionIdentity())
-                    || !Arrays.equals(keySchema, oldFunctionRoot.getKeySchema())
-                    || stateFormatVersion != oldFunctionRoot.getStateFormatVersion()) {
-                throw CairoException.critical(0).put("live view checkpoint function root identity or schema mismatch");
+        boolean isInitializationComplete = false;
+        try {
+            oldRootPageSegmentId = oldFunctionRootRef.isNull() ? NO_SEGMENT : oldFunctionRootRef.getSegmentId();
+            if (oldFunctionRootRef.isNull()) {
+                oldPartitionMapRoot.clear();
+                oldScalarStateRef.clear();
+                scalarStateRef.clear();
+            } else {
+                oldFunctionRoot.of(checkpointsDir, oldFunctionRootRef);
+                if (!Arrays.equals(functionIdentity, oldFunctionRoot.getFunctionIdentity())
+                        || !Arrays.equals(keySchema, oldFunctionRoot.getKeySchema())
+                        || stateFormatVersion != oldFunctionRoot.getStateFormatVersion()) {
+                    throw CairoException.critical(0).put("live view checkpoint function root identity or schema mismatch");
+                }
+                oldFunctionRoot.getPartitionMapRootRef(oldPartitionMapRoot);
+                oldFunctionRoot.getScalarStateRef(oldScalarStateRef);
+                copyStateRef(oldScalarStateRef, scalarStateRef);
+                for (int i = 0; i < oldFunctionRoot.getSegmentUseCountSize(); i++) {
+                    segmentUseCounts.add(oldFunctionRoot.getSegmentId(i), oldFunctionRoot.getSegmentUseCount(i));
+                }
             }
-            oldFunctionRoot.getPartitionMapRootRef(oldPartitionMapRoot);
-            oldFunctionRoot.getScalarStateRef(oldScalarStateRef);
-            copyStateRef(oldScalarStateRef, scalarStateRef);
-            for (int i = 0; i < oldFunctionRoot.getSegmentUseCountSize(); i++) {
-                segmentUseCounts.add(oldFunctionRoot.getSegmentId(i), oldFunctionRoot.getSegmentUseCount(i));
+            isInitialized = true;
+            isInitializationComplete = true;
+        } finally {
+            if (!isInitializationComplete) {
+                clearBorrowedCompiled();
             }
         }
-        initialized = true;
     }
 
-    public long getLastSegmentBytes() {
-        return lastSegmentBytes;
+    @Override
+    protected void clearBorrowedCompiled() {
+        resultFunctionRoot.clearBorrowedCompiled();
+        isInitialized = false;
+        functionIdentity = null;
+        keySchema = null;
     }
 
+    @Override
+    public void detach() {
+        oldFunctionRoot.detach();
+        resultFunctionRoot.detach();
+        super.detach();
+    }
+
+    /**
+     * Stages one partition. The {@code keyLength} key bytes at {@code keyAddress} and the
+     * {@code scalarLength} scalar bytes at {@code scalarAddress} are copied before this
+     * returns.
+     */
     public void putPartition(
-            @NotNull byte[] key,
-            @NotNull byte[] scalarState,
+            long keyAddress,
+            int keyLength,
+            long scalarAddress,
+            int scalarLength,
             @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
     ) {
-        ensureInitialized();
-        mutationAt(mutationCount++).put(key, scalarState, statePageRefs);
+        putPartition(keyAddress, keyLength, scalarAddress, scalarLength, statePageRefs, statePageRefs.length);
     }
 
-    public void removePartition(@NotNull byte[] key) {
+    /**
+     * Stages one partition whose references are the first {@code statePageRefCount} of
+     * {@code statePageRefs}. The {@code keyLength} key bytes at {@code keyAddress}, the
+     * {@code scalarLength} scalar bytes at {@code scalarAddress} and those references are
+     * copied before this returns.
+     */
+    public void putPartition(
+            long keyAddress,
+            int keyLength,
+            long scalarAddress,
+            int scalarLength,
+            @NotNull LiveViewCheckpointStatePageRef[] statePageRefs,
+            int statePageRefCount
+    ) {
         ensureInitialized();
-        mutationAt(mutationCount++).remove(key);
+        mutations.put(keyAddress, keyLength, scalarAddress, scalarLength, statePageRefs, statePageRefCount);
     }
 
     public void setScalarStateRef(@NotNull LiveViewCheckpointStatePageRef ref) {
@@ -222,30 +247,9 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         copyStateRef(ref, oldScalarStateRef);
     }
 
-    private static void adjustRefs(LongList counts, LiveViewCheckpointPartitionMapEntry entry, int delta) {
-        for (int i = 0; i < entry.getStatePageCount(); i++) {
-            LiveViewCheckpointMetadata.adjustSegmentUseCount(counts, entry.getStatePageRef(i).getSegmentId(), delta);
-        }
-    }
-
     private static void copyStateRef(LiveViewCheckpointStatePageRef from, LiveViewCheckpointStatePageRef to) {
         to.of(from.getSegmentId(), from.getOffset(), from.getStoredLength(), from.getDecodedLength(),
                 from.getPageKind(), from.getCodec(), from.getRowCount(), from.getFlags());
     }
 
-    private void ensureInitialized() {
-        if (!initialized) {
-            throw CairoException.critical(0).put("live view checkpoint function root builder is not initialized");
-        }
-    }
-
-    private LiveViewCheckpointPartitionMapWriter.Mutation mutationAt(int index) {
-        if (index >= mutations.length) {
-            mutations = Arrays.copyOf(mutations, mutations.length * 2);
-        }
-        if (mutations[index] == null) {
-            mutations[index] = new LiveViewCheckpointPartitionMapWriter.Mutation();
-        }
-        return mutations[index];
-    }
 }

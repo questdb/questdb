@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,7 +45,15 @@ public class CreateLiveViewOperation implements Operation {
     private final long inMemoryInterval;
     private final char inMemoryIntervalUnit;
     private final int partitionBy;
+    // Per output column, in output order, the position in the CREATE statement of its top-level
+    // SELECT expression. A copy: the builder that fills it is the parser's reusable instance,
+    // cleared by the next parse, while the operation can outlive that parse (a PG prepared
+    // statement executes it again).
+    private final IntList selectColumnPositions;
     private final String selectSql;
+    // Where selectSql starts in the text the CREATE statement was parsed from. CairoEngine.createLiveView
+    // compiles selectSql on its own and adds this to the positions of the errors that compile raises.
+    private final int selectSqlPosition;
     private final String sqlText;
     private final byte startFromKind;
     // Unquoted START FROM '<timestamp>' text, null for NOW and BEGINNING. Parsed against the
@@ -61,6 +70,7 @@ public class CreateLiveViewOperation implements Operation {
             String baseTableName,
             int baseTableNamePosition,
             String selectSql,
+            int selectSqlPosition,
             @NotNull String sqlText,
             long flushEveryInterval,
             char flushEveryIntervalUnit,
@@ -71,13 +81,15 @@ public class CreateLiveViewOperation implements Operation {
             byte startFromKind,
             @Nullable String startFromTimestamp,
             int startFromTimestampPosition,
-            @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec
+            @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec,
+            IntList selectColumnPositions
     ) {
         this.viewName = viewName;
         this.viewNamePosition = viewNamePosition;
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.selectSql = selectSql;
+        this.selectSqlPosition = selectSqlPosition;
         this.sqlText = sqlText;
         this.flushEveryInterval = flushEveryInterval;
         this.flushEveryIntervalUnit = flushEveryIntervalUnit;
@@ -89,6 +101,7 @@ public class CreateLiveViewOperation implements Operation {
         this.startFromTimestamp = startFromTimestamp;
         this.startFromTimestampPosition = startFromTimestampPosition;
         this.anchorSpec = anchorSpec;
+        this.selectColumnPositions = new IntList(selectColumnPositions);
     }
 
     @Override
@@ -146,8 +159,16 @@ public class CreateLiveViewOperation implements Operation {
         return partitionBy;
     }
 
+    public IntList getSelectColumnPositions() {
+        return selectColumnPositions;
+    }
+
     public String getSelectSql() {
         return selectSql;
+    }
+
+    public int getSelectSqlPosition() {
+        return selectSqlPosition;
     }
 
     public String getSqlText() {

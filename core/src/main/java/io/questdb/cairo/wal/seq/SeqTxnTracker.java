@@ -944,11 +944,15 @@ public class SeqTxnTracker {
             if (gaugeDelta != 0) {
                 metrics.walMetrics().addWriterTxn(gaugeDelta);
             }
-            // Progress made means table is not suspended
+            // Progress made means table is not suspended, unless an operator suspended it. SUSPEND WAL can
+            // land while an apply that already passed the hard-suspension check runs, and only RESUME WAL
+            // lifts it: TableSequencerAPI.resumeTable clears the hard flag before setUnsuspended().
             if (writerTxn > prevWriterTxn) {
-                setSuspendedState(1);
+                if (!hardSuspended) {
+                    setSuspendedState(1);
+                }
                 progressMade = true;
-            } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
+            } else if (dirtyWriterTxn > prevDirtyWriterTxn && !hardSuspended) {
                 setSuspendedState(1);
             }
         }

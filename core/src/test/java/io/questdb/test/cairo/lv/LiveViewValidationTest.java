@@ -1319,8 +1319,9 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     private void assertLiveViewCreateRejected(String selectSql, String offendingToken) throws Exception {
+        final String fullSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql;
         try {
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
+            execute(fullSql);
             // Should not reach here; drop defensively so a spurious success does not
             // leave a view that trips the next assertion on the same name.
             execute("DROP LIVE VIEW lv");
@@ -1335,13 +1336,14 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                             "non-deterministic function cannot be used in live view: " + offendingToken
                     )
             );
-            // The position points at the offending token in the SELECT text (the LV
-            // create compiles op.getSelectSql() directly, so positions are relative
-            // to selectSql). Error Position Convention: point at the offending char.
+            // The position points at the offending token in the whole CREATE statement:
+            // the LV create compiles op.getSelectSql() on its own and maps the compile's
+            // positions back into the statement. Error Position Convention: point at the
+            // offending char.
             final int pos = e.getPosition();
             Assert.assertTrue(
-                    "position " + pos + " must point at '" + offendingToken + "' in: " + selectSql,
-                    pos >= 0 && selectSql.startsWith(offendingToken, pos)
+                    "position " + pos + " must point at '" + offendingToken + "' in: " + fullSql,
+                    pos >= 0 && fullSql.startsWith(offendingToken, pos)
             );
         }
     }

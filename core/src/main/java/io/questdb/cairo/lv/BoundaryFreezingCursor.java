@@ -33,29 +33,13 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Wraps a repair replay's source cursor and freezes every logical checkpoint
- * boundary the replay crosses, one row before the window functions see that row.
+ * Freezes each repair boundary B after all rows at or below B and before any row above
+ * it reaches the window functions. This cursor must sit below {@link AnchorDispatchingCursor}
+ * so the crossing row's anchor reset also happens after the freeze. Freezing in the
+ * replay loop is too late: the window cursor's hasNext() has already folded that row.
  * <p>
- * A checkpoint root at boundary {@code B} must describe the window state after
- * every qualifying row with designated timestamp {@code <= B} has been folded,
- * and no row above it. The replay reads rows in ascending timestamp order, so
- * that moment is the instant before the first row with {@code ts > B} reaches the
- * window functions - which is exactly where this cursor sits.
- * <p>
- * Freezing from the replay's own row loop instead cannot reach that instant:
- * {@code WindowRecordCursorFactory.WindowRecordCursor.hasNext()} folds the row
- * into every function before it returns, so a boundary frozen from the loop body
- * carries the crossing row as well. For a bounded RANGE frame that row is
- * physically in the frozen ring, and a later resume that restores the root and
- * replays from {@code B + 1} folds it a second time - a partition's sum then
- * counts it twice. The same wrapping order the anchor dispatch relies on is what
- * makes the boundary land between two rows rather than inside one; see
- * {@link AnchorDispatchingCursor}, which must stay ABOVE this cursor so a row's
- * anchor reset also lands after the boundary it crosses.
- * <p>
- * The cursor carries the freeze cursor ({@link #getCaptured()}) across the turns
- * a yielding repair takes, so a resumed turn continues where the previous one
- * stopped.
+ * The capture position survives yielding turns so a resumed repair continues at the
+ * next uncaptured boundary.
  */
 final class BoundaryFreezingCursor implements RecordCursor {
     private LiveViewWindow anchorWindow;
@@ -63,10 +47,26 @@ final class BoundaryFreezingCursor implements RecordCursor {
     private ObjList<LiveViewCheckpointTimelineEntry> boundaries;
     private LiveViewCheckpointTimelineStoreWriter.RepairCapture capture;
     private int captured;
+    // What every freeze asks first, or null when the caller freezes every boundary. See
+    // setFreezeBudget().
+    private FreezeBudget freezeBudget;
+    // The boundaries this cursor may still reach: the list's size while it is bound, and the
+    // count captured when the budget refused one, so both freeze loops end there. Every caller
+    // binds a list it does not change while bound, and of() resets this, so a repair that
+    // parks and resumes starts from the whole list again.
+    private int freezeLimit;
     private ObjList<WindowFunction> functions;
+    // Whether the budget refused a boundary since of().
+    private boolean isFreezeDeclined;
+    // The view whose batch-minimum window each freeze restarts, or null when the
+    // caller does not keep one. See of().
+    private LiveViewInstance instance;
     // Per-boundary row positions, one per entry in boundaries; null when the
     // caller derives the position from its own running row count instead.
     private LongList positions;
+    // The merged rows a keyed replay owes below the boundary this cursor is about to
+    // freeze, or null when the replay emits every row of the range itself. See RowDrain.
+    private RowDrain rowDrain;
     private long rowPosition;
     private LiveViewCheckpointRepairSession session;
     private int timestampIndex;
@@ -92,6 +92,11 @@ final class BoundaryFreezingCursor implements RecordCursor {
         anchorWindow = null;
         session = null;
         positions = null;
+        instance = null;
+        rowDrain = null;
+        freezeBudget = null;
+        freezeLimit = 0;
+        isFreezeDeclined = false;
     }
 
     /**
@@ -100,7 +105,7 @@ final class BoundaryFreezingCursor implements RecordCursor {
      * and any remaining boundary, so the state the replay ends on is theirs.
      */
     public void freezeRemaining() {
-        while (captured < boundaries.size()) {
+        while (captured < freezeLimit) {
             freezeOne();
         }
     }
@@ -135,11 +140,19 @@ final class BoundaryFreezingCursor implements RecordCursor {
         // Strictly below: a boundary AT this row's timestamp waits for the next
         // row, which is what admits the boundary's complete timestamp tie.
         final long timestamp = base.getRecord().getTimestamp(timestampIndex);
-        while (captured < boundaries.size()
+        while (captured < freezeLimit
                 && boundaries.getQuick(captured).maxTimestamp < timestamp) {
             freezeOne();
         }
         return true;
+    }
+
+    /**
+     * @return whether the budget refused a boundary since {@link #of}, which leaves every
+     * boundary from {@link #getCaptured()} up unfrozen
+     */
+    public boolean isFreezeDeclined() {
+        return isFreezeDeclined;
     }
 
     @Override
@@ -172,6 +185,40 @@ final class BoundaryFreezingCursor implements RecordCursor {
             int captured,
             int timestampIndex
     ) {
+        of(base, capture, boundaries, positions, functions, anchorWindow, session, captured, timestampIndex, null);
+    }
+
+    /**
+     * As above, with {@code instance} naming the view whose batch-minimum window each
+     * freeze restarts.
+     * <p>
+     * A boundary this cursor freezes is one the repair intends to publish, so the next
+     * freeze above it - the chain's, or the cadence seal that closes the repair - stands
+     * on it and measures its own batch from it. {@code minSeenTsSinceCheckpoint} is what
+     * that seal proves strict forwardness with, and nothing else restarts it here: a
+     * cadence seal gets the restart from {@code setHeadCheckpoint}, and a repair that
+     * truncates gets it from the head it clears. A repair that keeps its ladder clears
+     * no head, so without this the seal above the chain would read the whole replay's
+     * minimum, find it below the boundary it is sealing on, and freeze the live domain
+     * complete.
+     * <p>
+     * Null for the head-miss rebuild. A converging one puts the pre-repair runtime back,
+     * so no seal stands on its boundaries. One that reaches the end of the base table
+     * leaves the minimum to span its whole replay, so the seal that closes it replaces
+     * the newest root with a complete image, as it did before its splice chained.
+     */
+    public void of(
+            RecordCursor base,
+            LiveViewCheckpointTimelineStoreWriter.RepairCapture capture,
+            ObjList<LiveViewCheckpointTimelineEntry> boundaries,
+            @Nullable LongList positions,
+            ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable LiveViewCheckpointRepairSession session,
+            int captured,
+            int timestampIndex,
+            @Nullable LiveViewInstance instance
+    ) {
         this.base = base;
         this.capture = capture;
         this.boundaries = boundaries;
@@ -181,7 +228,12 @@ final class BoundaryFreezingCursor implements RecordCursor {
         this.session = session;
         this.captured = captured;
         this.timestampIndex = timestampIndex;
+        this.instance = instance;
+        this.rowDrain = null;
         this.rowPosition = 0;
+        this.freezeBudget = null;
+        this.freezeLimit = boundaries.size();
+        this.isFreezeDeclined = false;
     }
 
     @Override
@@ -195,6 +247,38 @@ final class BoundaryFreezingCursor implements RecordCursor {
         // dispatch does: recordAt positions on an arbitrary row out of order, and
         // a boundary only means anything against forward iteration.
         base.recordAt(record, atRowId);
+    }
+
+    /**
+     * Binds what every freeze asks before it freezes its boundary; call after {@link #of}. A
+     * refusal stops the freezing for good - this boundary and every one above it stay
+     * unfrozen - while the rows keep passing through unchanged.
+     * <p>
+     * Only a replay whose freeze stamps the running row position may bind one: a refused
+     * boundary would leave per-boundary positions or a keyed merge's drain misaligned with the
+     * boundaries above it.
+     */
+    public void setFreezeBudget(@Nullable FreezeBudget freezeBudget) {
+        assert positions == null && rowDrain == null : "a freeze budget beside per-boundary positions or a row drain";
+        this.freezeBudget = freezeBudget;
+    }
+
+    /**
+     * Binds the merge a keyed replay publishes beside its own rows, so a boundary this
+     * cursor freezes counts the rows that merge still owes below it.
+     * <p>
+     * A keyed replay's cursor yields only the affected keys' rows, and the block it
+     * publishes carries every other key's stored row as well. Those rows are appended by
+     * the merge rather than by the replay's loop, so without this the position a boundary
+     * records would count the replayed rows below it and none of the merged ones - and
+     * the ladder's cumulative positions would then describe a row set nothing wrote.
+     * <p>
+     * The replay still stamps {@link #setRowPosition} after every row it appends itself,
+     * and that stamp already carries whatever this drained before it, so the two compose
+     * rather than overwrite each other.
+     */
+    public void setRowDrain(@Nullable RowDrain rowDrain) {
+        this.rowDrain = rowDrain;
     }
 
     /**
@@ -219,6 +303,17 @@ final class BoundaryFreezingCursor implements RecordCursor {
     }
 
     private void freezeOne() {
+        if (freezeBudget != null && !freezeBudget.isAffordable(captured, boundaries.size())) {
+            isFreezeDeclined = true;
+            freezeLimit = captured;
+            return;
+        }
+        if (rowDrain != null) {
+            // Everything the merge owes at or below this boundary, appended before the
+            // boundary records the position it stands at. The replay stamps the position
+            // of its own last row; what this adds is the rows it did not emit itself.
+            rowPosition += rowDrain.drainUpTo(boundaries.getQuick(captured).maxTimestamp);
+        }
         capture.capture(
                 boundaries.getQuick(captured),
                 functions,
@@ -226,8 +321,42 @@ final class BoundaryFreezingCursor implements RecordCursor {
                 positions != null ? positions.getQuick(captured) : rowPosition
         );
         captured++;
+        if (instance != null) {
+            // Ordered with the freeze, and before the next row is folded: the boundary
+            // just frozen is where the batch the next seal measures begins.
+            instance.resetMinSeenTsSinceCheckpoint();
+        }
         if (session != null) {
             session.recordProgress(captured);
         }
+    }
+
+    /**
+     * What a replay that keeps its chain only while it pays for it asks before each freeze.
+     */
+    @FunctionalInterface
+    interface FreezeBudget {
+        /**
+         * Called where the boundary is about to freeze: every row at or below it folded,
+         * none above it.
+         *
+         * @param boundaryIndex the boundary about to freeze, which is how many froze before it
+         * @param boundaryCount every boundary the replay was bound with
+         * @return false to leave this boundary and every one above it unfrozen
+         */
+        boolean isAffordable(int boundaryIndex, int boundaryCount);
+    }
+
+    /**
+     * Appends the rows a keyed replay's merge owes below one boundary.
+     */
+    @FunctionalInterface
+    interface RowDrain {
+        /**
+         * @param tsInclusive the boundary's own timestamp
+         * @return how many rows it appended, which the boundary's live-view row position
+         * takes on top of the replay's own last stamp
+         */
+        long drainUpTo(long tsInclusive);
     }
 }

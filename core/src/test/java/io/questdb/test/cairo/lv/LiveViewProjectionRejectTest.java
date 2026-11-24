@@ -24,8 +24,16 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.File;
 
 /**
  * What a live view still turns away once projections around the window are admitted, and
@@ -39,7 +47,10 @@ import org.junit.Test;
  * <p>
  * Grouped by why the reject exists, because the groups have different futures. The shape
  * rejects are the ones a later change could lift; the purity and timestamp rejects are
- * contract, and lifting them would make a view that cannot be recomputed.
+ * contract, and lifting them would make a view that cannot be recomputed. So is the reject
+ * of an output column whose type no table can store: the view's table takes the SELECT's
+ * column types, and its WAL writer refuses such a column, so the view could never hold a
+ * row. Those tests assert the message and position exactly.
  *
  * @see LiveViewProjectionTest
  * @see io.questdb.cairo.lv.LiveViewCompiledPlan
@@ -47,10 +58,38 @@ import org.junit.Test;
 public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
 
     private static final String FRAME = "PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING";
+    private static final String WINDOW = "avg(px) OVER (" + FRAME + ")";
 
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
+    }
+
+    @Test
+    public void testCompiledOperationOwnsItsColumnPositions() throws Exception {
+        // A compiled CREATE LIVE VIEW can run after its compiler parsed another one, as a PG
+        // prepared statement executed again does. The second statement below puts every column
+        // at another position and projects a type the check accepts, so a position read from
+        // the parser's reusable state rather than the operation's own would point elsewhere.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String sqlA = lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base");
+            final String sqlB = "CREATE LIVE VIEW lv_other_name FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, NULL::double nn, " + WINDOW + " AS a FROM base";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (Operation opA = compiler.compile(sqlA, sqlExecutionContext).getOperation()) {
+                    compiler.compile(sqlB, sqlExecutionContext);
+                    try {
+                        opA.execute(sqlExecutionContext, null);
+                        Assert.fail("the first operation must reject its NULL column");
+                    } catch (SqlException e) {
+                        assertError(e, sqlA.indexOf("NULL n"), nullColumnMessage("n"));
+                    }
+                }
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv_other_name"));
+        });
     }
 
     @Test
@@ -65,6 +104,33 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
                     "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS c FROM base WHERE ts > '2026-08-07'",
                     "live view select cannot filter on the designated timestamp yet"
             );
+        });
+    }
+
+    @Test
+    public void testFirstUnstorableColumnIsReported() throws Exception {
+        // With two offending columns, the reject names the one that comes first in the output,
+        // whichever of the two types it has.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, NULL a, interval(ts, ts) b, " + WINDOW + " AS w FROM base"),
+                    "NULL a",
+                    nullColumnMessage("a")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, interval(ts, ts) b, NULL a, " + WINDOW + " AS w FROM base"),
+                    "interval(",
+                    intervalColumnMessage("b")
+            );
+            // A view without the designated timestamp is turned away by the check that runs
+            // before this one, at the view name: what it lacks comes before what it has.
+            assertFailsExactly(
+                    lv("SELECT sym, NULL n, " + WINDOW + " AS w FROM base"),
+                    "CREATE LIVE VIEW ".length(),
+                    "live view select must project the base table's designated timestamp 'ts' as a plain column"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
         });
     }
 
@@ -201,6 +267,21 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTextArrayHasNoCastToAdvise() throws Exception {
+        // The text[] reject advises no cast because no cast takes a text[]. This pins that: should
+        // one appear, this fails, and the reject's message should start advising it.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String sql = "SELECT ts, sym, current_schemas(px > 0)::string v FROM base";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("::"),
+                    "there is no matching function `cast` with the argument types: (text[], STRING)"
+            );
+        });
+    }
+
+    @Test
     public void testTimestampMustSurviveTheProjection() throws Exception {
         // Every drain path stamps its rows with the view's designated timestamp, so a view
         // that projects none cannot refresh at all. Until projections were admitted, the
@@ -239,6 +320,281 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testUnstorableColumnBehindAnEarlierRejectGetsThatReject() throws Exception {
+        // A shape refused before the SELECT compiles, or a column the compiler itself refuses,
+        // keeps its own message when it also carries an unstorable type.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertRejected(
+                    "SELECT ts, sym, n, " + WINDOW + " AS a FROM (SELECT ts, sym, px, NULL n FROM base)",
+                    "live view requires a single base table in FROM clause"
+            );
+            assertRejected(
+                    "WITH c AS (SELECT ts, sym, px, NULL n FROM base) SELECT ts, sym, n, " + WINDOW + " AS a FROM c",
+                    "live view requires a single base table in FROM clause"
+            );
+            assertRejected(
+                    "SELECT ts, sym, sum(NULL) OVER (" + FRAME + ") AS a FROM base",
+                    "window function sum does not support an untyped NULL argument"
+            );
+            // A constant text[] is refused when the window factory builds a column over it.
+            assertRejected(
+                    "SELECT ts, sym, " + WINDOW + " AS a, current_schemas(true) v FROM base",
+                    "unsupported column type text[]"
+            );
+        });
+    }
+
+    @Test
+    public void testUnstorableColumnFirstInTheOutputIsRejected() throws Exception {
+        // The other rejects put the offending column after ts and sym. Here it is the first
+        // output column, ahead of the designated timestamp, so a check that skipped the first
+        // column would let the view through.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertUnstorableColumnRejected(
+                    lv("SELECT NULL n, ts, sym, " + WINDOW + " AS a FROM base"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+        });
+    }
+
+    @Test
+    public void testUnstorableColumnPositionWhateverSurroundsIt() throws Exception {
+        // The position comes from the parsed projection, one item per output column, so it has
+        // to land on the offending expression whatever names, quotes, comments, parentheses,
+        // variables or clauses surround it. The message names the column as the view's table
+        // would: an unaliased column by its generated name.
+        assertMemoryLeak(() -> {
+            createBase();
+            // unaliased
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, NULL, " + WINDOW + " AS a FROM base"),
+                    "NULL,",
+                    nullColumnMessage("NULL")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, interval(ts, ts), " + WINDOW + " AS a FROM base"),
+                    "interval(",
+                    intervalColumnMessage("interval")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, " + WINDOW + " AS a, 1:2 FROM base"),
+                    ":2 FROM",
+                    intervalColumnMessage("column")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, current_schemas(" + WINDOW + " > 0) FROM base"),
+                    "current_schemas(",
+                    textArrayColumnMessage("current_schemas")
+            );
+            // a quoted alias, and a keyword one
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, " + WINDOW + " AS a, NULL \"a b\" FROM base"),
+                    "NULL \"a b\"",
+                    nullColumnMessage("a b")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, " + WINDOW + " AS a, NULL AS \"select\" FROM base"),
+                    "NULL AS",
+                    nullColumnMessage("select")
+            );
+            // after the window, and computed from its value
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, " + WINDOW + " AS a, NULL n FROM base"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, " + WINDOW + " AS a, CASE WHEN " + WINDOW + " > 0 THEN NULL END n FROM base"),
+                    "CASE",
+                    nullColumnMessage("n")
+            );
+            // a parenthesised body
+            assertUnstorableColumnRejected(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS (SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base)",
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            // a comment that spells the same token, ahead of the real one
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, /* NULL */ NULL n, " + WINDOW + " AS a FROM base"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            // a variable: the parser substitutes the declared expression, so its position is in the DECLARE
+            assertUnstorableColumnRejected(
+                    lv("DECLARE @n := NULL SELECT ts, sym, @n n, " + WINDOW + " AS a FROM base"),
+                    "NULL SELECT",
+                    nullColumnMessage("n")
+            );
+            // a duplicated column, which the compiler renames
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, px, px, NULL n, " + WINDOW + " AS a FROM base"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            // an alias on a base column, which a mapping below the window applies
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym AS s2, NULL n, avg(px) OVER (PARTITION BY s2 ORDER BY ts ROWS 10 PRECEDING) AS a FROM base"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            // a named window
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, avg(px) OVER w AS a, NULL n FROM base WINDOW w AS (" + FRAME + ")"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            // a filter on a DOUBLE and on a SYMBOL, and the ORDER BY a live view admits
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base WHERE px > 0"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base WHERE sym = 'A'"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base ORDER BY ts"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+        });
+    }
+
+    @Test
+    public void testUnstorableColumnRejectLeavesNothingBehind() throws Exception {
+        // The reject runs before the view's table, files or registry entry exist, so it leaves
+        // none of them behind and the name stays free.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String sql = lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base");
+            assertUnstorableColumnRejected(sql, "NULL n", nullColumnMessage("n"));
+            assertNoLiveViewDirectory();
+            assertQuery("SELECT count() FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+            // the same statement again gets the same answer
+            assertUnstorableColumnRejected(sql, "NULL n", nullColumnMessage("n"));
+            // IF NOT EXISTS over a free name creates, so it checks the columns too
+            final String ifNotExistsSql = "CREATE LIVE VIEW IF NOT EXISTS lv2 FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base";
+            assertUnstorableColumnRejected("lv2", ifNotExistsSql, "NULL n", nullColumnMessage("n"));
+
+            // the name takes the spelling the message advises, and the view refreshes
+            final String select = "SELECT ts, sym, NULL::double n, " + WINDOW + " AS a FROM base";
+            execute(lv(select));
+            execute("""
+                    INSERT INTO base (ts, sym, px) VALUES
+                      ('2026-08-07T12:00:00.000000Z','A',10.0),
+                      ('2026-08-07T12:00:01.000000Z','B',20.0),
+                      ('2026-08-07T12:00:02.000000Z','A',12.0)""");
+            refresh();
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tn\ta
+                            2026-08-07T12:00:00.000000Z\tA\tnull\t10.0
+                            2026-08-07T12:00:01.000000Z\tB\tnull\t20.0
+                            2026-08-07T12:00:02.000000Z\tA\tnull\t11.0
+                            """);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "lv", LOG);
+
+            // IF NOT EXISTS over the view that now exists is a no-op that compiles nothing, as a
+            // replayed DDL needs, so the NULL column it carries is not refused
+            execute(sql.replace("CREATE LIVE VIEW lv", "CREATE LIVE VIEW IF NOT EXISTS lv"));
+            assertQuery("SELECT \"column\", type FROM table_columns('lv')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype
+                            ts\tTIMESTAMP
+                            sym\tSYMBOL
+                            n\tDOUBLE
+                            a\tDOUBLE
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnstorableColumnTypeIsRejectedAtTheColumn() throws Exception {
+        // Every spelling of each type no table stores that a projection can produce: an untyped
+        // NULL, including a cast to a type that has no NULL of its own, an INTERVAL, and a
+        // text[] computed from the window value. The message advises a cast only where one
+        // keeps the value: any typed NULL for a NULL; for an INTERVAL its two bounds, which
+        // keep the interval's precision, where a cast to a string keeps milliseconds only.
+        assertMemoryLeak(() -> {
+            createBase();
+            // NULL
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base"), "NULL n", nullColumnMessage("n"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, NaN n, " + WINDOW + " AS a FROM base"), "NaN", nullColumnMessage("n"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, null n, " + WINDOW + " AS a FROM base"), "null n", nullColumnMessage("n"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, (NULL) n, " + WINDOW + " AS a FROM base"), "NULL) n", nullColumnMessage("n"));
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, CASE WHEN px > 0 THEN NULL END n, " + WINDOW + " AS a FROM base"),
+                    "CASE",
+                    nullColumnMessage("n")
+            );
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, CASE WHEN px > 0 THEN NULL ELSE NULL END n, " + WINDOW + " AS a FROM base"),
+                    "CASE",
+                    nullColumnMessage("n")
+            );
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, NULL::text[] n, " + WINDOW + " AS a FROM base"), "::text[]", nullColumnMessage("n"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, NULL::regclass n, " + WINDOW + " AS a FROM base"), "::regclass", nullColumnMessage("n"));
+            // INTERVAL: a timestamp interval, a NULL one, and the raw one the slice operator makes
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, interval(ts, ts) iv, " + WINDOW + " AS a FROM base"), "interval(", intervalColumnMessage("iv"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, NULL::interval iv, " + WINDOW + " AS a FROM base"), "::interval", intervalColumnMessage("iv"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, cast(NULL AS interval) iv, " + WINDOW + " AS a FROM base"), "cast(", intervalColumnMessage("iv"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, 1:2 iv, " + WINDOW + " AS a FROM base"), ":2 iv", intervalColumnMessage("iv"));
+            // text[]: a constant one never gets this far, see testUnstorableColumnBehindAnEarlierRejectGetsThatReject
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, current_schemas(" + WINDOW + " > 0) v FROM base"),
+                    "current_schemas(",
+                    textArrayColumnMessage("v")
+            );
+        });
+    }
+
+    @Test
+    public void testUnstorableIntervalOnANanosecondBase() throws Exception {
+        // Over a TIMESTAMP_NS base the interval's type carries the nanosecond kind above its
+        // tag, and the full type is not in the set of types no table stores: only its tag is.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertUnstorableColumnRejected(
+                    lv("SELECT ts, sym, interval(ts, ts) iv, " + WINDOW + " AS a FROM base_ns"),
+                    "interval(",
+                    intervalColumnMessage("iv")
+            );
+        });
+    }
+
+    @Test
+    public void testUnstorableNullColumnMatchesCreateTableAsSelect() throws Exception {
+        // CREATE TABLE AS SELECT refuses an untyped NULL column with this message; a live view
+        // gives the same SELECT the same words, at the column rather than at the statement start.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertFailsExactly("CREATE TABLE t AS (SELECT ts, sym, NULL n FROM base)", 0, nullColumnMessage("n"));
+            Assert.assertNull(engine.getTableTokenIfExists("t"));
+            assertUnstorableColumnRejected(lv("SELECT ts, sym, NULL n, " + WINDOW + " AS a FROM base"), "NULL n", nullColumnMessage("n"));
+        });
+    }
+
+    @Test
     public void testWindowContractRejectsSurviveAProjection() throws Exception {
         // The per-window-function contract runs on the window factory the walk found, so
         // wrapping the call in an expression must not route around it. Both of these are
@@ -257,6 +613,62 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
         });
     }
 
+    private static void assertError(SqlException e, int expectedPosition, String expectedMessage) {
+        TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
+        Assert.assertEquals(expectedPosition, e.getPosition());
+    }
+
+    private static void assertFailsExactly(String sql, int expectedPosition, String expectedMessage) throws Exception {
+        try {
+            execute(sql);
+            Assert.fail("the statement must fail: " + sql);
+        } catch (SqlException e) {
+            assertError(e, expectedPosition, expectedMessage);
+        }
+    }
+
+    private static void assertNoLiveViewDirectory() {
+        final File[] lvDirs = new File(engine.getConfiguration().getDbRoot()).listFiles(
+                f -> f.getName().equals("lv") || f.getName().startsWith("lv~")
+        );
+        Assert.assertNotNull(lvDirs);
+        Assert.assertEquals(0, lvDirs.length);
+    }
+
+    private static void assertUnstorableColumnRejected(String sql, String positionToken, String expectedMessage) throws Exception {
+        assertUnstorableColumnRejected("lv", sql, positionToken, expectedMessage);
+    }
+
+    // The expected position is where positionToken occurs in sql; it must occur exactly once.
+    private static void assertUnstorableColumnRejected(
+            String viewName,
+            String sql,
+            String positionToken,
+            String expectedMessage
+    ) throws Exception {
+        final int position = sql.indexOf(positionToken);
+        Assert.assertTrue("'" + positionToken + "' must occur once in: " + sql, position > -1 && position == sql.lastIndexOf(positionToken));
+        assertFailsExactly(sql, position, expectedMessage);
+        Assert.assertNull(engine.getTableTokenIfExists(viewName));
+    }
+
+    private static String intervalColumnMessage(String columnName) {
+        return "cannot create INTERVAL-type column, please use interval_start(" + columnName + "), interval_end(" + columnName + ")";
+    }
+
+    private static String lv(String selectSql) {
+        return "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql;
+    }
+
+    // CREATE TABLE AS SELECT's wording for the same column
+    private static String nullColumnMessage(String columnName) {
+        return "cannot create NULL-type column, please use type cast, e.g. " + columnName + "::type";
+    }
+
+    private static String textArrayColumnMessage(String columnName) {
+        return "cannot create text[]-type column [column=" + columnName + "]";
+    }
+
     private void assertRejected(String selectSql, String expectedMessage) throws Exception {
         assertQuery("CREATE LIVE VIEW lv_rejected FLUSH EVERY 1s START FROM NOW AS " + selectSql)
                 .failsWith(expectedMessage);
@@ -264,5 +676,13 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
 
     private void createBase() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    private void refresh() {
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv");
+            driveRefreshToQuiescence(job);
+        }
     }
 }

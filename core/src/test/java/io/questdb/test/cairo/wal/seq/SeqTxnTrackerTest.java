@@ -48,6 +48,93 @@ import static org.junit.Assert.*;
 
 public class SeqTxnTrackerTest {
     private static final Log LOG = LogFactory.getLog(SeqTxnTrackerTest.class);
+    private static final int PRIOR_FRESH = 2;
+    private static final int PRIOR_RUNNING = 1;
+    private static final int PRIOR_SUSPENDED = 0;
+    private static final int PROGRESS_DIRTY_ONLY = 1;
+    private static final int PROGRESS_NONE = 2;
+    private static final int PROGRESS_RESET = 3;
+    private static final int PROGRESS_WRITER = 0;
+
+    @Test
+    public void testApplyProgressKeepsOperatorSuspension() throws Exception {
+        // SUSPEND WAL sets the hard flag, then the suspended state, and only RESUME WAL lifts them. An
+        // apply that passed the hard-suspension check before SUSPEND landed still reports its progress
+        // through updateWriterTxns, which must not take the table out of the suspended state while the
+        // hard flag stands. Progress still clears a suspension a failed apply left (no hard flag): that
+        // is how a table that auto-resumed on restart stops reporting itself suspended.
+        TestUtils.assertMemoryLeak(() -> {
+            final String[] priorNames = {"suspended", "running", "fresh"};
+            final String[] progressNames = {"writerTxn advances", "only dirtyWriterTxn advances", "none", "reset to UNINITIALIZED"};
+            for (int hard = 0; hard < 2; hard++) {
+                final boolean isHard = hard == 1;
+                for (int progress = PROGRESS_WRITER; progress <= PROGRESS_RESET; progress++) {
+                    for (int prior = PRIOR_SUSPENDED; prior <= PRIOR_FRESH; prior++) {
+                        final String row = "[hard=" + isHard + ", progress=" + progressNames[progress] + ", prior=" + priorNames[prior] + ']';
+                        final SeqTxnTracker tracker = createSeqTracker();
+                        if (prior != PRIOR_FRESH) {
+                            tracker.initTxns(1, 5, false);
+                        }
+                        if (prior == PRIOR_SUSPENDED) {
+                            tracker.setSuspended(ErrorTag.DISK_FULL, "manual halt");
+                        }
+                        tracker.setHardSuspended(isHard);
+                        final long prevWriterTxn = tracker.getWriterTxn();
+                        // initTxns does not set dirtyWriterTxn, so every tracker starts it at 0.
+                        final long prevDirtyWriterTxn = 0;
+                        final long writerTxn;
+                        final long dirtyWriterTxn;
+                        switch (progress) {
+                            case PROGRESS_WRITER -> {
+                                writerTxn = 3;
+                                dirtyWriterTxn = 3;
+                            }
+                            case PROGRESS_DIRTY_ONLY -> {
+                                writerTxn = prevWriterTxn;
+                                dirtyWriterTxn = prevDirtyWriterTxn + 2;
+                            }
+                            case PROGRESS_NONE -> {
+                                writerTxn = prevWriterTxn;
+                                dirtyWriterTxn = prevDirtyWriterTxn;
+                            }
+                            default -> {
+                                writerTxn = SeqTxnTracker.UNINITIALIZED_TXN;
+                                dirtyWriterTxn = SeqTxnTracker.UNINITIALIZED_TXN;
+                            }
+                        }
+                        final boolean isAdvanced = writerTxn > prevWriterTxn || dirtyWriterTxn > prevDirtyWriterTxn;
+                        final boolean wasSuspended = tracker.isSuspended();
+                        final long seqTxn = tracker.getSeqTxn();
+
+                        assertEquals(row + " notify the apply job", writerTxn < seqTxn, tracker.updateWriterTxns(writerTxn, dirtyWriterTxn));
+
+                        final boolean isSuspendedExpected = wasSuspended && (isHard || !isAdvanced);
+                        assertEquals(row + " suspended", isSuspendedExpected, tracker.isSuspended());
+                        assertEquals(row + " hard flag", isHard, tracker.isHardSuspended());
+                        assertEquals(row + " writerTxn", writerTxn, tracker.getWriterTxn());
+                        if (isSuspendedExpected) {
+                            assertEquals(row + " tag", ErrorTag.DISK_FULL, tracker.getErrorTag());
+                            assertEquals(row + " message", "manual halt", tracker.getErrorMessage());
+                        }
+
+                        // A waiter for a txn no apply reaches ends at once on a suspended table, and keeps
+                        // waiting on a running one.
+                        final FiberTarget target = new FiberTarget();
+                        final FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+                        final long token = coordinator.beginBuild(1);
+                        final FiberWalWaitRegistration registration = coordinator.acquireWal(token, 100);
+                        assertSame(row, SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
+                        assertTrue(row, coordinator.seal(token));
+                        assertEquals(row + " waiter fired", isSuspendedExpected, coordinator.isFired(token));
+                        if (!isSuspendedExpected) {
+                            assertTrue(row, registration.cancel());
+                            assertTrue(row, coordinator.abort(token));
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testConcurrentInitTxns() throws Exception {

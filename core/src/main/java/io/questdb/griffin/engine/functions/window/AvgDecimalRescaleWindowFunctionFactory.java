@@ -2683,6 +2683,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -4769,6 +4774,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -6713,6 +6723,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
         }
 
         @Override
@@ -8724,6 +8739,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
+        }
+
+        @Override
         public int checkpointStateFormatVersion() {
             return 1;
         }
@@ -10692,6 +10712,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
         }
 
         @Override
@@ -12866,6 +12891,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
+        }
+
+        @Override
+        public int checkpointStateFixedLength() {
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
         }
 
         @Override

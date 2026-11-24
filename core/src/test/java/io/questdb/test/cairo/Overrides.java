@@ -51,6 +51,7 @@ import org.junit.Assume;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.ObjIntConsumer;
 
 import static io.questdb.cairo.DebugUtils.LOG;
@@ -187,9 +188,27 @@ public class Overrides {
     }
 
     private final Properties defaultProperties = new Properties();
-    private final Properties properties = new Properties();
+    // Bumped by every change setProperty or reset makes to the overrides. getConfiguration rebuilds whenever the
+    // configuration it published was built at an older version, and a rebuild reads the version before it copies
+    // the overrides: a setProperty on another thread that lands while a rebuild runs leaves the version newer than
+    // the one that rebuild publishes, so the next read rebuilds again instead of keeping the copy that missed it.
+    private final AtomicLong overridesVersion = new AtomicLong();
+    // setProperty writes the overrides only through remove and setProperty below, which run beforeOverrideWritten()
+    // just before the write lands, after anything setProperty does ahead of the write.
+    private final Properties properties = new Properties() {
+        @Override
+        public Object remove(Object key) {
+            beforeOverrideWritten();
+            return super.remove(key);
+        }
+
+        @Override
+        public Object setProperty(String key, String value) {
+            beforeOverrideWritten();
+            return super.setProperty(key, value);
+        }
+    };
     private boolean adaptiveRecoveryRollForwardEnabled = true;
-    private boolean changed = true;
     private ObjIntConsumer<ColumnPurgeTask> columnPurgeTruncateRefusalListener = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
@@ -201,7 +220,8 @@ public class Overrides {
     private boolean freeLeakedReaders = false;
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
-    private CairoConfiguration propsConfig;
+    // The configuration getConfiguration built from the overrides, with the version it copied them at.
+    private volatile VersionedConfiguration propsConfig;
     private QwpServerInfoProvider qwpServerInfoProvider = null;
     private RostiAllocFacade rostiAllocFacade = null;
     private long spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
@@ -220,11 +240,16 @@ public class Overrides {
 
     public CairoConfiguration getConfiguration(String root) {
         if (!properties.isEmpty()) {
-            if (changed) {
-                this.propsConfig = getTestConfiguration(root, defaultProperties, properties);
-                changed = false;
+            final long version = overridesVersion.get();
+            VersionedConfiguration published = propsConfig;
+            if (published == null || published.version() < version) {
+                final CairoConfiguration configuration = getTestConfiguration(root, defaultProperties, properties);
+                beforeConfigurationPublished();
+                published = new VersionedConfiguration(configuration, version);
+                propsConfig = published;
+                afterConfigurationPublished();
             }
-            return this.propsConfig;
+            return published.configuration();
         } else {
             return getDefaultConfiguration(root);
         }
@@ -302,7 +327,7 @@ public class Overrides {
         isHiddenTelemetryTable = false;
         qwpServerInfoProvider = null;
         properties.clear();
-        changed = true;
+        overridesVersion.incrementAndGet();
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
         freeLeakedReaders = false;
         adaptiveRecoveryRollForwardEnabled = true;
@@ -336,6 +361,11 @@ public class Overrides {
         setProperty(propertyKey, String.valueOf(value));
     }
 
+    /**
+     * Sets the override of {@code propertyKey}, or removes it when {@code value} is null; the next configuration
+     * read reflects the change. Any number of threads may read the configuration while one thread calls this
+     * method, but calls to it must not race each other.
+     */
     public void setProperty(ConfigPropertyKey propertyKey, String value) {
         String propertyPath = propertyKey.getPropertyPath();
         if (value != null) {
@@ -346,13 +376,11 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = changed || !Chars.equalsNc(value, existing);
-        } else {
-            // Remove first, fold into the flag second: writing this as changed || remove(...) lets
-            // the short-circuit skip the removal outright whenever changed is already true, which
-            // leaves the cancelled override standing.
-            final boolean hasRemoved = properties.remove(propertyPath) != null;
-            changed = changed || hasRemoved;
+            if (!Chars.equalsNc(value, existing)) {
+                overridesVersion.incrementAndGet();
+            }
+        } else if (properties.remove(propertyPath) != null) {
+            overridesVersion.incrementAndGet();
         }
     }
 
@@ -366,6 +394,30 @@ public class Overrides {
 
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         this.rostiAllocFacade = rostiAllocFacade;
+    }
+
+    /**
+     * Test hook: runs on the thread that rebuilt the configuration, right after it published the pair and before
+     * the read returns the configuration it built. OverridesTest parks a rebuild here so that an older rebuild
+     * publishes over it before it returns.
+     */
+    protected void afterConfigurationPublished() {
+    }
+
+    /**
+     * Test hook: runs on the thread that rebuilds the configuration, after the rebuild copied the overrides and
+     * before it pairs the result with the version it read ahead of the copy and publishes the pair.
+     * OverridesTest parks a rebuild here to change the overrides from another thread under it.
+     */
+    protected void beforeConfigurationPublished() {
+    }
+
+    /**
+     * Test hook: runs on the thread that calls setProperty, inside its write to the overrides (the put of a value
+     * or the removal of a key), before the write lands. OverridesTest parks a setProperty here to read the
+     * configuration from another thread under it.
+     */
+    protected void beforeOverrideWritten() {
     }
 
     private static CairoConfiguration getTestConfiguration(String installRoot, Properties defaultProperties, Properties properties) {
@@ -515,5 +567,8 @@ public class Overrides {
         }
         defaultConfiguration = getTestConfiguration(root, defaultProperties, null);
         return defaultConfiguration;
+    }
+
+    private record VersionedConfiguration(CairoConfiguration configuration, long version) {
     }
 }

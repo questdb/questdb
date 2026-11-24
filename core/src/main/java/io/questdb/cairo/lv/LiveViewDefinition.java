@@ -471,6 +471,7 @@ public class LiveViewDefinition {
                         windowName,
                         anchorKind,
                         anchorExpressionSql,
+                        0,
                         anchorDailyTimeUs,
                         anchorDailyTimeZone,
                         0,
@@ -633,6 +634,12 @@ public class LiveViewDefinition {
     public static final class LvAnchorSpec {
         public final long anchorDailyTimeUs;
         public final @Nullable String anchorDailyTimeZone;
+        // CREATE-time-only, like anchorPosition: the token of the CREATE statement that an error from
+        // compiling anchorExpressionSql points at. That text is the parser's rendering of the typed
+        // ANCHOR EXPRESSION, or the expression it synthesizes from ANCHOR DAILY, so its own offsets are
+        // not statement offsets: this holds the typed expression's root token, or the ANCHOR keyword for
+        // ANCHOR DAILY. Not persisted - 0 when read back from _lv; only CairoEngine.createLiveView reads it.
+        public final int anchorExpressionPosition;
         public final String anchorExpressionSql;
         public final byte anchorKind;
         // CREATE-time-only: offset of the ANCHOR keyword in the user's
@@ -649,6 +656,7 @@ public class LiveViewDefinition {
                 String windowName,
                 byte anchorKind,
                 String anchorExpressionSql,
+                int anchorExpressionPosition,
                 long anchorDailyTimeUs,
                 @Nullable String anchorDailyTimeZone,
                 int anchorPosition,
@@ -657,6 +665,7 @@ public class LiveViewDefinition {
             this.windowName = windowName;
             this.anchorKind = anchorKind;
             this.anchorExpressionSql = anchorExpressionSql;
+            this.anchorExpressionPosition = anchorExpressionPosition;
             this.anchorDailyTimeUs = anchorDailyTimeUs;
             this.anchorDailyTimeZone = anchorDailyTimeZone;
             this.anchorPosition = anchorPosition;

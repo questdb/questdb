@@ -36,12 +36,15 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +55,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final CairoConfiguration configuration;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
+    private final int[] fwdIndexedCursorFactoriesIdx = new int[]{0};
+    private final ObjList<SymbolIndexRowCursorFactory> fwdIndexedRowCursorFactories = new ObjList<>();
     private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
@@ -62,6 +67,9 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private PageFrameRecordCursor bwdRecordCursor;
     private PageFrameRecordCursor cursor;
     private Function filter;
+    private int fwdIndexedColumnIndex = -1;
+    private HeapRowCursorFactory fwdIndexedHeapRowCursorFactory;
+    private PageFrameRecordCursor fwdIndexedRecordCursor;
     private RowCursorFactory rowCursorFactory;
     private TimeFrameCursorImpl timeFrameCursor;
 
@@ -338,6 +346,118 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         }
     }
 
+    /**
+     * Opens this full scan over {@code [timestampLo, timestampHi]}, <b>inclusive of both edges</b>,
+     * in ascending designated-timestamp order, restricted to the rows whose indexed SYMBOL column
+     * {@code columnIndex} holds one of {@code symbolKeys}. It yields exactly that subsequence of
+     * {@link #getCursorInTimestampRange(SqlExecutionContext, long, long)} and reads no other rows.
+     * <p>
+     * {@link HeapRowCursorFactory} merges one index-backed row cursor per key per page frame, so
+     * the scan costs an index open per partition, a seek per key per frame and an
+     * {@code O(rows * log |keys|)} merge; see {@code LiveViewCheckpointKeyedScanCost}.
+     * <p>
+     * {@code symbolKeys} are table-local keys: {@link SymbolTable#VALUE_IS_NULL} selects null rows,
+     * the caller must drop a {@link SymbolTable#VALUE_NOT_FOUND} key, and duplicates are not
+     * admitted, since each would yield its key's rows again.
+     * {@link #isIndexedForwardTimestampRangeSupported(int)} reports whether this factory qualifies.
+     */
+    public RecordCursor getCursorInTimestampRangeForwardIndexed(
+            SqlExecutionContext executionContext,
+            long timestampLo,
+            long timestampHi,
+            int columnIndex,
+            @Transient IntList symbolKeys
+    ) throws SqlException {
+        if (!(partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory fullFrameFactory)) {
+            throw CairoException.nonCritical().put("timestamp range cursor requires a full partition scan");
+        }
+        if (!isIndexedForwardTimestampRangeSupported(columnIndex)) {
+            throw CairoException.nonCritical()
+                    .put("indexed forward timestamp range cursor requires an indexed symbol column [columnIndex=")
+                    .put(columnIndex)
+                    .put(']');
+        }
+        if (symbolKeys.size() < 1) {
+            throw CairoException.nonCritical().put("indexed forward timestamp range cursor requires at least one symbol key");
+        }
+        if (fwdIndexedColumnIndex != columnIndex) {
+            // One factory serves every repair of one view, and a view keys on one column,
+            // so this rebuild is a first-call cost rather than a per-key one.
+            fwdIndexedRecordCursor = Misc.free(fwdIndexedRecordCursor);
+            // Row cursors a getCursor() that threw mid-build left behind are reachable only through
+            // the heap factory, so free it too, before clearing the per-key factories it reads.
+            fwdIndexedHeapRowCursorFactory = Misc.free(fwdIndexedHeapRowCursorFactory);
+            Misc.freeObjListAndClear(fwdIndexedRowCursorFactories);
+            fwdIndexedColumnIndex = columnIndex;
+        }
+        // Grow the per-key factories to this call's key count and trim back to it: a factory holds
+        // only its key, so rebinding one is a field write. The trim keeps the list exactly this
+        // call's keys for the heap factory's whole-list walks - init(), prepareCursor() and
+        // toPlan(). SymbolIndexRowCursorFactory holds no resource, so trimmed slots need no close.
+        final int keyCount = symbolKeys.size();
+        int builtCount = fwdIndexedRowCursorFactories.size();
+        if (builtCount < keyCount) {
+            // setPos() moves only the size, so the buffer still holds the factories a narrower call
+            // trimmed, with only nulls past them. A column change clear()s the whole buffer, so
+            // each factory left there reads this call's column. Take them back and build only past
+            // them: every slot below size() then stays built should an allocation fail.
+            fwdIndexedRowCursorFactories.setPos(keyCount);
+            while (builtCount < keyCount && fwdIndexedRowCursorFactories.getQuick(builtCount) != null) {
+                builtCount++;
+            }
+            fwdIndexedRowCursorFactories.setPos(builtCount);
+            for (int i = builtCount; i < keyCount; i++) {
+                fwdIndexedRowCursorFactories.add(new SymbolIndexRowCursorFactory(
+                        columnIndex,
+                        SymbolTable.VALUE_IS_NULL,
+                        IndexReader.DIR_FORWARD,
+                        null
+                ));
+            }
+        }
+        fwdIndexedRowCursorFactories.setPos(keyCount);
+        for (int i = 0; i < keyCount; i++) {
+            fwdIndexedRowCursorFactories.getQuick(i).of(symbolKeys.getQuick(i));
+        }
+        fwdIndexedCursorFactoriesIdx[0] = keyCount;
+        if (fwdIndexedRecordCursor == null) {
+            // This class owns the heap factory; the record cursor only borrows it and frees its own
+            // row cursor.
+            fwdIndexedHeapRowCursorFactory = new HeapRowCursorFactory(fwdIndexedRowCursorFactories, fwdIndexedCursorFactoriesIdx);
+            fwdIndexedRecordCursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    getMetadata(),
+                    fwdIndexedHeapRowCursorFactory,
+                    false,
+                    filter
+            );
+        }
+        final PartitionFrameCursor partitionFrameCursor = fullFrameFactory.getCursor(
+                executionContext,
+                columnIndexes,
+                timestampLo,
+                timestampHi
+        );
+        final PageFrameCursor frameCursor = initFwdPageFrameCursor(partitionFrameCursor, executionContext);
+        try {
+            fwdIndexedRecordCursor.of(frameCursor, executionContext);
+            if (filter != null) {
+                filter.init(fwdIndexedRecordCursor, executionContext);
+            }
+            return fwdIndexedRecordCursor;
+        } catch (Throwable th) {
+            frameCursor.close();
+            throw th;
+        }
+    }
+
+    /**
+     * Returns the base table's column index behind one of this factory's projected columns.
+     */
+    public int getBaseColumnIndex(int columnIndex) {
+        return columnIndexes.getQuick(columnIndex);
+    }
+
     @Override
     public int getScanDirection() {
         if (singleRowFactory) {
@@ -421,6 +541,17 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                 && getMetadata().isColumnIndexed(columnIndex);
     }
 
+    /**
+     * Reports, without opening anything, whether
+     * {@link #getCursorInTimestampRangeForwardIndexed(SqlExecutionContext, long, long, int, IntList)}
+     * accepts this column. It is the same predicate as
+     * {@link #isIndexedBackwardTimestampRangeSupported(int)}, kept separate so a caller of either
+     * direction need not know that they agree.
+     */
+    public boolean isIndexedForwardTimestampRangeSupported(int columnIndex) {
+        return isIndexedBackwardTimestampRangeSupported(columnIndex);
+    }
+
     public boolean isIntervalScan() {
         return partitionFrameCursorFactory.isIntervalScan();
     }
@@ -478,6 +609,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.cursor = null;
         final Function filter = this.filter;
         this.filter = null;
+        final PageFrameRecordCursor fwdIndexedRecordCursor = this.fwdIndexedRecordCursor;
+        this.fwdIndexedRecordCursor = null;
+        final HeapRowCursorFactory fwdIndexedHeapRowCursorFactory = this.fwdIndexedHeapRowCursorFactory;
+        this.fwdIndexedHeapRowCursorFactory = null;
+        this.fwdIndexedColumnIndex = -1;
         final TablePageFrameCursor fwdPageFrameCursor = this.fwdPageFrameCursor;
         this.fwdPageFrameCursor = null;
         final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
@@ -496,6 +632,22 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         failure = Misc.freeBestEffort(failure, bwdRecordCursor);
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, fwdIndexedRecordCursor);
+        // The heap factory owns the row cursors it built per frame and the record cursor only
+        // borrows it, so free it after the cursor: a getCursor() that threw mid-build leaves its
+        // built cursors reachable only through the factory. Misc.freeObjListAndClear() empties the
+        // shared list, so the two closes cannot free a row cursor twice.
+        failure = Misc.freeBestEffort(failure, fwdIndexedHeapRowCursorFactory);
+        // The per-key factories are this factory's too, reused across repairs.
+        failure = Misc.freeObjListBestEffort(failure, fwdIndexedRowCursorFactories);
+        // close() must survive a half-built instance whose field initializers never ran, so the
+        // null guards keep cleanup going instead of losing the original failure to an NPE.
+        if (fwdIndexedRowCursorFactories != null) {
+            fwdIndexedRowCursorFactories.clear();
+        }
+        if (fwdIndexedCursorFactoriesIdx != null) {
+            fwdIndexedCursorFactoriesIdx[0] = 0;
+        }
         failure = Misc.freeBestEffort(failure, fwdPageFrameCursor);
         if (bwdPageFrameCursor != fwdPageFrameCursor) {
             failure = Misc.freeBestEffort(failure, bwdPageFrameCursor);

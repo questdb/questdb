@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -99,22 +100,41 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         CharSequence tableName = args.get(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
-        TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        // Outside a view, or when the view's definition does not name the table, a table the principal
-        // may not see fails like a missing one.
-        if (tableToken == null || !isVisibleAtCompile(sqlExecutionContext, tableToken, view)) {
-            throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);
-        }
-        if (!sqlExecutionContext.getCairoEngine().isWalTable(tableToken)) {
-            throw SqlException.$(argPositions.get(0), "table is not a WAL table: ").put(tableName);
-        }
+        final TableToken tableToken = getWalTableToken(sqlExecutionContext, tableName, argPositions.get(0), view, true);
+        final int timestampType = getTimestampType(sqlExecutionContext.getCairoEngine(), tableToken);
+        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType, argPositions.get(0), view));
+    }
+
+    private static int getTimestampType(CairoEngine engine, TableToken tableToken) {
         int timestampType = 0;
-        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(tableToken)) {
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
             if (metadata != null) {
                 timestampType = metadata.getTimestampType();
             }
         }
-        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType, argPositions.get(0), view));
+        return timestampType;
+    }
+
+    private static TableToken getWalTableToken(
+            SqlExecutionContext executionContext,
+            CharSequence tableName,
+            int tableNamePosition,
+            SqlExecutionContext.TableFunctionView view,
+            boolean isCompile
+    ) throws SqlException {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+        // Outside a view, or when the view's definition does not name the table, a table the principal
+        // may not see fails like a missing one.
+        if (tableToken == null || !(isCompile
+                ? isVisibleAtCompile(executionContext, tableToken, view)
+                : isVisible(executionContext, tableToken, view))) {
+            throw SqlException.$(tableNamePosition, "table does not exist: ").put(tableName);
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(tableNamePosition, "table is not a WAL table: ").put(tableName);
+        }
+        return tableToken;
     }
 
     // WAL diagnostics show a protected table to the operators allowed to recover it, see
@@ -149,17 +169,24 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-            // Recheck the table or enclosing view: a compiled factory can outlive a grant or view definition.
-            if (!isVisible(executionContext, tableToken, view)) {
-                throw SqlException.$(tableNamePosition, "table does not exist: ").put(tableToken.getTableName());
-            }
             cursor.close();
+            final CairoEngine engine = executionContext.getCairoEngine();
+            // Resolve and recheck the table or enclosing view: a compiled factory can outlive a grant,
+            // a view definition, or the table itself, which a drop and recreation under the same name
+            // replaces.
+            final TableToken currentTableToken = getWalTableToken(
+                    executionContext,
+                    tableToken.getTableName(),
+                    tableNamePosition,
+                    view,
+                    false
+            );
+            cursor.timestampDriver = ColumnType.getTimestampDriver(getTimestampType(engine, currentTableToken));
             long txnLo = 0;
             while (true) {
                 TransactionLogCursor logCursor = null;
                 try {
-                    logCursor = executionContext.getCairoEngine().getTableSequencerAPI()
-                            .getCursor(tableToken, txnLo, cursorHolder);
+                    logCursor = engine.getTableSequencerAPI().getCursor(currentTableToken, txnLo, cursorHolder);
                     logCursor.toMinTxn();
                     cursor.logCursor = logCursor;
                     break;
@@ -169,7 +196,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                         // Txn sequencer can have its parts deleted due to housekeeping
                         // Need to keep scanning until we find a valid part
                         if (txnLo == 0) {
-                            long writerTxn = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+                            long writerTxn = engine.getTableSequencerAPI().getTxnTracker(currentTableToken).getWriterTxn();
                             if (writerTxn > 0) {
                                 txnLo = writerTxn;
                                 continue;
@@ -201,9 +228,9 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TransactionRecord record = new TransactionRecord();
-            private final TimestampDriver timestampDriver;
             private SqlExecutionCircuitBreaker circuitBreaker;
             private TransactionLogCursor logCursor;
+            private TimestampDriver timestampDriver;
 
             private TableListRecordCursor(TimestampDriver timestampDriver) {
                 this.timestampDriver = timestampDriver;

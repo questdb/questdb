@@ -242,6 +242,82 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleRequestOfSuspendedLiveViewWaitsForResume() throws Exception {
+        // A purge pass asks a live view for an idle save point, and the view is paused - by SUSPEND WAL or by
+        // cairo.wal.apply.suspended.tables - before its refresh worker takes it. A paused view takes no save
+        // point, neither from the refresh scan nor from the helper the scan calls, and the request waits
+        // until RESUME WAL or the unlisting, after which the next pass takes it, as a hard-suspended table's
+        // request waits.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            // Below the rows, so the view materializes them.
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
+            try (LiveViewRefreshJob refreshJob = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int source = 0; source < 2; source++) {
+                    final boolean isListed = source == 1;
+                    final String label = isListed ? "listed in cairo.wal.apply.suspended.tables" : "SUSPEND WAL";
+                    execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                            + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+                    final TableToken lv = engine.verifyTableName("lv");
+                    for (int i = 0; i < 3; i++) {
+                        tick(INTERVAL_MS);
+                        execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:0" + i + ":00.000000Z', " + (i + 1) + ")");
+                        drainWalQueue();
+                        runJob(refreshJob);
+                        tick(INTERVAL_MS);
+                        runJob(refreshJob);
+                        engine.releaseInactive();
+                    }
+                    final SeqTxnTracker tracker = tracker(lv);
+                    Assert.assertNotEquals(label, tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    tick(INTERVAL_MS);
+                    drainPurgeJob();
+                    Assert.assertTrue(label + ": the purge pass must ask for the idle save point", tracker.isIdleEpochRequested());
+                    if (isListed) {
+                        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, lv.getDirName());
+                    } else {
+                        execute("ALTER LIVE VIEW lv SUSPEND WAL");
+                    }
+
+                    final SavePointCounter counter = new SavePointCounter(lv);
+                    for (int i = 0; i < 3; i++) {
+                        tick(INTERVAL_MS);
+                        runJob(refreshJob);
+                        counter.check();
+                    }
+                    Assert.assertEquals(label + ": save points of the paused view", 0, counter.count);
+                    Assert.assertTrue(label + ": the request waits for the view to resume", tracker.isIdleEpochRequested());
+                    // The helper the scan calls holds a view suspended after the scan's check, under its latch.
+                    refreshJob.takeIdleSavePointForTest(engine.getLiveViewRegistry().getViewInstance("lv"));
+                    counter.check();
+                    Assert.assertEquals(label + ": save points the helper took", 0, counter.count);
+                    Assert.assertTrue(label + ": the request waits for the view to resume", tracker.isIdleEpochRequested());
+
+                    if (isListed) {
+                        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                    } else {
+                        execute("ALTER LIVE VIEW lv RESUME WAL");
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        tick(INTERVAL_MS);
+                        runJob(refreshJob);
+                        counter.check();
+                    }
+                    Assert.assertEquals(label + ": save points after the pause", 1, counter.count);
+                    Assert.assertFalse(label, tracker.isIdleEpochRequested());
+                    Assert.assertEquals(label, tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    execute("DROP LIVE VIEW lv");
+                    execute("DROP TABLE base");
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testIdleRequestRacingSuspensionTakesNoSavePoint() throws Exception {
         // The purge job asks, then the table is suspended before the apply run: the run neither applies nor takes
         // a save point on the suspended table. After RESUME WAL the next pass asks again.

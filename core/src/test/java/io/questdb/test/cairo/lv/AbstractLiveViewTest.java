@@ -24,26 +24,76 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.PartitionGeometry;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -62,11 +112,56 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // Longer than the 100ms FLUSH EVERY the tests declare, so one pass always crosses a flush
     // deadline rather than leaving the view waiting on the clock.
     protected static final long CLOCK_ADVANCE_MICROS = 250_000;
+    // Past the default five-minute checkpoint duration cadence, so the next commit after the
+    // clock moves this far seals a root at its newest row.
+    protected static final long DURATION_CADENCE_ELAPSED_MICROS = 6 * 60 * 1_000_000L;
+    // How a zero-row end-of-table head-miss rebuild derives the state at the view's new frontier:
+    // its replay already holds it, it restores the newest root below the frontier and folds the
+    // base rows above it, or it folds the base rows from the frontier's dependency floor up.
+    // See assertZeroRowDepartureSealsTheFrontier.
+    protected static final int FRONTIER_STATE_RESTORE = 1;
+    protected static final int FRONTIER_STATE_SKIP = 0;
+    protected static final int FRONTIER_STATE_WARM_UP = 2;
+    // A filtered view whose one-minute RANGE frame lets a localized rebuild warm its state from
+    // one minute below a correction. Under the default checkpoint cadence its roots are sparse,
+    // so a correction of its newest rows prices that rebuild below a resume from the root under
+    // them, and the rebuild runs to the end of the base table: a head-miss end-of-table splice.
+    protected static final String HEAD_MISS_DEPARTURE_VIEW_SQL = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s FROM base WHERE x > 0";
     protected static final int REFRESH_QUIESCENCE_PASSES = 512;
+    // The refresh-retry backoff LiveViewRefreshJob documents: after a faulting turn no worker
+    // re-drives the view for the first wait, each consecutive faulting turn doubles it, and no wait
+    // exceeds the cap. Mirrored here, rather than read from the job, so a change to the schedule
+    // shows up as a failing expectation instead of passing silently.
+    protected static final long REFRESH_RETRY_BACKOFF_BASE_MICROS = 100_000;
+    protected static final long REFRESH_RETRY_BACKOFF_MAX_MICROS = 5_000_000;
+    // How long a paced writer waits for the refresh driver's next tick before giving up on
+    // it. Generous: it bounds a stalled driver, it does not pace anything itself.
+    protected static final long REFRESH_TICK_WAIT_NANOS = 30_000_000_000L;
+    // Bounds drainJobThroughRetryBackoff. A streak ends within this many waits under any budget the
+    // tests set: the default count budget allows 5 faulting turns, and the 60s default duration
+    // budget about 18 at the capped wait.
+    protected static final int RETRY_BACKOFF_WAITS = 64;
     // Enough passes for the slowest seed in the suite (the parquet base test, which used 2000
     // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
     protected static final int SEED_COMPLETION_PASSES = 2000;
+    // How long a test waits for a thread it started to reach a point or to finish; only a broken run waits it out.
+    protected static final long THREAD_JOIN_MILLIS = 60_000;
+    // Hosted Windows CI agents run these suites about 15-20x slower than Linux/mac (measured
+    // against build 280635: LiveViewConcurrencyTest 205s vs 9.5s, LiveViewCheckpointKeyedScanTest
+    // 235s vs 15s). The soak tests are pure redundancy: each extra row only deepens race exposure,
+    // and every soak checks its view against a full recompute oracle that holds at any volume.
+    // isReducedWindowsLoad lets those tests keep their full depth on Linux/mac while taking a
+    // lighter pass on Windows, where the depth is a time sink rather than cover. (Fuzz runs stay
+    // at full count on every platform: their counts feed route-coverage assertions, so a shorter
+    // run could leave a route unreached.)
+    protected static final boolean isReducedWindowsLoad = Os.type == Os.WINDOWS;
+
+    // What assertTierReadConsistent compared the routed read with.
+    protected static final int TIER_READ_RECOMPUTE = 1;
+    protected static final int TIER_READ_SKIPPED = 0;
+    protected static final int TIER_READ_TABLE_ONLY = 2;
 
 
     /**
@@ -79,6 +174,36 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         TableWriter.Row row = walWriter.newRow(ts);
         row.putLong(1, x);
         row.append();
+    }
+
+    /**
+     * Scales a soak redundancy count down on Windows (see {@link #isReducedWindowsLoad}),
+     * never below {@code min}, and leaves it untouched on every other platform. Only pure
+     * redundancy counts, such as the rows a soak churns, pass through here; a count a test
+     * asserts against or a threshold it must cross never does.
+     */
+    protected static int reducedOnWindows(int full, int min) {
+        return isReducedWindowsLoad ? Math.max(min, full / 2) : full;
+    }
+
+    /**
+     * Waits for the refresh driver to complete one more tick than it had when called.
+     * Bounded: a driver that has stopped ticking must fail the run loudly rather than
+     * silently drop the paced writer's intended refresh/writer overlap. The caller runs on
+     * a writer thread whose try/catch routes any throw into the shared errors queue, so a
+     * timeout surfaces as a test failure instead of a vacuous pass (or a hang).
+     */
+    protected static void awaitRefreshTick(AtomicLong refreshTicks, ConcurrentLinkedQueue<Throwable> errors) {
+        final long seen = refreshTicks.get();
+        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
+        while (refreshTicks.get() == seen && errors.isEmpty()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new AssertionError("refresh driver did not tick within "
+                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L)
+                        + "s; the paced writer lost its intended refresh/writer overlap");
+            }
+            Os.pause();
+        }
     }
 
     /**
@@ -104,6 +229,9 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * Runs the job until it reports no more work, up to a bounded burst. Unlike the two drive*
      * helpers this is not an await - the caller loops over it - so exhausting the bound is not a
      * failure.
+     * <p>
+     * It leaves the clock alone, so a view backing off after a faulting turn stays put: a caller
+     * that means to drive such a view on uses {@link #drainJobThroughRetryBackoff}.
      */
     protected static boolean drainJob(Job job) {
         boolean any = false;
@@ -111,6 +239,364 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    /**
+     * {@link #drainJob} that does not stop at a refresh-retry backoff: whenever the burst ends with
+     * a view waiting out the backoff a faulting turn armed, it moves the simulated clock to that
+     * view's deadline and drains again. So a fault that clears ends with the view refreshed, and one
+     * that does not ends with the view invalidated once a flush-retry budget runs out, as a worker
+     * would leave it; nothing else moves the clock. Fails if the waits do not end within
+     * {@link #RETRY_BACKOFF_WAITS}.
+     */
+    protected static boolean drainJobThroughRetryBackoff(Job job) {
+        boolean any = drainJob(job);
+        for (int i = 0; i < RETRY_BACKOFF_WAITS; i++) {
+            final long retryUs = nextRefreshRetryMicros();
+            if (retryUs == Numbers.LONG_NULL) {
+                return any;
+            }
+            setCurrentMicros(retryUs);
+            any |= drainJob(job);
+        }
+        Assert.fail("live view refresh still backing off after " + RETRY_BACKOFF_WAITS + " waits");
+        return any;
+    }
+
+    /**
+     * The earliest refresh-retry deadline still ahead of the engine's clock among the registered
+     * views that can refresh, or {@link Numbers#LONG_NULL} when none is backing off after a
+     * faulting turn. A deadline the clock already passed is not a wait: the view is due, and
+     * whether the job drives it is the job's answer.
+     */
+    protected static long nextRefreshRetryMicros() {
+        final ObjList<LiveViewInstance> views = new ObjList<>();
+        engine.getLiveViewRegistry().getViews(views);
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        long nextUs = Numbers.LONG_NULL;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final LiveViewInstance instance = views.getQuick(i);
+            if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            final long retryUs = instance.getRefreshRetryNotBeforeUs();
+            if (retryUs != Numbers.LONG_NULL && retryUs > nowUs && (nextUs == Numbers.LONG_NULL || retryUs < nextUs)) {
+                nextUs = retryUs;
+            }
+        }
+        return nextUs;
+    }
+
+    /**
+     * How long after the first faulting turn of a streak its {@code turn}-th (counted from 1) runs,
+     * when every turn runs at the deadline the one before it armed.
+     */
+    protected static long refreshRetryStreakMicros(int turn) {
+        long offsetUs = 0;
+        for (int i = 0; i < turn - 1; i++) {
+            offsetUs += Math.min(REFRESH_RETRY_BACKOFF_MAX_MICROS, REFRESH_RETRY_BACKOFF_BASE_MICROS << Math.min(i, 32));
+        }
+        return offsetUs;
+    }
+
+    /**
+     * How many faulting turns a streak charged to the duration budget alone runs, each at the
+     * deadline the one before it armed, before the budget of {@code maxDurationMicros} runs out:
+     * the turn that finds the budget spent is the last.
+     */
+    protected static int refreshRetryTurnsUntilDurationExhausts(long maxDurationMicros) {
+        int turn = 1;
+        while (refreshRetryStreakMicros(turn) < maxDurationMicros) {
+            turn++;
+        }
+        return turn;
+    }
+
+    /**
+     * Confirms {@code SELECT * FROM viewName} routes through the in-memory tier (Mode B), not
+     * disk-only: opens the inner {@link LiveViewRecordCursor}, drains it, and asserts the fence
+     * engaged and the tier served rows. Single-threaded, after quiescence.
+     */
+    protected static void assertModeBEngaged(String viewName) throws SqlException {
+        try (RecordCursorFactory factory = select("SELECT * FROM " + viewName)) {
+            final RecordCursorFactory lvFactory = liveViewFactoryOf(factory);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvFactory.getCursor(sqlExecutionContext)) {
+                println(lvFactory.getMetadata(), cursor, new StringSink());
+                Assert.assertTrue("read-back must route through Mode B", cursor.isRoutingEligible());
+                Assert.assertTrue("Mode B must serve in-mem rows", cursor.inMemRowsServed() > 0);
+            }
+        }
+    }
+
+    /**
+     * Runs {@code sql} with the tier on (Mode B) and again with the fence forced off
+     * (disk-only, see {@link #printDiskOnly}), and asserts the two outputs are byte-identical.
+     * Mirrors the differential oracle in {@code LiveViewInMemReadTest}; single-threaded only.
+     */
+    protected static void assertModeBMatchesDiskOnly(String viewName, String sql) throws SqlException {
+        final StringSink modeB = new StringSink();
+        printSql(sql, modeB);
+        final StringSink diskOnly = new StringSink();
+        printDiskOnly(viewName, sql, diskOnly);
+        Assert.assertEquals("Mode B vs disk-only mismatch for: " + sql, diskOnly.toString(), modeB.toString());
+    }
+
+    /**
+     * Asserts the view's SYMBOL column {@code keyColumn} names each row by one label only. A
+     * filter on the symbol resolves a label to an id through the view's own symbol table, a
+     * filter on its text compares labels, and a grouped count keys on the id, so all three
+     * agree unless the table lists one label under two ids, or an id the rows carry under no
+     * label. Needs no recompute, so it holds at any point a reader can open the view, an
+     * un-flushed lead or a recovery's discarded ids included.
+     *
+     * @param keys every label the run's rows carry, NULL aside
+     */
+    /**
+     * Asserts that {@code instance}'s restart recovery restored its window state from a published
+     * timeline root, and that nothing rebuilt or reset on the way there. Static so a test that
+     * runs a real server, and so reaches the instance through that server's engine, asserts the
+     * same witness.
+     * <p>
+     * {@code isCheckpointRestoreSucceeded()} alone cannot carry this assertion. Both restart routes
+     * report it: {@code tryRestoreFromTimeline} falls through to the applied-base rebuild on every
+     * restore failure a retry would meet again, and the rebuild recomputes the whole window,
+     * produces correct rows, faults no refresh cycle and fails no seal. A recompute oracle, the
+     * fault count and the seal-failure count are all green over that fallback, so a test that
+     * asserts only the flag proves the view has state - not that the roots it published are the
+     * state it came back on.
+     */
+    protected static void assertRestoredFromTimeline(String viewName, LiveViewInstance instance) {
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE, instance);
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but only after rebuilding from the applied base first",
+                0L,
+                instance.getCheckpointRebuildAttempts()
+        );
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but retired the timeline it restored from;"
+                        + " the roots the previous process published are gone",
+                0L,
+                instance.getCheckpointTimelineResets()
+        );
+        Assert.assertTrue(
+                "live view '" + viewName + "' restored without naming the root it came back on",
+                instance.getCheckpointRestoreCheckpointId() != Numbers.LONG_NULL
+                        && instance.getCheckpointRestoreGeneration() != Numbers.LONG_NULL
+        );
+    }
+
+    protected static void assertSymbolLabelsConsistent(String viewName, String keyColumn, ObjList<String> keys) throws SqlException {
+        final StringSink bySymbol = new StringSink();
+        final StringSink byText = new StringSink();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final String key = keys.getQuick(i);
+            bySymbol.clear();
+            byText.clear();
+            printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + " = '" + key + "'", bySymbol);
+            printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + "::varchar = '" + key + "'", byText);
+            TestUtils.assertEquals("view '" + viewName + "' filters key '" + key + "' by id unlike by label", byText, bySymbol);
+        }
+        bySymbol.clear();
+        byText.clear();
+        printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + " IS NULL", bySymbol);
+        printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + "::varchar IS NULL", byText);
+        TestUtils.assertEquals("view '" + viewName + "' filters the NULL key by id unlike by label", byText, bySymbol);
+        bySymbol.clear();
+        byText.clear();
+        printSql("SELECT " + keyColumn + ", count() FROM " + viewName + " ORDER BY 1", bySymbol);
+        printSql("SELECT " + keyColumn + "::varchar " + keyColumn + ", count() FROM " + viewName + " ORDER BY 1", byText);
+        TestUtils.assertEquals("view '" + viewName + "' groups its key by id unlike by label", byText, bySymbol);
+    }
+
+    /**
+     * Asserts what a read through the view's in-memory tier returns, at any point of a run: an
+     * un-flushed lead resident, a repair parked, a view WAL block committed but not applied.
+     * Returns which of the checks below ran.
+     * <ul>
+     *     <li>While the view's WAL holds a block its table has not applied, reads stay on the
+     *     table as it stands, so the routed read must equal the forced disk-only read
+     *     ({@link #TIER_READ_TABLE_ONLY}). A read that served a lead on top of the table
+     *     without the pending block's rows equals neither that nor the recompute.</li>
+     *     <li>Once the view has refreshed every commit the base applied, with no repair parked
+     *     and no retry pending, the routed read - the table plus any un-flushed lead - must
+     *     already equal the recompute ({@link #TIER_READ_RECOMPUTE}).</li>
+     *     <li>Otherwise the view stands at a base commit the test cannot recompute, and nothing
+     *     is checked ({@link #TIER_READ_SKIPPED}). So is a view with no tier, whose un-flushed
+     *     rows no reader sees.</li>
+     * </ul>
+     *
+     * @param orderBy an ORDER BY list naming every output column, so tied rows sort alike
+     */
+    protected static int assertTierReadConsistent(
+            String viewName,
+            String baseName,
+            String oracleSql,
+            String orderBy
+    ) throws SqlException {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        if (instance.getInMemoryTier() == null || instance.isInvalid()) {
+            return TIER_READ_SKIPPED;
+        }
+        final String viewRead = "(" + viewName + ") ORDER BY " + orderBy;
+        final TableToken viewToken = instance.getLiveViewToken();
+        final long viewWalTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+        final long viewAppliedTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn();
+        if (viewWalTxn > viewAppliedTxn) {
+            final StringSink routed = new StringSink();
+            printSql(viewRead, routed);
+            final StringSink tableOnly = new StringSink();
+            printDiskOnly(viewName, viewRead, tableOnly);
+            TestUtils.assertEquals(
+                    "view '" + viewName + "' served a read past a WAL block its table has not applied [viewWalTxn="
+                            + viewWalTxn + ", viewAppliedTxn=" + viewAppliedTxn + ']',
+                    tableOnly,
+                    routed
+            );
+            return TIER_READ_TABLE_ONLY;
+        }
+        final long baseSeqTxn;
+        try (TableReader reader = getReader(baseName)) {
+            baseSeqTxn = reader.getSeqTxn();
+        }
+        if (instance.getRefreshReachedSeqTxn() != baseSeqTxn
+                || instance.getSuspendedRepair() != null
+                || instance.getRefreshRetryNotBeforeUs() != Numbers.LONG_NULL) {
+            return TIER_READ_SKIPPED;
+        }
+        try {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + oracleSql + ") ORDER BY " + orderBy, viewRead, LOG, true);
+        } catch (AssertionError e) {
+            throw new AssertionError("view '" + viewName + "' read through its tier at base seqTxn " + baseSeqTxn
+                    + " [leadRows=" + instance.getLeadRowCount()
+                    + ", lastProcessedSeqTxn=" + instance.getLastProcessedSeqTxn() + "]: " + e.getMessage(), e);
+        }
+        return TIER_READ_RECOMPUTE;
+    }
+
+    /**
+     * Asserts the view's table holds its row at {@code timestamp} in a composite partition, at a
+     * file row at or past the partition's live row count. A walk of the partition's file rows
+     * {@code [0, liveRows)} never reaches such a row; only a walk of the partition's pieces does.
+     * A case that covers the piece walk asserts this premise first, so a change to where the
+     * writer lays out pieces cannot leave the case passing without reaching the row.
+     */
+    protected static void assertViewRowPastLiveFilePrefix(String viewName, String timestamp) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        final long rowTimestamp = ts(timestamp);
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            final int partitionIndex = reader.getPartitionIndexByTimestamp(rowTimestamp);
+            Assert.assertTrue("the view's table holds no partition for " + timestamp, partitionIndex > -1);
+            Assert.assertTrue(
+                    "the view's partition holding " + timestamp + " must be composite",
+                    reader.getTxFile().isPartitionComposite(partitionIndex)
+            );
+            final long liveRows = reader.openPartition(partitionIndex);
+            final MemoryCR timestamps = reader.getColumn(TableReader.getPrimaryColumnIndex(
+                    reader.getColumnBase(partitionIndex),
+                    reader.getMetadata().getTimestampIndex()
+            ));
+            final PartitionGeometry geometry = reader.getGeometry();
+            for (int piece = 0, n = geometry.getPieceCount(partitionIndex); piece < n; piece++) {
+                final long rowLo = geometry.getPieceRowOffset(partitionIndex, piece);
+                final long rowHi = rowLo + geometry.getPieceRowCount(partitionIndex, piece);
+                for (long row = rowLo; row < rowHi; row++) {
+                    if (timestamps.getLong(row << 3) == rowTimestamp) {
+                        Assert.assertTrue(
+                                "the view's row at " + timestamp + " sits at file row " + row
+                                        + ", inside the partition's first " + liveRows + " file rows",
+                                row >= liveRows
+                        );
+                        return;
+                    }
+                }
+            }
+            Assert.fail("the view's table holds no live row at " + timestamp);
+        }
+    }
+
+    /**
+     * Asserts a keyed {@code WINDOW JOIN} from the view onto its base returns what the same
+     * join from a plain table copy of the view returns, on the sync and the parallel plan,
+     * each with the JIT filter on and off. The join maps each base key to the view's key for
+     * it through the view's symbol table, so a table that lists a label under an id no row
+     * carries leaves rows without a match - NULL aggregates - where the copy, with a symbol
+     * table of its own, matches them.
+     */
+    protected static void assertViewWindowJoinMatchesCopy(
+            String viewName,
+            String baseName,
+            String keyColumn,
+            String baseValueColumn,
+            String filter
+    ) throws SqlException {
+        final String copyName = viewName + "_wj_copy";
+        execute("DROP TABLE IF EXISTS " + copyName);
+        execute("CREATE TABLE " + copyName + " AS (SELECT * FROM " + viewName + ") TIMESTAMP(ts) PARTITION BY DAY");
+        final boolean wasParallel = sqlExecutionContext.isParallelWindowJoinEnabled();
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelWindowJoinEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_DISABLED : SqlJitMode.JIT_MODE_ENABLED);
+                try {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            windowJoinSql(copyName, baseName, keyColumn, baseValueColumn, filter),
+                            windowJoinSql(viewName, baseName, keyColumn, baseValueColumn, filter),
+                            LOG,
+                            true
+                    );
+                } catch (AssertionError e) {
+                    throw new AssertionError("WINDOW JOIN from view '" + viewName + "' differs from its copy [parallel="
+                            + ((mode & 1) != 0) + ", jit=" + ((mode & 2) == 0) + "]: " + e.getMessage(), e);
+                }
+            }
+        } finally {
+            sqlExecutionContext.setParallelWindowJoinEnabled(wasParallel);
+            sqlExecutionContext.setJitMode(jitMode);
+            execute("DROP TABLE " + copyName);
+        }
+    }
+
+    /**
+     * Prints {@code sql} with the seqTxn fence forced off - both slot stamps moved to a value
+     * the disk reader never reports - so the view's reads fall back to the disk-only path and
+     * serve its table as it stands. Restores the stamps afterwards; single-threaded only.
+     */
+    protected static void printDiskOnly(String viewName, String sql, StringSink sink) throws SqlException {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        Assert.assertNotNull("live view '" + viewName + "' has no in-memory tier", tier);
+        final long s0 = tier.getSlot(0).lvSeqTxn();
+        final long s1 = tier.getSlot(1).lvSeqTxn();
+        tier.getSlot(0).setLvSeqTxn(fenceMismatch(s0));
+        tier.getSlot(1).setLvSeqTxn(fenceMismatch(s1));
+        try {
+            printSql(sql, sink);
+        } finally {
+            tier.getSlot(0).setLvSeqTxn(s0);
+            tier.getSlot(1).setLvSeqTxn(s1);
+        }
+    }
+
+    /**
+     * Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes
+     * the freeze intent before it waits for the refresh latch, and {@code startCheckpoint} enters the monitor only
+     * once it holds the latch, so from here on every free that CASes the latch loses until the caller lets the
+     * monitor go.
+     */
+    protected static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
+            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
+            }
+            Os.pause();
+        }
     }
 
     /**
@@ -132,6 +618,503 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
             Os.pause();
         }
+    }
+
+    /**
+     * Spins until the thread parks on a monitor's {@code wait()}: a checkpoint freeze's {@code waitForUnfrozen()} in
+     * the tests that call it.
+     */
+    protected static void awaitWaiting(Thread thread) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (thread.getState() != Thread.State.WAITING) {
+            if (thread.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail(thread.getName() + " never parked [state=" + thread.getState() + ']');
+            }
+            Os.pause();
+        }
+    }
+
+    /**
+     * Joins a thread a test started, whose body records what it threw in {@code error}, and fails when the
+     * thread is still running after {@link #THREAD_JOIN_MILLIS} or threw.
+     */
+    protected static void joinWithoutError(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
+        thread.join(THREAD_JOIN_MILLIS);
+        Assert.assertFalse(thread.getName() + " must complete", thread.isAlive());
+        if (error.get() != null) {
+            throw new AssertionError(thread.getName() + " failed", error.get());
+        }
+    }
+
+    /**
+     * A thread, not started yet, that runs {@code startCheckpoint} on the view, as {@code DatabaseCheckpointAgent}
+     * does for CHECKPOINT CREATE, and records whether it published the freeze in {@code isFrozen} and what it
+     * threw in {@code error}.
+     */
+    protected static Thread newCheckpointAgentThread(
+            LiveViewInstance instance,
+            AtomicBoolean isFrozen,
+            AtomicReference<Throwable> error
+    ) {
+        return new Thread(() -> {
+            try {
+                isFrozen.set(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-checkpoint-agent");
+    }
+
+    /**
+     * Starts a thread named {@code name} that runs {@code body} and records what it threw in {@code error}, for
+     * {@link #joinWithoutError} to report.
+     */
+    protected static Thread startThread(String name, AtomicReference<Throwable> error, Runnable body) {
+        final Thread thread = new Thread(() -> {
+            try {
+                body.run();
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, name);
+        thread.start();
+        return thread;
+    }
+
+    /**
+     * One WAL segment per base commit, so the count {@link #purgeBaseWalAndCountSegments} returns
+     * reads the purge floor, and a purge job that runs whenever that helper drives it.
+     */
+    protected static void configureWalPurge() {
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        // WalPurgeJob is interval-gated off the simulated clock.
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+    }
+
+    /**
+     * Runs the purge job over the table {@code base} with every hold but the views' lifted, and
+     * returns the WAL segments its WAL directories still hold.
+     */
+    protected static long purgeBaseWalAndCountSegments() {
+        return purgeBaseWalAndCountSegments("base");
+    }
+
+    /**
+     * Runs the purge job over the table {@code baseTableName} with every hold but the views' lifted,
+     * and returns the WAL segments its WAL directories still hold.
+     */
+    protected static long purgeBaseWalAndCountSegments(String baseTableName) {
+        releaseSavePointHolds(baseTableName);
+        engine.releaseInactive();
+        setCurrentMicros(currentMicros + 60_000_000L);
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+            purgeJob.drain(0);
+        }
+        final File tableDir = new File(engine.getConfiguration().getDbRoot(), engine.verifyTableName(baseTableName).getDirName());
+        final File[] walDirs = tableDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
+        if (walDirs == null) {
+            return 0;
+        }
+        long segments = 0;
+        for (File walDir : walDirs) {
+            final File[] segmentDirs = walDir.listFiles(File::isDirectory);
+            if (segmentDirs != null) {
+                segments += segmentDirs.length;
+            }
+        }
+        return segments;
+    }
+
+    /**
+     * The refresh job's private checkpoint timeline writer, for the tests that read what a seal
+     * or a repair left behind in it.
+     */
+    protected static LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter(
+            LiveViewRefreshJob job
+    ) throws ReflectiveOperationException {
+        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
+        field.setAccessible(true);
+        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
+        Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
+        return writer;
+    }
+
+    /**
+     * Asserts every repair root {@code instance} tracks is one of the two newest roots of its
+     * published timeline: the store writer removes the second-newest root only when it is one,
+     * so a tracked id below them would never go, and one the timeline does not hold names a root
+     * of another history.
+     */
+    protected static void assertRepairRootsAmongTheTwoNewest(LiveViewInstance instance) {
+        final LongList repairRootIds = instance.getCheckpointRepairRootIds();
+        if (repairRootIds.size() == 0) {
+            return;
+        }
+        final LongList ids = checkpointTimelineIds(instance);
+        final int n = ids.size();
+        for (int i = 0, m = repairRootIds.size(); i < m; i++) {
+            final long id = repairRootIds.getQuick(i);
+            Assert.assertTrue(
+                    "live view '" + instance.getDefinition().getViewName() + "' tracks repair root " + id
+                            + ", which is not one of the two newest roots of " + ids,
+                    (n > 0 && ids.getQuick(n - 1) == id) || (n > 1 && ids.getQuick(n - 2) == id)
+            );
+        }
+    }
+
+    /**
+     * The checkpoint ids of {@code instance}'s published timeline, in key order.
+     */
+    protected static LongList checkpointTimelineIds(LiveViewInstance instance) {
+        final LongList ids = new LongList();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader reader = new LiveViewCheckpointTimelineReader(configuration)
+        ) {
+            store.of(dir);
+            reader.of(dir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> ids.add(entry.checkpointId));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The test hooks installed on {@code job}, installing them first if the job runs none.
+     */
+    protected static LiveViewTestRefreshHooks hooks(LiveViewRefreshJob job) {
+        return LiveViewTestRefreshHooks.install(job);
+    }
+
+    /**
+     * The view rows the head-miss departure fixture leaves: when {@code isDayRowKept}, the row
+     * {@code 2025-12-31T23:55 a 0.5} that the base may since have lost, then a row of {@code a}
+     * a minute from {@code 2026-01-01T00:00} to {@code 00:lastMinute}, each of {@code x = 1.0}.
+     * The one-minute frame of each holds itself and the row a minute below it, and the 23:55 row
+     * sits five minutes under the first: {@code s} is 1.0 at 00:00 and 2.0 above it.
+     */
+    protected static String headMissDepartureRows(boolean isDayRowKept, int lastMinute) {
+        final StringSink sink = new StringSink();
+        sink.put("ts\tsym\tx\ts\n");
+        if (isDayRowKept) {
+            sink.put("2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5\n");
+        }
+        for (int minute = 0; minute <= lastMinute; minute++) {
+            sink.put("2026-01-01T00:").put(minute < 10 ? "0" : "").put(minute).put(":00.000000Z\ta\t1.0\t")
+                    .put(minute == 0 ? "1.0" : "2.0").put('\n');
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Repairs the head-miss executor published on {@code job}: every route but the two resumes
+     * from a sealed anchor.
+     */
+    protected static long countHeadMissRepairs(LiveViewRefreshJob job) {
+        long repairs = 0;
+        for (int route = 0; route < LiveViewCheckpointRepairRoute.ROUTE_COUNT; route++) {
+            if (route != LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR
+                    && route != LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR) {
+                repairs += job.getStatsForTest().getRouteCount(route);
+            }
+        }
+        return repairs;
+    }
+
+    /**
+     * Rows of {@code a}, one a minute from {@code 2026-01-01T00:fromMinute} to
+     * {@code 00:toMinute}, each holding {@code x}, as the VALUES list of one INSERT.
+     */
+    protected static String minuteRowsOfA(int fromMinute, int toMinute, String x) {
+        final StringSink sink = new StringSink();
+        for (int minute = fromMinute; minute <= toMinute; minute++) {
+            if (minute > fromMinute) {
+                sink.put(", ");
+            }
+            sink.put("('2026-01-01T00:").put(minute < 10 ? "0" : "").put(minute).put(":00.000000Z', 'a', ").put(x).put(')');
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Every catalogued segment the selected generation still references must have its file,
+     * whichever directory its kind puts it in. This is the assertion a reference count that
+     * retired one page too early fails.
+     */
+    protected static void assertCatalogueMatchesDisk(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                final List<String> missing = new ArrayList<>();
+                directory.iterateAll(entry -> {
+                    if (entry.referenceCount <= 0) {
+                        return;
+                    }
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (!exists) {
+                        missing.add((entry.isMetadata() ? "m." : "d.") + entry.segmentId);
+                    }
+                });
+                Assert.assertEquals(
+                        "the selected generation references unlinked segments " + missing,
+                        0,
+                        missing.size()
+                );
+                // The root the superblock names is the one page nothing may have
+                // reclaimed; a pending directory segment is not catalogued at all,
+                // so the check above cannot speak for it.
+                final long pending = metaStore.getSuperblock().pendingDirectorySegmentId;
+                if (pending != Numbers.LONG_NULL) {
+                    Assert.assertTrue(
+                            "the unregistered directory segment must survive, segmentId=" + pending,
+                            metaFiles.contains(pending)
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * The catalogued segment ids of the selected generation, whatever their kind.
+     */
+    protected static Set<Long> catalogue(LiveViewInstance instance) {
+        final Set<Long> ids = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> ids.add(entry.segmentId));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The number of entries the selected generation's segment catalogue holds.
+     */
+    protected static long catalogueSize(LiveViewInstance instance) {
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory = new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                return directory.size();
+            }
+        }
+    }
+
+    /**
+     * The files under the view's checkpoint directory, counted through every subdirectory.
+     */
+    protected static int checkpointFileCount(LiveViewInstance instance) {
+        return countFiles(new File(
+                new File(configuration.getDbRoot(), instance.getLiveViewToken().getDirName()),
+                LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+        ));
+    }
+
+    protected static boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
+        try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
+            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+            return configuration.getFilesFacade().exists(path.$());
+        }
+    }
+
+    /**
+     * Catalogued segments with no file on disk. Every one is dead weight: a sweep
+     * has already unlinked what the entry names, so nothing can ever read it and
+     * no count decides anything about it.
+     */
+    protected static Set<Long> deadCatalogueEntries(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final Set<Long> dead = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (!exists) {
+                        dead.add(entry.segmentId);
+                    }
+                });
+            }
+        }
+        return dead;
+    }
+
+    /**
+     * The metadata segment ids with a final-name file on disk. A purge unlinks the
+     * file but leaves the catalogue entry, so on-disk presence is the reclaim test.
+     */
+    protected static Set<Long> metaSegmentIds(LiveViewInstance instance) {
+        final Set<Long> ids = new HashSet<>();
+        try (Path checkpointsDir = checkpointsDir(instance); Path metaDir = new Path()) {
+            LiveViewCheckpointLayout.metaDirPath(metaDir, checkpointsDir);
+            final String[] names = new File(metaDir.toString()).list();
+            if (names != null) {
+                for (String name : names) {
+                    if (name.endsWith(LiveViewCheckpointLayout.TMP_SUFFIX)
+                            || !Chars.startsWith(name, LiveViewCheckpointLayout.META_SEGMENT_PREFIX)) {
+                        continue;
+                    }
+                    try {
+                        ids.add(Long.parseLong(name.substring(LiveViewCheckpointLayout.META_SEGMENT_PREFIX.length())));
+                    } catch (NumberFormatException ignore) {
+                        // A name that is not m.<number> is not a segment we track.
+                    }
+                }
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The generation the superblock of {@code instance}'s checkpoint timeline names.
+     */
+    protected static long publishedCheckpointGeneration(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path().of(configuration.getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            store.of(checkpointsDir);
+            return store.getSuperblock().generation;
+        }
+    }
+
+    /**
+     * The length of the view's durable retirement queue, {@code _retirements}, or -1 when the
+     * view has none.
+     */
+    protected static long retirementQueueBytes(LiveViewInstance instance) {
+        final File retirements = retirementQueueFile(instance);
+        return retirements.exists() ? retirements.length() : -1;
+    }
+
+    /**
+     * The segment ids of the work items the view's durable retirement queue holds: after a
+     * 32-byte header, whose int at offset 12 counts the items, one 32-byte item each, whose first
+     * long is the segment id.
+     */
+    protected static Set<Long> retirementQueueSegmentIds(LiveViewInstance instance) throws IOException {
+        final Set<Long> ids = new HashSet<>();
+        final File retirements = retirementQueueFile(instance);
+        if (retirements.exists()) {
+            final ByteBuffer queue = ByteBuffer.wrap(Files.readAllBytes(retirements.toPath())).order(ByteOrder.LITTLE_ENDIAN);
+            for (int i = 0, n = queue.getInt(12); i < n; i++) {
+                ids.add(queue.getLong(32 + i * 32));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Catalogued segments no root of the selected generation references any more,
+     * whose file is nevertheless still on disk. Each one is collectable garbage
+     * waiting for a sweep - modulo the handful the fallback slot or a reader pin
+     * still protects, which is what keeps the bound above zero rather than at it.
+     */
+    protected static int uncollectedSegmentCount(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final int[] count = {0};
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    if (entry.referenceCount != 0) {
+                        return;
+                    }
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (exists) {
+                        count[0]++;
+                    }
+                });
+            }
+        }
+        return count[0];
+    }
+
+    /**
+     * Commits a REPLACE_RANGE over {@code [lo, hi)} on the base table {@code (ts, sym, x)},
+     * holding one row {@code (lo, 'a', keptX)}, or none for a NaN {@code keptX}: what a
+     * materialized view's incremental refresh writes over a bucket range. The commit is left to
+     * the WAL apply job.
+     */
+    protected static void replaceBaseRange(long lo, long hi, double keptX) {
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+            if (!Double.isNaN(keptX)) {
+                final TableWriter.Row row = walWriter.newRow(lo);
+                row.putSym(1, "a");
+                row.putDouble(2, keptX);
+                row.append();
+            }
+            walWriter.commitWithParams(lo, hi, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+    }
+
+    /**
+     * The LiveViewRecordCursorFactory under any wrapper the plan put on top of it.
+     */
+    protected static RecordCursorFactory liveViewFactoryOf(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+            f = f.getBaseFactory();
+        }
+        Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+        return f;
     }
 
     /**
@@ -165,6 +1148,54 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * engine's own configuration for the time, then puts the clock back. A derived clock answers
      * with the stamp; a pinned real one answers with wall time.
      */
+    private static void assertRestoreRoute(String viewName, int expected, LiveViewInstance instance) {
+        Assert.assertEquals(
+                "live view '" + viewName + "' took the wrong restart recovery route",
+                LiveViewCheckpointRecoveryPhase.routeName(expected),
+                LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
+        );
+    }
+
+    private static Path checkpointsDir(LiveViewInstance instance) {
+        return new Path().of(configuration.getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    private static File retirementQueueFile(LiveViewInstance instance) {
+        return new File(
+                new File(new File(configuration.getDbRoot(), instance.getLiveViewToken().getDirName()), LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME),
+                LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME
+        );
+    }
+
+    private static int countFiles(File dir) {
+        final File[] files = dir.listFiles();
+        Assert.assertNotNull(files);
+        int count = 0;
+        for (File file : files) {
+            count += file.isDirectory() ? countFiles(file) : 1;
+        }
+        return count;
+    }
+
+    // A keyed WINDOW JOIN from `left` onto the base, sorted on every output column so the
+    // view and its copy compare row for row whatever order their tied rows scan in.
+    private static String windowJoinSql(String left, String baseName, String keyColumn, String baseValueColumn, String filter) {
+        return "SELECT * FROM (SELECT t.ts, t." + keyColumn + ", count() AS n, sum(p." + baseValueColumn + ") AS s FROM " + left + " t"
+                + " WINDOW JOIN " + baseName + " p ON t." + keyColumn + " = p." + keyColumn
+                + " RANGE BETWEEN 1 HOUR PRECEDING AND 1 HOUR FOLLOWING EXCLUDE PREVAILING"
+                + (filter != null ? " WHERE " + filter : "")
+                + ") ORDER BY 1, 2, 3, 4";
+    }
+
+    // Maps a slot stamp to a value the disk reader can never report, which forces the fence
+    // off so the read serves disk-only. An unstamped slot never passes the fence, so it stays
+    // unstamped: any number it took instead could be the disk reader's own seqTxn.
+    private static long fenceMismatch(long seqTxn) {
+        return seqTxn == Numbers.LONG_NULL ? Numbers.LONG_NULL : seqTxn + 1_000_000;
+    }
+
     private static boolean isEngineMillisecondClockDerivedFromTestClock() {
         // 2100-01-01T00:00:00Z in micros, far enough from now that no real clock reads it.
         final long probeMicros = 4_102_444_800_000_000L;
@@ -175,6 +1206,23 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         } finally {
             setCurrentMicros(savedMicros);
         }
+    }
+
+    // A stalled stdout backs the async log ring up, and a full ring drops every record that
+    // does not wait for a slot. Hosted CI agents stall it for seconds at a time, which dropped
+    // the refresh job lines tests assert through LogCapture. A guaranteed logger waits instead.
+    // Both hooks carry their own names, so a subclass overriding setUp() or tearDown() without
+    // calling super cannot skip them.
+    @Before
+    public void enableGuaranteedRefreshJobLogging() {
+        if (isRefreshJobLoggingGuaranteed()) {
+            LogFactory.enableGuaranteedLogging(LiveViewRefreshJob.class);
+        }
+    }
+
+    @After
+    public void restoreRefreshJobLogging() {
+        LogFactory.disableGuaranteedLogging(LiveViewRefreshJob.class);
     }
 
     @Before
@@ -209,6 +1257,211 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Runs {@code test}, a test method whose body runs under the plain {@code assertMemoryLeak},
+     * with {@code cairo.commit.mode} set to {@code commitMode}, then asserts what that mode asks
+     * of every kind of checkpoint file in {@code fileKinds} (see
+     * {@link LiveViewCheckpointDiskFullFault#kindOf}). The sync mode must sync each kind with the
+     * synchronous flag and never with the async one. The async mode must never sync one with the
+     * synchronous flag, which is the wait it exists to avoid. Whether its sync reaches the facade
+     * at all is the mapped memory's choice: since #7912, {@code MemoryCMARWImpl} drops an async
+     * sync, as {@code msync(MS_ASYNC)} has been a no-op on Linux since 2.6.19. The test
+     * configuration defaults to nosync, which skips the sync branch of every checkpoint writer.
+     */
+    protected void assertCheckpointFilesSyncInCommitMode(
+            String commitMode,
+            ObjList<String> fileKinds,
+            TestUtils.LeakProneCode test
+    ) throws Exception {
+        final boolean isAsync = "async".equals(commitMode);
+        Assert.assertTrue("not a syncing commit mode: " + commitMode, isAsync || "sync".equals(commitMode));
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final LiveViewCheckpointDiskFullFault syncs = new LiveViewCheckpointDiskFullFault();
+        ff = syncs;
+        test.run();
+        for (int i = 0, n = fileKinds.size(); i < n; i++) {
+            final String kind = fileKinds.getQuick(i);
+            if (isAsync) {
+                Assert.assertEquals(
+                        "the async commit mode must not sync " + kind + " synchronously",
+                        0,
+                        syncs.getSyncCount(kind, false)
+                );
+            } else {
+                Assert.assertTrue(
+                        "the sync commit mode must sync " + kind,
+                        syncs.getSyncCount(kind, false) > 0
+                );
+                Assert.assertEquals(
+                        "the sync commit mode must not sync " + kind + " with the async flag",
+                        0,
+                        syncs.getSyncCount(kind, true)
+                );
+            }
+        }
+    }
+
+    /**
+     * Asserts no root of {@code instance}'s checkpoint timeline, when it has one, sits above the
+     * newest row the view's table holds. A restart, and an in-place restore of the runtime, floor
+     * their restore at that row and put the head there, so a root above it makes every later
+     * publication of the timeline fail.
+     */
+    protected void assertNoCheckpointRootAboveTheNewestRow(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path timelinePath = new Path()
+        ) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            if (!engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
+                return;
+            }
+        }
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        if (ladder.size() == 0) {
+            return;
+        }
+        final long newestRootTs = ladder.getQuick(ladder.size() - 2);
+        long durableMaxTs = Numbers.LONG_NULL;
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            if (reader.size() > 0) {
+                durableMaxTs = reader.getMaxTimestamp();
+            }
+        }
+        if (durableMaxTs == Numbers.LONG_NULL || newestRootTs > durableMaxTs) {
+            Assert.fail("live view '" + instance.getDefinition().getViewName() + "' keeps a checkpoint root above the newest row its table holds [root="
+                    + newestRootTs + ", newestRow=" + durableMaxTs + ']');
+        }
+    }
+
+    /**
+     * Commits {@code departure}, which leaves the view's newest rows to a localized end-of-table
+     * head-miss rebuild that emits no row, and asserts the rebuild derived the state at the view's
+     * new frontier {@code frontierTs} the way {@code frontierStateRoute} names
+     * ({@link #FRONTIER_STATE_SKIP}, {@link #FRONTIER_STATE_RESTORE} or
+     * {@link #FRONTIER_STATE_WARM_UP}) and sealed a root there instead of retiring the timeline:
+     * one head-miss repair, {@code frontierTruncates} truncates of a splice at the frontier, the
+     * replay's and the derivation's base rows together {@code scanRows} (not asserted when
+     * negative: a repair that parks counts a row twice per park), the head at the frontier
+     * at the departure's base commit, no marker, and {@code ladder}. Over a timeline the frontier
+     * truncate retired, when {@code isFreshHistory}, the seal opens generation 1; otherwise the
+     * generation moves {@code generations} on.
+     */
+    protected void assertZeroRowDepartureSealsTheFrontier(
+            LiveViewRefreshJob job,
+            ZeroRowDeparture departure,
+            String frontierTs,
+            int frontierStateRoute,
+            long frontierTruncates,
+            long scanRows,
+            long generations,
+            boolean isFreshHistory,
+            String ladder
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        final long generationBefore = publishedCheckpointGeneration(instance);
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        final long scanRowsBefore = instance.getO3ReplayScanRows();
+        final long sealsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT);
+        final long restoresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT);
+        final long warmUpsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT);
+        final long truncatesBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
+        final long retiresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+        final long keepsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_TRUNCATE_ZERO_ROW_KEEP_COUNT);
+        departure.run();
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        final long departureSeqTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("base"));
+        Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals("the seal lands at the frontier", sealsBefore + 1, stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+        Assert.assertEquals(
+                "a restore derives the frontier state",
+                restoresBefore + (frontierStateRoute == FRONTIER_STATE_RESTORE ? 1 : 0),
+                stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT)
+        );
+        Assert.assertEquals(
+                "a warm-up derives the frontier state",
+                warmUpsBefore + (frontierStateRoute == FRONTIER_STATE_WARM_UP ? 1 : 0),
+                stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT)
+        );
+        Assert.assertEquals(truncatesBefore + frontierTruncates, stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+        Assert.assertEquals("nothing retires", retiresBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+        Assert.assertEquals("no watermark publishes a root", keepsBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_TRUNCATE_ZERO_ROW_KEEP_COUNT));
+        if (scanRows >= 0) {
+            Assert.assertEquals("the replay's and the derivation's base rows", scanRows, instance.getO3ReplayScanRows() - scanRowsBefore);
+        }
+        if (isFreshHistory) {
+            Assert.assertEquals("the frontier truncate keeps no root", resetsBefore + 1, instance.getCheckpointTimelineResets());
+            Assert.assertEquals("the seal opens a fresh history", 1, publishedCheckpointGeneration(instance));
+        } else {
+            Assert.assertEquals("the timeline stays", resetsBefore, instance.getCheckpointTimelineResets());
+            Assert.assertEquals(generationBefore + generations, publishedCheckpointGeneration(instance));
+        }
+        assertCheckpointLadder(instance, ColumnType.isTimestampNano(instance.getDefinition().getBaseTimestampType()), ladder);
+        Assert.assertEquals("the head sits at the frontier", parseBaseTimestamp(instance, frontierTs), instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals("at the departure's commit", departureSeqTxn, instance.getHeadCheckpointBaseSeqTxn());
+        try (Path dir = new Path().of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+            Assert.assertFalse("the seal resolves the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * The restart after a zero-row departure sealed the view's frontier restores from that root,
+     * with the view holding {@code rows}; rows committed in order at exactly the frontier, and
+     * above it, by {@code tieValues}, fold over the restored state into {@code rowsWithTie}; and the
+     * next restart restores again, replaying their commit over the root from its own timestamp.
+     */
+    protected void assertTieAtTheFrontierFoldsOntoTheRestoredRoot(String rows, String tieValues, String rowsWithTie) throws Exception {
+        assertTieAtTheFrontierFoldsOntoTheRestoredRoot("SELECT ts, sym, x, s FROM lv", rows, tieValues, rowsWithTie);
+    }
+
+    /**
+     * As above, with the view's rows read through {@code rowsSql}, a query over {@code lv}
+     * ordered by its designated timestamp {@code ts}.
+     */
+    protected void assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+            String rowsSql,
+            String rows,
+            String tieValues,
+            String rowsWithTie
+    ) throws Exception {
+        restartLiveViewsAndRecover();
+        assertZeroRowDepartureRestored(rowsSql, rows);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base VALUES " + tieValues);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        assertZeroRowDepartureRows(rowsSql, rowsWithTie);
+        restartLiveViewsAndRecover();
+        assertZeroRowDepartureRestored(rowsSql, rowsWithTie);
+    }
+
+    /**
+     * Asserts every logical root of {@code instance}'s checkpoint timeline, ascending, one line
+     * each as {@code maxTimestamp -> effective row position}, with the timestamp printed in
+     * microseconds, or in nanoseconds when {@code isNanos}. See {@link #snapshotCheckpointLadder}.
+     */
+    protected void assertCheckpointLadder(LiveViewInstance instance, boolean isNanos, String expected) {
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = ladder.size(); i < n; i += 2) {
+            if (isNanos) {
+                NanosFormatUtils.appendDateTimeNSec(sink, ladder.getQuick(i));
+            } else {
+                MicrosFormatUtils.appendDateTimeUSec(sink, ladder.getQuick(i));
+            }
+            sink.put(" -> ").put(ladder.getQuick(i + 1)).put('\n');
+        }
+        TestUtils.assertEquals("checkpoint ladder of live view '" + instance.getDefinition().getViewName() + "'", expected, sink);
+    }
+
+    /**
      * Asserts the named view refreshed without a single faulting cycle.
      * <p>
      * Any test whose oracle compares the live view against a from-base recompute of its own SELECT
@@ -230,17 +1483,79 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts the named view's restart recovery rebuilt its whole window from the applied base
+     * rather than restoring a published root, and that the rebuild retired the timeline on its
+     * way through. The mirror image of {@link #assertRestoredFromTimeline(String)}: a case that
+     * means to exercise the fallback needs this, because a restore that quietly succeeded would
+     * satisfy the same rows.
+     */
+    protected void assertRebuiltFromAppliedBase(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_FALLBACK_REBUILD, instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' took the rebuild route without starting a rebuild",
+                instance.getCheckpointRebuildAttempts() > 0
+        );
+    }
+
+    /**
+     * Asserts the named view, carried over from an older checkpoint format, rebuilt its whole
+     * window from the applied base on the upgrade route, and that the rebuild retired the older
+     * directory: nothing is pending any more. Distinct from
+     * {@link #assertRebuiltFromAppliedBase(String)}, whose route a view that merely lost its
+     * timeline takes, with the restatement guard armed.
+     */
+    protected void assertUpgradeRebuilt(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_UPGRADE_REBUILD, instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' took the upgrade route without starting a rebuild",
+                instance.getCheckpointRebuildAttempts() > 0
+        );
+        Assert.assertTrue(instance.isCheckpointRestoreSucceeded());
+        Assert.assertFalse(
+                "live view '" + viewName + "' rebuilt, but its older-format timeline is still pending retirement",
+                instance.isCheckpointUpgradeRebuildPending()
+        );
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+    }
+
+    /**
+     * Asserts the named view's restart recovery restored its window state from a published timeline
+     * root, and that nothing rebuilt or reset on the way there. See
+     * {@link #assertRestoredFromTimeline(String, LiveViewInstance)}.
+     */
+    protected void assertRestoredFromTimeline(String viewName) {
+        assertRestoredFromTimeline(viewName, restoreWitnessInstance(viewName));
+    }
+
+    /**
+     * Moves the simulated clock to where the next refresh pass should run: the earliest deadline a
+     * view backing off after a faulting turn waits for, or {@link #CLOCK_ADVANCE_MICROS} on when no
+     * view is backing off.
+     */
+    protected static void advanceClockToNextRefreshPass() {
+        final long retryUs = nextRefreshRetryMicros();
+        setCurrentMicros(retryUs != Numbers.LONG_NULL ? retryUs : currentMicros + CLOCK_ADVANCE_MICROS);
+    }
+
+    /**
      * Advances the clock and drives the refresh job until it makes no further progress. Fails if the
      * job is still finding work after {@link #REFRESH_QUIESCENCE_PASSES} passes, which means the view
      * never converged and any assertion the caller makes next would be reading a half-refreshed view.
+     * <p>
+     * A view waiting out a refresh-retry backoff is not quiescent: the pass after it runs at the
+     * view's deadline ({@link #advanceClockToNextRefreshPass}), so a fault that clears converges and
+     * one that does not runs a flush-retry budget out, as a worker would leave it.
      */
     protected void driveRefreshToQuiescence(LiveViewRefreshJob job) {
         for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            advanceClockToNextRefreshPass();
             drainWalQueue();
             boolean progressed = drainJob(job);
             drainWalQueue();
-            if (!progressed) {
+            if (!progressed && nextRefreshRetryMicros() == Numbers.LONG_NULL) {
                 return;
             }
         }
@@ -262,13 +1577,37 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 completed = true;
                 break;
             }
-            drainJob(job);
+            // The clock stays put while the sweep runs, unless a faulting seed turn left the view
+            // backing off: the sweep resumes at the view's deadline, not on a clock that never
+            // reaches it.
+            drainJobThroughRetryBackoff(job);
         }
         drainWalQueue();
         if (!completed) {
             Assert.fail("seed of live view '" + viewName + "' did not complete within "
                     + SEED_COMPLETION_PASSES + " passes; the view is still SEEDING");
         }
+    }
+
+    /**
+     * Drives one refresh pass at a time until the named view has a repair parked on it, so a
+     * caller can read the durable state a reader would see mid-repair, or what the parked
+     * session itself holds before a later turn resumes or discards it. Fails if the repair
+     * never parks, which would leave every assertion after it vacuous.
+     */
+    protected void driveUntilParked(LiveViewRefreshJob job, String viewName) {
+        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES; pass++) {
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            job.processNotificationsForTest();
+            drainWalQueue();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+            Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
+            if (instance.getSuspendedRepair() != null) {
+                return;
+            }
+        }
+        Assert.fail("the repair on '" + viewName + "' never parked on its turn budget");
     }
 
     /**
@@ -296,6 +1635,85 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Whether {@link LiveViewRefreshJob} logs through a guaranteed logger for the test. A
+     * guaranteed record waits for a ring slot, so while stdout stalls the refresh job stalls
+     * with it. A suite that asserts no refresh job lines and runs refresh workers under a
+     * liveness deadline overrides this to return false, keeping a stdout stall out of its
+     * refresh workers.
+     */
+    protected boolean isRefreshJobLoggingGuaranteed() {
+        return true;
+    }
+
+    /**
+     * Every logical timeline entry of {@code instance} as {@code (maxTimestamp, effective row
+     * position)}, ascending - the ladder a resume reads to decide how many live-view rows the
+     * root it selects stands on.
+     * <p>
+     * The position is the effective one, so it carries the suffix corrections later repairs
+     * published into {@code LiveViewCheckpointRowPositionDelta} rather than only what the
+     * entry itself stores.
+     */
+    protected LongList snapshotCheckpointLadder(LiveViewInstance instance) {
+        final LongList ladder = new LongList();
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
+                LiveViewCheckpointTimelineReader reader =
+                        new LiveViewCheckpointTimelineReader(engine.getConfiguration());
+                LiveViewCheckpointRowPositionDeltaReader deltaReader =
+                        new LiveViewCheckpointRowPositionDeltaReader(engine.getConfiguration())
+        ) {
+            store.of(checkpointsDir);
+            reader.of(checkpointsDir);
+            deltaReader.of(checkpointsDir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> {
+                    ladder.add(entry.maxTimestamp);
+                    ladder.add(deltaReader.effectivePosition(pin.getRowPositionDeltaRootRef(), entry));
+                });
+            }
+        }
+        return ladder;
+    }
+
+    /**
+     * Stops every live view the way a process stop does - the registry drops its instances and
+     * every reader and writer goes back - then registers them again from disk and drives the
+     * restart recovery to quiescence.
+     */
+    protected void restartLiveViewsAndRecover() {
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.buildViewGraphs();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+    }
+
+    /**
+     * Removes every WAL directory of the base table, which is what a restore that captured the
+     * applied table and not its WAL leaves behind.
+     */
+    protected void removeBaseWal(String baseTableName) {
+        final TableToken baseToken = engine.verifyTableName(baseTableName);
+        final File baseDir = new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName());
+        final File[] walDirs = baseDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
+        Assert.assertNotNull(walDirs);
+        Assert.assertTrue("the base must have a WAL to lose", walDirs.length > 0);
+        for (File walDir : walDirs) {
+            try (Path p = new Path()) {
+                p.of(walDir.getAbsolutePath());
+                Assert.assertTrue("could not remove " + walDir, engine.getConfiguration().getFilesFacade().rmdir(p));
+            }
+        }
+    }
+
+    /**
      * Retires the checkpoint timeline the seed sweep has been sealing into, so a following restart
      * has no resume source and the sweep has to re-run from offset 0 behind its skip-write floor. A
      * no-op when the view has no timeline (nothing has been sealed yet, or the sweep completed and
@@ -308,5 +1726,54 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLifecycle.retireTimeline(engine.getConfiguration(), p, null, true);
         }
+    }
+
+    private static long parseBaseTimestamp(LiveViewInstance instance, String timestamp) {
+        try {
+            return ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()).parseFloorLiteral(timestamp);
+        } catch (NumericException e) {
+            throw new AssertionError("not a timestamp: " + timestamp, e);
+        }
+    }
+
+    private void assertZeroRowDepartureRestored(String rowsSql, String rows) throws Exception {
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\nactive\n");
+        assertZeroRowDepartureRows(rowsSql, rows);
+        assertNoRefreshFaults("lv");
+    }
+
+    private void assertZeroRowDepartureRows(String rowsSql, String rows) throws Exception {
+        assertQuery(rowsSql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .sizeMayVary()
+                .returns(rows);
+    }
+
+    private LiveViewInstance restoreWitnessInstance(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' has not run its restart recovery attempt yet, so it"
+                        + " witnesses no route: drive refresh to quiescence first",
+                instance.isCheckpointRestoreAttempted()
+        );
+        return instance;
+    }
+
+    /**
+     * A commit that moves the view's newest rows out of it: a REPLACE_RANGE, or an upsert over a
+     * deduplicating base.
+     */
+    @FunctionalInterface
+    protected interface ZeroRowDeparture {
+        void run() throws Exception;
     }
 }

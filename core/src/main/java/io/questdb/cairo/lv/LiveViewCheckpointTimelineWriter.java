@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -44,6 +45,10 @@ import java.io.Closeable;
  *     <li>{@link #append} inserts one logical checkpoint entry, path-copying
  *     the {@code O(log N)} spine and splitting nodes that overflow, reusing
  *     every untouched subtree by its existing page reference.</li>
+ *     <li>{@link #appendRemovingSecondLast} appends one entry above every key and
+ *     drops the second-to-last entry in the same pass. The last entry moves down
+ *     one position, so every node keeps its entry count, and only the at most two
+ *     leaves holding the last two positions and their spines are copied.</li>
  *     <li>{@link #splice} re-versions a set of existing entries in place (same
  *     keys, new root/positions - the out-of-order repair of {@code [C, H)}). It
  *     copies only the leaves holding the affected keys and their ancestor
@@ -71,14 +76,19 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private long lastSegmentBytes;
     private int lastSegmentPageCount;
-    private LiveViewCheckpointTimelineNode[] dropPool = new LiveViewCheckpointTimelineNode[0];
-    private LiveViewCheckpointTimelineNode[] leftPool = new LiveViewCheckpointTimelineNode[0];
+    // The key of the entry the last insertRec replacing the last entry dropped.
+    private long replacedCheckpointId;
+    private long replacedMaxTimestamp;
+    private final ObjList<LiveViewCheckpointTimelineNode> dropPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointTimelineNode> leftPool = new ObjList<>();
     private final LiveViewCheckpointTimelineNode newRootBuilder = new LiveViewCheckpointTimelineNode();
     private final LongList releasedSegmentIds = new LongList();
-    private InsertResult[] resultPool = new InsertResult[0];
-    private LiveViewCheckpointTimelineNode[] rightPool = new LiveViewCheckpointTimelineNode[0];
-    private LiveViewCheckpointPageRef[] spliceRefPool = new LiveViewCheckpointPageRef[0];
-    private LiveViewCheckpointPageRef[] truncateRefPool = new LiveViewCheckpointPageRef[0];
+    private final ObjList<InsertResult> resultPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointTimelineNode> rightPool = new ObjList<>();
+    // The last entry appendRemovingSecondLast moves down one position.
+    private final LiveViewCheckpointTimelineEntry shiftedEntry = new LiveViewCheckpointTimelineEntry();
+    private final ObjList<LiveViewCheckpointPageRef> spliceRefPool = new ObjList<>();
+    private final ObjList<LiveViewCheckpointPageRef> truncateRefPool = new ObjList<>();
 
     public LiveViewCheckpointTimelineWriter(@NotNull CairoConfiguration configuration) {
         this(configuration, 64, 64);
@@ -115,7 +125,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             leaf.insertEntryAt(0, entry);
             writePage(leaf, newRootOut);
         } else {
-            insertRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, 0);
+            insertRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, 0, false);
             final InsertResult root = resultAt(0);
             if (root.split) {
                 newRootBuilder.resetInternal();
@@ -129,11 +139,66 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         commitSegment();
     }
 
+    /**
+     * Appends {@code entry}, whose key must sit above every key the tree holds, and
+     * drops the tree's second-to-last entry in the same pass, filling
+     * {@code newRootOut} with the new tree root: {@code [.., X, Y]} becomes
+     * {@code [.., Y, Z]}. The last entry moves down one position and {@code entry}
+     * takes the last, so every node keeps its entry count: nothing splits or merges,
+     * and the separators stay sorted. The descent follows the rightmost path. A last
+     * leaf holding two entries or more rewrites its last two slots; one holding only
+     * the last entry takes {@code entry} in its one slot and hands the last entry to
+     * the last leaf of its left neighbour, in place of the dropped entry. Only the at
+     * most two leaves holding the last two positions and their spines are copied into
+     * {@code newSegmentId}.
+     *
+     * @throws CairoException when the tree holds fewer than two entries, or when its
+     *                        second-to-last key is not
+     *                        {@code (removedMaxTimestamp, removedCheckpointId)}; the
+     *                        segment is then discarded, and nothing the caller
+     *                        publishes changes
+     */
+    public void appendRemovingSecondLast(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            long removedMaxTimestamp,
+            long removedCheckpointId,
+            @NotNull LiveViewCheckpointTimelineEntry entry,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        if (oldRoot.isNull()) {
+            throw CairoException.critical(0).put("cannot remove the second-to-last entry of an empty live view checkpoint timeline");
+        }
+        beginSegment(newSegmentId);
+        try {
+            if (shiftLastRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, removedMaxTimestamp, removedCheckpointId, 0)) {
+                throw CairoException.critical(0).put("cannot remove the second-to-last entry of a live view checkpoint timeline holding one entry");
+            }
+        } catch (Throwable t) {
+            segmentWriter.discard();
+            throw t;
+        }
+        final InsertResult root = resultAt(0);
+        newRootOut.of(root.leftRef.getSegmentId(), root.leftRef.getOffset(), root.leftRef.getLength());
+        commitSegment();
+    }
+
     @Override
     public void close() {
         Misc.free(reader);
         Misc.free(segmentWriter);
         Misc.free(checkpointsDir);
+    }
+
+    /**
+     * Releases the reader's mappings and any in-flight segment while keeping every
+     * shell, so the writer can serve the next publication without holding a
+     * mapping into a file a retire or compaction unlinks.
+     */
+    public void detach() {
+        reader.detach();
+        segmentWriter.discard();
+        releasedSegmentIds.clear();
     }
 
     /**
@@ -170,6 +235,30 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     /**
+     * Replaces the tree's last entry with {@code entry}, whose key must sit above
+     * every key the tree holds, and fills {@code newRootOut} with the new tree
+     * root. The descent follows the rightmost path an append of {@code entry}
+     * would take, and the leaf it lands in keeps its entry count, so nothing
+     * splits and only that path is copied into {@code newSegmentId}.
+     */
+    public void replaceLast(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            @NotNull LiveViewCheckpointTimelineEntry entry,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        if (oldRoot.isNull()) {
+            throw CairoException.critical(0).put("cannot replace the last entry of an empty live view checkpoint timeline");
+        }
+        beginSegment(newSegmentId);
+        insertRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, 0, true);
+        final InsertResult root = resultAt(0);
+        assert !root.split;
+        newRootOut.of(root.leftRef.getSegmentId(), root.leftRef.getOffset(), root.leftRef.getLength());
+        commitSegment();
+    }
+
+    /**
      * Re-versions the {@code entryCount} entries in {@code entries} (sorted
      * ascending by key; every key must already exist in the tree) by replacing
      * their root/position payloads, filling {@code newRootOut} with the new tree
@@ -180,7 +269,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
      */
     public void splice(
             @NotNull LiveViewCheckpointPageRef oldRoot,
-            @NotNull LiveViewCheckpointTimelineEntry[] entries,
+            @NotNull ObjList<LiveViewCheckpointTimelineEntry> entries,
             int entryCount,
             long newSegmentId,
             @NotNull LiveViewCheckpointPageRef newRootOut
@@ -262,13 +351,11 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private LiveViewCheckpointTimelineNode dropAt(int depth) {
-        if (depth >= dropPool.length) {
-            dropPool = growNodes(dropPool, depth + 1);
-        }
-        LiveViewCheckpointTimelineNode node = dropPool[depth];
+        growNodes(dropPool, depth + 1);
+        LiveViewCheckpointTimelineNode node = dropPool.getQuick(depth);
         if (node == null) {
             node = new LiveViewCheckpointTimelineNode();
-            dropPool[depth] = node;
+            dropPool.setQuick(depth, node);
         }
         return node;
     }
@@ -295,7 +382,14 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         res.split = true;
     }
 
-    private void insertRec(long seg, long off, long len, LiveViewCheckpointTimelineEntry entry, int depth) {
+    private void insertRec(
+            long seg,
+            long off,
+            long len,
+            LiveViewCheckpointTimelineEntry entry,
+            int depth,
+            boolean isReplacingLast
+    ) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
         // A descended node is always written back, so decoding one is exactly what
@@ -303,6 +397,20 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         releasedSegmentIds.add(seg);
         final InsertResult res = resultAt(depth);
         if (node.isLeaf()) {
+            if (isReplacingLast) {
+                // A key above every key descends to the leaf holding the tree's last
+                // entry, which is the one it replaces.
+                final int last = node.count() - 1;
+                assert last >= 0 && LiveViewCheckpointTimeline.compareKey(
+                        node.entryMaxTimestamp[last],
+                        node.entryCheckpointId[last],
+                        entry.maxTimestamp,
+                        entry.checkpointId
+                ) < 0 : "live view checkpoint replacement key not above the last entry";
+                replacedMaxTimestamp = node.entryMaxTimestamp[last];
+                replacedCheckpointId = node.entryCheckpointId[last];
+                node.retainPrefix(last);
+            }
             final int pos = node.leafInsertPosition(entry.maxTimestamp, entry.checkpointId);
             assert pos == node.count()
                     || LiveViewCheckpointTimeline.compareKey(node.entryMaxTimestamp[pos], node.entryCheckpointId[pos], entry.maxTimestamp, entry.checkpointId) != 0
@@ -312,7 +420,8 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             return;
         }
         final int ci = node.childIndexFor(entry.maxTimestamp, entry.checkpointId);
-        insertRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], entry, depth + 1);
+        assert !isReplacingLast || ci == node.count() - 1;
+        insertRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], entry, depth + 1, isReplacingLast);
         final InsertResult child = resultAt(depth + 1);
         node.setChildEntry(ci, child.leftMinTs, child.leftMinId, child.leftRef.getSegmentId(), child.leftRef.getOffset(), child.leftRef.getLength());
         if (child.split) {
@@ -322,13 +431,11 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private LiveViewCheckpointTimelineNode leftAt(int depth) {
-        if (depth >= leftPool.length) {
-            leftPool = growNodes(leftPool, depth + 1);
-        }
-        LiveViewCheckpointTimelineNode node = leftPool[depth];
+        growNodes(leftPool, depth + 1);
+        LiveViewCheckpointTimelineNode node = leftPool.getQuick(depth);
         if (node == null) {
             node = new LiveViewCheckpointTimelineNode();
-            leftPool[depth] = node;
+            leftPool.setQuick(depth, node);
         }
         return node;
     }
@@ -357,52 +464,103 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private InsertResult resultAt(int depth) {
-        if (depth >= resultPool.length) {
-            final InsertResult[] grown = new InsertResult[depth + 1];
-            System.arraycopy(resultPool, 0, grown, 0, resultPool.length);
-            resultPool = grown;
+        while (resultPool.size() <= depth) {
+            resultPool.add(null);
         }
-        InsertResult res = resultPool[depth];
+        InsertResult res = resultPool.getQuick(depth);
         if (res == null) {
             res = new InsertResult();
-            resultPool[depth] = res;
+            resultPool.setQuick(depth, res);
         }
         return res;
     }
 
     private LiveViewCheckpointTimelineNode rightAt(int depth) {
-        if (depth >= rightPool.length) {
-            rightPool = growNodes(rightPool, depth + 1);
-        }
-        LiveViewCheckpointTimelineNode node = rightPool[depth];
+        growNodes(rightPool, depth + 1);
+        LiveViewCheckpointTimelineNode node = rightPool.getQuick(depth);
         if (node == null) {
             node = new LiveViewCheckpointTimelineNode();
-            rightPool[depth] = node;
+            rightPool.setQuick(depth, node);
         }
         return node;
     }
 
-    private LiveViewCheckpointPageRef spliceRefAt(int depth) {
-        if (depth >= spliceRefPool.length) {
-            final LiveViewCheckpointPageRef[] grown = new LiveViewCheckpointPageRef[depth + 1];
-            System.arraycopy(spliceRefPool, 0, grown, 0, spliceRefPool.length);
-            spliceRefPool = grown;
+    /**
+     * One level of {@link #appendRemovingSecondLast}'s descent down the rightmost path
+     * of the subtree at {@code (seg, off, len)}, which leaves the new subtree in
+     * {@link #resultAt}({@code depth}).
+     *
+     * @return true when the subtree's last leaf held only the last entry, which then
+     * sits in {@link #shiftedEntry} for an ancestor to put in place of the dropped
+     * entry, the last entry of the subtree left of this one
+     */
+    private boolean shiftLastRec(
+            long seg,
+            long off,
+            long len,
+            LiveViewCheckpointTimelineEntry entry,
+            long removedMaxTimestamp,
+            long removedCheckpointId,
+            int depth
+    ) {
+        final LiveViewCheckpointTimelineNode node = leftAt(depth);
+        reader.openAndDecode(seg, off, len, node);
+        releasedSegmentIds.add(seg);
+        final InsertResult res = resultAt(depth);
+        final int c = node.count();
+        if (node.isLeaf()) {
+            // The reader's last() rejects an empty node before a caller gets here.
+            assert c > 0 && LiveViewCheckpointTimeline.compareKey(
+                    node.entryMaxTimestamp[c - 1],
+                    node.entryCheckpointId[c - 1],
+                    entry.maxTimestamp,
+                    entry.checkpointId
+            ) < 0 : "live view checkpoint appended key not above the last entry";
+            node.copyEntryTo(c - 1, shiftedEntry);
+            if (c == 1) {
+                node.retainPrefix(0);
+                node.insertEntryAt(0, entry);
+                finishNode(node, res, depth, true);
+                return true;
+            }
+            checkRemovedKey(node.entryMaxTimestamp[c - 2], node.entryCheckpointId[c - 2], removedMaxTimestamp, removedCheckpointId);
+            node.retainPrefix(c - 2);
+            node.insertEntryAt(c - 2, shiftedEntry);
+            node.insertEntryAt(c - 1, entry);
+            finishNode(node, res, depth, true);
+            return false;
         }
-        LiveViewCheckpointPageRef ref = spliceRefPool[depth];
-        if (ref == null) {
-            ref = new LiveViewCheckpointPageRef();
-            spliceRefPool[depth] = ref;
+        final int ci = c - 1;
+        final boolean isCarried = shiftLastRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], entry, removedMaxTimestamp, removedCheckpointId, depth + 1);
+        final InsertResult child = resultAt(depth + 1);
+        node.setChildEntry(ci, child.leftMinTs, child.leftMinId, child.leftRef.getSegmentId(), child.leftRef.getOffset(), child.leftRef.getLength());
+        if (isCarried) {
+            // An append splits an internal node into halves whose right one holds at least
+            // two children, and a truncate promotes a node it leaves holding one child, so
+            // no internal node on the rightmost path holds a single child: the last leaf's
+            // left neighbour sits under this node.
+            assert ci > 0 : "live view checkpoint timeline holds a single-child node on its rightmost path";
+            insertRec(node.childSegmentId[ci - 1], node.childOffset[ci - 1], node.childLength[ci - 1], shiftedEntry, depth + 1, true);
+            checkRemovedKey(replacedMaxTimestamp, replacedCheckpointId, removedMaxTimestamp, removedCheckpointId);
+            final InsertResult previous = resultAt(depth + 1);
+            assert !previous.split;
+            node.setChildEntry(ci - 1, previous.leftMinTs, previous.leftMinId, previous.leftRef.getSegmentId(), previous.leftRef.getOffset(), previous.leftRef.getLength());
         }
-        return ref;
+        finishNode(node, res, depth, false);
+        return false;
     }
 
-    private void spliceRec(long seg, long off, long len, LiveViewCheckpointTimelineEntry[] entries, int lo, int hi, int depth) {
+    private LiveViewCheckpointPageRef spliceRefAt(int depth) {
+        return refAt(spliceRefPool, depth);
+    }
+
+    private void spliceRec(long seg, long off, long len, ObjList<LiveViewCheckpointTimelineEntry> entries, int lo, int hi, int depth) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
         releasedSegmentIds.add(seg);
         if (node.isLeaf()) {
             for (int r = lo; r < hi; r++) {
-                final LiveViewCheckpointTimelineEntry e = entries[r];
+                final LiveViewCheckpointTimelineEntry e = entries.getQuick(r);
                 final int pos = node.findEntry(e.maxTimestamp, e.checkpointId);
                 if (pos < 0) {
                     throw CairoException.critical(0)
@@ -421,7 +579,12 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             if (ci + 1 < c) {
                 final long nextMinTs = node.childMinMaxTimestamp[ci + 1];
                 final long nextMinId = node.childMinCheckpointId[ci + 1];
-                while (r < hi && LiveViewCheckpointTimeline.compareKey(entries[r].maxTimestamp, entries[r].checkpointId, nextMinTs, nextMinId) < 0) {
+                while (r < hi && LiveViewCheckpointTimeline.compareKey(
+                        entries.getQuick(r).maxTimestamp,
+                        entries.getQuick(r).checkpointId,
+                        nextMinTs,
+                        nextMinId
+                ) < 0) {
                     r++;
                 }
             } else {
@@ -437,17 +600,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     }
 
     private LiveViewCheckpointPageRef truncateRefAt(int depth) {
-        if (depth >= truncateRefPool.length) {
-            final LiveViewCheckpointPageRef[] grown = new LiveViewCheckpointPageRef[depth + 1];
-            System.arraycopy(truncateRefPool, 0, grown, 0, truncateRefPool.length);
-            truncateRefPool = grown;
-        }
-        LiveViewCheckpointPageRef ref = truncateRefPool[depth];
-        if (ref == null) {
-            ref = new LiveViewCheckpointPageRef();
-            truncateRefPool[depth] = ref;
-        }
-        return ref;
+        return refAt(truncateRefPool, depth);
     }
 
     /**
@@ -517,10 +670,32 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         lastSegmentPageCount++;
     }
 
-    private static LiveViewCheckpointTimelineNode[] growNodes(LiveViewCheckpointTimelineNode[] src, int size) {
-        final LiveViewCheckpointTimelineNode[] dst = new LiveViewCheckpointTimelineNode[size];
-        System.arraycopy(src, 0, dst, 0, src.length);
-        return dst;
+    private static void checkRemovedKey(long maxTimestamp, long checkpointId, long removedMaxTimestamp, long removedCheckpointId) {
+        if (maxTimestamp != removedMaxTimestamp || checkpointId != removedCheckpointId) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint timeline second-to-last key does not match the removed key [maxTimestamp=")
+                    .put(maxTimestamp).put(", checkpointId=").put(checkpointId)
+                    .put(", removedMaxTimestamp=").put(removedMaxTimestamp)
+                    .put(", removedCheckpointId=").put(removedCheckpointId).put(']');
+        }
+    }
+
+    private static void growNodes(ObjList<LiveViewCheckpointTimelineNode> pool, int size) {
+        while (pool.size() < size) {
+            pool.add(null);
+        }
+    }
+
+    /**
+     * @return the reference shell {@code pool} holds for {@code depth}, built on
+     * first use. A tree deepens a level at a time and never shrinks, so the pool
+     * stops growing as soon as the deepest descent has run once.
+     */
+    private static LiveViewCheckpointPageRef refAt(ObjList<LiveViewCheckpointPageRef> pool, int depth) {
+        while (pool.size() <= depth) {
+            pool.add(new LiveViewCheckpointPageRef());
+        }
+        return pool.getQuick(depth);
     }
 
     /**

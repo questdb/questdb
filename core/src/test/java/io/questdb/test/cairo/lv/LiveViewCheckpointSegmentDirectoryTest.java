@@ -416,6 +416,44 @@ public class LiveViewCheckpointSegmentDirectoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNetReferenceDeltasRecordOnlyFinalRetirements() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointSegmentDirectoryWriter writer = openWriter()) {
+                writer.begin(root);
+                writer.addSegment(1, 100, 3, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA);
+                writer.addSegment(2, 200, 1, LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_BOUNDARY);
+
+                final LongList deltas = new LongList();
+                deltas.add(1L, -2);
+                deltas.add(2L, 2);
+                writer.applyRootReferenceDeltas(deltas, 7);
+                Assert.assertEquals(1, writer.getReferenceCount(1));
+                Assert.assertEquals(3, writer.getReferenceCount(2));
+
+                deltas.clear();
+                deltas.add(1L, -1);
+                deltas.add(2L, -3);
+                writer.applyRootReferenceDeltas(deltas, 8);
+                Assert.assertEquals(0, writer.getReferenceCount(1));
+                Assert.assertEquals(0, writer.getReferenceCount(2));
+                Assert.assertEquals(8, writer.getRetirementTransitions().size());
+                Assert.assertEquals(0, writer.getLiveDataSegmentDelta());
+
+                // A later root in the same atomic publication can revive a
+                // segment. It must disappear from the durable retirement batch.
+                deltas.clear();
+                deltas.add(1L, 1);
+                writer.applyRootReferenceDeltas(deltas, 8);
+                Assert.assertEquals(1, writer.getReferenceCount(1));
+                Assert.assertEquals(4, writer.getRetirementTransitions().size());
+                Assert.assertEquals(2, writer.getRetirementTransitions().getQuick(0));
+                Assert.assertEquals(1, writer.getLiveDataSegmentDelta());
+            }
+        });
+    }
+
+    @Test
     public void testMetadataPageReleaseRejectsInvalidBatchesAtomically() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();

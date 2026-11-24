@@ -34,6 +34,9 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
+import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -305,6 +308,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DependentViewGraph dependentViewGraph;
     private final AtomicReference<DurabilityFailure> durabilityFailure = new AtomicReference<>();
     private final FunctionFactoryCache ffCache;
+    private final LiveViewCheckpointPurgeState liveViewCheckpointPurgeState = new LiveViewCheckpointPurgeState();
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
     // Bumped by every setLocalDurabilityPolicy(), after the new policy is published. A TableWriter compares it
     // with the version it last reconciled its adaptive durable-epoch anchor against, so it re-checks the anchor
@@ -313,6 +317,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
+    private final AtomicLong nextLiveViewLifecycleIdentity = new AtomicLong(1);
     private final PartitionCompactionRequestQueue partitionCompactionRequestQueue = new PartitionCompactionRequestQueue(PARTITION_COMPACTION_REQUEST_QUEUE_CAPACITY);
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     // Tables, by directory name, that a writer has opened in this process; see isPartitionPurgeSafe().
@@ -379,6 +384,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile boolean isCompleteInitDone;
     private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
+    // volatile: a test thread arms these while createLiveView reads them on a worker thread.
+    private volatile @Nullable Runnable liveViewCreateRollbackAfterResetHook;
+    private volatile @Nullable Runnable liveViewCreateRollbackBeforeFenceHook;
     // Governs the adaptive durable epoch on the apply side (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
     // ALWAYS_ON unless Enterprise installs REPLICA_SKIP while the node is a live replica. Role changes swap it on
     // the lifecycle thread and apply workers read it, hence volatile.
@@ -610,6 +618,15 @@ public class CairoEngine implements Closeable, WriterSource {
         if (f.checkpointFunctionIdentity() == null || f.checkpointDependency() == null) {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
+        }
+        final int fixedStateLength = f.checkpointStateFixedLength();
+        if (fixedStateLength != -1
+                && (fixedStateLength <= 0 || !f.supportsCheckpointState() || f.supportsCheckpointRingState())) {
+            // A leaf-inlined entry is sized by the declared width, so only a whole-state, non-ring
+            // function may declare one, and it must be positive.
+            throw SqlException.$(position, "live view window function ")
+                    .put(f.getName())
+                    .put("() declares an invalid fixed checkpoint state width");
         }
     }
 
@@ -1039,7 +1056,17 @@ public class CairoEngine implements Closeable, WriterSource {
                                     baseTableToken,
                                     metadata
                             );
-                            LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
+                            // The dedup flags come from the table's own _meta, not the
+                            // configuration: a view CREATEd with the identity keeps it however the
+                            // switch moves afterwards.
+                            LiveViewInstance instance = new LiveViewInstance(
+                                    definition,
+                                    tableToken,
+                                    nextLiveViewLifecycleIdentity(),
+                                    metadata.getTimestampIndex() > -1
+                                            && metadata.isDedupKey(metadata.getTimestampIndex()),
+                                    dedupKeyColumnIndexOf(metadata)
+                            );
                             // _lv is written before _txn and _lv.s after it, so a definition with no
                             // state is the shape a CREATE that crashed mid-way leaves behind (and,
                             // equally, an _lv.s lost out of band). Either way there is no resume
@@ -1184,6 +1211,43 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 0,
                                                 true
                                         );
+                                if (reconciliation.isFormatUpgrade()) {
+                                    // An older layout version, written while live views were beta:
+                                    // the view rebuilds from its base table on its first refresh
+                                    // and stays active and queryable until then. The older
+                                    // superblock stays on disk until the rebuild retires it.
+                                    // Checked ahead of isFormatBlocked(), which an upgrade refines.
+                                    LOG.info().$("live view checkpoint timeline was written by an older format, rebuilding from base [view=")
+                                            .$(tableToken)
+                                            .$(", version=").$(reconciliation.getForeignFormatVersion())
+                                            .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                            .I$();
+                                    instance.markCheckpointUpgradeRebuildPending(reconciliation.getForeignFormatVersion());
+                                    continue;
+                                }
+                                if (reconciliation.isFormatBlocked()) {
+                                    // A newer layout version than this build implements. The
+                                    // directory, rows and watermarks stay as the other build left
+                                    // them; the view stays queryable and droppable, reports itself
+                                    // invalid and releases its base WAL floor - see
+                                    // LiveViewCheckpointRecoveryPhase.
+                                    LOG.error().$("live view checkpoint timeline declares an unsupported format version, blocking refresh [view=")
+                                            .$(tableToken)
+                                            .$(", version=").$(reconciliation.getForeignFormatVersion())
+                                            .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                            .I$();
+                                    final StringSink blockedReason = Misc.getThreadLocalSink();
+                                    blockedReason
+                                            .put("checkpoint timeline format version ")
+                                            .put(reconciliation.getForeignFormatVersion())
+                                            .put(" is not supported by this build (supported version ")
+                                            .put(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                            .put("); refresh is stopped and the view's checkpoints, rows and watermarks are retained. ")
+                                            .put("Start a build that implements this version to resume the view, ")
+                                            .put("or DROP and re-create it to rebuild from the base rows available today");
+                                    instance.markCheckpointRecoveryBlocked(blockedReason);
+                                    continue;
+                                }
                                 if (reconciliation.isFormatReset()) {
                                     // A development build with a different
                                     // on-disk layout owned this directory.
@@ -1204,13 +1268,17 @@ public class CairoEngine implements Closeable, WriterSource {
                                 // purge sweep found while walking its segment
                                 // catalogue. Both stay NULL/empty when no valid
                                 // slot was adopted, which is the disposition of a
-                                // view that has never sealed a root.
+                                // view that has never sealed a root. A sweep that
+                                // failed counted nothing, so its counts stay NULL
+                                // until the next sweep reports them.
                                 if (reconciliation.getStats() != null) {
                                     instance.recordCheckpointTimelineStats(reconciliation.getStats());
-                                    instance.recordCheckpointGcSweep(
-                                            reconciliation.getLiveSegmentCount(),
-                                            reconciliation.getObsoleteSegmentBytes()
-                                    );
+                                    if (!reconciliation.isPurgeFailed()) {
+                                        instance.recordCheckpointGcSweep(
+                                                reconciliation.getLiveSegmentCount(),
+                                                reconciliation.getObsoleteSegmentBytes()
+                                        );
+                                    }
                                 }
                                 // Publish the durable checkpoint head from the
                                 // generation's base coordinate so live_views()
@@ -1362,6 +1430,7 @@ public class CairoEngine implements Closeable, WriterSource {
         matViewStateStore.clear();
         matViewTimerQueue.clear();
         liveViewRegistry.clear();
+        liveViewCheckpointPurgeState.clear();
         liveViewStateStore.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
@@ -1429,6 +1498,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // one pooled handle to LiveViewInstance would otherwise turn the old order into a
             // use-after-free that no test catches.
             failure = Misc.freeBestEffort(failure, liveViewRegistry);
+            try {
+                liveViewCheckpointPurgeState.clear();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
             failure = Misc.freeBestEffort(failure, liveViewStateStore);
             failure = Misc.freeBestEffort(failure, sqlCompilerPool);
             failure = Misc.freeBestEffort(failure, writerPool);
@@ -1590,6 +1664,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
+        // The non-timestamp output column a sparse repair publication upserts on, or NO_KEY_COLUMN.
+        // A CREATE-time schema decision: the flags stay in the view's _meta.
+        int sparsePublicationKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         // Base-column names the SELECT's filter + window inputs + designated ts
         // depend on. ApplyWal2TableJob's schema-change hook narrows invalidation
         // using this set: only changes that touch one of these columns mark the
@@ -1627,6 +1704,21 @@ public class CairoEngine implements Closeable, WriterSource {
                 CompiledQuery cq;
                 try {
                     cq = compiler.compile(op.getSelectSql(), executionContext);
+                } catch (SqlException e) {
+                    // compile() reads the stored SELECT text alone: map its positions into the CREATE statement
+                    e.setPosition(e.getPosition() + op.getSelectSqlPosition());
+                    throw e;
+                } catch (ImplicitCastException e) {
+                    throw e.position(e.getPosition() + op.getSelectSqlPosition());
+                } catch (CairoException e) {
+                    // Only CairoException itself is created per throw and positioned in the SELECT text. Its
+                    // subclasses carry no position of the text, and some are shared: PoolClosedException.INSTANCE
+                    // and the fiber-local EntryLockedException / LimitOverflowException flyweights never reset
+                    // their position, so writing one would leak into later throws.
+                    if (e.getClass() == CairoException.class) {
+                        e.position(e.getPosition() + op.getSelectSqlPosition());
+                    }
+                    throw e;
                 } finally {
                     executionContext.setLiveViewCompile(false);
                     executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
@@ -1636,6 +1728,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                     metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                     validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
+                    validateLiveViewColumnTypes(metadata, op.getSelectColumnPositions());
+
+                    // Resolved by the same helper the repair's uniqueness check reads, so the pair the
+                    // table deduplicates on and the pair a repair proves unique always match.
+                    if (configuration.isLiveViewCheckpointRepairSparsePublicationEnabled()) {
+                        sparsePublicationKeyColumnIndex =
+                                LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(plan);
+                    }
 
                     // Capture each base-column name the SELECT projects. Resolving
                     // against the base table here also catches the rare case of an LV
@@ -1719,28 +1819,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Runs at CREATE only, never at restart.
                     final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
                     if (anchor != null && anchor.anchorExpressionSql != null) {
-                        final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
-                        if (anchorNode != null) {
-                            Function anchorFn = null;
-                            try {
-                                FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
-                                executionContext.setLiveViewCompile(true);
-                                try {
-                                    anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
-                                } finally {
-                                    executionContext.setLiveViewCompile(false);
-                                }
-                                // Anchor the reject position in the user's CREATE SQL (the
-                                // ANCHOR keyword) rather than in the re-parsed desugared
-                                // expression. anchorNode.position is an offset into the
-                                // synthesized timestamp_floor* text for DAILY, and into a
-                                // toSink-roundtripped expression for ANCHOR EXPRESSION; in
-                                // both cases it diverges from what the user typed.
-                                validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
-                            } finally {
-                                Misc.free(anchorFn);
-                            }
-                        }
+                        validateAnchorExpression(compiler, anchor, baseProjMeta, executionContext);
                     }
                 }
             } catch (TableReferenceOutOfDateException e) {
@@ -1859,8 +1938,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 partitionBy,
                 metadata,
                 definition,
-                outputSymbolCacheFlags
+                outputSymbolCacheFlags,
+                sparsePublicationKeyColumnIndex
         );
+        if (sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+            LOG.info().$("live view carries sparse publication dedup keys [view=").$(op.getViewName())
+                    .$(", timestamp=").$(metadata.getColumnName(metadata.getTimestampIndex()))
+                    .$(", key=").$(metadata.getColumnName(sparsePublicationKeyColumnIndex))
+                    .I$();
+        }
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
@@ -1893,6 +1979,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
+            LiveViewInstance instance = null;
             try {
                 // TableUtils.createTable already wrote the table-dir _lv (definition), BEFORE _txn -
                 // see the note there. _txn is what exists() keys on, so a crash between them leaves
@@ -1941,7 +2028,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
 
                 // _lv is written by TableUtils.createTable, before _txn - see the note there.
-                LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
+                instance = new LiveViewInstance(
+                        definition,
+                        liveViewToken,
+                        nextLiveViewLifecycleIdentity(),
+                        sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN,
+                        sparsePublicationKeyColumnIndex
+                );
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);
@@ -1965,15 +2058,31 @@ public class CairoEngine implements Closeable, WriterSource {
                     // freed instance after the table-drop below succeeds. The
                     // graph-side entry is removed in the same pass so a retried
                     // CREATE does not see a stale dependent.
-                    LiveViewInstance partial = liveViewRegistry.removeView(op.getViewName());
-                    dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
+                    final LiveViewInstance partial = instance;
                     // registerView already published the instance to getViews, so a
                     // refresh worker may hold its latch. Free via the DROP path's
                     // latch-aware teardown, not close() (which frees off-latch and
                     // would race the worker into a UAF/leak): tryCloseIfDropped frees
                     // only if unlatched, else defers to the worker's finally hook.
                     if (partial != null) {
+                        // markAsDropped takes the view's monitor, which an invalidation holds while it checks for
+                        // the mark and writes _lv.s, so none writes over the teardown below.
                         partial.markAsDropped();
+                        final Runnable beforeFenceHook = liveViewCreateRollbackBeforeFenceHook;
+                        if (beforeFenceHook != null) {
+                            beforeFenceHook.run();
+                        }
+                        partial.fenceRefresh();
+                        liveViewCheckpointPurgeState.reset(partial.getLifecycleIdentity());
+                        final Runnable afterResetHook = liveViewCreateRollbackAfterResetHook;
+                        if (afterResetHook != null) {
+                            afterResetHook.run();
+                        }
+                        partial.clearCheckpointTimelineOwnership();
+                    }
+                    liveViewRegistry.removeView(op.getViewName());
+                    dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
+                    if (partial != null) {
                         partial.tryCloseIfDropped();
                     }
                 } catch (Throwable rollbackErr) {
@@ -2155,6 +2264,9 @@ public class CairoEngine implements Closeable, WriterSource {
             // drop.
             instance.markDroppedAndAwaitCheckpoint();
             instance.fenceRefresh();
+        }
+        if (instance != null) {
+            liveViewCheckpointPurgeState.reset(instance.getLifecycleIdentity());
         }
         if (instance != null) {
             instance.clearCheckpointTimelineOwnership();
@@ -2414,8 +2526,21 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
+    public LiveViewCheckpointPurgeState getLiveViewCheckpointPurgeState() {
+        return liveViewCheckpointPurgeState;
+    }
+
     public LiveViewRegistry getLiveViewRegistry() {
         return liveViewRegistry;
+    }
+
+    @TestOnly
+    public void setLiveViewCreateRollbackHooks(
+            @Nullable Runnable beforeFenceHook,
+            @Nullable Runnable afterResetHook
+    ) {
+        this.liveViewCreateRollbackBeforeFenceHook = beforeFenceHook;
+        this.liveViewCreateRollbackAfterResetHook = afterResetHook;
     }
 
     public LiveViewStateStore getLiveViewStateStore() {
@@ -3153,6 +3278,10 @@ public class CairoEngine implements Closeable, WriterSource {
      * instance — notably the refresh worker on flush retry budget exhaustion.
      * Mirrors the lock + persist pattern
      * of {@link #invalidateLiveViewsForBaseTable0}.
+     * <p>
+     * An invalidation never replaces another: the view keeps the first one's reason and
+     * time, and a view that DROP LIVE VIEW or the rollback of a failed CREATE LIVE VIEW
+     * has marked dropped is left to them.
      */
     public void invalidateLiveView(LiveViewInstance instance, String reason) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
@@ -3161,7 +3290,20 @@ public class CairoEngine implements Closeable, WriterSource {
             // the snapshot reflects the pre-invalidation state and the agent's
             // _lv.s copy is not raced by this rewrite.
             instance.waitForUnfrozen();
+            // DROP LIVE VIEW and the rollback of a failed CREATE LIVE VIEW mark the view dropped under
+            // this monitor before they tear its files down, so a view found dropped here is theirs:
+            // write nothing over the teardown.
+            if (instance.isDropped()) {
+                return;
+            }
             final LiveViewStateReader reader = instance.getStateReader();
+            // The first invalidation stands. Callers decide while the view is still valid and get here
+            // later, off the refresh latch, so another invalidation can have landed in between: keep its
+            // reason and time, in memory and in _lv.s. The rewrite still runs, so the view is durably
+            // invalid even when the first one's write failed.
+            final boolean isInvalid = reader.isInvalid();
+            final CharSequence persistedReason = isInvalid ? reader.getInvalidationReason() : reason;
+            final long persistedTimestampUs = isInvalid ? reader.getInvalidationTimestampUs() : invalidationTimestampUs;
             // Persist _lv.s BEFORE flipping the in-memory invalid bit. WalPurgeJob releases this
             // view's base-WAL purge floor as soon as it observes the in-memory bit (an unsynchronized
             // read), so writing the durable state first closes the window where a concurrent purge
@@ -3171,8 +3313,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // On persist failure the view still flips invalid in-memory: invalidation is a terminal
             // circuit-breaker that must stop the refresh worker even when _lv.s is unwritable (a broken
             // disk is exactly what exhausts the flush-retry budget driving this call). A view
-            // invalidated in-memory only re-derives the same invalid state on restart - it loads valid,
-            // resumes, and hits the same failure - so the terminal outcome is unchanged.
+            // invalidated in-memory only loads valid on restart and resumes, unless a later
+            // invalidation rewrites _lv.s with its reason. Both callers' causes are re-checked there:
+            // the ahead-of-base guard runs on every scan, and a fault that persists exhausts the
+            // flush-retry budget again. A fault that has cleared lets the view refresh on from its
+            // durable state, which is consistent.
             try (
                     BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                     Path path = new Path()
@@ -3181,8 +3326,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 blockFileWriter.of(path.$());
                 LiveViewState.append(
                         true,
-                        reason,
-                        invalidationTimestampUs,
+                        persistedReason,
+                        persistedTimestampUs,
                         reader.getSubscribeFromSeqTxn(),
                         reader.getLastProcessedSeqTxn(),
                         reader.getAppliedWatermark(),
@@ -3193,12 +3338,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
             } catch (Throwable t) {
                 LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                        .$(", reason=").$safe(reason)
+                        .$(", reason=").$safe(persistedReason)
                         .$(", error=").$(t).I$();
             }
             // Publish the in-memory flip after the persist attempt: on the happy path the durable
             // state already leads it; if the persist failed the terminal circuit-breaker still fires.
-            instance.markInvalid(reason, invalidationTimestampUs);
+            if (!isInvalid) {
+                instance.markInvalid(reason, invalidationTimestampUs);
+            }
         }
         // Free refresh-worker-internal runtime state now that the view is
         // INVALID. Best-effort: if a refresh cycle is in flight the latch CAS
@@ -3216,7 +3363,8 @@ public class CairoEngine implements Closeable, WriterSource {
      * For each affected view the persisted {@code invalidation_reason} appends the
      * offending dependency column name (e.g. {@code drop column operation
      * [column=value]}), so an operator can tell from {@code live_views()} exactly
-     * which dependency broke without cross-reading the view's SELECT.
+     * which dependency broke without cross-reading the view's SELECT, unless the view
+     * is already invalid, which keeps its first reason.
      */
     public void invalidateLiveViewsForBaseSchemaChange(
             TableToken baseTableToken,
@@ -3474,6 +3622,19 @@ public class CairoEngine implements Closeable, WriterSource {
      * Mounts a retained protocol-owned execution for another executable segment.
      */
     public void mountSqlExecution(long ownerId, SqlExecutionContext executionContext) {
+    }
+
+    /**
+     * Issues the next process-local live view lifecycle identity. Every registration of a
+     * {@link LiveViewInstance}, a replica's included, must draw its identity from here, so that
+     * {@link LiveViewCheckpointPurgeState} never binds two views to one slot.
+     */
+    public long nextLiveViewLifecycleIdentity() {
+        final long identity = nextLiveViewLifecycleIdentity.getAndIncrement();
+        if (identity <= 0) {
+            throw CairoException.critical(0).put("live view lifecycle identity space exhausted");
+        }
+        return identity;
     }
 
     public boolean notifyDropped(TableToken tableToken) {
@@ -4233,6 +4394,27 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * The non-timestamp dedup key of a live view's own table, or
+     * {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN} when it carries none or more than
+     * one. A restart reads it from {@code _meta} because a view keeps the identity however the
+     * configuration moves. More than one flag yields no key: an upsert on a pair that is not the
+     * table's whole key would collapse rows the repair never checked.
+     */
+    private static int dedupKeyColumnIndexOf(RecordMetadata metadata) {
+        int keyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i == metadata.getTimestampIndex() || !metadata.isDedupKey(i)) {
+                continue;
+            }
+            if (keyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+                return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+            }
+            keyColumnIndex = i;
+        }
+        return keyColumnIndex;
+    }
+
     private static TableReader checkReaderVersion(TableToken tableToken, long metadataVersion, TableReader reader) {
         final int tableId = tableToken.getTableId();
         if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
@@ -4360,6 +4542,38 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
             throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(fn.getType()));
+        }
+    }
+
+    /**
+     * Rejects an output column whose type no table can store. The view's table takes the
+     * SELECT's metadata as is, and its WAL writer refuses such a column
+     * (WalWriter.configureNullSetters), so every refresh would fault until the view
+     * invalidates itself. The message advises a replacement only where one keeps the value:
+     * a cast to any type for an untyped NULL (CREATE TABLE AS SELECT's wording), and the two
+     * bounds for an INTERVAL, which keep its precision where a cast to a string keeps
+     * milliseconds only. Nothing takes the place of a text[].
+     */
+    private static void validateLiveViewColumnTypes(RecordMetadata metadata, IntList columnPositions) throws SqlException {
+        // one top-level projection item per output column: the parser rejects wildcards, and
+        // validateLiveViewFactory every shape but a projection over the window over the base scan
+        assert columnPositions.size() == metadata.getColumnCount();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            // isPersisted() takes a tag: an INTERVAL carries its timestamp kind above the tag
+            final short columnTag = ColumnType.tagOf(columnType);
+            if (!ColumnType.isPersisted(columnTag)) {
+                final CharSequence columnName = metadata.getColumnName(i);
+                final SqlException e = SqlException.$(columnPositions.getQuick(i), "cannot create ")
+                        .put(ColumnType.nameOf(columnType)).put("-type column");
+                switch (columnTag) {
+                    case ColumnType.NULL -> e.put(", please use type cast, e.g. ").put(columnName).put("::type");
+                    case ColumnType.INTERVAL -> e.put(", please use interval_start(").put(columnName)
+                            .put("), interval_end(").put(columnName).put(')');
+                    default -> e.put(" [column=").put(columnName).put(']');
+                }
+                throw e;
+            }
         }
     }
 
@@ -4849,20 +5063,35 @@ public class CairoEngine implements Closeable, WriterSource {
                     // state and the agent's _lv.s copy is not raced by this
                     // rewrite.
                     instance.waitForUnfrozen();
+                    // As in invalidateLiveView: DROP LIVE VIEW and the rollback of a failed CREATE
+                    // LIVE VIEW mark the view dropped under this monitor before they tear its files
+                    // down, so write nothing over the teardown of a view found dropped here; and the
+                    // first invalidation's reason and time stand, in memory and in _lv.s, which is
+                    // still rewritten.
+                    if (instance.isDropped()) {
+                        continue;
+                    }
                     final LiveViewStateReader reader = instance.getStateReader();
+                    final boolean isInvalid = reader.isInvalid();
+                    final CharSequence persistedReason = isInvalid ? reader.getInvalidationReason() : viewReason;
+                    final long persistedTimestampUs = isInvalid ? reader.getInvalidationTimestampUs() : invalidationTimestampUs;
                     // Persist _lv.s before flipping the in-memory invalid bit, matching
                     // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
                     // writing the durable state first keeps a concurrent purge from releasing the
                     // floor while _lv.s still records the view as valid. On persist failure the view
-                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
-                    // state on restart.
+                    // still flips invalid in-memory (best-effort, terminal), but a restart loads it
+                    // valid, unless a later invalidation rewrites _lv.s with its reason. Only a
+                    // cause the restart can see again re-derives the invalidation: buildViewGraphs
+                    // synthesizes one for a dropped or renamed base, and drainBaseWal for a mat
+                    // view TRUNCATE the base already applied. A one-shot cause that the apply job
+                    // never revisits, such as an UPDATE, is lost, and the view resumes.
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());
                         LiveViewState.append(
                                 true,
-                                viewReason,
-                                invalidationTimestampUs,
+                                persistedReason,
+                                persistedTimestampUs,
                                 reader.getSubscribeFromSeqTxn(),
                                 reader.getLastProcessedSeqTxn(),
                                 reader.getAppliedWatermark(),
@@ -4873,10 +5102,17 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                     } catch (Throwable t) {
                         LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                                .$(", reason=").$safe(viewReason)
+                                .$(", reason=").$safe(persistedReason)
                                 .$(", error=").$(t).I$();
+                    } finally {
+                        // Let _lv.s go before this monitor does, as invalidateLiveView's try-with-resources
+                        // does: a failed CREATE LIVE VIEW's rollback marks the view dropped under this monitor
+                        // and then deletes its directory, which Windows refuses while a file in it is open.
+                        blockFileWriter.close();
                     }
-                    instance.markInvalid(viewReason, invalidationTimestampUs);
+                    if (!isInvalid) {
+                        instance.markInvalid(viewReason, invalidationTimestampUs);
+                    }
                 }
                 // Free refresh-worker-internal runtime state now that the view
                 // is INVALID. Best-effort: a refresh cycle in flight defers the
@@ -5411,7 +5647,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     private void registerLiveViewStubIfAbsent(TableToken liveViewToken, LiveViewLifecycleState stubState) {
         if (liveViewRegistry.getViewInstance(liveViewToken.getTableName()) == null) {
-            liveViewRegistry.registerStubView(new LiveViewInstance(liveViewToken, stubState));
+            liveViewRegistry.registerStubView(new LiveViewInstance(liveViewToken, stubState, nextLiveViewLifecycleIdentity()));
         }
     }
 
@@ -5595,6 +5831,56 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.nonCritical()
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
+        }
+    }
+
+    // Compiles the anchor of a live view being created against the base columns its SELECT reads, and checks the
+    // compiled function. The anchor's stored text is the parser's rendering of the typed ANCHOR EXPRESSION, or the
+    // call it synthesizes from ANCHOR DAILY, so the compile positions its errors in a text the CREATE statement does
+    // not contain: each error it positions is reported at the anchor's token in the statement instead.
+    private void validateAnchorExpression(
+            SqlCompiler compiler,
+            LiveViewDefinition.LvAnchorSpec anchor,
+            RecordMetadata baseProjMeta,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final Function anchorFn;
+        try {
+            final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
+            if (anchorNode == null) {
+                // The text holds no token: the rendering drops a quoted name's quotes, and a name of blanks, or one
+                // that opens a comment, lexes to nothing. There is nothing to compile; the refresh refuses such an
+                // anchor (LiveViewRefreshJob.buildAnchorWindow).
+                return;
+            }
+            final FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
+            executionContext.setLiveViewCompile(true);
+            try {
+                anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        } catch (SqlException e) {
+            e.setPosition(anchor.anchorExpressionPosition);
+            throw e;
+        } catch (ImplicitCastException e) {
+            throw e.position(anchor.anchorExpressionPosition);
+        } catch (CairoException e) {
+            // As for the SELECT compile in createLiveView: only CairoException itself is created per throw and
+            // positioned in the compiled text. A subclass carries no such position, and PoolClosedException.INSTANCE
+            // and the fiber-local EntryLockedException / LimitOverflowException flyweights never reset theirs, so
+            // writing one would leak into later throws.
+            if (e.getClass() == CairoException.class) {
+                e.position(anchor.anchorExpressionPosition);
+            }
+            throw e;
+        }
+        try {
+            // A purity reject points at the ANCHOR keyword (anchorPosition), a compile error above at the anchor's
+            // own token (anchorExpressionPosition).
+            validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
+        } finally {
+            Misc.free(anchorFn);
         }
     }
 

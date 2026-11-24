@@ -33,11 +33,17 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewRefreshTask;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.lv.WalSegmentPageFrameCursor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -46,32 +52,52 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.lang.management.LockInfo;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -79,6 +105,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -135,6 +162,14 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  *   consumer cannot outlive the cursor that holds the pin, so the writer can only ever
  *   reclaim the slot the readers are not on; a break is a use-after-free, surfacing as
  *   a torn value against the same per-snapshot invariant, or as a crash.</li>
+ *   <li><b>Parked repairs across refresh workers.</b> Two or three workers, sharded as a
+ *   pool shards them, park and resume one-row-budget repairs of an anchored view under
+ *   each other, and a repair parked by a worker outside the view's shard must be finished
+ *   by that worker alone.</li>
+ *   <li><b>SYMBOL labels across recoveries.</b> Mid-drain faults make recoveries discard
+ *   leads whose symbol values the view's table never committed, and readers that hold
+ *   their tier pin must refuse the rewind of those ids; every label a reader sees must be
+ *   its base row's.</li>
  * </ul>
  * <p>
  * <b>Why the oracle stays deterministic despite the concurrency.</b> The premise of
@@ -158,11 +193,21 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
+    // The reason the CREATE LIVE VIEW rollback tests invalidate the views over base with, through the base-table writer.
+    private static final String BASE_REASON = "invalidated by the base";
+    // The reason the checkpoint soak's teardown invalidates the view with.
+    private static final String CHECKPOINT_SOAK_INVALIDATION_REASON = "invalidated during the checkpoint soak";
     // The clock sits at 2026-01-01 (the CREATE moment / view lower bound); the data
     // starts a year later so the refresh driver's clock advances can never lift the
     // floor above a data row, even if it spins many times during ingestion.
     private static final String CLOCK_START = "2026-01-01T00:00:00.000000Z";
+    private static final String COULD_NOT_PERSIST_LINE = "could not persist live view invalidation [view=";
+    // What registerBaseTableFault throws in the CREATE LIVE VIEW rollback tests, once the CREATE published the view.
+    private static final String CREATE_FAILURE = "injected registerBaseTable failure";
     private static final String DATA_START = "2027-01-01T00:00:00.000000Z";
+    // What startCheckpoint logs when the frees it retries once it lets the refresh latch go fail. It swallows the
+    // failure, so the line is all that tells a failed free from one that had nothing to do.
+    private static final String FAILED_FREEZE_FREE_LINE = "could not free live view runtime state after a checkpoint freeze";
     // Filter workers for the parallel-filter tier-swap soak: the pool's size and, because
     // the two must agree for the reduce work to land on those threads, the shared-worker
     // count each reader's execution context declares.
@@ -170,15 +215,33 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // The filtered read the parallel-filter soak routes through the tier's page frame. The
     // predicate keeps every row of the (ts, i, rn) view - see readFilteredRowNumberViewOnce.
     private static final String FILTERED_VIEW_SQL = "SELECT * FROM lv WHERE rn > 0";
-    // How long a paced writer waits for the refresh driver's next tick before giving up on
-    // it. Generous: it bounds a stalled driver, it does not pace anything itself.
-    private static final long REFRESH_TICK_WAIT_NANOS = 30_000_000_000L;
+    // The reason the tests of a checkpoint freeze that holds the refresh latch invalidate their view with.
+    private static final String FREEZE_HOLD_REASON = "invalidated during the freeze";
+    // The view those tests freeze: an IN MEMORY 60s view over base (ts, sym, i) with a running sum per sym.
+    private static final String FREEZE_VIEW_SQL = "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts "
+            + "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base";
     // Refresh passes the parallel-filter soak's driver runs per tick, matching drainJob's
     // own bound - the driver inlines that loop to sample the tier between passes.
     private static final int REFRESH_PASSES_PER_TICK = 64;
+    // The name of a refresh worker thread of the soaks, ahead of its worker id.
+    private static final String REFRESH_WORKER_THREAD_NAME = "lv-refresh-worker-";
+    // The CREATE the CREATE LIVE VIEW rollback tests fail once it published lv, and run again once the fault is gone.
+    // base holds rows, so the view it publishes seeds.
+    private static final String ROLLBACK_CREATE_SQL = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + FREEZE_VIEW_SQL;
+    // The reason invalidateLiveView invalidates the view a CREATE LIVE VIEW rollback test fails with.
+    private static final String ROLLBACK_REASON = "invalidated during the rollback";
+    // How long the shutdown soak's driver holds its closing tick for the readers' first read through
+    // the tier: well inside the REFRESH_TICK_WAIT_NANOS a paced writer waits for that tick.
+    private static final long ROUTED_READ_WAIT_NANOS = 10_000_000_000L;
+    // Rewinds the readers of the SYMBOL soak must refuse before its driver stops the writers.
+    private static final int SYMBOL_SOAK_REFUSALS = 3;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
-    // Fault injection for testCreateRollbackDefersFreeWhileRefreshLatchHeld, armed for the duration of
-    // that one test. Null (the default) makes the state-store wrapper below a pure pass-through, so
+    // How long the multi-worker soak's driver waits after a tick for a worker to finish a
+    // turn that did work. A tick no writer committed on has no turn to wait for, so the bound
+    // keeps such a tick from stalling the driver.
+    private static final long TURN_WAIT_NANOS = 2_000_000_000L;
+    // Fault injection for the tests that fail a CREATE LIVE VIEW after it published the view, armed for the duration
+    // of each. Null (the default) makes the state-store wrapper below a pure pass-through, so
     // every other test in the class sees a stock engine.
     private static volatile Runnable registerBaseTableFault;
 
@@ -214,6 +277,69 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testAnInvalidationAfterTheCreateRollbackMarkedTheViewWritesNothing() throws Exception {
+        // The rollback of a CREATE LIVE VIEW that failed once it published the view marks the view dropped, tripping
+        // its refresh breaker, and then the base-table writer and invalidateLiveView reach the view. Both find it
+        // dropped and write nothing over the rollback's teardown, and the base-table writer goes on to lv0.
+        final LiveViewStateFileFault fault = new LiveViewStateFileFault();
+        assertMemoryLeak(fault, () -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final TableToken baseToken = createRollbackFixture(true);
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicBoolean isStateFileOpened = new AtomicBoolean();
+                final AtomicBoolean isRefreshCancelledAtTheMark = new AtomicBoolean();
+                final AtomicReference<Thread> invalidatorRef = new AtomicReference<>();
+                final AtomicReference<Throwable> invalidatorError = new AtomicReference<>();
+                registerBaseTableFault = () -> {
+                    final LiveViewInstance partial = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the CREATE must have published the view", partial);
+                    partialRef.set(partial);
+                    fault.watchStateFile(partial);
+                    fault.runAtNextStateFileOpen(() -> isStateFileOpened.set(true));
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                // Right after the mark: both invalidations run, on a thread of their own, before the rollback goes on.
+                engine.setLiveViewCreateRollbackHooks(() -> {
+                    final LiveViewInstance partial = partialRef.get();
+                    isRefreshCancelledAtTheMark.set(partial.getRefreshCancelledFlag().get());
+                    final Thread invalidator = startThread("lv-invalidator", invalidatorError, () -> {
+                        engine.invalidateLiveViewsForBaseTable(baseToken, BASE_REASON);
+                        engine.invalidateLiveView(partial, ROLLBACK_REASON);
+                    });
+                    invalidatorRef.set(invalidator);
+                    try {
+                        invalidator.join(THREAD_JOIN_MILLIS);
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }, null);
+                try {
+                    assertCreateFailsAfterPublishing();
+                } finally {
+                    registerBaseTableFault = null;
+                    engine.setLiveViewCreateRollbackHooks(null, null);
+                }
+                joinWithoutError(invalidatorRef.get(), invalidatorError);
+                Assert.assertFalse("an invalidation must not open the state file of a view the rollback marked dropped", isStateFileOpened.get());
+                Assert.assertEquals(0, fault.getStateFileOpensAfterDrop());
+                Assert.assertTrue("the mark must trip the view's refresh breaker", isRefreshCancelledAtTheMark.get());
+                final LiveViewInstance partial = partialRef.get();
+                Assert.assertTrue(partial.isDropped());
+                Assert.assertFalse("an invalidation must not flip a view the rollback marked dropped", partial.isInvalid());
+                Assert.assertNull(partial.getInvalidationReason());
+                final LiveViewInstance sibling = engine.getLiveViewRegistry().getViewInstance("lv0");
+                Assert.assertTrue("the base-table writer must go on past the dropped view", sibling.isInvalid());
+                TestUtils.assertEquals(BASE_REASON, sibling.getInvalidationReason());
+                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, BASE_REASON);
+            } finally {
+                capture.stop();
+            }
+        });
     }
 
     @Test
@@ -349,6 +475,139 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // structural guarantee has moved to the isFreezeArmed() gate in
         // refreshInstance, which precedes every latch-held rewrite.
         assertMemoryLeak(this::runCheckpointFreezeDuringLatchHeldRewrite);
+    }
+
+    @Test
+    public void testCheckpointFreezeFreesViewInvalidatedDuringItsHold() throws Exception {
+        // An invalidation frees the view's runtime state through a refresh-latch CAS and, when the CAS loses,
+        // leaves the free to the latch holder. CHECKPOINT CREATE's startCheckpoint holds the latch while it waits
+        // for the view's monitor, which invalidateLiveView holds while it writes _lv.s, so the invalidation's free
+        // loses to the freeze. startCheckpoint makes the free once it lets the latch go, as a refresh turn does.
+        assertCheckpointFreezeFreesViewInvalidatedDuringItsHold(false);
+    }
+
+    @Test
+    public void testCheckpointFreezeFreesViewTheBaseInvalidatedDuringItsHold() throws Exception {
+        // As testCheckpointFreezeFreesViewInvalidatedDuringItsHold, through the base-table writer's invalidation,
+        // which the WAL apply job runs for a base DROP, RENAME, UPDATE or schema change.
+        assertCheckpointFreezeFreesViewInvalidatedDuringItsHold(true);
+    }
+
+    @Test
+    public void testCheckpointFreezeKeepsRuntimeStateOfValidView() throws Exception {
+        // startCheckpoint frees a dropped or invalid view's runtime state once it lets the refresh latch go. A valid
+        // view keeps its compiled factory, in-memory tier and memory tracker through the freeze, and its window
+        // state carries on: the next AA row sums with the AA row before it.
+        assertMemoryLeak(() -> {
+            final LiveViewInstance instance = createRefreshedFreezeView();
+            final RecordCursorFactory factory = instance.getCompiledFactory();
+            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            final MemoryTracker tracker = instance.getMemoryTracker();
+            Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            try {
+                Assert.assertTrue(instance.isFreezeInProgress());
+                Assert.assertSame(factory, instance.getCompiledFactory());
+                Assert.assertSame(tier, instance.getInMemoryTier());
+                Assert.assertSame(tracker, instance.getMemoryTracker());
+            } finally {
+                instance.endCheckpoint();
+            }
+            Assert.assertFalse(instance.isFreezeArmed());
+
+            execute("INSERT INTO base VALUES ('2027-01-01T00:00:03.000000Z', 'AA', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\ti\tv
+                            2027-01-01T00:00:01.000000Z\tAA\t1\t1.0
+                            2027-01-01T00:00:02.000000Z\tBB\t2\t2.0
+                            2027-01-01T00:00:03.000000Z\tAA\t3\t4.0
+                            """);
+            assertNoRefreshFaults("lv");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testCheckpointFreezeOfInvalidViewWithNothingLeftToFree() throws Exception {
+        // The frees startCheckpoint retries find nothing to do on an invalid view whose own invalidation freed its
+        // runtime state, or that was invalidated before a refresh allocated any. Each of two checkpoints in a row
+        // publishes its freeze and leaves the view invalid with nothing in memory, and no free fails.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                assertCheckpointFreezeOfInvalidViewWithNothingLeftToFree(true);
+                assertCheckpointFreezeOfInvalidViewWithNothingLeftToFree(false);
+                capture.drain();
+                capture.assertNotLogged(FAILED_FREEZE_FREE_LINE);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointFreezeReleasesSeedSnapshotOfViewInvalidatedDuringItsHold() throws Exception {
+        // A seeding view pins its base snapshot across sweep turns, and the free of an invalidated view returns it
+        // to the pool. As in testCheckpointFreezeFreesViewInvalidatedDuringItsHold, the invalidation's free loses to
+        // a checkpoint freeze, which returns the snapshot once it lets the refresh latch go.
+        // One row per sweep turn, so the sweep yields with its snapshot pinned.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2025-01-01T00:00:01.000000Z', 'AA', 1),
+                        ('2025-01-02T00:00:01.000000Z', 'AA', 2),
+                        ('2025-01-03T00:00:01.000000Z', 'BB', 3)
+                    """);
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM BEGINNING AS " + FREEZE_VIEW_SQL);
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int pass = 0; pass < SEED_COMPLETION_PASSES && instance.getSeedBaseReader() == null; pass++) {
+                    job.run();
+                }
+            }
+            Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+            Assert.assertNotNull("the sweep must yield with its base snapshot pinned", instance.getSeedBaseReader());
+
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+            synchronized (instance) {
+                agent.start();
+                awaitAgentBlockedHoldingTheLatch(agent, instance);
+                engine.invalidateLiveView(instance, FREEZE_HOLD_REASON);
+                Assert.assertTrue(instance.isInvalid());
+                Assert.assertNotNull("the invalidation's free must lose to the freeze", instance.getSeedBaseReader());
+                Assert.assertNotNull(instance.getCompiledFactory());
+                Assert.assertNotNull(instance.getMemoryTracker());
+            }
+            joinWithoutError(agent, agentError);
+            Assert.assertTrue("the freeze of a view that is not dropped must be published", isFrozen.get());
+            Assert.assertTrue(instance.isFreezeInProgress());
+            Assert.assertTrue(instance.isInvalid());
+            Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+            assertRuntimeStateFreed(instance);
+            instance.endCheckpoint();
+            Assert.assertFalse(instance.isFreezeArmed());
+
+            execute("DROP LIVE VIEW lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
@@ -501,7 +760,30 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // every thread joins and the refresh quiesces single-threaded, the view
         // still equals the from-scratch recompute.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800));
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800, CheckpointSoakTeardown.NONE));
+    }
+
+    @Test
+    public void testConcurrentCheckpointDuringRefreshThenDrop() throws Exception {
+        // As testConcurrentCheckpointDuringRefresh, with DROP LIVE VIEW on another thread at a random cycle of the
+        // checkpoint agent while the refresh driver and the writers run, and a thread that holds the view's monitor
+        // on and off, as the view's state file writers do, which keeps the agent on the refresh latch while it waits
+        // for the monitor. The drop closes the view it unregistered through a refresh-latch CAS, and whichever holder
+        // that close loses to - a refresh turn, or the agent's freeze, refused once the view is dropped - closes the
+        // view once it lets the latch go: nothing of the view stays in memory, and the leak check passes with no
+        // close of the test's own.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800, CheckpointSoakTeardown.DROP));
+    }
+
+    @Test
+    public void testConcurrentCheckpointDuringRefreshThenInvalidation() throws Exception {
+        // As testConcurrentCheckpointDuringRefreshThenDrop, with an invalidation of the view, the base-table writer's
+        // or invalidateLiveView's, in place of the drop. Whichever holder of the refresh latch the invalidation's free
+        // loses to - a refresh turn or the agent's freeze - makes the free once it lets the latch go: the view ends
+        // invalid with nothing in memory.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800, CheckpointSoakTeardown.INVALIDATION));
     }
 
     @Test
@@ -518,16 +800,22 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // (sweep cursor, sealed seed boundaries, in-mem tier) mid-sweep, a path
         // the non-seed DROP-during-refresh test never reaches. Whatever the
         // interleaving, the drop must leave the registry empty and the base table
-        // intact, with no leak or crash.
+        // intact, with no leak or crash. An invalidation of the base's views races
+        // the drop too, and never writes the state file of the view the drop marked
+        // dropped.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runDropDuringSeed(rnd, 4, 700));
+        final InvalidationAfterDropCount invalidationsAfterDrop = new InvalidationAfterDropCount();
+        assertMemoryLeak(invalidationsAfterDrop, () -> runDropDuringSeed(rnd, 4, 700, invalidationsAfterDrop));
     }
 
     @Test
     public void testConcurrentDropDuringRefresh() throws Exception {
-        // DROP LIVE VIEW races a refresh-driver thread pumping the refresh job.
+        // DROP LIVE VIEW races a refresh-driver thread pumping the refresh job, and an
+        // invalidation of the base's views, which never writes the state file of the
+        // view the drop marked dropped.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runDropDuringRefresh(rnd, 4, 700));
+        final InvalidationAfterDropCount invalidationsAfterDrop = new InvalidationAfterDropCount();
+        assertMemoryLeak(invalidationsAfterDrop, () -> runDropDuringRefresh(rnd, 4, 700, invalidationsAfterDrop));
     }
 
     @Test
@@ -599,7 +887,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(fallbackWorkerId, workerCount, engine, 1);
                     LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, workerCount, engine, 1)
             ) {
-                fallbackJob.setSimulateBaseCommitBetweenAheadGuardReadsForTest(() -> {
+                hooks(fallbackJob).setSimulateBaseCommitBetweenAheadGuardReads(() -> {
                     guardReadsSplit.countDown();
                     try {
                         if (!releaseFallback.await(30, TimeUnit.SECONDS)) {
@@ -672,7 +960,155 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCreateRollbackDefersFreeWhileRefreshLatchHeld() throws Exception {
+    public void testCreateRollbackAfterABaseInvalidationWhoseStateFileGrowthFailed() throws Exception {
+        // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, with a reason longer than a page: the
+        // base-table writer's open of the view's state file succeeds, and the growth of the file past its first page
+        // that the reason needs fails. The writer logs the failure once and closes the file it opened all the same
+        // before it lets the view's monitor go; the view flips invalid in memory, and the rollback still waits for the
+        // writer and leaves nothing behind.
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(
+                true,
+                BASE_REASON + ' ' + "x".repeat((int) Files.PAGE_SIZE),
+                StateFileWriteFailure.GROWTH
+        );
+    }
+
+    @Test
+    public void testCreateRollbackAfterABaseInvalidationWhoseStateFileWriteFailed() throws Exception {
+        // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, and the base-table writer's open of the
+        // view's state file fails. The view flips invalid in memory all the same, the failure is logged once, and the
+        // rollback still waits for the writer and leaves nothing behind.
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, StateFileWriteFailure.OPEN);
+    }
+
+    @Test
+    public void testCreateRollbackDoesNotWaitForACheckpointFreeze() throws Exception {
+        // A checkpoint freeze of the view a failing CREATE LIVE VIEW published holds the base-table writer, which
+        // invalidated lv0 and waits for the freeze to end, with the view's monitor released. The rollback marks the
+        // view dropped and tears it down without waiting for the freeze: no checkpoint copies a view whose name never
+        // committed. Once the freeze ends, the writer finds the view dropped and writes nothing.
+        final LiveViewStateFileFault fault = new LiveViewStateFileFault();
+        assertMemoryLeak(fault, () -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final TableToken baseToken = createRollbackFixture(true);
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicReference<Thread> invalidatorRef = new AtomicReference<>();
+                final AtomicReference<Throwable> invalidatorError = new AtomicReference<>();
+                final AtomicReference<Throwable> createError = new AtomicReference<>();
+                registerBaseTableFault = () -> {
+                    final LiveViewInstance partial = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the CREATE must have published the view", partial);
+                    partialRef.set(partial);
+                    fault.watchStateFile(partial);
+                    Assert.assertTrue(partial.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                    final Thread invalidator = startThread(
+                            "lv-invalidator",
+                            invalidatorError,
+                            () -> engine.invalidateLiveViewsForBaseTable(baseToken, BASE_REASON)
+                    );
+                    invalidatorRef.set(invalidator);
+                    awaitWaiting(invalidator);
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                final Thread creator;
+                try {
+                    creator = startCreateThread(createError);
+                    creator.join(THREAD_JOIN_MILLIS);
+                } finally {
+                    registerBaseTableFault = null;
+                }
+                final LiveViewInstance partial = partialRef.get();
+                Assert.assertNotNull("the CREATE must have published the view", partial);
+                try {
+                    Assert.assertFalse("the rollback must not wait for a checkpoint freeze", creator.isAlive());
+                    Assert.assertTrue(partial.isFreezeInProgress());
+                    Assert.assertTrue(partial.isDropped());
+                } finally {
+                    partial.endCheckpoint();
+                }
+                assertCreateFailedAfterPublishing(createError.get());
+                joinWithoutError(invalidatorRef.get(), invalidatorError);
+                Assert.assertEquals(0, fault.getStateFileOpensAfterDrop());
+                Assert.assertEquals(0, fault.getOpenStateFileFdCount());
+                Assert.assertFalse("an invalidation must not flip a view the rollback marked dropped", partial.isInvalid());
+                Assert.assertNull(partial.getInvalidationReason());
+                final LiveViewInstance sibling = engine.getLiveViewRegistry().getViewInstance("lv0");
+                Assert.assertTrue(sibling.isInvalid());
+                TestUtils.assertEquals(BASE_REASON, sibling.getInvalidationReason());
+                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, BASE_REASON);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateRollbackFencesARefreshTurnThatTakesTheMonitor() throws Exception {
+        // A refresh worker holds the refresh latch of the view a failing CREATE LIVE VIEW published and, once the
+        // rollback marked the view dropped, takes the view's monitor, as persistState does under the latch. The mark
+        // lets the monitor go before the rollback waits for the latch, so the worker gets through, lets the latch go,
+        // and the rollback ends: no deadlock.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                createRollbackFixture(false);
+                final CountDownLatch instanceRegistered = new CountDownLatch(1);
+                final CountDownLatch workerLatched = new CountDownLatch(1);
+                final CountDownLatch viewMarked = new CountDownLatch(1);
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicReference<Throwable> workerError = new AtomicReference<>();
+                final AtomicReference<Throwable> createError = new AtomicReference<>();
+                final Thread worker = startThread("lv-refresh-worker", workerError, () -> {
+                    awaitLatch(instanceRegistered, "the CREATE never published the view");
+                    final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the worker must see the published view", instance);
+                    Assert.assertTrue(instance.tryLockForRefresh());
+                    try {
+                        workerLatched.countDown();
+                        awaitLatch(viewMarked, "the rollback never marked the view dropped");
+                        synchronized (instance) {
+                            Assert.assertTrue(instance.isDropped());
+                        }
+                    } finally {
+                        instance.unlockAfterRefresh();
+                        instance.tryCloseIfDropped();
+                    }
+                });
+                registerBaseTableFault = () -> {
+                    partialRef.set(engine.getLiveViewRegistry().getViewInstance("lv"));
+                    instanceRegistered.countDown();
+                    awaitLatch(workerLatched, "the refresh worker never took the view's refresh latch");
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                // Right after the mark, ahead of the fence.
+                engine.setLiveViewCreateRollbackHooks(viewMarked::countDown, null);
+                final Thread creator;
+                try {
+                    creator = startCreateThread(createError);
+                    creator.join(THREAD_JOIN_MILLIS);
+                    worker.join(THREAD_JOIN_MILLIS);
+                } finally {
+                    registerBaseTableFault = null;
+                    engine.setLiveViewCreateRollbackHooks(null, null);
+                }
+                Assert.assertFalse("the rollback must not deadlock with a refresh turn", creator.isAlive());
+                joinWithoutError(worker, workerError);
+                assertCreateFailedAfterPublishing(createError.get());
+                final LiveViewInstance partial = partialRef.get();
+                Assert.assertTrue(partial.isDropped());
+                Assert.assertFalse(partial.isInvalid());
+                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, null);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateRollbackFencesLateRefreshAndKeepsLifecycleBounded() throws Exception {
         // createLiveView publishes the instance into the registry the refresh worker
         // iterates (registerView -> getViews) BEFORE the CREATE commits. If a later
         // CREATE step throws, the rollback must not free the instance off-latch. A
@@ -689,37 +1125,57 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // (assertMemoryLeak fails); post-fix the worker's tryCloseIfDropped frees it.
         final CountDownLatch instanceRegistered = new CountDownLatch(1);
         final CountDownLatch workerLatched = new CountDownLatch(1);
-        final CountDownLatch rollbackDone = new CountDownLatch(1);
+        final CountDownLatch workerMayWrite = new CountDownLatch(1);
+        final CountDownLatch workerWroteLifecycleState = new CountDownLatch(1);
+        final AtomicLong workerLifecycleIdentity = new AtomicLong();
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             final Thread worker = new Thread(() -> {
+                LiveViewInstance instance = null;
+                boolean isRefreshLocked = false;
                 try {
-                    instanceRegistered.await();
-                    final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    if (!instanceRegistered.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting for CREATE to register the instance");
+                    }
+                    instance = engine.getLiveViewRegistry().getViewInstance("lv");
                     Assert.assertNotNull("worker must see the registered instance", instance);
                     // Mirror refreshInstance: take the latch, clear the fresh-instance
                     // guards (all false), then hold it across the teardown.
                     Assert.assertTrue(instance.tryLockForRefresh());
+                    isRefreshLocked = true;
                     Assert.assertFalse(instance.isDropped());
                     workerLatched.countDown();
-                    // The rollback teardown runs now, while we hold the latch. Install the
-                    // runtime state only after it completes, reproducing the "worker sets
-                    // inMemoryTier after the teardown" window.
-                    rollbackDone.await();
+                    // The rollback hook releases us immediately before the fence. The CREATE
+                    // catch must mark the instance dropped and fence this latch before it resets
+                    // publication purge state; otherwise this late mutation can repopulate it.
+                    if (!workerMayWrite.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting for CREATE rollback coordination");
+                    }
+                    final LongList pendingRetirements = new LongList();
+                    pendingRetirements.add(17);
+                    final long lifecycleIdentity = instance.getLifecycleIdentity();
+                    workerLifecycleIdentity.set(lifecycleIdentity);
+                    engine.getLiveViewCheckpointPurgeState().markReconciled(lifecycleIdentity);
+                    engine.getLiveViewCheckpointPurgeState().replacePendingRetirements(
+                            lifecycleIdentity,
+                            pendingRetirements
+                    );
                     final IntList types = new IntList(1);
                     types.add(ColumnType.LONG);
                     instance.setInMemoryTier(new LiveViewInMemoryTier(types, 0, 4096L));
-                    // refreshInstance's finally hook: release the latch, then free if the
-                    // view was dropped mid-cycle. The fix makes this free the tier; the
-                    // off-latch close() would already have set isClosed, leaking it.
-                    instance.unlockAfterRefresh();
-                    instance.tryCloseIfDropped();
+                    workerWroteLifecycleState.countDown();
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
+                    // Mirror refreshInstance's finally hook even if fixture setup fails, so
+                    // the rollback fence cannot deadlock on an abandoned latch.
+                    if (isRefreshLocked) {
+                        instance.unlockAfterRefresh();
+                        instance.tryCloseIfDropped();
+                    }
                     clearWorkerThreadLocals();
                 }
             }, "lv-refresh-worker");
@@ -728,11 +1184,28 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // createLiveViewStateStore hook in setUpStatic). registerBaseTable, the step right after
             // registerView, releases the worker to latch the instance, waits for it to hold the
             // latch, then throws - so the rollback teardown runs against a latched instance.
+            engine.setLiveViewCreateRollbackHooks(
+                    workerMayWrite::countDown,
+                    () -> {
+                        workerMayWrite.countDown();
+                        try {
+                            if (!workerWroteLifecycleState.await(30, TimeUnit.SECONDS)) {
+                                throw new AssertionError("late refresh did not write purge state after reset");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException(e);
+                        }
+                    }
+            );
             registerBaseTableFault = () -> {
                 instanceRegistered.countDown();
                 try {
-                    workerLatched.await();
+                    if (!workerLatched.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("refresh worker did not acquire the instance latch");
+                    }
                 } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                     throw new RuntimeException(e);
                 }
                 throw CairoException.critical(0).put("injected registerBaseTable failure");
@@ -746,20 +1219,76 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } catch (Throwable expected) {
                 threw = true; // the injected registerBaseTable failure rolls the CREATE back
             } finally {
-                rollbackDone.countDown();
                 registerBaseTableFault = null;
+                engine.setLiveViewCreateRollbackHooks(null, null);
             }
 
-            worker.join();
+            worker.join(30_000);
+            Assert.assertFalse("refresh worker did not finish", worker.isAlive());
             if (!errors.isEmpty()) {
                 throw new RuntimeException("worker thread failed", errors.peek());
             }
             Assert.assertTrue("CREATE LIVE VIEW must fail when registerBaseTable throws", threw);
             // The rollback removed the half-built view; the name is free to reuse.
             Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+            final int activeGenerationCount =
+                    engine.getLiveViewCheckpointPurgeState().getActiveGenerationCountForTest();
+            final int pendingRetirementIdentity = activeGenerationCount == 0
+                    ? 0
+                    : engine.getLiveViewCheckpointPurgeState().getPendingRetirementIdentityForTest(
+                    workerLifecycleIdentity.get()
+            );
+            final int retirementPoolSize =
+                    engine.getLiveViewCheckpointPurgeState().getRetirementPoolSizeForTest();
+            Assert.assertEquals(
+                    "CREATE rollback must prune purge state seeded by a late refresh"
+                            + " [activeGenerationCount=" + activeGenerationCount
+                            + ", pendingRetirementIdentity=" + pendingRetirementIdentity
+                            + ", retirementPoolSize=" + retirementPoolSize + ']',
+                    0,
+                    activeGenerationCount
+            );
+            Assert.assertEquals("CREATE rollback must retain one reusable pending-list shell", 1, retirementPoolSize);
+
+            // Every retry publishes a distinct instance before the same deterministic failure.
+            // None may leave a live lifecycle entry or grow the one-shell pool.
+            registerBaseTableFault = () -> {
+                throw CairoException.critical(0).put("injected repeated registerBaseTable failure");
+            };
+            try {
+                for (int i = 0; i < 16; i++) {
+                    try {
+                        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                                "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+                        Assert.fail("expected injected CREATE failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "injected repeated registerBaseTable failure");
+                    }
+                    Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+                    Assert.assertEquals(0, engine.getLiveViewCheckpointPurgeState().getActiveGenerationCountForTest());
+                    Assert.assertEquals(1, engine.getLiveViewCheckpointPurgeState().getRetirementPoolSizeForTest());
+                }
+            } finally {
+                registerBaseTableFault = null;
+            }
 
             execute("DROP TABLE base");
         });
+    }
+
+    @Test
+    public void testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile() throws Exception {
+        // The base-table writer, which a base DROP, RENAME, UPDATE or schema change runs, invalidates lv0 and then
+        // the view a failing CREATE LIVE VIEW published, and holds that view's monitor inside its open of the view's
+        // state file when the CREATE's rollback marks the view dropped.
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, StateFileWriteFailure.NONE);
+    }
+
+    @Test
+    public void testCreateRollbackWaitsForAnInvalidationWritingTheStateFile() throws Exception {
+        // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, through invalidateLiveView, which a
+        // refresh worker runs off the refresh latch.
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(false, ROLLBACK_REASON, StateFileWriteFailure.NONE);
     }
 
     @Test
@@ -1141,7 +1670,66 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // from-scratch recompute. Nothing else exercises refresh-vs-refresh: every
         // other test drives a single LiveViewRefreshJob(0, engine, 1).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, 800));
+        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, reducedOnWindows(800, 200), null));
+    }
+
+    @Test
+    public void testMultiRefreshWorkerParkedRepairSoak() throws Exception {
+        // testMultiRefreshWorkerConvergence runs PARTITION BY 0 at the default budgets, so its
+        // workers never park a repair, never loop over anchor segments and never replay by
+        // key. This soak runs two or three refresh workers, sharded as ServerMain shards them,
+        // over an anchored PARTITION BY sym view with an indexed key, a one-row replay budget
+        // and segment yield on, with the other repair knobs drawn per run (LiveViewFuzzKnobs).
+        // Paced writers interleave their commits, so late rows reach closed segments while the
+        // workers park and resume repairs under each other, and readers check every row they
+        // see against the dataset. The concurrent phase must show repairs parked and resumed
+        // and two workers at work. A parked repair is the parking worker's alone, so the soak
+        // then parks one on a worker that does not own the view's shard: the view's own worker
+        // must back off, and the parker must find it again from its own list. The quiesced view
+        // must equal the recompute, and again after a restart and forward rows.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runMultiRefreshWorkerRepairSoak(rnd, 3, 2 + rnd.nextInt(2), 2, reducedOnWindows(1500 + rnd.nextInt(1000), 500)));
+    }
+
+    @Test
+    public void testMultiRefreshWorkerShutdownSoak() throws Exception {
+        // testMultiRefreshWorkerConvergence with a shutdown in it. At a random tick the engine's closing flag, which
+        // ServerMain raises while the refresh pools still run, rises inside a refresh worker's turn, and the soak
+        // keeps ticking past FLUSH EVERY with the flag up until the writers finish. No turn may start then, and
+        // above all none may run over what a turn the shutdown cancelled left in the accumulators: a worker that
+        // flushed the lead over a peer's cancelled drain would seal its rows as the root of a commit they run past.
+        // The views then restart with the flag down, and the view the restart recovers must equal the recompute.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // A turn learns of the shutdown at its next consult of the refresh breaker. Under the suite's throttle the
+        // drain's window cursor checks the flag on one consult in five, so a commit of a row or two read last in a
+        // turn could end it with no check; at 0 every consult checks. The jobs read the throttle when the soak
+        // builds them.
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 0;
+            }
+        };
+        final ClosingAtRefreshTimestampRead closingFault = new ClosingAtRefreshTimestampRead();
+        try {
+            assertMemoryLeak(closingFault, () -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, reducedOnWindows(800, 200), closingFault));
+        } finally {
+            engine.setClosing(false);
+        }
+    }
+
+    @Test
+    public void testSymbolReadersAcrossMidDrainRecoveries() throws Exception {
+        // The other tier soaks read their SYMBOL labels with no recovery under them, over four
+        // values the view commits at once. This soak reads labels while recoveries discard
+        // leads whose symbol values the view's table never committed: each recovery's tier
+        // rebuild tries to take the stranded ids back, and a reader that pins a slot listing
+        // them must refuse it, or the reader's rows name no account or another one. Readers
+        // check every row's label against the base row at its timestamp.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "i", "sym");
+        assertMemoryLeak(fault.facade(), () -> runSymbolRecoverySoak(rnd, fault, 4, reducedOnWindows(24_000, 6_000)));
     }
 
     @Test
@@ -1167,6 +1755,140 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testOperatorSuspendResumeUnderIngest() throws Exception {
+        // An ingest thread commits base rows and applies them, two refresh workers serve the view - sharded
+        // scan, shared notification queue - and an operator thread toggles the view's suspension through SUSPEND
+        // WAL / RESUME WAL and its listing in cairo.wal.apply.suspended.tables, all started together, with write
+        // denial drawn per run. However the toggles fall between and into the workers' turns, no turn fails and
+        // the view is never invalidated, and once the operator resumes and unlists it, the view converges on
+        // the recompute and wal_tables() reports it running.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final boolean isWriteDenied = rnd.nextBoolean();
+        final int commitCount = 100 + rnd.nextInt(100);
+        final int toggleCount = 50 + rnd.nextInt(100);
+        final LogCapture capture = new LogCapture();
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(isWriteDenied));
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String viewSql = "SELECT ts, sym, i, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS c, "
+                    + "sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS s FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            LOG.info().$("operator suspension under ingest [writeDenied=").$(isWriteDenied)
+                    .$(", commits=").$(commitCount).$(", toggles=").$(toggleCount).I$();
+            capture.start();
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final ObjList<LiveViewRefreshJob> jobs = new ObjList<>();
+            try {
+                jobs.add(new LiveViewRefreshJob(0, engine, 2));
+                jobs.add(new LiveViewRefreshJob(1, engine, 2));
+                final CyclicBarrier barrier = new CyclicBarrier(4);
+                final AtomicBoolean isRunning = new AtomicBoolean(true);
+                final AtomicLong workedTurns = new AtomicLong();
+                final ObjList<Thread> workers = new ObjList<>();
+                for (int w = 0; w < 2; w++) {
+                    workers.add(newRefreshWorkerThread(w, jobs.getQuick(w), barrier, isRunning, workedTurns, errors));
+                }
+                final long seed0 = rnd.nextLong();
+                final long seed1 = rnd.nextLong();
+                final Thread ingest = new Thread(() -> {
+                    final Rnd ingestRnd = new Rnd(seed0, seed1);
+                    try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        long ts = MicrosTimestampDriver.floor("2026-04-01T00:00:00.000000Z");
+                        for (int c = 0; c < commitCount && errors.isEmpty(); c++) {
+                            for (int r = 0, n = 1 + ingestRnd.nextInt(5); r < n; r++) {
+                                ts += 1 + ingestRnd.nextInt(60_000_000);
+                                final TableWriter.Row row = walWriter.newRow(ts);
+                                row.putSym(1, "k" + ingestRnd.nextInt(8));
+                                row.putLong(2, ingestRnd.nextLong(1000));
+                                row.putDouble(3, ingestRnd.nextDouble());
+                                row.append();
+                            }
+                            walWriter.commit();
+                            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                            drainWalQueue();
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        clearWorkerThreadLocals();
+                    }
+                }, "lv-ingest");
+                final Thread operator = new Thread(() -> {
+                    final Rnd operatorRnd = new Rnd(seed1, seed0);
+                    try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        for (int t = 0; t < toggleCount && errors.isEmpty(); t++) {
+                            switch (operatorRnd.nextInt(4)) {
+                                case 0 ->
+                                        execute("ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'operator " + t + "'", context);
+                                case 1 -> execute("ALTER LIVE VIEW lv RESUME WAL", context);
+                                case 2 ->
+                                        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, lvToken.getDirName());
+                                default -> setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                            }
+                            for (int spin = operatorRnd.nextInt(2_000); spin > 0; spin--) {
+                                Os.pause();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        clearWorkerThreadLocals();
+                    }
+                }, "lv-operator");
+                for (int w = 0, n = workers.size(); w < n; w++) {
+                    workers.getQuick(w).start();
+                }
+                ingest.start();
+                operator.start();
+                ingest.join();
+                operator.join();
+                isRunning.set(false);
+                for (int w = 0, n = workers.size(); w < n; w++) {
+                    workers.getQuick(w).join();
+                }
+                if (!errors.isEmpty()) {
+                    throw new AssertionError("a thread failed", errors.peek());
+                }
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                Assert.assertFalse("RESUME WAL and the unlisting must lift the view's suspension", engine.isWalApplySuspended(lvToken));
+                for (int pass = 0; pass < 4; pass++) {
+                    setCurrentMicros(currentMicros + 61_000_000L);
+                    driveRefreshToQuiescence(jobs);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("[reason=" + instance.getInvalidationReason() + ']', instance.isInvalid());
+                Assert.assertEquals(
+                        engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn(),
+                        instance.getLastProcessedSeqTxn()
+                );
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql, "lv", LOG);
+                assertQuery("SELECT name, suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("name\tsuspended\terrorTag\terrorMessage\nlv\tfalse\t\t\n");
+                capture.drain();
+                capture.assertNotLogged("live view refresh failed");
+                capture.assertNotLogged("budget exhausted");
+            } finally {
+                capture.stop();
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                Misc.freeObjList(jobs);
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testPacedWriterWaitStopsOnFailure() {
         final AtomicLong refreshTicks = new AtomicLong();
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
@@ -1188,17 +1910,18 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // a use-after-free, so it surfaces as a torn value or a crash rather than a
         // wrong-but-plausible answer.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runParallelFilterTierSwapSoak(rnd, 4, 4, 2000));
+        assertMemoryLeak(() -> runParallelFilterTierSwapSoak(rnd, 4, 4, reducedOnWindows(2000, 500)));
     }
 
     @Test
     public void testReaderChurnSoak() throws Exception {
         // Reader threads churn cursors over an IN MEMORY view while a refresh driver
         // appends via the fast-path CAS and writers ingest - the read/publish risk.
-        // The sum() view carries a SYMBOL passthrough, so the reads route disk-only;
-        // this soak stresses the read/publish hand-off without Mode B in the loop.
+        // The sum() view carries a SYMBOL passthrough, and its reads route through the
+        // tier too, resolving each label through the tier's symbol table: every row a
+        // reader sees must carry its base row's label and value.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, false, false));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200), false, false));
     }
 
     @Test
@@ -1211,7 +1934,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // mismatch, not merely a crash. The cross-writer O3 drives the in-mem
         // rebuild against the live Mode B readers (the both-slots-pinned race).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, false));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200), true, false));
     }
 
     @Test
@@ -1228,7 +1951,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // the run quiesces the test rebuilds a known lead and asserts Mode A is
         // engaged (the cursor serves the lead and equals the recompute).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, true));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200), true, true));
     }
 
     @Test
@@ -1257,12 +1980,207 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // makes concurrent var-length reads safe; see LiveViewInMemReadTest's
         // testInMemVarSizeRecordsAreIndependent for the deterministic proof.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
+        assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, reducedOnWindows(800, 200)));
+    }
+
+    @Test
+    public void testRefusedCheckpointFreezeClosesViewItsDropCouldNotClose() throws Exception {
+        // DROP LIVE VIEW marks the view dropped, fences its refresh, unregisters it and then closes it through a
+        // refresh-latch CAS, which leaves the close to the latch holder when it loses. A checkpoint that looked the
+        // view up before the drop unregistered it takes the latch and waits for the view's monitor, then refuses to
+        // freeze the dropped view. The drop's close loses to it, and nothing else reaches the unregistered view
+        // again, so startCheckpoint closes it once it lets the latch go. The leak check fails without that close.
+        final DropPausedAtTimelineRetire ff = new DropPausedAtTimelineRetire();
+        assertMemoryLeak(ff, () -> {
+            final LiveViewInstance instance = createRefreshedFreezeView();
+            final AtomicReference<Throwable> dropError = new AtomicReference<>();
+            final Thread dropper = new Thread(() -> {
+                try {
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+                } catch (Throwable th) {
+                    dropError.set(th);
+                } finally {
+                    clearWorkerThreadLocals();
+                }
+            }, "lv-dropper");
+            ff.pause(dropper);
+            dropper.start();
+            ff.awaitPaused();
+            Assert.assertTrue(instance.isDropped());
+            Assert.assertSame("the paused drop has not unregistered the view yet", instance, engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            final AtomicBoolean isFrozen = new AtomicBoolean(true);
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+            synchronized (instance) {
+                try {
+                    agent.start();
+                    awaitAgentBlockedHoldingTheLatch(agent, instance);
+                } finally {
+                    ff.resume();
+                }
+                joinWithoutError(dropper, dropError);
+                Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                Assert.assertNotNull("the drop's close must lose to the freeze", instance.getCompiledFactory());
+                Assert.assertNotNull(instance.getInMemoryTier());
+                Assert.assertNotNull(instance.getMemoryTracker());
+            }
+            joinWithoutError(agent, agentError);
+            Assert.assertFalse("the freeze of a dropped view must be refused", isFrozen.get());
+            Assert.assertFalse(instance.isFreezeArmed());
+            Assert.assertFalse(instance.isFreezeInProgress());
+            assertRuntimeStateFreed(instance);
+            Assert.assertEquals(LiveViewLifecycleState.DROPPING, instance.getLifecycleState());
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
     public void testTierSwapDriverClosesInitialCursorAfterSwap() throws Exception {
         assertMemoryLeak(() -> assertInitialTierCursorClosed(false));
+    }
+
+    @Test
+    public void testTwoViewsPublishingZeroRowResumesInterleavedKeepTheirTimelines() throws Exception {
+        // As below, with the checkpoint chain declined: each view's resume of a row both filters
+        // reject truncates at its anchor, the root at the view's frontier, and publishes that root
+        // at the commit with a watermark. The first job's hook ahead of that publication drives
+        // the second job, whose turn over the other view - truncate, watermark and sweep - runs
+        // between the first view's truncate and its watermark. Each publication names its own
+        // view's newest root, so neither refuses, and neither view retires its timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s "
+                    + "FROM base WHERE x > 0";
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            try (
+                    LiveViewRefreshJob jobA = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewRefreshJob jobB = new LiveViewRefreshJob(0, engine, 1)
+            ) {
+                setCurrentMicros(1_000_000_000_000L);
+                commitAndRefresh(jobA, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitAndRefresh(jobA, "('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 4.5)");
+                // The row at 00:03 leaves both filters: each view's head goes back to a root at 00:02.
+                commitAndRefresh(jobA, "('2026-01-01T00:03:00.000000Z', 'a', -4.5)");
+                final LiveViewInstance lv1 = engine.getLiveViewRegistry().getViewInstance("lv1");
+                final LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+                Assert.assertNotNull(lv1);
+                Assert.assertNotNull(lv2);
+                final long resets1 = lv1.getCheckpointTimelineResets();
+                final long resets2 = lv2.getCheckpointTimelineResets();
+                for (int i = 0; i < 4; i++) {
+                    hooks(jobA).setSimulateResumeHeadSealStart(() -> drainJob(jobB));
+                    final long keepsA = jobA.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+                    final long keepsB = jobB.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+                    commitAndRefresh(jobA, "('2026-01-01T00:02:1" + i + ".000000Z', 'b', -1.0)");
+                    Assert.assertEquals("the other job took one view's turn", keepsB + 1, jobB.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                    Assert.assertEquals(keepsA + 1, jobA.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                    final long seqTxn = 4 + i;
+                    for (LiveViewInstance view : new LiveViewInstance[]{lv1, lv2}) {
+                        Assert.assertEquals(seqTxn, view.getHeadCheckpointBaseSeqTxn());
+                        Assert.assertEquals(MicrosTimestampDriver.floor("2026-01-01T00:02:00.000000Z"), view.getHeadCheckpointMaxTs());
+                        Assert.assertEquals(0, view.getCheckpointSealFailures());
+                    }
+                }
+                Assert.assertEquals(resets1, lv1.getCheckpointTimelineResets());
+                Assert.assertEquals(resets2, lv2.getCheckpointTimelineResets());
+                assertCatalogueMatchesDisk(lv1);
+                assertCatalogueMatchesDisk(lv2);
+                for (String view : new String[]{"lv1", "lv2"}) {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            "(" + viewSql + ") ORDER BY ts, sym",
+                            "(" + view + ") ORDER BY ts, sym",
+                            LOG,
+                            true
+                    );
+                    assertNoRefreshFaults(view);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTwoViewsSplicingInterleavedCarryOnlyTheirOwnSweptEntries() throws Exception {
+        // Two filtered views over one deduplicating base, refreshed by two jobs that share the
+        // engine's purge state. Both lose their newest row, then rows both filters reject land
+        // below it, so each view's resume splices at the commit, emits nothing and re-stamps its
+        // head. The first job's hook ahead of that re-stamp drives the second job, whose turn
+        // over the other view - splice, re-stamp and sweep - runs between the first view's splice
+        // and its re-stamp. A splice that carried the other view's proposal would refuse to
+        // retire an entry its own catalogue does not hold the way the sweep found it, or remove
+        // a live one, and retire its timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s "
+                    + "FROM base WHERE x > 0";
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            try (
+                    LiveViewRefreshJob jobA = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewRefreshJob jobB = new LiveViewRefreshJob(0, engine, 1)
+            ) {
+                setCurrentMicros(1_000_000_000_000L);
+                commitAndRefresh(jobA, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitAndRefresh(jobA, "('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 4.5)");
+                // The row at 00:03 leaves both filters: each view's head goes back to a root at 00:02.
+                commitAndRefresh(jobA, "('2026-01-01T00:03:00.000000Z', 'a', -4.5)");
+                final LiveViewInstance lv1 = engine.getLiveViewRegistry().getViewInstance("lv1");
+                final LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+                Assert.assertNotNull(lv1);
+                Assert.assertNotNull(lv2);
+                final long resets1 = lv1.getCheckpointTimelineResets();
+                final long resets2 = lv2.getCheckpointTimelineResets();
+                final long[] entries = {-1, -1};
+                final int[] files = {-1, -1};
+                for (int i = 0; i < 4; i++) {
+                    hooks(jobA).setSimulateResumeHeadSealStart(() -> drainJob(jobB));
+                    final long zeroRowKeepsB = jobB.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
+                    commitAndRefresh(jobA, "('2026-01-01T00:02:1" + i + ".000000Z', 'b', -1.0)");
+                    Assert.assertEquals("the other job took one view's turn", zeroRowKeepsB + 1, jobB.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+                    Assert.assertEquals(i + 1, jobA.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+                    final long seqTxn = 4 + i;
+                    final LiveViewInstance[] views = {lv1, lv2};
+                    for (int v = 0; v < 2; v++) {
+                        final LiveViewInstance view = views[v];
+                        Assert.assertEquals(seqTxn, view.getHeadCheckpointBaseSeqTxn());
+                        Assert.assertEquals(MicrosTimestampDriver.floor("2026-01-01T00:02:00.000000Z"), view.getHeadCheckpointMaxTs());
+                        if (i == 1) {
+                            entries[v] = catalogueSize(view);
+                            files[v] = checkpointFileCount(view);
+                        } else if (i > 1) {
+                            Assert.assertEquals(entries[v], catalogueSize(view));
+                            Assert.assertEquals(files[v], checkpointFileCount(view));
+                        }
+                    }
+                }
+                Assert.assertEquals(resets1, lv1.getCheckpointTimelineResets());
+                Assert.assertEquals(resets2, lv2.getCheckpointTimelineResets());
+                assertCatalogueMatchesDisk(lv1);
+                assertCatalogueMatchesDisk(lv2);
+                for (String view : new String[]{"lv1", "lv2"}) {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            "(" + viewSql + ") ORDER BY ts, sym",
+                            "(" + view + ") ORDER BY ts, sym",
+                            LOG,
+                            true
+                    );
+                    assertNoRefreshFaults(view);
+                }
+            }
+        });
     }
 
     @Test
@@ -1283,13 +2201,21 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         return false;
     }
 
+    // No test here asserts a refresh job line, and the soaks' readers and writers fill the log
+    // ring whenever stdout stalls. A guaranteed logger then parks every refresh worker on a
+    // ring slot until the paced writers' 30s tick deadline expires.
+    @Override
+    protected boolean isRefreshJobLoggingGuaranteed() {
+        return false;
+    }
+
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
+        appendRow(walWriter, ts, symIdx < 0 ? null : SYMBOLS[symIdx], iv, xv);
+    }
+
+    private static void appendRow(WalWriter walWriter, long ts, @Nullable CharSequence sym, long iv, double xv) {
         TableWriter.Row row = walWriter.newRow(ts);
-        if (symIdx < 0) {
-            row.putSym(1, (CharSequence) null);
-        } else {
-            row.putSym(1, SYMBOLS[symIdx]);
-        }
+        row.putSym(1, sym);
         row.putLong(2, iv); // LONG_NULL stores as NULL
         row.putDouble(3, xv);
         row.append();
@@ -1308,6 +2234,26 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         vcSink.put('v').put(ts);
         row.putVarchar(2, vcSink); // vv VARCHAR = 'v' + decimal ts
         row.append();
+    }
+
+    // For each row of a generateDataset dataset, how many rows of its key share its UTC day up
+    // to and including it: the count an ANCHOR DAILY '00:00' count() gives the row once the
+    // whole dataset is in. The timestamps ascend, so the days do too. symIdx holds keys below
+    // symbolCount, or -1 for the NULL key.
+    private static long[] dailyKeyCounts(long[] tsv, int[] symIdx, int symbolCount) {
+        final long[] counts = new long[tsv.length];
+        // Indexed by key + 1, so the NULL key takes slot 0.
+        final long[] keyCounts = new long[symbolCount + 1];
+        long day = Long.MIN_VALUE;
+        for (int k = 0; k < tsv.length; k++) {
+            final long rowDay = Math.floorDiv(tsv[k], Micros.DAY_MICROS);
+            if (rowDay != day) {
+                Arrays.fill(keyCounts, 0);
+                day = rowDay;
+            }
+            counts[k] = ++keyCounts[symIdx[k] + 1];
+        }
+        return counts;
     }
 
     // Generates the logical dataset: strictly-unique, strictly-increasing timestamps
@@ -1341,6 +2287,480 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
+    }
+
+    private static long sumWorkedTurns(ObjList<AtomicLong> workedTurns) {
+        long sum = 0;
+        for (int i = 0, n = workedTurns.size(); i < n; i++) {
+            sum += workedTurns.getQuick(i).get();
+        }
+        return sum;
+    }
+
+    // None of the runtime state the frees of a dropped or invalid view release is left.
+    private static void assertRuntimeStateFreed(LiveViewInstance instance) {
+        Assert.assertNull(instance.getCompiledFactory());
+        Assert.assertNull(instance.getInMemoryTier());
+        Assert.assertNull(instance.getMemoryTracker());
+        Assert.assertNull(instance.getAnchorWindow());
+        Assert.assertNull(instance.getRepairRuntime());
+        Assert.assertNull(instance.getStoredRowScanFactory());
+        Assert.assertNull(instance.getSeedBaseReader());
+    }
+
+    // Runs ROLLBACK_CREATE_SQL, which registerBaseTableFault fails once the CREATE published lv.
+    private static void assertCreateFailsAfterPublishing() throws SqlException {
+        try {
+            execute(ROLLBACK_CREATE_SQL);
+            Assert.fail("the CREATE must fail");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), CREATE_FAILURE);
+        }
+    }
+
+    // The CREATE on a thread of startCreateThread failed with what registerBaseTableFault throws once it published lv.
+    private static void assertCreateFailedAfterPublishing(@Nullable Throwable createError) {
+        Assert.assertTrue("the CREATE must fail with the injected failure, not " + createError, createError instanceof CairoException);
+        TestUtils.assertContains(((CairoException) createError).getFlyweightMessage(), CREATE_FAILURE);
+    }
+
+    // The directory and the name of the view the failed CREATE published are gone.
+    private static void assertPartialViewGone(String partialDirName) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(partialDirName);
+            Assert.assertFalse("the rollback must remove the view's directory", configuration.getFilesFacade().exists(path.$()));
+        }
+        Assert.assertNull(engine.getTableTokenByDirName(partialDirName));
+    }
+
+    private static void awaitLatch(CountDownLatch latch, String failure) {
+        try {
+            Assert.assertTrue(failure, latch.await(THREAD_JOIN_MILLIS, TimeUnit.MILLISECONDS));
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    // Spins until the rollback of the failed CREATE on createThread blocks on the view's monitor to mark the view
+    // dropped, or has marked it. False when neither comes within THREAD_JOIN_MILLIS.
+    private static boolean awaitRollbackAtTheMark(Thread createThread, LiveViewInstance partial) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!partial.isDropped() && !isBlockedOn(createThread, partial)) {
+            if (System.nanoTime() > deadlineNanos) {
+                return false;
+            }
+            Os.pause();
+        }
+        return true;
+    }
+
+    // base with two rows, so a view created over it seeds, and with isSiblingCreated lv0 over it, which registers
+    // ahead of any view created later.
+    private static TableToken createRollbackFixture(boolean isSiblingCreated) throws SqlException {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base VALUES ('2027-01-01T00:00:01.000000Z', 'AA', 1), ('2027-01-01T00:00:02.000000Z', 'BB', 2)");
+        drainWalQueue();
+        if (isSiblingCreated) {
+            execute("CREATE LIVE VIEW lv0 FLUSH EVERY 100ms START FROM BEGINNING AS " + FREEZE_VIEW_SQL);
+        }
+        return engine.verifyTableName("base");
+    }
+
+    // Is the thread blocked entering the monitor of the object?
+    private static boolean isBlockedOn(Thread thread, Object monitor) {
+        if (thread.getState() != Thread.State.BLOCKED) {
+            return false;
+        }
+        final ThreadInfo info = ManagementFactory.getThreadMXBean().getThreadInfo(thread.threadId());
+        if (info == null) {
+            return false;
+        }
+        final LockInfo lock = info.getLockInfo();
+        return lock != null && lock.getIdentityHashCode() == System.identityHashCode(monitor);
+    }
+
+    // Runs ROLLBACK_CREATE_SQL on a thread of its own, as a client session does, and records what it threw in
+    // createError.
+    private static Thread startCreateThread(AtomicReference<Throwable> createError) {
+        return startThread("lv-create", createError, () -> {
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                execute(ROLLBACK_CREATE_SQL, context);
+            } catch (SqlException e) {
+                throw new AssertionError(e);
+            }
+        });
+    }
+
+    // Builds the thread that tears the checkpoint soak's view down: it awaits the barrier and the view's first
+    // in-memory tier, waits until the checkpoint agent has run a number of cycles it draws after that, spins a number
+    // of pauses it draws, and then drops the view or invalidates it, through the base-table writer or
+    // invalidateLiveView as it draws. Logs its draws, so a seed reproduces the run, and sets isTornDown once it is
+    // done, however it ends.
+    private static Thread newCheckpointSoakTeardownThread(
+            Rnd rnd,
+            CheckpointSoakTeardown teardown,
+            LiveViewInstance instance,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicLong agentCycles,
+            AtomicBoolean isTornDown,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final int cycles = rnd.nextInt(64);
+        final int spins = rnd.nextInt(10_000);
+        final boolean isBaseWriter = rnd.nextBoolean();
+        LOG.info().$("LV concurrency checkpoint soak teardown: teardown=").$(teardown.name())
+                .$(", cycles=").$(cycles)
+                .$(", spins=").$(spins)
+                .$(", baseWriter=").$(isBaseWriter).$();
+        return new Thread(() -> {
+            try {
+                barrier.await();
+                // The view has runtime state to free once a refresh turn built its in-memory tier.
+                while (instance.getInMemoryTier() == null && errors.isEmpty()) {
+                    Os.pause();
+                }
+                final long cyclesBefore = agentCycles.get();
+                while (agentCycles.get() - cyclesBefore < cycles && errors.isEmpty()) {
+                    Os.pause();
+                }
+                for (int spin = spins; spin > 0; spin--) {
+                    Os.pause();
+                }
+                if (teardown == CheckpointSoakTeardown.DROP) {
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+                } else if (isBaseWriter) {
+                    engine.invalidateLiveViewsForBaseTable(baseToken, CHECKPOINT_SOAK_INVALIDATION_REASON);
+                } else {
+                    engine.invalidateLiveView(instance, CHECKPOINT_SOAK_INVALIDATION_REASON);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                isTornDown.set(true);
+                clearWorkerThreadLocals();
+            }
+        }, "lv-checkpoint-soak-teardown");
+    }
+
+    // Builds the thread that stands in for the writers of the soak view's state file - the WAL apply job's rewrite of
+    // it, an invalidation's - which hold the view's monitor while they write. Until the teardown is done and the
+    // writers stop, it holds the monitor for a number of pauses it draws, then lets it go for another number it draws.
+    // A checkpoint freeze that takes the refresh latch meanwhile keeps it until the monitor frees up, and that is the
+    // hold the frees of a dropped or invalidated view lose to. Logs its draws, so a seed reproduces the run.
+    private static Thread newViewMonitorHolderThread(
+            Rnd rnd,
+            LiveViewInstance instance,
+            CyclicBarrier barrier,
+            AtomicBoolean running,
+            AtomicBoolean isTornDown,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final int holdSpins = rnd.nextInt(2_000);
+        final int gapSpins = rnd.nextInt(2_000);
+        LOG.info().$("LV concurrency checkpoint soak monitor holder: holdSpins=").$(holdSpins)
+                .$(", gapSpins=").$(gapSpins).$();
+        return new Thread(() -> {
+            try {
+                barrier.await();
+                while (running.get() || !isTornDown.get()) {
+                    synchronized (instance) {
+                        for (int spin = holdSpins; spin > 0; spin--) {
+                            Os.pause();
+                        }
+                    }
+                    for (int spin = gapSpins; spin > 0; spin--) {
+                        Os.pause();
+                    }
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-view-monitor-holder");
+    }
+
+    // A checkpoint freeze takes the refresh latch of a refreshed IN MEMORY view and waits for the view's monitor,
+    // which this thread holds while it invalidates the view, the base-table writer's way with isBaseWriter,
+    // invalidateLiveView's without. The invalidation's free loses its latch CAS to the freeze, and the freeze frees
+    // the view's runtime state once it lets the latch go. The view stays invalid, serves its rows from disk, loads
+    // invalid after a restart, and drops.
+    private void assertCheckpointFreezeFreesViewInvalidatedDuringItsHold(boolean isBaseWriter) throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewInstance instance = createRefreshedFreezeView();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                synchronized (instance) {
+                    agent.start();
+                    awaitAgentBlockedHoldingTheLatch(agent, instance);
+                    if (isBaseWriter) {
+                        engine.invalidateLiveViewsForBaseTable(baseToken, FREEZE_HOLD_REASON);
+                    } else {
+                        engine.invalidateLiveView(instance, FREEZE_HOLD_REASON);
+                    }
+                    Assert.assertTrue(instance.isInvalid());
+                    Assert.assertNotNull("the invalidation's free must lose to the freeze", instance.getCompiledFactory());
+                    Assert.assertNotNull(instance.getInMemoryTier());
+                    Assert.assertNotNull(instance.getMemoryTracker());
+                }
+                joinWithoutError(agent, agentError);
+                capture.drain();
+                capture.assertNotLogged(FAILED_FREEZE_FREE_LINE);
+            } finally {
+                capture.stop();
+            }
+            Assert.assertTrue("the freeze of a view that is not dropped must be published", isFrozen.get());
+            Assert.assertTrue(instance.isFreezeInProgress());
+            assertRuntimeStateFreed(instance);
+            assertInvalidWithNoInMemoryRows(FREEZE_HOLD_REASON);
+            instance.endCheckpoint();
+            Assert.assertFalse(instance.isFreezeArmed());
+
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\ti\tv
+                            2027-01-01T00:00:01.000000Z\tAA\t1\t1.0
+                            2027-01-01T00:00:02.000000Z\tBB\t2\t2.0
+                            """);
+            restartLiveViewsAndRecover();
+            assertInvalidWithNoInMemoryRows(FREEZE_HOLD_REASON);
+
+            execute("DROP LIVE VIEW lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+        });
+    }
+
+    // An invalid view with nothing in memory - refreshed, then invalidated with no freeze in the way, so the
+    // invalidation freed it, or invalidated before a refresh allocated anything - goes through two checkpoints in a
+    // row: each publishes its freeze and leaves the view as it was, and the view drops.
+    private void assertCheckpointFreezeOfInvalidViewWithNothingLeftToFree(boolean isRefreshed) throws Exception {
+        final LiveViewInstance instance = isRefreshed ? createRefreshedFreezeView() : createFreezeView();
+        engine.invalidateLiveView(instance, FREEZE_HOLD_REASON);
+        Assert.assertTrue(instance.isInvalid());
+        assertRuntimeStateFreed(instance);
+        for (int checkpoint = 0; checkpoint < 2; checkpoint++) {
+            Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            try {
+                Assert.assertTrue(instance.isFreezeInProgress());
+                assertRuntimeStateFreed(instance);
+                assertInvalidWithNoInMemoryRows(FREEZE_HOLD_REASON);
+            } finally {
+                instance.endCheckpoint();
+            }
+            Assert.assertFalse(instance.isFreezeArmed());
+        }
+        execute("DROP LIVE VIEW lv");
+        Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+        execute("DROP TABLE base");
+    }
+
+    // A CREATE LIVE VIEW fails once it published the view, while an invalidation of the view holds the view's monitor
+    // and is inside its open of the view's state file, past its check for a drop: the base-table writer's, after it
+    // invalidated lv0, with isBaseWriter, invalidateLiveView's without. The rollback's mark of the drop waits for the
+    // monitor, so the invalidation's write, file closed, lands ahead of it, and nothing opens the file after it: the
+    // rollback removes a directory nothing writes to. A failure of the write, which the invalidation logs, leaves the
+    // view flipped invalid in memory all the same.
+    private void assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(
+            boolean isBaseWriter,
+            String reason,
+            StateFileWriteFailure failure
+    ) throws Exception {
+        final LiveViewStateFileFault fault = new LiveViewStateFileFault();
+        assertMemoryLeak(fault, () -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final TableToken baseToken = createRollbackFixture(isBaseWriter);
+                final Thread createThread = Thread.currentThread();
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicReference<Thread> invalidatorRef = new AtomicReference<>();
+                final AtomicReference<Throwable> invalidatorError = new AtomicReference<>();
+                final CountDownLatch invalidatorInsideTheOpen = new CountDownLatch(1);
+                final AtomicBoolean isRollbackAtTheMark = new AtomicBoolean();
+                registerBaseTableFault = () -> {
+                    final LiveViewInstance partial = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the CREATE must have published the view", partial);
+                    partialRef.set(partial);
+                    fault.watchStateFile(partial);
+                    // On the invalidator, holding the view's monitor, ahead of its open of the state file.
+                    fault.runAtNextStateFileOpen(() -> {
+                        invalidatorInsideTheOpen.countDown();
+                        isRollbackAtTheMark.set(awaitRollbackAtTheMark(createThread, partial));
+                        if (failure == StateFileWriteFailure.OPEN) {
+                            fault.failStateFileOpens(1);
+                        } else if (failure == StateFileWriteFailure.GROWTH) {
+                            fault.failStateFileGrowths(1);
+                        }
+                    });
+                    invalidatorRef.set(startThread("lv-invalidator", invalidatorError, () -> {
+                        if (isBaseWriter) {
+                            engine.invalidateLiveViewsForBaseTable(baseToken, reason);
+                        } else {
+                            engine.invalidateLiveView(partial, reason);
+                        }
+                    }));
+                    awaitLatch(invalidatorInsideTheOpen, "the invalidation never reached its open of the state file");
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                try {
+                    assertCreateFailsAfterPublishing();
+                } finally {
+                    registerBaseTableFault = null;
+                }
+                joinWithoutError(invalidatorRef.get(), invalidatorError);
+                Assert.assertTrue("the rollback never came to its mark", isRollbackAtTheMark.get());
+                Assert.assertEquals("nothing may open the state file once the rollback marked the view dropped", 0, fault.getStateFileOpensAfterDrop());
+                Assert.assertEquals(
+                        "the invalidation must close the state file holding the view's monitor",
+                        failure == StateFileWriteFailure.OPEN ? 0 : 1,
+                        fault.getStateFileClosesHoldingTheMonitor()
+                );
+                Assert.assertEquals(0, fault.getStateFileClosesWithoutTheMonitor());
+                Assert.assertEquals(0, fault.getOpenStateFileFdCount());
+                final LiveViewInstance partial = partialRef.get();
+                final String partialDirName = partial.getLiveViewToken().getDirName();
+                Assert.assertTrue(partial.isDropped());
+                // The invalidation held the monitor first, so it ran first.
+                Assert.assertTrue(partial.isInvalid());
+                TestUtils.assertEquals(reason, partial.getInvalidationReason());
+                if (isBaseWriter) {
+                    final LiveViewInstance sibling = engine.getLiveViewRegistry().getViewInstance("lv0");
+                    Assert.assertTrue(sibling.isInvalid());
+                    TestUtils.assertEquals(reason, sibling.getInvalidationReason());
+                }
+                capture.drain();
+                final int persistFailures = failure == StateFileWriteFailure.NONE ? 0 : 1;
+                // A log record keeps a line's first 4 KiB, which a reason longer than a page overflows, so the error
+                // after such a reason never shows: count its line by the reason's first 1,000 chars.
+                final String loggedReason = reason.length() > 1_000 ? reason.substring(0, 1_000) : reason + ", error=";
+                Assert.assertEquals(
+                        persistFailures,
+                        capture.countOccurrences(COULD_NOT_PERSIST_LINE + partialDirName + ", reason=" + loggedReason)
+                );
+                assertCreateRolledBackCleanly(capture, partialDirName, persistFailures, isBaseWriter ? reason : null);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    // The rollback of a CREATE of lv that failed once it published the view left nothing behind: none of its steps
+    // failed, persistFailures invalidations failed to write the view's state file, the view's directory and names
+    // are gone, the same CREATE then succeeds in a directory of its own, and a restart loads lv seeding, next to lv0
+    // invalid with siblingReason unless that is null.
+    private void assertCreateRolledBackCleanly(
+            LogCapture capture,
+            String partialDirName,
+            int persistFailures,
+            @Nullable String siblingReason
+    ) throws Exception {
+        capture.drain();
+        Assert.assertEquals(persistFailures, capture.countOccurrences(COULD_NOT_PERSIST_LINE));
+        capture.assertNotLogged("could not clean up partial live view fs");
+        capture.assertNotLogged("could not roll back partially-created live view");
+        capture.assertNotLogged("could not unregister partially-created live view");
+        assertPartialViewGone(partialDirName);
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+        Assert.assertNull(engine.getTableTokenIfExists("lv"));
+
+        execute(ROLLBACK_CREATE_SQL);
+        final String createdDirName = engine.verifyTableName("lv").getDirName();
+        Assert.assertNotEquals(partialDirName, createdDirName);
+
+        // What a restart does: the registries drop their entries and load them back from disk.
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.closeNameRegistry();
+        engine.reloadTableNames();
+        engine.buildViewGraphs();
+        assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views() ORDER BY view_name")
+                .noLeakCheck()
+                .returns("view_name\tview_status\tinvalidation_reason\n"
+                        + "lv\tseeding\t\n"
+                        + (siblingReason != null ? "lv0\tinvalid\t" + siblingReason + '\n' : ""));
+        TestUtils.assertEquals(createdDirName, engine.verifyTableName("lv").getDirName());
+        assertPartialViewGone(partialDirName);
+    }
+
+    // live_views() reports the view invalid with the reason, and with no in-memory tier, so no in-memory bytes or rows.
+    private void assertInvalidWithNoInMemoryRows(String reason) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason, in_mem_bytes, in_mem_rows FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\tin_mem_bytes\tin_mem_rows\n"
+                        + "invalid\t" + reason + "\t0\t0\n");
+    }
+
+    // base (ts, sym, i) and the never-refreshed view FREEZE_VIEW_SQL over it.
+    private LiveViewInstance createFreezeView() throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + FREEZE_VIEW_SQL);
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        return instance;
+    }
+
+    // createFreezeView refreshed past rows AA 1 and BB 2, so it holds a compiled factory, an in-memory tier and a
+    // memory tracker.
+    private LiveViewInstance createRefreshedFreezeView() throws Exception {
+        final LiveViewInstance instance = createFreezeView();
+        execute("INSERT INTO base VALUES ('2027-01-01T00:00:01.000000Z', 'AA', 1), ('2027-01-01T00:00:02.000000Z', 'BB', 2)");
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertNotNull(instance.getCompiledFactory());
+        Assert.assertNotNull(instance.getInMemoryTier());
+        Assert.assertNotNull(instance.getMemoryTracker());
+        return instance;
+    }
+
+    // Commits a late row 1us above every row of the day that holds the dataset's row a third of
+    // the way in, under the row's own key, so that day's repair has more rows to replay than a
+    // one-row replay budget lets one turn take. Each late row sorts between its row and the
+    // next.
+    private void commitLateRowsIntoAClosedDay(long[] tsv, int[] symIdx) throws SqlException {
+        final long day = Math.floorDiv(tsv[tsv.length / 3], Micros.DAY_MICROS);
+        int k = tsv.length / 3;
+        while (k > 0 && Math.floorDiv(tsv[k - 1], Micros.DAY_MICROS) == day) {
+            k--;
+        }
+        final StringSink sql = new StringSink();
+        sql.put("INSERT INTO base VALUES ");
+        boolean isFirst = true;
+        for (; k + 1 < tsv.length && Math.floorDiv(tsv[k], Micros.DAY_MICROS) == day; k++) {
+            if (tsv[k + 1] - tsv[k] > 1) {
+                sql.put(isFirst ? "(" : ", (").put(tsv[k] + 1).put("::timestamp, ")
+                        .put(symIdx[k] < 0 ? "null" : "'" + SYMBOLS[symIdx[k]] + "'").put(", 1, 1.0)");
+                isFirst = false;
+            }
+        }
+        Assert.assertFalse("the day must hold a row to correct", isFirst);
+        execute(sql);
+    }
+
+    // One base commit refreshed 1.2s after the last, past the 1s checkpoint cadence.
+    private void commitAndRefresh(LiveViewRefreshJob job, String values) throws Exception {
+        execute("INSERT INTO base (ts, sym, x) VALUES " + values);
+        drainWalQueue();
+        setCurrentMicros(currentMicros + 1_200_000);
+        drainJob(job);
+        drainWalQueue();
     }
 
     private void assertInitialTierCursorClosed(boolean hasInjectedFailure) throws Exception {
@@ -1437,6 +2857,48 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         return true;
     }
 
+    // Builds a thread that awaits the barrier and then invalidates the base's live views, at a point it draws:
+    // as soon as DROP LIVE VIEW marks the view dropped, or after a random number of pauses. It invalidates them
+    // through a base UPDATE, which invalidates them once a WAL apply, the refresh driver's, applies it to a row,
+    // or through the base-table writer directly. Draws its knobs from rnd and logs them, so a seed reproduces
+    // the run.
+    private Thread newBaseInvalidatorThread(
+            Rnd rnd,
+            LiveViewInstance instance,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final boolean isUpdate = rnd.nextBoolean();
+        final boolean isAtDropMark = rnd.nextBoolean();
+        final int spins = rnd.nextInt(100_000);
+        LOG.info().$("LV concurrency base invalidator: update=").$(isUpdate)
+                .$(", atDropMark=").$(isAtDropMark)
+                .$(", spins=").$(spins).$();
+        return new Thread(() -> {
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                barrier.await();
+                if (isAtDropMark) {
+                    // The main thread fires the drop right after the barrier; only a broken drop waits this out.
+                    awaitDropped(instance, 60_000);
+                } else {
+                    for (int spin = spins; spin > 0; spin--) {
+                        Os.pause();
+                    }
+                }
+                if (isUpdate) {
+                    execute("UPDATE base SET x = x + 1", context);
+                } else {
+                    engine.invalidateLiveViewsForBaseTable(baseToken, "invalidated during the drop");
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-base-invalidator");
+    }
+
     // Like newPacedWriterThread, but for the var-size base table (ts, vs STRING,
     // vv VARCHAR): writer w ingests the round-robin slice fromIndex+w, fromIndex+w+numWriters,
     // ... one batch per refresh tick. Each row's var-length values are derived from its
@@ -1528,6 +2990,140 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-paced-writer-" + writerId);
     }
 
+    // The late half of a stream-and-late pair (see newPacedStreamWriterThread): it commits the
+    // rows isLate marks, in ascending ts order, each once the stream has committed a row lagRows
+    // past it or has finished, one row per commit and one commit per refresh tick. Each row then
+    // lands below the stream's head, and a lag past a day jump puts it in a closed anchor day.
+    // It stops early once isStopRequested is set.
+    private Thread newPacedLateWriterThread(
+            boolean[] isLate,
+            int lagRows,
+            long[] tsv,
+            int[] symIdx,
+            ObjList<String> symbols,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicInteger streamedTo,
+            AtomicBoolean isStreamDone,
+            AtomicBoolean isStopRequested,
+            AtomicLong refreshTicks,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                for (int k = 0, n = isLate.length; k < n && errors.isEmpty() && !isStopRequested.get(); k++) {
+                    if (!isLate[k]) {
+                        continue;
+                    }
+                    while (streamedTo.get() < k + lagRows && !isStreamDone.get() && errors.isEmpty()) {
+                        awaitRefreshTick(refreshTicks, errors);
+                    }
+                    final int s = symIdx[k];
+                    appendRow(walWriter, tsv[k], s < 0 ? null : symbols.getQuick(s), iv[k], xv[k]);
+                    walWriter.commit();
+                    awaitRefreshTick(refreshTicks, errors);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-paced-late-writer");
+    }
+
+    // The streaming half of a stream-and-late pair: it commits every row isLate does not mark,
+    // in ascending ts order, batch rows a commit and commitsPerTick commits per refresh tick,
+    // and raises streamedTo to each commit's last row. Its commits are all in order, so the
+    // stream drains as an un-flushed lead between flushes, and the late rows are
+    // newPacedLateWriterThread's alone. It stops early once isStopRequested is set, and raises
+    // isStreamDone on exit, failed or not, so the late writer never waits on a stream that has
+    // stopped.
+    private Thread newPacedStreamWriterThread(
+            boolean[] isLate,
+            int batch,
+            int commitsPerTick,
+            long[] tsv,
+            int[] symIdx,
+            ObjList<String> symbols,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicInteger streamedTo,
+            AtomicBoolean isStreamDone,
+            AtomicBoolean isStopRequested,
+            AtomicLong refreshTicks,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                int sinceCommit = 0;
+                int commitsThisTick = 0;
+                for (int k = 0, n = isLate.length; k < n && errors.isEmpty() && !isStopRequested.get(); k++) {
+                    if (isLate[k]) {
+                        continue;
+                    }
+                    final int s = symIdx[k];
+                    appendRow(walWriter, tsv[k], s < 0 ? null : symbols.getQuick(s), iv[k], xv[k]);
+                    if (++sinceCommit >= batch) {
+                        walWriter.commit();
+                        streamedTo.set(k);
+                        sinceCommit = 0;
+                        if (++commitsThisTick >= commitsPerTick) {
+                            commitsThisTick = 0;
+                            awaitRefreshTick(refreshTicks, errors);
+                        }
+                    }
+                }
+                if (errors.isEmpty()) {
+                    walWriter.commit();
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+            } finally {
+                isStreamDone.set(true);
+                clearWorkerThreadLocals();
+            }
+        }, "lv-paced-stream-writer");
+    }
+
+    // A refresh worker on its own thread, the way a pool worker runs its LiveViewRefreshJob:
+    // it awaits the barrier, then runs the job until the soak stops it, counting the turns that
+    // reported work - the soak's evidence that this worker took part rather than spinning idle
+    // beside the others.
+    private Thread newRefreshWorkerThread(
+            int workerId,
+            LiveViewRefreshJob job,
+            CyclicBarrier barrier,
+            AtomicBoolean isRunning,
+            AtomicLong workedTurns,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try {
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                while (isRunning.get() && errors.isEmpty()) {
+                    if (job.run()) {
+                        workedTurns.incrementAndGet();
+                    } else {
+                        Os.pause();
+                    }
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, REFRESH_WORKER_THREAD_NAME + workerId);
+    }
+
     private Thread newTierSwapRefreshThread(
             LiveViewRefreshJob job,
             LiveViewInMemoryTier tier,
@@ -1588,24 +3184,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-refresh-driver");
     }
 
-    // Waits for the refresh driver to complete one more tick than it had when called.
-    // Bounded: a driver that has stopped ticking must fail the run loudly rather than
-    // silently drop the paced writer's intended refresh/writer overlap. The caller runs on
-    // a writer thread whose try/catch routes any throw into the shared errors queue, so a
-    // timeout surfaces as a test failure instead of a vacuous pass (or a hang).
-    private static void awaitRefreshTick(AtomicLong refreshTicks, ConcurrentLinkedQueue<Throwable> errors) {
-        final long seen = refreshTicks.get();
-        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
-        while (refreshTicks.get() == seen && errors.isEmpty()) {
-            if (System.nanoTime() >= deadlineNanos) {
-                throw new AssertionError("refresh driver did not tick within "
-                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L)
-                        + "s; the paced writer lost its intended refresh/writer overlap");
-            }
-            Os.pause();
-        }
-    }
-
     // Builds a writer thread that owns its own WalWriter and ingests a round-robin
     // slice of [fromIndex, rowCount): writer w gets fromIndex+w, fromIndex+w+numWriters,
     // ... The slices are disjoint and globally ts-ordered, so timestamps stay unique;
@@ -1645,25 +3223,132 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-writer-" + writerId);
     }
 
-    // Opens a fresh cursor over the live view and fully drains it, touching the
-    // fixed-width columns so the read path actually runs over the row buffers. Called
-    // in a tight loop by the reader threads while the view refreshes concurrently; it
-    // asserts nothing about the row set (the view is mid-flight) - a torn read or a
-    // corrupt tier slot surfaces as an exception or a JVM crash, not a value mismatch.
-    // The final single-threaded oracle validates contents after quiescence.
-    private void readViewOnce() throws Exception {
+    // driveRefreshToQuiescence over several refresh workers, the way a pool runs them: every pass
+    // drains each job in turn, so a repair one worker parked is resumed by that worker. Fails if
+    // the jobs still find work after REFRESH_QUIESCENCE_PASSES passes.
+    private void driveRefreshToQuiescence(ObjList<LiveViewRefreshJob> jobs) {
+        for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
+            advanceClockToNextRefreshPass();
+            drainWalQueue();
+            boolean isProgressed = false;
+            for (int j = 0, n = jobs.size(); j < n; j++) {
+                isProgressed |= drainJob(jobs.getQuick(j));
+            }
+            drainWalQueue();
+            if (!isProgressed && nextRefreshRetryMicros() == Numbers.LONG_NULL) {
+                return;
+            }
+        }
+        Assert.fail("live view refresh did not quiesce within " + REFRESH_QUIESCENCE_PASSES
+                + " passes over " + jobs.size() + " refresh workers");
+    }
+
+    // Opens a fresh cursor over the anchored (ts, sym, i, s, c) view of the parked-repair and
+    // symbol soaks and checks every row against the dataset the view derives from: timestamps
+    // ascend, each names a dataset row, the key and value are that row's, and the count lies
+    // between 1 and the count the whole dataset gives the row (dayCounts, see dailyKeyCounts).
+    // A view mid-flight can lack rows, or hold a count a late row raises later, but never a row
+    // the dataset lacks, a key or value off its base row, or a count past the whole dataset's:
+    // a fold of the same rows twice shows there, and so does a symbol id that resolves to
+    // another row's label. symIdx indexes symbols, or SYMBOLS when symbols is null.
+    // <p>
+    // A pauseAtRow of 0 or more sleeps pauseMillis before that row, holding the cursor's tier
+    // pin across whatever the refresh worker does meanwhile. A read that routed through the tier
+    // counts into routedReads, when given. Returns the rows it checked.
+    private long readAnchoredViewOnce(
+            long[] tsv,
+            int[] symIdx,
+            @Nullable ObjList<String> symbols,
+            long[] iv,
+            long[] dayCounts,
+            int pauseAtRow,
+            int pauseMillis,
+            @Nullable AtomicLong routedReads
+    ) throws Exception {
         try (
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(ctx)
+                LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)
+        ) {
+            if (routedReads != null && cursor.isRoutingEligible()) {
+                routedReads.incrementAndGet();
+            }
+            final Record record = cursor.getRecord();
+            long prevTs = Long.MIN_VALUE;
+            long rows = 0;
+            while (cursor.hasNext()) {
+                if (rows == pauseAtRow) {
+                    Os.sleep(pauseMillis);
+                }
+                final long ts = record.getTimestamp(0);
+                if (ts <= prevTs) {
+                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+                }
+                final int k = Arrays.binarySearch(tsv, ts);
+                if (k < 0) {
+                    throw new AssertionError("the view holds a row the dataset lacks: ts=" + ts);
+                }
+                final CharSequence sym = record.getSymA(1);
+                final int s = symIdx[k];
+                final String expectedSym = s < 0 ? null : symbols != null ? symbols.getQuick(s) : SYMBOLS[s];
+                if (!Chars.equalsNullable(expectedSym, sym)) {
+                    throw new AssertionError("sym off its base row: ts=" + ts + ", expected=" + expectedSym + ", actual=" + sym);
+                }
+                final long i = record.getLong(2);
+                if (i != iv[k]) {
+                    throw new AssertionError("i off its base row: ts=" + ts + ", expected=" + iv[k] + ", actual=" + i);
+                }
+                final long c = record.getLong(4);
+                if (c < 1 || c > dayCounts[k]) {
+                    throw new AssertionError("count outside [1, " + dayCounts[k] + "]: ts=" + ts + ", sym=" + sym + ", c=" + c);
+                }
+                prevTs = ts;
+                rows++;
+            }
+            return rows;
+        }
+    }
+
+    // Opens a fresh cursor over the (ts, sym, i, v) sum() view and fully drains it, checking
+    // every row against the dataset it derives from: timestamps strictly ascend, each names a
+    // dataset row, and the row's sym label and i value are that row's. Called in a tight loop by
+    // the reader threads while the view refreshes concurrently; the view is mid-flight, so the
+    // row count and the aggregate are left to the final single-threaded oracle, but no
+    // committed snapshot may hold a row the dataset lacks or a label or value off its base row.
+    // A torn read or a corrupt tier slot surfaces as one of those, as an exception, or as a JVM
+    // crash. Returns whether the read routed through the in-mem tier.
+    private boolean readViewOnce(long[] tsv, int[] symIdx, long[] iv) throws Exception {
+        try (
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
+                LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)
         ) {
             final Record record = cursor.getRecord();
+            long prevTs = Long.MIN_VALUE;
             while (cursor.hasNext()) {
-                record.getLong(0); // ts
-                record.getLong(2); // i
-                record.getLong(3); // v (sum aggregate)
+                final long ts = record.getTimestamp(0);
+                if (ts <= prevTs) {
+                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+                }
+                final int k = Arrays.binarySearch(tsv, ts);
+                if (k < 0) {
+                    throw new AssertionError("the view holds a row the dataset lacks: ts=" + ts);
+                }
+                final CharSequence sym = record.getSymA(1);
+                final String expectedSym = symIdx[k] < 0 ? null : SYMBOLS[symIdx[k]];
+                if (!Chars.equalsNullable(expectedSym, sym)) {
+                    throw new AssertionError("sym off its base row: ts=" + ts + ", expected=" + expectedSym + ", actual=" + sym);
+                }
+                final long i = record.getLong(2);
+                if (i != iv[k]) {
+                    throw new AssertionError("i off its base row: ts=" + ts + ", expected=" + iv[k] + ", actual=" + i);
+                }
+                record.getLong(3); // v, the sum aggregate
+                prevTs = ts;
             }
+            return cursor.isRoutingEligible();
         }
     }
 
@@ -1817,7 +3502,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // worker; the try/finally guarantees endCheckpoint so a freeze never leaks and
     // blocks the final quiescence drive. After all threads join and the refresh
     // quiesces single-threaded, the view equals the from-scratch recompute.
-    private void runCheckpointDuringRefresh(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // A teardown other than NONE invalidates or drops the view on a thread of its
+    // own at a random agent cycle, while another thread holds the view's monitor on
+    // and off as the view's state file writers do, and the agent and the driver run
+    // on until the teardown is done; the view then ends invalid, or gone, with
+    // nothing of it in memory.
+    private void runCheckpointDuringRefresh(Rnd rnd, int numWriters, int rowCount, CheckpointSoakTeardown teardown) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -1845,20 +3535,30 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean running = new AtomicBoolean(true);
+        final boolean hasTeardown = teardown != CheckpointSoakTeardown.NONE;
+        // Set once the teardown is done, so the agent and the driver run on until then.
+        final AtomicBoolean isTornDown = new AtomicBoolean(!hasTeardown);
+        final AtomicLong agentCycles = new AtomicLong();
         try {
-            // numWriters writers + the refresh driver + the checkpoint agent,
-            // released together so the freeze lands while ingestion and refresh
-            // are both in flight.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            // numWriters writers + the refresh driver + the checkpoint agent (+ the
+            // teardown and the monitor holder), released together so the freeze
+            // lands while ingestion and refresh are both in flight.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2 + (hasTeardown ? 2 : 0));
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            final Thread teardownThread = hasTeardown
+                    ? newCheckpointSoakTeardownThread(rnd, teardown, instance, baseToken, barrier, agentCycles, isTornDown, errors)
+                    : null;
+            final Thread monitorHolder = hasTeardown
+                    ? newViewMonitorHolderThread(rnd, instance, barrier, running, isTornDown, errors)
+                    : null;
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
-                    while (running.get()) {
+                    while (running.get() || !isTornDown.get()) {
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
                         drainJob(job);
@@ -1872,7 +3572,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             final Thread agent = new Thread(() -> {
                 try {
                     barrier.await();
-                    while (running.get()) {
+                    while (running.get() || !isTornDown.get()) {
                         // Mirror DatabaseCheckpointAgent: freeze, (the per-LV file
                         // copy would run here), unfreeze. The finally guarantees
                         // endCheckpoint regardless of how the freeze interleaves.
@@ -1882,6 +3582,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         } finally {
                             instance.endCheckpoint();
                         }
+                        agentCycles.incrementAndGet();
                     }
                 } catch (Throwable th) {
                     errors.add(th);
@@ -1895,10 +3596,18 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
             driver.start();
             agent.start();
+            if (teardownThread != null) {
+                teardownThread.start();
+                monitorHolder.start();
+            }
             for (Thread t : writers) {
                 t.join();
             }
             running.set(false);
+            if (teardownThread != null) {
+                teardownThread.join();
+                monitorHolder.join();
+            }
             driver.join();
             agent.join();
 
@@ -1911,6 +3620,24 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         } finally {
             Misc.free(job);
+        }
+
+        if (teardown == CheckpointSoakTeardown.INVALIDATION) {
+            Assert.assertTrue(instance.isInvalid());
+            TestUtils.assertEquals(CHECKPOINT_SOAK_INVALIDATION_REASON, instance.getInvalidationReason());
+            assertRuntimeStateFreed(instance);
+            assertInvalidWithNoInMemoryRows(CHECKPOINT_SOAK_INVALIDATION_REASON);
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+            return;
+        }
+        if (teardown == CheckpointSoakTeardown.DROP) {
+            Assert.assertTrue(instance.isDropped());
+            assertRuntimeStateFreed(instance);
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+            return;
         }
 
         TestUtils.assertSqlCursors(
@@ -2338,8 +4065,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // sweep while writers ingest the suffix. The earliest rows are pre-committed so
     // the sweep has real history to chew through when the drop lands mid-sweep. The
     // contract is a clean teardown of the seed state (sweep cursor, rolling
-    // sealed seed boundaries, in-mem tier): registry empty, base intact, no leak.
-    private void runDropDuringSeed(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // sealed seed boundaries, in-mem tier): registry empty, base intact, no leak. A thread
+    // that invalidates the base's views races the drop as well, and no invalidation writes
+    // the state file of the view once the drop marked it dropped.
+    private void runDropDuringSeed(
+            Rnd rnd,
+            int numWriters,
+            int rowCount,
+            InvalidationAfterDropCount invalidationsAfterDrop
+    ) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -2370,6 +4104,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         drainWalQueue();
 
         execute(createSql);
+        invalidationsAfterDrop.of(engine.getLiveViewRegistry().getViewInstance("lv"));
 
         LOG.info().$("LV concurrency DROP-during-seed: writers=").$(numWriters)
                 .$(", rows=").$(rowCount).$(", n=").$(n).$(", preCount=").$(preCount)
@@ -2379,15 +4114,16 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean refreshing = new AtomicBoolean(true);
         try {
-            // numWriters writers + the refresh driver + this (main) thread, released
-            // together, so by the time the main thread fires the DROP the writers
-            // are ingesting and the driver is driving the seed sweep.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            // numWriters writers + the refresh driver + the base invalidator + this (main)
+            // thread, released together, so by the time the main thread fires the DROP the
+            // writers are ingesting and the driver is driving the seed sweep.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 3);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            final Thread invalidator = newBaseInvalidatorThread(rnd, engine.getLiveViewRegistry().getViewInstance("lv"), baseToken, barrier, errors);
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
@@ -2407,12 +4143,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 t.start();
             }
             driver.start();
+            invalidator.start();
             barrier.await();
             execute("DROP LIVE VIEW lv"); // races the in-flight seed + ingestion
 
             for (Thread t : writers) {
                 t.join();
             }
+            invalidator.join();
             refreshing.set(false);
             driver.join();
 
@@ -2426,6 +4164,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // Clean teardown: the view is gone from the registry and the base table
         // survived intact. No leak - assertMemoryLeak wraps the whole run.
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+        Assert.assertEquals("an invalidation must not write over a drop", 0, invalidationsAfterDrop.getStateFileOpens());
         drainWalQueue();
         assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n" + rowCount + "\n");
 
@@ -2435,8 +4174,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // DROP LIVE VIEW races a refresh-driver thread that keeps pumping the refresh job
     // while writers ingest. The refresh job swallows per-view failures
     // (handleRefreshFailure), so a torn-down view never throws into the driver - the
-    // contract under test is a clean teardown, not a thrown error.
-    private void runDropDuringRefresh(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // contract under test is a clean teardown, not a thrown error. A thread that
+    // invalidates the base's views races the drop as well, and no invalidation writes
+    // the state file of the view once the drop marked it dropped.
+    private void runDropDuringRefresh(
+            Rnd rnd,
+            int numWriters,
+            int rowCount,
+            InvalidationAfterDropCount invalidationsAfterDrop
+    ) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -2456,6 +4202,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
 
         execute(createSql);
+        invalidationsAfterDrop.of(engine.getLiveViewRegistry().getViewInstance("lv"));
 
         LOG.info().$("LV concurrency DROP-during-refresh: writers=").$(numWriters)
                 .$(", rows=").$(rowCount).$(", n=").$(n).$(", sql=").$(viewSql).$();
@@ -2465,16 +4212,17 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean refreshing = new AtomicBoolean(true);
         try {
-            // numWriters writers + the refresh driver + this (main) thread, released
-            // together, so by the time the main thread fires the DROP the writers are
-            // ingesting and the driver is turning the refresh job - the drop lands
-            // mid-flight.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            // numWriters writers + the refresh driver + the base invalidator + this (main)
+            // thread, released together, so by the time the main thread fires the DROP the
+            // writers are ingesting and the driver is turning the refresh job - the drop
+            // lands mid-flight.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 3);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            final Thread invalidator = newBaseInvalidatorThread(rnd, engine.getLiveViewRegistry().getViewInstance("lv"), baseToken, barrier, errors);
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
@@ -2494,12 +4242,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 t.start();
             }
             driver.start();
+            invalidator.start();
             barrier.await();
             execute("DROP LIVE VIEW lv"); // races the in-flight refresh
 
             for (Thread t : writers) {
                 t.join();
             }
+            invalidator.join();
             refreshing.set(false);
             driver.join();
 
@@ -2514,6 +4264,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // survived intact (the view drop leaves its row set untouched). No leak -
         // assertMemoryLeak wraps the whole run.
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+        Assert.assertEquals("an invalidation must not write over a drop", 0, invalidationsAfterDrop.getStateFileOpens());
         drainWalQueue();
         assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n" + rowCount + "\n");
 
@@ -2618,10 +4369,23 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // does, one per pool worker) against sustained multi-writer O3 ingestion, plus
     // reader threads that assert a per-snapshot prefix invariant. The refresh
     // workers contend the shared registry, task queue and per-view refresh latch -
-    // the refresh-vs-refresh path a single driver can never reach. After every
-    // thread joins and one worker drives the refresh to quiescence single-threaded,
-    // the view must equal the from-scratch recompute.
-    private void runMultiRefreshWorkerSoak(Rnd rnd, int numWriters, int numRefreshWorkers, int numReaders, int rowCount) throws Exception {
+    // the refresh-vs-refresh path a single driver can never reach. Every thread starts
+    // on one barrier, and the writers pace to the apply driver's ticks, so they cannot
+    // finish before the workers and readers get going. The soak asserts its own evidence
+    // - two workers or more did work, the readers read the view through the tier - and
+    // then, once the workers have driven the refresh to quiescence together, that the view
+    // equals the from-scratch recompute.
+    // closingFault, when not null, raises the engine's closing flag inside a refresh worker's turn once the readers
+    // have read through the tier and the apply driver reaches a tick the run draws: see
+    // testMultiRefreshWorkerShutdownSoak.
+    private void runMultiRefreshWorkerSoak(
+            Rnd rnd,
+            int numWriters,
+            int numRefreshWorkers,
+            int numReaders,
+            int rowCount,
+            @Nullable ClosingAtRefreshTimestampRead closingFault
+    ) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         // A SYMBOL-free row_number() IN MEMORY view: the reads route through the
@@ -2639,6 +4403,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final long[] iv = new long[rowCount];
         final double[] xv = new double[rowCount];
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+        // From the second tick, and no later than one every writer reaches with commits still to come. The driver
+        // holds that tick until the readers have routed through the tier, and arms the fault ahead of it, so every
+        // commit the writers still have comes after the arm.
+        final int closingTick = closingFault != null ? 2 + rnd.nextInt(isReducedWindowsLoad ? 1 : 4) : -1;
 
         execute(createSql);
 
@@ -2649,111 +4417,200 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
 
-        // One LiveViewRefreshJob per worker, exactly as ServerMain.setupLiveViewJobs
-        // creates them (workerId = w). Nothing shards views by workerId, so every job
-        // walks the whole registry.
-        final LiveViewRefreshJob[] jobs = new LiveViewRefreshJob[numRefreshWorkers];
+        // One LiveViewRefreshJob per worker, created with a worker count of one, so every
+        // job's idle scan walks the whole registry - more contention on the latch than the
+        // sharded scan of a ServerMain pool, whose shape testMultiRefreshWorkerParkedRepairSoak
+        // runs.
+        final ObjList<LiveViewRefreshJob> jobs = new ObjList<>();
+        final ObjList<AtomicLong> workedTurns = new ObjList<>();
         for (int w = 0; w < numRefreshWorkers; w++) {
-            jobs[w] = new LiveViewRefreshJob(w, engine, 1);
+            jobs.add(new LiveViewRefreshJob(w, engine, 1));
+            workedTurns.add(new AtomicLong());
         }
-        final AtomicBoolean running = new AtomicBoolean(true);
+        final AtomicBoolean isRunning = new AtomicBoolean(true);
+        final AtomicLong refreshTicks = new AtomicLong();
+        final AtomicLong reads = new AtomicLong();
+        final AtomicLong routedReads = new AtomicLong();
+        // The turns the shutdown cancelled, and each job's refresh latch attempts when the flag rose.
+        final AtomicLong cancelledTurns = new AtomicLong();
+        final long[] latchAttemptsAtTheFlag = new long[numRefreshWorkers];
+        if (closingFault != null) {
+            for (int w = 0; w < numRefreshWorkers; w++) {
+                hooks(jobs.getQuick(w)).setRefreshFaultObserver(t -> {
+                    if (t instanceof CairoException ce && ce.isCancellation()) {
+                        cancelledTurns.incrementAndGet();
+                    }
+                });
+            }
+            closingFault.of(baseToken.getDirName(), () -> {
+                for (int w = 0; w < numRefreshWorkers; w++) {
+                    latchAttemptsAtTheFlag[w] = hooks(jobs.getQuick(w)).getRefreshLatchAttempts();
+                }
+            });
+        }
         try {
-            // Writers + the base-apply/clock driver are released together; the refresh
-            // workers and readers spin independently until running clears.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
-            final Thread[] writers = new Thread[numWriters];
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1 + numRefreshWorkers + numReaders);
+            final ObjList<Thread> threads = new ObjList<>();
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
-                writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+                threads.add(newPacedWriterThread(
+                        w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, refreshTicks, errors
+                ));
             }
+            final int writerThreadCount = threads.size();
 
             // A single driver applies the base (and LV) WAL and advances the clock so
-            // FLUSH EVERY ticks come due. Keeping the clock and drainWalQueue on one
-            // thread isolates the refresh-vs-refresh contention (the actual subject)
-            // from driving the shared wal-apply job across many threads.
-            final Thread applyDriver = new Thread(() -> {
+            // FLUSH EVERY ticks come due, once per tick of the paced writers. Keeping the
+            // clock and drainWalQueue on one thread isolates the refresh-vs-refresh
+            // contention (the actual subject) from driving the shared wal-apply job across
+            // many threads. Each tick then waits, bounded, until a worker has finished a turn
+            // that did work. A turn slower than the tick, as on a slow Windows runner, would
+            // otherwise always find a newer commit when it ends, re-enqueue its own notification
+            // and dequeue it again within the same run(), so one worker would take every turn of
+            // the soak and the others would only ever lose the latch.
+            threads.add(new Thread(() -> {
                 try {
-                    barrier.await();
-                    while (running.get()) {
+                    barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                    while (isRunning.get() && errors.isEmpty()) {
+                        final long workedTurnsBefore = sumWorkedTurns(workedTurns);
+                        Os.sleep(1);
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
+                        if (closingFault != null && refreshTicks.get() + 1 == closingTick) {
+                            // A worked turn can be one that drained nothing - the restore attempt, or a
+                            // notification whose turn lost the latch - so by this tick no turn may have
+                            // published the tier yet. The paced writers wait for this tick, so no commit
+                            // lands while the driver holds it, and the clock keeps moving, so a turn the
+                            // apply lag or the retry back-off deferred still runs. Past the bound the
+                            // fault arms anyway, and the routing assert below reports the run.
+                            final long holdDeadlineNanos = System.nanoTime() + ROUTED_READ_WAIT_NANOS;
+                            while (routedReads.get() == 0
+                                    && errors.isEmpty()
+                                    && System.nanoTime() < holdDeadlineNanos) {
+                                Os.sleep(1);
+                                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                                drainWalQueue();
+                            }
+                            closingFault.arm();
+                        }
+                        refreshTicks.incrementAndGet();
+                        final long turnDeadlineNanos = System.nanoTime() + TURN_WAIT_NANOS;
+                        // A closing engine starts no turn, so there is none to wait for.
+                        while (sumWorkedTurns(workedTurns) == workedTurnsBefore
+                                && !engine.isClosing()
+                                && isRunning.get()
+                                && errors.isEmpty()
+                                && System.nanoTime() < turnDeadlineNanos) {
+                            Os.sleep(1);
+                            drainWalQueue();
+                        }
                     }
                 } catch (Throwable th) {
                     errors.add(th);
+                    barrier.reset();
                 } finally {
                     clearWorkerThreadLocals();
                 }
-            }, "lv-apply-driver");
+            }, "lv-apply-driver"));
 
             // The refresh workers: each pumps its OWN job; all contend the same
-            // registry, task queue and per-view latch. This is the production default.
-            final Thread[] refreshWorkers = new Thread[numRefreshWorkers];
+            // registry, task queue and per-view latch.
             for (int w = 0; w < numRefreshWorkers; w++) {
-                final LiveViewRefreshJob job = jobs[w];
-                refreshWorkers[w] = new Thread(() -> {
-                    try {
-                        while (running.get()) {
-                            drainJob(job);
-                        }
-                    } catch (Throwable th) {
-                        errors.add(th);
-                    } finally {
-                        clearWorkerThreadLocals();
-                    }
-                }, "lv-refresh-worker-" + w);
+                threads.add(newRefreshWorkerThread(w, jobs.getQuick(w), barrier, isRunning, workedTurns.getQuick(w), errors));
             }
 
             // Readers assert the prefix invariant on every snapshot (ts ascending, rn
             // gapless 1..N), so a torn slot or a seam dup/gap from two workers racing
             // the publish surfaces as a value mismatch, not merely a crash.
-            final Thread[] readers = new Thread[numReaders];
             for (int r = 0; r < numReaders; r++) {
-                readers[r] = new Thread(() -> {
+                threads.add(new Thread(() -> {
                     try {
-                        while (running.get()) {
-                            readRowNumberViewOnce();
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        while (isRunning.get() && errors.isEmpty()) {
+                            if (readRowNumberViewOnce()) {
+                                routedReads.incrementAndGet();
+                            }
+                            reads.incrementAndGet();
                         }
                     } catch (Throwable th) {
                         errors.add(th);
+                        barrier.reset();
                     } finally {
                         clearWorkerThreadLocals();
                     }
-                }, "lv-reader-" + r);
+                }, "lv-reader-" + r));
             }
 
-            for (Thread t : writers) {
-                t.start();
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
             }
-            applyDriver.start();
-            for (Thread t : refreshWorkers) {
-                t.start();
+            for (int i = 0; i < writerThreadCount; i++) {
+                threads.getQuick(i).join();
             }
-            for (Thread t : readers) {
-                t.start();
+            if (closingFault != null) {
+                // The turn in flight at the arm can be past its last read of the base, and the writers can
+                // make their last commits while it finishes: a worker that loses the latch to it still
+                // reports work, so the driver's ticks go on. The workers and the driver keep running until
+                // a turn reads a commit made after the arm, and the flag rises in it.
+                final long closingDeadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
+                while (!engine.isClosing() && errors.isEmpty() && System.nanoTime() < closingDeadlineNanos) {
+                    Os.sleep(1);
+                }
             }
-            for (Thread t : writers) {
-                t.join();
-            }
-            running.set(false);
-            applyDriver.join();
-            for (Thread t : refreshWorkers) {
-                t.join();
-            }
-            for (Thread t : readers) {
-                t.join();
+            isRunning.set(false);
+            for (int i = writerThreadCount, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
             }
 
             if (!errors.isEmpty()) {
                 throw new RuntimeException("worker thread failed", errors.peek());
             }
 
-            // Quiesce single-threaded through one job, then assert the oracle below.
-            drainWalQueue();
-            driveRefreshToQuiescence(jobs[0]);
-        } finally {
-            for (LiveViewRefreshJob job : jobs) {
-                Misc.free(job);
+            // The soak's own evidence, from the concurrent phase alone: without it a run in
+            // which one worker took every turn, or no reader opened the view, passes having
+            // raced nothing.
+            int workersThatWorked = 0;
+            final StringSink turns = new StringSink();
+            for (int w = 0; w < numRefreshWorkers; w++) {
+                final long workerTurns = workedTurns.getQuick(w).get();
+                if (workerTurns > 0) {
+                    workersThatWorked++;
+                }
+                turns.put(w == 0 ? "" : ",").put(workerTurns);
             }
+            LOG.info().$("LV concurrency multi-refresh-worker soak done: refreshTicks=").$(refreshTicks.get())
+                    .$(", workedTurns=[").$(turns).$("], reads=").$(reads.get())
+                    .$(", routedReads=").$(routedReads.get()).$();
+            Assert.assertTrue("at least two refresh workers must have done work mid-soak", workersThatWorked >= 2);
+            Assert.assertTrue("the readers must have read the view mid-soak", reads.get() > 0);
+            Assert.assertTrue("the readers must have routed through the tier mid-soak", routedReads.get() > 0);
+
+            if (closingFault == null) {
+                // Quiesce through every worker, then assert the oracle below.
+                drainWalQueue();
+                driveRefreshToQuiescence(jobs);
+            } else {
+                Assert.assertTrue("the shutdown must have risen inside a refresh worker's turn", engine.isClosing());
+                LOG.info().$("LV concurrency multi-refresh-worker shutdown: closingTick=").$(closingTick)
+                        .$(", cancelledTurns=").$(cancelledTurns.get()).$();
+                Assert.assertTrue("the shutdown must have cancelled the turn it rose in", cancelledTurns.get() > 0);
+                // Past the flag, a worker reaches the refresh latch at most once more: with a call that read the flag
+                // down ahead of the latch before it rose, which the read under the latch refuses.
+                for (int w = 0; w < numRefreshWorkers; w++) {
+                    Assert.assertTrue(
+                            "refresh worker " + w + " kept starting turns on a closing engine",
+                            hooks(jobs.getQuick(w)).getRefreshLatchAttempts() <= latchAttemptsAtTheFlag[w] + 1
+                    );
+                }
+            }
+        } finally {
+            Misc.freeObjList(jobs);
+        }
+        if (closingFault != null) {
+            // What a process stop leaves: the flag goes down with the process, and the views come back from what
+            // is durable, never from what a cancelled turn left in RAM.
+            engine.setClosing(false);
+            restartLiveViewsAndRecover();
         }
 
         TestUtils.assertSqlCursors(
@@ -2764,6 +4621,230 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // The parked-repair soak (see testMultiRefreshWorkerParkedRepairSoak). Several refresh
+    // workers, sharded by workerCount as ServerMain shards them, run on their own threads over
+    // an anchored PARTITION BY sym view whose key the base indexes, under the repair knobs
+    // drawn for the run with a one-row replay budget, segment yield, the per-segment loop and
+    // keyed replay on, so a correction to a closed anchor segment parks its repair after every
+    // row. Paced writers commit one batch per apply-driver tick, and the round-robin slices
+    // make the slower writer's batches late, reaching back over the day jumps. Readers check
+    // every row they see against the dataset: the row exists, its key and value are the base
+    // row's, and its count stays within the count the whole dataset gives it. Every thread
+    // starts on one barrier.
+    // <p>
+    // Then the soak reads its own evidence from the concurrent phase alone - segment replays
+    // parked, parked repairs resumed, workers that did work, rows the readers checked - before
+    // the workers drive the view to quiescence together, each resuming the repairs it parked,
+    // and the view must equal the recompute. Without that evidence a run whose workers never
+    // parked or never contended passes having tested nothing.
+    private void runMultiRefreshWorkerRepairSoak(Rnd rnd, int numWriters, int numRefreshWorkers, int numReaders, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
+        knobs.replayMaxRows = 1;
+        knobs.isSegmentYield = true;
+        knobs.isPerSegment = true;
+        knobs.isKeyedReplay = true;
+        knobs.apply(AbstractLiveViewTest::setProperty);
+        final StringSink knobLog = new StringSink();
+        knobs.toSink(knobLog);
+        final boolean isInMemory = rnd.nextBoolean();
+
+        final String viewSql = """
+                SELECT ts, sym, i, sum(i) OVER w AS s, count() OVER w AS c FROM base
+                WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')""";
+        // ANCHOR DAILY '00:00' resets at every UTC midnight, and the timestamps only move
+        // forward, so a reset per anchor value is a partition per day.
+        final String oracleSql = """
+                SELECT ts, sym, i,
+                    sum(i) OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts) AS s,
+                    count() OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts) AS c
+                FROM base""";
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+        final long[] dayCounts = dailyKeyCounts(tsv, symIdx, SYMBOLS.length);
+
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + (isInMemory ? "IN MEMORY 60s " : "") + "START FROM NOW AS " + viewSql);
+
+        LOG.info().$("LV concurrency parked-repair soak: writers=").$(numWriters)
+                .$(", refreshWorkers=").$(numRefreshWorkers).$(", readers=").$(numReaders)
+                .$(", rows=").$(rowCount).$(", inMem=").$(isInMemory)
+                .$(", knobs=[").$(knobLog).$("]").$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final ObjList<LiveViewRefreshJob> jobs = new ObjList<>();
+        final ObjList<AtomicLong> workedTurns = new ObjList<>();
+        for (int w = 0; w < numRefreshWorkers; w++) {
+            jobs.add(new LiveViewRefreshJob(w, numRefreshWorkers, engine, 1));
+            workedTurns.add(new AtomicLong());
+        }
+        final AtomicBoolean isRunning = new AtomicBoolean(true);
+        final AtomicLong refreshTicks = new AtomicLong();
+        final AtomicLong checkedRows = new AtomicLong();
+        try {
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1 + numRefreshWorkers + numReaders);
+            final ObjList<Thread> threads = new ObjList<>();
+            for (int w = 0; w < numWriters; w++) {
+                // Small batches: a paced writer commits one per tick, so the batch size is how
+                // many commits, and so how many repairs, the run gets.
+                final int batch = 2 + rnd.nextInt(7);
+                threads.add(newPacedWriterThread(
+                        w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, refreshTicks, errors
+                ));
+            }
+            final int writerThreadCount = threads.size();
+            // Applies the base WAL and moves the clock past FLUSH EVERY once per tick, the tick
+            // the writers pace off. The sleep leaves the workers a turn or several on every
+            // commit, so repairs park and resume between commits rather than after the last.
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                    while (isRunning.get() && errors.isEmpty()) {
+                        Os.sleep(1);
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        refreshTicks.incrementAndGet();
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                    barrier.reset();
+                } finally {
+                    clearWorkerThreadLocals();
+                }
+            }, "lv-apply-driver"));
+            for (int w = 0; w < numRefreshWorkers; w++) {
+                threads.add(newRefreshWorkerThread(w, jobs.getQuick(w), barrier, isRunning, workedTurns.getQuick(w), errors));
+            }
+            for (int r = 0; r < numReaders; r++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        while (isRunning.get() && errors.isEmpty()) {
+                            checkedRows.addAndGet(readAnchoredViewOnce(tsv, symIdx, null, iv, dayCounts, -1, 0, null));
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        clearWorkerThreadLocals();
+                    }
+                }, "lv-reader-" + r));
+            }
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
+            }
+            for (int i = 0; i < writerThreadCount; i++) {
+                threads.getQuick(i).join();
+            }
+            isRunning.set(false);
+            for (int i = writerThreadCount, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            // The concurrent phase's evidence, read before the quiescence below adds to it.
+            // Each job's stats are written by its own thread only, which has joined.
+            long segmentYields = 0;
+            int workersThatWorked = 0;
+            final StringSink turns = new StringSink();
+            for (int w = 0; w < numRefreshWorkers; w++) {
+                segmentYields += jobs.getQuick(w).getStatsForTest().get(LiveViewRefreshStats.SEGMENT_YIELD_COUNT);
+                final long workerTurns = workedTurns.getQuick(w).get();
+                if (workerTurns > 0) {
+                    workersThatWorked++;
+                }
+                turns.put(w == 0 ? "" : ",").put(workerTurns);
+            }
+            final long repairResumes = instance.getCheckpointRepairResumes();
+            LOG.info().$("LV concurrency parked-repair soak done: refreshTicks=").$(refreshTicks.get())
+                    .$(", segmentYields=").$(segmentYields).$(", repairResumes=").$(repairResumes)
+                    .$(", workedTurns=[").$(turns).$("], checkedRows=").$(checkedRows.get()).$();
+            Assert.assertTrue("segment replays must have parked on the turn budget mid-soak", segmentYields > 0);
+            Assert.assertTrue("parked repairs must have resumed mid-soak", repairResumes > 0);
+            Assert.assertTrue("at least two refresh workers must have done work mid-soak", workersThatWorked >= 2);
+            Assert.assertTrue("the readers must have checked rows mid-soak", checkedRows.get() > 0);
+
+            drainWalQueue();
+            driveRefreshToQuiescence(jobs);
+
+            // The hand-off on its own, which the soak reaches only by chance: a repair parked by
+            // a worker whose shard does not hold the view. The view's own worker meets it on its
+            // idle scan and must back off, and nothing but the parker's own list brings the
+            // parker back to it once no commit notifies anyone.
+            final int shardOwner = Math.floorMod(instance.getLiveViewToken().getTableId(), numRefreshWorkers);
+            final LiveViewRefreshJob parker = jobs.getQuick((shardOwner + 1) % numRefreshWorkers);
+            commitLateRowsIntoAClosedDay(tsv, symIdx);
+            drainWalQueue();
+            for (int i = 0; i < REFRESH_QUIESCENCE_PASSES && instance.getSuspendedRepair() == null; i++) {
+                parker.run();
+            }
+            final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+            Assert.assertNotNull("the late rows must park a repair on the worker that dequeued them", parked);
+            Assert.assertSame(parker, parked.getOwner());
+            final long resumesBeforeShardOwner = instance.getCheckpointRepairResumes();
+            advanceClockToNextRefreshPass();
+            drainJob(jobs.getQuick(shardOwner));
+            Assert.assertSame("the view's own worker must leave the parked session where it found it", parked, instance.getSuspendedRepair());
+            Assert.assertSame("the view's own worker must not take the repair over", parker, parked.getOwner());
+            Assert.assertEquals(
+                    "the view's own worker must not continue another worker's replay",
+                    resumesBeforeShardOwner,
+                    instance.getCheckpointRepairResumes()
+            );
+            driveRefreshToQuiescence(jobs);
+            Assert.assertNull("the parker must have finished its repair", instance.getSuspendedRepair());
+        } finally {
+            Misc.freeObjList(jobs);
+        }
+
+        final String oracleRead = "(" + oracleSql + ") ORDER BY 1, 2";
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleRead, "(lv) ORDER BY 1, 2", LOG, true);
+        assertNoRefreshFaults("lv");
+
+        // A restart over what the workers left. The restore must come back on the timeline
+        // their seals and parked repairs published, and forward rows - in order, and one late
+        // into a closed day - must fold onto the restored accumulators exactly as they would
+        // onto the live ones: a root frozen from the wrong runtime shows only from here on.
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        // 2us above its row, so it misses every row commitLateRowsIntoAClosedDay added.
+        int lateRow = rowCount / 2;
+        while (tsv[lateRow + 1] - tsv[lateRow] < 3) {
+            lateRow++;
+        }
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            drainJob(job);
+            assertRestoredFromTimeline("lv");
+            driveRefreshToQuiescence(job);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleRead, "(lv) ORDER BY 1, 2", LOG, true);
+            final long nextTs = tsv[rowCount - 1] + 1_000_000;
+            execute("INSERT INTO base VALUES "
+                    + "(" + nextTs + "::timestamp, 'AA', 1, 1.0), "
+                    + "(" + (nextTs + 1) + "::timestamp, 'BB', 2, 2.0), "
+                    + "(" + (tsv[lateRow] + 2) + "::timestamp, '" + SYMBOLS[Math.max(0, symIdx[lateRow])] + "', 3, 3.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleRead, "(lv) ORDER BY 1, 2", LOG, true);
         assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
@@ -2980,8 +5061,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // modeB: a SYMBOL-free row_number() view, so the read path routes through
         // the in-mem tier (Mode B seam routing) and the readers can assert the
         // gapless-rn invariant per snapshot. Otherwise: a sum() view with a SYMBOL
-        // passthrough, which routes disk-only but still exercises the publish hand-off
-        // (the readers open cursors over the view while the driver swaps under them).
+        // passthrough, whose reads route through the tier as well and resolve their
+        // labels through its symbol table; the readers check every row's label and value
+        // against the dataset (see readViewOnce) while the driver swaps under them.
         final String viewSql = modeB
                 ? "SELECT ts, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base"
                 : "SELECT " + projection(0, n) + " FROM base";
@@ -3063,12 +5145,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 readers[r] = new Thread(() -> {
                     try {
                         while (running.get()) {
-                            if (modeB) {
-                                if (readRowNumberViewOnce()) {
-                                    routedReads.incrementAndGet();
-                                }
-                            } else {
-                                readViewOnce();
+                            if (modeB ? readRowNumberViewOnce() : readViewOnce(tsv, symIdx, iv)) {
+                                routedReads.incrementAndGet();
                             }
                         }
                     } catch (Throwable th) {
@@ -3114,12 +5192,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     "the refresh worker must have published into the tier under the churning readers",
                     swapsObserved.get() + inPlacePublishesObserved.get() > 0
             );
-            if (modeB) {
-                Assert.assertTrue(
-                        "the readers must have routed through the tier mid-soak, not just after it",
-                        routedReads.get() > 0
-                );
-            }
+            Assert.assertTrue(
+                    "the readers must have routed through the tier mid-soak, not just after it",
+                    routedReads.get() > 0
+            );
         } finally {
             Misc.free(job);
         }
@@ -3150,6 +5226,233 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // readers; this pins it deterministically post-quiescence.)
             assertModeALeadEngaged(viewSql, tsv[rowCount - 1]);
         }
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // The SYMBOL soak (see testSymbolReadersAcrossMidDrainRecoveries). An IN MEMORY anchored
+    // PARTITION BY sym view over two paced writers, an in-order stream and a late writer that
+    // commits one row in forty behind it, whose rows keep bringing symbol values new to the
+    // view, so most un-flushed leads intern ids the view's table has not committed. The
+    // stream's in-order commits are what a mid-drain recovery needs after a fault: an
+    // out-of-order repair commits the lead's values again instead of stranding them. The
+    // refresh driver advances the clock a fraction of FLUSH EVERY per tick, so leads stay
+    // resident across ticks, and every few ticks it arms a fault for that tick's turns: the
+    // turn fails part-way, the recovery restores the runtime from the timeline and discards
+    // the lead, and its tier rebuild tries to take the stranded ids back. A reader that pins
+    // the slot listing those ids refuses the rewind. Readers check the label of every row
+    // against the base row at its timestamp, and one read in four holds its cursor - and so
+    // its tier pin - for a few milliseconds part-way through. Every thread starts on one
+    // barrier.
+    // <p>
+    // The driver stops the writers once SYMBOL_SOAK_REFUSALS rewinds were refused, or the
+    // dataset runs out, so a run lasts as long as the race takes. The soak's evidence, from the
+    // concurrent phase alone: faults fired, rewinds attempted and refused, reads routed through
+    // the tier. The quiesced view must equal the recompute, with no refresh fault the soak did
+    // not inject.
+    private void runSymbolRecoverySoak(Rnd rnd, LiveViewMidDrainFault fault, int numReaders, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        // A root every few rows, so every mid-drain recovery finds one to restore from.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        // Above every symbol value the run brings, for the base and for the view's table.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 4096);
+
+        final String viewSql = """
+                SELECT ts, sym, i, sum(i) OVER w AS s, count() OVER w AS c FROM base
+                WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')""";
+        final String oracleSql = """
+                SELECT ts, sym, i,
+                    sum(i) OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts) AS s,
+                    count() OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts) AS c
+                FROM base""";
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        fault.of(engine.verifyTableName("base").getDirName());
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+        // Row k draws its key from the first 1 + k / 8 values, so a value new to the view turns
+        // up every few rows, all the way through, and older values keep coming back. The values
+        // stay below the tables' initial symbol capacity, set above: a capacity growth rewrites
+        // the symbol column and bumps the table's metadata version, and a read that compiled
+        // before the bump gets the stale-plan signal from getCursor. HTTP and PGWire recompile
+        // on it; these readers do not, and that signal is not what this soak is about.
+        final int symbolCount = 1 + rowCount / 8;
+        final ObjList<String> symbols = new ObjList<>();
+        for (int k = 0; k < rowCount; k++) {
+            if (symIdx[k] > -1) {
+                symIdx[k] = rnd.nextInt(1 + (symbolCount - 1) * k / rowCount);
+            }
+        }
+        for (int s = 0; s < symbolCount; s++) {
+            symbols.add("sym-" + s);
+        }
+        final long[] dayCounts = dailyKeyCounts(tsv, symIdx, symbols.size());
+        // The late writer's rows, and how far behind the stream it commits each of them. A day
+        // jump every 20 rows on average puts most of them in a closed anchor day.
+        final boolean[] isLate = new boolean[rowCount];
+        for (int k = 1; k < rowCount; k++) {
+            isLate[k] = rnd.nextInt(40) == 0;
+        }
+        final int lagRows = 10 + rnd.nextInt(60);
+
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql);
+        LOG.info().$("LV concurrency symbol recovery soak: readers=").$(numReaders)
+                .$(", rows=").$(rowCount).$(", symbols=").$(symbols.size()).$(", lagRows=").$(lagRows).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean isRunning = new AtomicBoolean(true);
+        final AtomicLong refreshTicks = new AtomicLong();
+        final AtomicLong firedFaults = new AtomicLong();
+        final AtomicLong checkedRows = new AtomicLong();
+        final AtomicLong routedReads = new AtomicLong();
+        final long driverSeed = rnd.nextLong();
+        try {
+            final CyclicBarrier barrier = new CyclicBarrier(2 + 1 + numReaders);
+            final ObjList<Thread> threads = new ObjList<>();
+            final AtomicInteger streamedTo = new AtomicInteger(-1);
+            final AtomicBoolean isStreamDone = new AtomicBoolean();
+            // The driver stops the writers once readers have refused enough rewinds, so a run
+            // lasts as long as the race takes to happen, up to the whole dataset.
+            final AtomicBoolean isStopRequested = new AtomicBoolean();
+            // Two or three commits a tick: the first drains on a turn of its own, and the task
+            // queued behind it drains the rest together, which is a turn that feeds a commit
+            // before it reads the next one.
+            threads.add(newPacedStreamWriterThread(
+                    isLate, 2 + rnd.nextInt(7), 2 + rnd.nextInt(2), tsv, symIdx, symbols, iv, xv, baseToken, barrier,
+                    streamedTo, isStreamDone, isStopRequested, refreshTicks, errors
+            ));
+            threads.add(newPacedLateWriterThread(
+                    isLate, lagRows, tsv, symIdx, symbols, iv, xv, baseToken, barrier, streamedTo, isStreamDone,
+                    isStopRequested, refreshTicks, errors
+            ));
+            final int writerThreadCount = threads.size();
+            threads.add(new Thread(() -> {
+                final Rnd driverRnd = new Rnd(driverSeed, driverSeed >>> 1);
+                try {
+                    barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                    while (isRunning.get() && errors.isEmpty()) {
+                        // A fraction of FLUSH EVERY per tick, so a flush lands every few ticks
+                        // and the ticks between leave the lead resident for the fault to discard.
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS / 6);
+                        drainWalQueue();
+                        // Armed for these turns alone: the base's own apply and the final oracle
+                        // read the same files, and must never meet the fault. Either fault
+                        // discards the lead the earlier ticks drained, with the interned values
+                        // no flush committed, once the failing turn has fed rows of its own. The
+                        // WAL read fault fails a later WAL read of the drain, after it fed the
+                        // commits before it. The applied scan fault fails the out-of-order
+                        // repair's read of the applied base, after the hand-off dropped the lead.
+                        // Each recovery restores the runtime from the timeline, which commits
+                        // nothing, and its tier rebuild tries the rewind.
+                        final boolean isArmed = driverRnd.nextInt(3) == 0;
+                        if (isArmed) {
+                            if (driverRnd.nextInt(4) != 0) {
+                                fault.arm(1 + driverRnd.nextInt(3));
+                            } else {
+                                fault.armAppliedScan();
+                            }
+                        }
+                        drainJob(job);
+                        if (isArmed) {
+                            if (fault.hasFired() || fault.hasAppliedScanFired()) {
+                                firedFaults.incrementAndGet();
+                            }
+                            fault.disarmAll();
+                        }
+                        drainWalQueue();
+                        // The driver is the job's own thread, so it reads the job's stats.
+                        if (job.getStatsForTest().get(LiveViewRefreshStats.SYMBOL_REWIND_REFUSAL_COUNT) >= SYMBOL_SOAK_REFUSALS) {
+                            isStopRequested.set(true);
+                        }
+                        refreshTicks.incrementAndGet();
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                    barrier.reset();
+                } finally {
+                    fault.disarm();
+                    clearWorkerThreadLocals();
+                }
+            }, "lv-refresh-driver"));
+            for (int r = 0; r < numReaders; r++) {
+                final long readerSeed = rnd.nextLong();
+                threads.add(new Thread(() -> {
+                    final Rnd readerRnd = new Rnd(readerSeed, readerSeed >>> 1);
+                    try {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        while (isRunning.get() && errors.isEmpty()) {
+                            // One read in four holds its pin part-way through, across the turns
+                            // the driver runs meanwhile; the rest pin and release the tier as
+                            // fast as they read.
+                            final int pauseAtRow = readerRnd.nextInt(4) == 0 ? readerRnd.nextInt(64) : -1;
+                            checkedRows.addAndGet(readAnchoredViewOnce(
+                                    tsv, symIdx, symbols, iv, dayCounts, pauseAtRow, 1 + readerRnd.nextInt(3), routedReads
+                            ));
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        clearWorkerThreadLocals();
+                    }
+                }, "lv-symbol-reader-" + r));
+            }
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
+            }
+            for (int i = 0; i < writerThreadCount; i++) {
+                threads.getQuick(i).join();
+            }
+            isRunning.set(false);
+            for (int i = writerThreadCount, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+            fault.disarmAll();
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            // The soak's own evidence, from the concurrent phase alone. The job's stats are
+            // written by the driver thread only, which has joined.
+            final long rewindAttempts = job.getStatsForTest().get(LiveViewRefreshStats.SYMBOL_REWIND_ATTEMPT_COUNT);
+            final long rewindRefusals = job.getStatsForTest().get(LiveViewRefreshStats.SYMBOL_REWIND_REFUSAL_COUNT);
+            LOG.info().$("LV concurrency symbol recovery soak done: refreshTicks=").$(refreshTicks.get())
+                    .$(", firedFaults=").$(firedFaults.get()).$(", refreshFaults=").$(instance.getRefreshFaultCount())
+                    .$(", rewindAttempts=").$(rewindAttempts).$(", rewindRefusals=").$(rewindRefusals)
+                    .$(", routedReads=").$(routedReads.get()).$(", checkedRows=").$(checkedRows.get()).$();
+            Assert.assertTrue("mid-drain faults must have fired", firedFaults.get() > 0);
+            Assert.assertTrue("recoveries must have tried to take stranded symbol ids back", rewindAttempts > 0);
+            Assert.assertTrue("a reader's pin must have refused a symbol id rewind", rewindRefusals > 0);
+            Assert.assertTrue("the readers must have routed through the tier mid-soak", routedReads.get() > 0);
+            Assert.assertTrue("the readers must have checked rows mid-soak", checkedRows.get() > 0);
+
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        Assert.assertFalse("the view must survive its recoveries: " + instance.getInvalidationReason(), instance.isInvalid());
+        // A fault can also land in a read whose caller swallows it, so not every one fails a
+        // turn; but no turn may fail on anything the soak did not inject.
+        Assert.assertTrue(
+                "every refresh fault must be one the soak injected [refreshFaults=" + instance.getRefreshFaultCount()
+                        + ", firedFaults=" + firedFaults.get() + ']',
+                instance.getRefreshFaultCount() <= firedFaults.get()
+        );
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + oracleSql + ") ORDER BY 1, 2", "(lv) ORDER BY 1, 2", LOG, true);
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -3384,6 +5687,162 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)) {
                 Assert.assertTrue("quiesced row_number() read must route through Mode B", cursor.isRoutingEligible());
             }
+        }
+    }
+
+    // How the checkpoint soak ends its view while the agent cycles: not at all, by an invalidation, or by DROP LIVE VIEW.
+    private enum CheckpointSoakTeardown {
+        DROP, INVALIDATION, NONE
+    }
+
+    // Where the invalidation's write of the view's state file fails in
+    // assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile: nowhere (NONE), at the open (OPEN), or, once the
+    // open succeeded, at the growth of the file past its first page (GROWTH), which only a reason longer than a page
+    // makes.
+    private enum StateFileWriteFailure {
+        GROWTH, NONE, OPEN
+    }
+
+    // Raises the engine's closing flag, once armed, at the next open of a file of the base's timestamp column that a
+    // refresh worker makes to read base rows, and lets the open go ahead. A page-frame scan of the applied base makes
+    // one as it opens a partition for its next frame, and the drain as it opens the WAL segment of the commit it
+    // reads next. Both consult the refresh breaker before they hand out a row of what they opened, so the shutdown
+    // lands inside the turn and cancels it. Every other open passes and leaves the fault armed. The inline apply of
+    // the view's own WAL, for one, runs base O3 tasks that the base's concurrent apply put on the engine's shared
+    // queue; they open base partitions on the worker's thread after the turn's last consult, so a turn the flag rose
+    // in there would finish uncancelled. Runs the action of() names right after the flag rises, on that worker's
+    // thread.
+    private static final class ClosingAtRefreshTimestampRead extends TestFilesFacadeImpl {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private volatile String baseDir;
+        private volatile Runnable onClosing;
+
+        @Override
+        public long openRO(LPSZ name) {
+            final String dir = baseDir;
+            if (isArmed.get()
+                    && dir != null
+                    && Thread.currentThread().getName().startsWith(REFRESH_WORKER_THREAD_NAME)
+                    && Utf8s.containsAscii(name, dir)
+                    && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")
+                    && isBaseRowRead()
+                    && isArmed.compareAndSet(true, false)) {
+                engine.setClosing(true);
+                final Runnable action = onClosing;
+                if (action != null) {
+                    action.run();
+                }
+            }
+            return super.openRO(name);
+        }
+
+        void arm() {
+            isArmed.set(true);
+        }
+
+        void of(String baseDir, Runnable onClosing) {
+            isArmed.set(false);
+            this.onClosing = onClosing;
+            this.baseDir = baseDir;
+        }
+
+        private static boolean isBaseRowRead() {
+            final List<StackWalker.StackFrame> stack = StackWalker.getInstance().walk(frames -> frames.toList());
+            for (int i = 0, n = stack.size(); i < n; i++) {
+                final StackWalker.StackFrame frame = stack.get(i);
+                if (isFrameOf(frame, PageFrameRecordCursorImpl.class, "hasNext")) {
+                    return true;
+                }
+                if (isFrameOf(frame, WalSegmentPageFrameCursor.class, "of")) {
+                    // The anchored segment classification opens segments too, with no consult after it.
+                    return i + 1 < n && isFrameOf(stack.get(i + 1), LiveViewRefreshJob.class, "drainBaseWal");
+                }
+            }
+            return false;
+        }
+
+        private static boolean isFrameOf(StackWalker.StackFrame frame, Class<?> clazz, String methodName) {
+            return clazz.getName().equals(frame.getClassName()) && methodName.equals(frame.getMethodName());
+        }
+    }
+
+    // Pauses DROP LIVE VIEW, on the thread pause() names and once, at the first file call of its timeline retire:
+    // the check for _checkpoints/_timeline, which comes after the drop marked the view dropped and fenced its
+    // refresh, and before it unregisters and closes the view.
+    private static final class DropPausedAtTimelineRetire extends TestFilesFacadeImpl {
+        private final CountDownLatch paused = new CountDownLatch(1);
+        private final AtomicReference<Thread> pausedThread = new AtomicReference<>();
+        private final CountDownLatch resumed = new CountDownLatch(1);
+
+        @Override
+        public boolean exists(LPSZ path) {
+            if (Utf8s.endsWithAscii(path, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + Files.SEPARATOR + LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                    && pausedThread.compareAndSet(Thread.currentThread(), null)) {
+                paused.countDown();
+                await(resumed, "the test never resumed the paused drop");
+            }
+            return super.exists(path);
+        }
+
+        void awaitPaused() {
+            await(paused, "the drop never reached its timeline retire");
+        }
+
+        void pause(Thread thread) {
+            pausedThread.set(thread);
+        }
+
+        void resume() {
+            resumed.countDown();
+        }
+
+        private static void await(CountDownLatch latch, String failure) {
+            try {
+                Assert.assertTrue(failure, latch.await(THREAD_JOIN_MILLIS, TimeUnit.MILLISECONDS));
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+        }
+    }
+
+    // Counts the opens for writing of one live view's state file that an invalidation, made by either of
+    // CairoEngine's two invalidation writers, makes once the view is marked dropped: an invalidation that
+    // writes over a DROP LIVE VIEW's teardown. A refresh turn the drop waits for may still write the file
+    // after the mark, before the drop tears anything down, so the count leaves those opens out.
+    private static final class InvalidationAfterDropCount extends TestFilesFacadeImpl {
+        private final AtomicInteger stateFileOpens = new AtomicInteger();
+        // The file name, with the view's directory and the separators ahead of it, of the watched state file.
+        private volatile String watchedFileName;
+        private volatile LiveViewInstance watchedInstance;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final String fileName = watchedFileName;
+            if (fileName != null
+                    && Utf8s.endsWithAscii(name, fileName)
+                    && watchedInstance.isDropped()
+                    && isInvalidation()) {
+                stateFileOpens.incrementAndGet();
+            }
+            return super.openRW(name, opts);
+        }
+
+        int getStateFileOpens() {
+            return stateFileOpens.get();
+        }
+
+        // Sets the instance before the name the open checks first.
+        void of(LiveViewInstance instance) {
+            watchedInstance = instance;
+            watchedFileName = Files.SEPARATOR + instance.getLiveViewToken().getDirName() + Files.SEPARATOR + LiveViewState.LIVE_VIEW_STATE_FILE_NAME;
+        }
+
+        private static boolean isInvalidation() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> CairoEngine.class.getName().equals(frame.getClassName())
+                            && ("invalidateLiveView".equals(frame.getMethodName())
+                            || "invalidateLiveViewsForBaseTable0".equals(frame.getMethodName()))
+            ));
         }
     }
 }

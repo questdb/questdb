@@ -33,11 +33,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.Decimals;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -181,6 +183,14 @@ public class CaseCommon {
     }
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
+        if (isNull(returnType)) {
+            // Every THEN and ELSE value is NULL, so the CASE returns NULL on every row, whatever its
+            // conditions say. Return the NULL literal, as null + x returns a NULL constant: a parent
+            // then resolves and reads the CASE as it does NULL, e.g. (CASE ... END)::int binds
+            // cast(oV). Nothing reads the conditions any more, so free them here.
+            Misc.freeObjList(args);
+            return NullConstant.NULL;
+        }
         if (isGeoHash(returnType)) {
             return switch (tagOf(returnType)) {
                 case GEOBYTE -> new GeoByteCaseFunction(returnType, picker, args);
@@ -376,7 +386,6 @@ public class CaseCommon {
         constructors.extendAndSet(DECIMAL128, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
-        constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);
     }
 }

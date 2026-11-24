@@ -83,6 +83,10 @@ import java.util.regex.Pattern;
  * generator then fills that slot with. A predicate shape the corpus can spell
  * is worth nothing if no generated table or key slot ever reaches it.
  * <p>
+ * {@link #testAllNullCaseReachesAnOperand} pins one shape that stands for no
+ * JIT defect: an all-NULL CASE as an operand, which threw from every read
+ * until the compiler folded it to the NULL literal.
+ * <p>
  * The generator is random, so each assertion runs over a large corpus rather
  * than a single draw; the seed is fixed so a failure is reproducible.
  */
@@ -145,6 +149,19 @@ public class FilterShapeCoverageTest {
     // 8-4-4-4-12, the spelling UuidType.randomLiteral emits.
     private static final String UUID_LITERAL =
             "'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'";
+
+    @Test
+    public void testAllNullCaseReachesAnOperand() {
+        // Bare, the parent resolves a NULL-typed argument; cast, a typed one.
+        assertCorpusMatches(
+                "bare all-NULL CASE",
+                Pattern.compile("\\(CASE WHEN [^()\\n]+ IS NULL THEN NULL END\\)(?!::)")
+        );
+        assertCorpusMatches(
+                "all-NULL CASE cast to a type",
+                Pattern.compile("\\(CASE WHEN [^()\\n]+ IS NULL THEN NULL END\\)::\\w+")
+        );
+    }
 
     @Test
     public void testCharComparesAgainstHighCodePointLiteral() {
