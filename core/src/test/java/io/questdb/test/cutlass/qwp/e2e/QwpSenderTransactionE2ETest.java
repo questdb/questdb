@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -114,6 +115,127 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
                     .returns("count\tmin\tmax\n15\t0\t10004\n");
+        });
+    }
+
+    @Test
+    public void testPooledStrictBatchesOfOneFrameKeepTheWholeBuffer() throws Exception {
+        // Batches of 600 rows fit one frame of this server's 64 KiB cap and one 64 KiB
+        // segment, as a sender with no auto-flush trigger sent them before transactions
+        // spanned frames. Such a sender is strict now, and its byte trigger sends 90% of
+        // a frame as a deferred frame and the rest with the commit. Four leases share
+        // 256 KiB, less than a segment each, yet every batch commits: a transaction whose
+        // frames fit one segment counts on the whole buffer, not on a share.
+        runInContext(port -> {
+            try (QuestDB db = QuestDB.connect(conf(port) + "auto_flush_rows=off;auto_flush_interval=off;"
+                    + "sf_max_segment_bytes=64k;sf_max_total_bytes=256k;sf_append_deadline_millis=30000;"
+                    + "query_pool_min=0;")) {
+                Sender[] leases = new Sender[4];
+                for (int i = 0; i < leases.length; i++) {
+                    leases[i] = db.borrowSender();
+                }
+                runOnThreads(leases.length, lease -> {
+                    for (int batch = 0; batch < 20; batch++) {
+                        writeRows(leases[lease], "p" + lease, batch * 600, 600);
+                        leases[lease].flush();
+                    }
+                });
+                for (Sender lease : leases) {
+                    Assert.assertTrue(lease.drain(60_000));
+                    lease.close();
+                }
+            }
+            drainWalQueue();
+            for (int i = 0; i < 4; i++) {
+                assertQuery("SELECT count(), count_distinct(v), min(v), max(v) FROM p" + i).noLeakCheck()
+                        .noRandomAccess().expectSize()
+                        .returns("count\tcount_distinct\tmin\tmax\n12000\t12000\t0\t11999\n");
+            }
+        });
+    }
+
+    @Test
+    public void testPooledStrictLeasesAtTheirShareCommitTogether() throws Exception {
+        // Two senders share 1 MiB, so each can count on eight segments. Two leases fill
+        // their strict transactions on two threads at once until each share refuses a
+        // row, and both commit as one transaction each without waiting for the other.
+        // Sized against the whole buffer, together they would have filled it, and each
+        // commit would have waited for room only the other commit frees.
+        runInContext(port -> {
+            String[] tables = {"t", "u"};
+            int[] refused = new int[2];
+            long[] txnBefore = new long[2];
+            try (QuestDB db = QuestDB.connect(conf(port) + "transaction=strict;auto_flush_interval=off;"
+                    + "sf_max_segment_bytes=64k;sf_max_total_bytes=1m;sf_append_deadline_millis=30000;"
+                    + "sender_pool_max=2;query_pool_min=0;")) {
+                Sender[] leases = {db.borrowSender(), db.borrowSender()};
+                CyclicBarrier filled = new CyclicBarrier(2);
+                long start = System.nanoTime();
+                runOnThreads(2, lease -> {
+                    refused[lease] = writeUntilShareRefused(leases[lease], tables[lease], 2);
+                    txnBefore[lease] = engine.getTableSequencerAPI().lastTxn(awaitTable(tables[lease]));
+                    // Both transactions are open, each at its largest, before either commits.
+                    filled.await(60, TimeUnit.SECONDS);
+                    leases[lease].flush();
+                });
+                Assert.assertTrue("must not wait for sf_append_deadline_millis",
+                        System.nanoTime() - start < TimeUnit.SECONDS.toNanos(10));
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertTrue(leases[i].drain(60_000));
+                    Assert.assertEquals("one transaction", txnBefore[i] + 1,
+                            engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[i])));
+                    leases[i].close();
+                }
+            }
+            drainWalQueue();
+            for (int i = 0; i < 2; i++) {
+                assertQuery("SELECT count(), min(v), max(v) FROM " + tables[i]).noLeakCheck().noRandomAccess()
+                        .expectSize().returns("count\tmin\tmax\n" + refused[i] + "\t0\t" + (refused[i] - 1) + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testPooledStrictLeasesRefuseRowsPastTheirShare() throws Exception {
+        // The four senders of a default pool share sf_max_total_bytes, and each may hold
+        // a strict transaction until the server commits it. Two leases used to size their
+        // transactions against the whole 512 KiB: both sent frames until together they
+        // filled it, then each commit waited for room the other held, threw after
+        // sf_append_deadline_millis, and nothing committed. Each counts only on its share
+        // now, two of the eight segments, so the second frame of this server's cap, a
+        // segment each, refuses a row, and each lease commits the rows before it, as one
+        // transaction, without waiting.
+        runInContext(port -> {
+            String[] tables = {"t", "u"};
+            int[] refused = new int[2];
+            long[] txnBefore = new long[2];
+            try (QuestDB db = QuestDB.connect(conf(port) + "transaction=strict;auto_flush_interval=off;"
+                    + "sf_max_segment_bytes=64k;sf_max_total_bytes=512k;sf_append_deadline_millis=30000;"
+                    + "query_pool_min=0;")) {
+                Sender[] leases = {db.borrowSender(), db.borrowSender()};
+                long start = System.nanoTime();
+                // Both transactions are open before either commits.
+                for (int i = 0; i < 2; i++) {
+                    refused[i] = writeUntilShareRefused(leases[i], tables[i], 4);
+                    txnBefore[i] = engine.getTableSequencerAPI().lastTxn(awaitTable(tables[i]));
+                }
+                for (Sender lease : leases) {
+                    lease.flush();
+                }
+                Assert.assertTrue("must not wait for sf_append_deadline_millis",
+                        System.nanoTime() - start < TimeUnit.SECONDS.toNanos(10));
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertTrue(leases[i].drain(60_000));
+                    Assert.assertEquals("one transaction", txnBefore[i] + 1,
+                            engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[i])));
+                    leases[i].close();
+                }
+            }
+            drainWalQueue();
+            for (int i = 0; i < 2; i++) {
+                assertQuery("SELECT count(), min(v), max(v) FROM " + tables[i]).noLeakCheck().noRandomAccess()
+                        .expectSize().returns("count\tmin\tmax\n" + refused[i] + "\t0\t" + (refused[i] - 1) + "\n");
+            }
         });
     }
 
@@ -404,10 +526,62 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
-    private static void writeRows(Sender sender, int from, int count) {
-        for (int i = from, n = from + count; i < n; i++) {
-            sender.table("t").longColumn("v", i).stringColumn("s", PAD).atNow();
+    // Runs task(0) .. task(threads - 1) on as many threads at once and rethrows the
+    // first failure. A failing thread breaks the others' barriers, so none waits for it.
+    private static void runOnThreads(int threads, ThreadTask task) throws Exception {
+        Throwable[] errors = new Throwable[threads];
+        CyclicBarrier start = new CyclicBarrier(threads);
+        Thread[] workers = new Thread[threads];
+        for (int i = 0; i < threads; i++) {
+            final int index = i;
+            workers[i] = new Thread(() -> {
+                try {
+                    start.await(60, TimeUnit.SECONDS);
+                    task.run(index);
+                } catch (Throwable t) {
+                    errors[index] = t;
+                    start.reset();
+                }
+            });
+            workers[i].start();
         }
+        for (Thread worker : workers) {
+            worker.join();
+        }
+        for (Throwable error : errors) {
+            if (error != null) {
+                throw new AssertionError(error);
+            }
+        }
+    }
+
+    private static void writeRows(Sender sender, int from, int count) {
+        writeRows(sender, "t", from, count);
+    }
+
+    private static void writeRows(Sender sender, String table, int from, int count) {
+        for (int i = from, n = from + count; i < n; i++) {
+            sender.table(table).longColumn("v", i).stringColumn("s", PAD).atNow();
+        }
+    }
+
+    // Writes rows 0, 1, ... of the table until the sender's share of a client buffer
+    // the pool's senders share refuses one, and returns the refused row.
+    private static int writeUntilShareRefused(Sender sender, String table, int senders) {
+        for (int i = 0; i < 100_000; i++) {
+            try {
+                sender.table(table).longColumn("v", i).stringColumn("s", PAD).atNow();
+            } catch (TransactionTooLargeException e) {
+                TestUtils.assertContains(e.getMessage(), "transaction too large for this sender's share of the client "
+                        + "buffer");
+                TestUtils.assertContains(e.getMessage(), ", senders=" + senders + ",");
+                TestUtils.assertContains(e.getMessage(), "so the row was not added. Raise sf_max_total_bytes, lower "
+                        + "sender_pool_max, or set sf_dir to keep the transaction on disk");
+                return i;
+            }
+        }
+        Assert.fail("the sender's share of the client buffer must refuse a row");
+        return -1;
     }
 
     // Writes rows 0, 1, ... until the client buffer refuses one, and returns the
@@ -427,7 +601,16 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     private TableToken awaitTable() throws Exception {
-        TestUtils.assertEventually(() -> Assert.assertNotNull(engine.getTableTokenIfExists("t")));
-        return engine.verifyTableName("t");
+        return awaitTable("t");
+    }
+
+    private static TableToken awaitTable(String table) throws Exception {
+        TestUtils.assertEventually(() -> Assert.assertNotNull(engine.getTableTokenIfExists(table)));
+        return engine.verifyTableName(table);
+    }
+
+    @FunctionalInterface
+    private interface ThreadTask {
+        void run(int index) throws Exception;
     }
 }
