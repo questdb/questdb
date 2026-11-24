@@ -52,6 +52,10 @@ public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOp
         this.partitionDuration = partitionDuration;
     }
 
+    public long getCutoffTimestamp() {
+        return cutoffTimestamp;
+    }
+
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
         if (!wApi.getTableToken().isWal()) {
