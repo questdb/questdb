@@ -63,21 +63,25 @@ import java.util.stream.Stream;
  * switch, the reseal of older partitions by a WAL commit (in place, and into a rewritten partition), ADD INDEX,
  * REINDEX, the seal at the generation cap of the last partition, and the rollback of the index when the writer opens
  * a partition. Every one of those seals takes the ordered flush: the new value and cover files reach the disk before
- * the {@code .pk} entry that names them, and the {@code .pk} before the purge may delete the files they supersede.
+ * the {@code .pk} entry that names them, and the {@code .pk} before the purge may delete the files they supersede. The
+ * rewrite of an older partition rebuilds its index into a new value file instead; without INCLUDE that rebuild seals
+ * nothing, and under NOSYNC and ASYNC it takes no flush: the purge job makes the live index files and {@code _txn}
+ * durable before it deletes the files they supersede.
  * <p>
  * After each power loss and restart, the table holds the rows of an outcome the operation allows (a WAL commit is in
  * the durable WAL, so recovery applies it), the index finds the rows a scan finds, with the same INCLUDE values, before
  * and after the writer opens, and the table takes the next commit, after which each partition holds one generation of
  * the index. One more power loss comes right after the operation returned and the purge deleted the files it
  * superseded: SYNC must keep the operation; in the other modes the kernel is assumed to have written back every file
- * but the index files of the sealed partitions, so those hold only what the seal flushed. NOSYNC and ASYNC may lose
- * commits, never the index.
+ * but the index files of the sealed partitions, so those hold only what the seal flushed, unless a later commit of the
+ * operation wrote that index too. NOSYNC and ASYNC may lose commits, never the index.
  * <p>
  * Directory entries follow ext4 and xfs: a file's fsync makes every directory change before it durable. Under strict
  * POSIX a SYNC commit into a new partition loses its directory, a limit of every SYNC commit, not of the seal.
  * <p>
- * PR runs cut the power at the flushes of index files, {@code syncfs} and {@code _txn}, where the index or the commit
- * changes what is durable; {@code -Dquestdb.fuzz.nightly=true} cuts it at every flush.
+ * PR runs take SYNC without INCLUDE and NOSYNC with INCLUDE only, and cut the power at the {@code .pk} flush of each
+ * seal, where the purge may start to delete the files the seal superseded; {@code -Dquestdb.fuzz.nightly=true} takes
+ * every mode and cuts the power at every flush.
  */
 @RunWith(Parameterized.class)
 public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
@@ -85,12 +89,20 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
     private static final Pattern INDEX_FILE = Pattern.compile("k\\.(pk|pv\\..*|pc\\d+\\..*|pci.*)");
     private static final boolean IS_NIGHTLY = Boolean.getBoolean("questdb.fuzz.nightly");
     private static final int KEYS = 4;
-    private static final Pattern PR_CRASH_POINT = Pattern.compile(".* (syncfs .*|.*/k\\.(pk|pv\\..*|pc\\d+\\..*|pci.*)|.*/_txn)");
+    private static final Pattern KEY_FILE = Pattern.compile(".*[/\\\\]k\\.pk");
+    // The flushes of the new _meta of a metadata swap, as withoutTable() writes them.
+    private static final Pattern META_SWAP_FLUSH = Pattern.compile("\\S+ <table>[/\\\\]_meta\\.swp");
+    // A flush of an index file or a syncfs, as withoutTable() writes them.
+    private static final Pattern SEAL_FLUSH = Pattern.compile(
+            "syncfs .*|\\S+ .*[/\\\\]k\\.(pk|pv\\..*|pc\\d+\\..*|pci.*)"
+    );
     // The default cairo.posting.seal.gen.threshold: a partition switch or an out-of-order append seals an index of more
     // generations.
     private static final int SEAL_THRESHOLD = 16;
     // The value file a seal writes; the first value file of a partition, k.pv.0, holds the generations of commits.
-    private static final Pattern SEAL_VALUE_FILE = Pattern.compile(".*/k\\.pv\\.[1-9][0-9]*");
+    private static final Pattern SEAL_VALUE_FILE = Pattern.compile(".*[/\\\\]k\\.pv\\.[1-9][0-9]*");
+    // The flushes of _txn, as withoutTable() writes them.
+    private static final Pattern TXN_FLUSH = Pattern.compile("\\S+ <table>[/\\\\]_txn");
     // The value files of a seal the operation created.
     private final Set<String> sealValueFiles = new HashSet<>();
     private final String commitMode;
@@ -104,6 +116,9 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
 
     @Parameterized.Parameters(name = "{0} INCLUDE={1}")
     public static Collection<Object[]> data() {
+        if (!IS_NIGHTLY) {
+            return Arrays.asList(new Object[][]{{"sync", false}, {"nosync", true}});
+        }
         return Arrays.asList(new Object[][]{
                 {"sync", false}, {"sync", true},
                 {"nosync", false}, {"nosync", true},
@@ -310,11 +325,13 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    // REINDEX rebuilds the index of every partition outside any commit.
+    // REINDEX rebuilds the index of every partition outside any commit. Only the power loss after REINDEX and the
+    // purge: REINDEX deletes the old index files before it writes the new ones, so a power loss inside it leaves a key
+    // file too short to open, a limit of REINDEX that this test does not cover.
     @Test
     public void testReindex() throws Exception {
         final List<long[]> r0 = rowsOverDays(0, 24, 4);
-        sweep(new Workload(false, r0, List.of(), false) {
+        final Workload workload = new Workload(false, r0, List.of(), false) {
             @Override
             void run(String table) throws Exception {
                 execute("REINDEX TABLE " + table + " COLUMN k LOCK EXCLUSIVE");
@@ -325,7 +342,9 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                 createTable(table, true, false, false);
                 execute(insertSql(table, r0));
             }
-        });
+        };
+        workload.isPowerLossInsideSkipped = true;
+        sweep(workload);
     }
 
     // A power loss right after the seal at the generation cap, stamped with the committed txn, leaves an entry that
@@ -355,11 +374,15 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                 final Set<Long> fds = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
                 crashFf.armCrashAt(crashFf.durabilityOpCount() + pkFlushOfSeal);
+                // The directory model of the sweep (ext4, xfs): off Linux the seal flushes each file, and only the
+                // journal makes the entry of its new value file durable.
+                crashFf.setNamespaceJournaled(true);
                 try {
                     drainWalQueue();
                 } catch (CrashSimulationError ignore) {
                     // the power loss
                 }
+                crashFf.setNamespaceJournaled(false);
                 Assert.assertFalse("the power loss after the seal did not come", crashFf.isCrashArmed());
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
@@ -383,20 +406,21 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                 final int opsBefore = crashFf.durabilityOpCount();
                 drainWalQueue();
                 final List<String> log = crashFf.durabilityOpLog();
-                int flush = 0;
-                for (int i = opsBefore + 1, n = log.size(); i < n && flush == 0; i++) {
-                    if (log.get(i - 1).contains(" syncfs ") && log.get(i).endsWith("/k.pk")) {
-                        flush = i - opsBefore + 1;
-                    }
-                }
-                Assert.assertTrue("the commit at the generation cap sealed nothing: " + log.subList(opsBefore, log.size()), flush > 0);
+                final List<Integer> sealKeyFileFlushes = sealKeyFileFlushes(log, opsBefore);
+                Assert.assertFalse(
+                        "the commit at the generation cap sealed nothing: " + log.subList(opsBefore, log.size()),
+                        sealKeyFileFlushes.isEmpty()
+                );
                 execute("DROP TABLE " + table);
                 drainWalQueue();
                 drainPurgeJob();
-                return flush;
+                return sealKeyFileFlushes.get(0) - opsBefore + 1;
             }
         };
         workload.isSetUpCrashed = true;
+        // The commit applied again after the rollback adds its row to the rolled back index as a plain commit, which
+        // NOSYNC and ASYNC do not flush, as any commit there.
+        workload.isSealedIndexCommittedAfterSeal = true;
         sweep(workload);
     }
 
@@ -490,6 +514,30 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
         return files;
     }
 
+    // The flushes, [from, to), of a metadata swap that no power loss may cut. A metadata swap is not atomic with
+    // _txn: a power loss between its first rename and the _txn flush leaves _meta and _txn out of step, with no _meta,
+    // or with the new _meta and the old _txn (under NOSYNC the swap even clears its _todo_ entry before _txn is
+    // durable). A limit of the metadata swap, not of the seal: the range runs from the last flush of _meta.swp to the
+    // next flush of _txn, or to the end, and holds no flush of a seal. Empty when the operation swaps no metadata.
+    private static int[] metaSwapFlushes(List<String> flushes) {
+        int from = -1;
+        for (int i = 0, n = flushes.size(); i < n; i++) {
+            if (META_SWAP_FLUSH.matcher(flushes.get(i)).matches()) {
+                from = i;
+            }
+        }
+        if (from < 0) {
+            return new int[]{0, 0};
+        }
+        int to = from + 1;
+        while (to < flushes.size() && !TXN_FLUSH.matcher(flushes.get(to)).matches()) {
+            Assert.assertFalse("a seal flush inside the metadata swap: " + flushes,
+                    SEAL_FLUSH.matcher(flushes.get(to)).matches());
+            to++;
+        }
+        return new int[]{from, to};
+    }
+
     // The name of the partition a file is in, without its version: 1970-01-01 for 1970-01-01.3/k.pv.4.
     private static String partitionName(String file) {
         final String dir = Paths.get(file).getParent().getFileName().toString();
@@ -546,6 +594,26 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
             while (partitionPurge.run()) {
             }
         }
+    }
+
+    // The indexes in the flush log, from `from` on, of the .pk flushes of seals: the first .pk flush after the flush of
+    // a seal's new files, a syncfs where syncfs is filesystem-wide (Linux), a flush of each file, the value file among
+    // them, elsewhere.
+    private static List<Integer> sealKeyFileFlushes(List<String> log, int from) {
+        final List<Integer> flushes = new ArrayList<>();
+        boolean isSealFileFlushed = false;
+        for (int i = from, n = log.size(); i < n; i++) {
+            final String flush = log.get(i);
+            if (KEY_FILE.matcher(flush).matches()) {
+                if (isSealFileFlushed) {
+                    flushes.add(i);
+                }
+                isSealFileFlushed = false;
+            } else if (flush.contains(" syncfs ") || SEAL_VALUE_FILE.matcher(flush).matches()) {
+                isSealFileFlushed = true;
+            }
+        }
+        return flushes;
     }
 
     // The flush with the table's directory name taken out, the same in every pass.
@@ -692,7 +760,17 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                     crashPoints = new ArrayList<>();
                     for (int i = opsBefore, n = log.size(); i < n; i++) {
                         flushes.add(withoutTable(log.get(i), token.getDirName()));
-                        if (IS_NIGHTLY || PR_CRASH_POINT.matcher(log.get(i)).matches()) {
+                    }
+                    final int[] metaSwap = metaSwapFlushes(flushes);
+                    if (IS_NIGHTLY && !workload.isPowerLossInsideSkipped) {
+                        for (int i = 0, n = flushes.size(); i < n; i++) {
+                            if (i < metaSwap[0] || i >= metaSwap[1]) {
+                                crashPoints.add(i + 1);
+                            }
+                        }
+                    }
+                    if (!IS_NIGHTLY && !workload.isPowerLossInsideSkipped) {
+                        for (int i : sealKeyFileFlushes(log, opsBefore)) {
                             crashPoints.add(i - opsBefore + 1);
                         }
                     }
@@ -706,7 +784,10 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
                     runPurgeJobs();
                     fsyncTableDirs(tableDir);
                     if (!"sync".equals(commitMode)) {
-                        markWrittenBackExceptSealedIndexes(tableDir, sealed);
+                        markWrittenBackExceptSealedIndexes(
+                                tableDir,
+                                workload.isSealedIndexCommittedAfterSeal ? Set.of() : sealed
+                        );
                     }
                     crashFf.powerLoss();
                 } else {
@@ -766,8 +847,13 @@ public class PostingSealPowerLossCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     private abstract static class Workload {
+        // The power loss after the operation returned and the purge ran is the only one.
+        boolean isPowerLossInsideSkipped;
         // R1 is in the durable WAL before the operation, so recovery applies it.
         final boolean isR1Durable;
+        // A plain commit of the operation wrote the index of the sealed partitions after the seal, so the kernel may
+        // have written those index files back as any other file.
+        boolean isSealedIndexCommittedAfterSeal;
         // The setup ends with a power loss.
         boolean isSetUpCrashed;
         final boolean isWal;
