@@ -85,10 +85,15 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         this.fullCursor = null;
         final PageFrameCursor streamingPfc = this.streamingPfc;
         this.streamingPfc = null;
-        materializer = null;
+        final HybridColumnMaterializer materializer = this.materializer;
+        this.materializer = null;
         materializerColumnData = null;
 
-        Throwable cleanupFailure = Misc.freeBestEffort(null, fullCursor);
+        // The decoded Parquet frames of the materializer charge the memory tracker of the cursor's query,
+        // and closing the cursor ends the query and returns the tracker to its pool: free them first. A
+        // failed export's writer still points at them, but only to drop its frames.
+        Throwable cleanupFailure = Misc.clearBestEffort(null, materializer);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, fullCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPfc);
         try {
             clearTempTable();
