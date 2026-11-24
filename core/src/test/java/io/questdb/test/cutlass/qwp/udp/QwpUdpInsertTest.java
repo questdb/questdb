@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.udp;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
@@ -60,6 +61,28 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19_002;
+    // Commits only when the receiver closes.
+    private static final QwpUdpReceiverConfiguration CLOSE_COMMIT_CONF = new DefaultQwpUdpReceiverConfiguration() {
+        @Override
+        public long getCommitInterval() {
+            return TimeUnit.HOURS.toMillis(1);
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
+        public int getPort() {
+            return PORT;
+        }
+
+        @Override
+        public boolean isOwnThread() {
+            return false;
+        }
+    };
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getMaxUncommittedDatagrams() {
@@ -1378,6 +1401,43 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                                     srv-1\t73.2\t1970-01-01T00:00:01.000000Z
                                     """
                     );
+        });
+    }
+
+    @Test
+    public void testSpellingsOfOneTableShareOneWriter() throws Exception {
+        // The sender sends a datagram per spelling of a table name, and the engine resolves
+        // "udp_tä" and "UDP_TÄ" to one table. The receiver folded only ASCII case, kept a
+        // writer per non-ASCII spelling, and committed the rows once per writer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE \"udp_tä\" (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("udp_tä");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+            try (QwpUdpReceiver receiver = receiverFactory.create(CLOSE_COMMIT_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    for (int i = 0; i < 6; i++) {
+                        sender.table((i & 1) == 0 ? "udp_tä" : "UDP_TÄ")
+                                .longColumn("v", i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (receiver.getProcessedCount() < 2 && System.nanoTime() < deadline) {
+                    receiver.runSerially();
+                    Os.pause();
+                }
+                Assert.assertEquals("a datagram per spelling", 2, receiver.getProcessedCount());
+                Assert.assertEquals("one writer", 1, receiver.getCachedTableCount());
+                Assert.assertEquals("nothing commits before close", txnBefore, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            Assert.assertEquals("one transaction", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+            drainWalQueue();
+            assertQuery("SELECT count(), sum(v) FROM \"UDP_Tä\"")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n6\t15\n");
         });
     }
 

@@ -388,6 +388,30 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTransactionOverSpellingsOfOneTableCommitsOnce() throws Exception {
+        // The client keeps a buffer per spelling of a table name, so the frames of one
+        // transaction carry blocks for "tä" and "tÄ", which the engine resolves to one
+        // table. The server folded only ASCII case, kept a writer per spelling, and
+        // committed the transaction as two WAL transactions.
+        runInContext(port -> {
+            try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(conf(port) + "transaction=on;")) {
+                Assert.assertTrue("the server confirms rollback", sender.isServerRollbackEnabled());
+                writeRowsUnderSpellings(sender, 0, 3_000);
+                TableToken token = awaitTable("tä");
+                sender.rollback();
+                long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+                writeRowsUnderSpellings(sender, 10_000, 3_000);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+                Assert.assertEquals("one transaction", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), count_distinct(v), min(v), max(v) FROM \"tÄ\"").noLeakCheck().noRandomAccess()
+                    .expectSize().returns("count\tcount_distinct\tmin\tmax\n3000\t3000\t10000\t12999\n");
+        });
+    }
+
+    @Test
     public void testTransactionalModeCommitsInPartsPastClientBuffer() throws Exception {
         // The client holds a transaction until the server commits it. transaction=on
         // used to block the row that took its transaction past sf_max_total_bytes for
@@ -562,6 +586,13 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     private static void writeRows(Sender sender, String table, int from, int count) {
         for (int i = from, n = from + count; i < n; i++) {
             sender.table(table).longColumn("v", i).stringColumn("s", PAD).atNow();
+        }
+    }
+
+    // Writes the rows alternately under two spellings of one table's name.
+    private static void writeRowsUnderSpellings(Sender sender, int from, int count) {
+        for (int i = from, n = from + count; i < n; i++) {
+            sender.table((i & 1) == 0 ? "tä" : "tÄ").longColumn("v", i).stringColumn("s", PAD).atNow();
         }
     }
 

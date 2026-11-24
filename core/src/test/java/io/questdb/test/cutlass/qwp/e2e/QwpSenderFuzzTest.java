@@ -87,7 +87,6 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
-    private static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
     private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
     private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
@@ -139,6 +138,13 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             {"city", "ciTY", "CITY"}
     };
     private final String[] symbolValueBases = new String[]{"us-midwest", "London"};
+    // Spellings of a table's name, all of which the engine resolves to the table. The
+    // client keeps a buffer per spelling, so a frame carries a block per spelling, and the
+    // server must give them one writer. Odd tables have a name with non-ASCII letters.
+    private final String[][] tableNameBases = new String[][]{
+            {"weather", "WEATHER"},
+            {"időjárás", "IDŐJÁRÁS", "időJÁRás", "IdŐjárÁS"}
+    };
     private final AtomicLong timestampMicros = new AtomicLong(1_465_839_830_102_300L);
     // Cap the client's outgoing WS frame size, by row count. The client
     // never fragments outgoing WS messages, so the per-batch wire payload
@@ -680,7 +686,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     private String getTableName(int tableIndex) {
-        return "weather" + tableIndex;
+        return tableNameBases[tableIndex % tableNameBases.length][0] + tableIndex;
     }
 
     private void initFuzzParameters(
@@ -744,8 +750,9 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     private CharSequence pickTableName(Rnd rnd) {
-        String tableName = rnd.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
-        return tableName + rnd.nextInt(numOfTables);
+        final int tableIndex = rnd.nextInt(numOfTables);
+        final String[] spellings = tableNameBases[tableIndex % tableNameBases.length];
+        return spellings[rnd.nextInt(spellings.length)] + tableIndex;
     }
 
     /**
@@ -886,7 +893,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                                     int newType = changeColumnTypeTo(rnd, type);
                                     try {
                                         engine.execute(
-                                                "ALTER TABLE " + tableName + " ALTER COLUMN "
+                                                "ALTER TABLE \"" + tableName + "\" ALTER COLUMN "
                                                         + meta.getColumnName(colIndex) + " TYPE " + ColumnType.nameOf(newType),
                                                 executionContext
                                         );

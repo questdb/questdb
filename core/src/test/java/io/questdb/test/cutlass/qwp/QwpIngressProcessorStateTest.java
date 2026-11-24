@@ -489,6 +489,59 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterleavedNonAsciiSpellingsAllocateNothingOnceWarm() throws Exception {
+        // A lookup that misses the entry found last folds a non-ASCII table name to its key,
+        // and interleaved spellings always miss it. The fold reuses its scratch.
+        assertMemoryLeak(() -> {
+            final String[] spellings = {"alloc_ä", "ALLOC_Ä", "alloc_ж", "ALLOC_Ж"};
+            final long[] messages = new long[spellings.length];
+            final int[] messageSizes = new int[spellings.length];
+            try {
+                execute("CREATE TABLE alloc_ä (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE alloc_ж (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                for (int t = 0; t < spellings.length; t++) {
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer(spellings[t])) {
+                        table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(t);
+                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                        table.nextRow();
+                        messageSizes[t] = encoder.encode(table);
+                        messages[t] = Unsafe.malloc(messageSizes[t], MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.getUnsafe().copyMemory(encoder.getBuffer().getBufferPtr(), messages[t], messageSizes[t]);
+                    }
+                }
+                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                    state.of(1, AllowAllSecurityContext.INSTANCE);
+                    long seq = ingestInterleaved(state, messages, messageSizes, 0, 3_000);
+                    Assert.assertEquals("a writer per table, not per spelling", 2, state.getCachedTableCount());
+                    try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                        final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+                        final long threadId = Thread.currentThread().threadId();
+                        final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                        // The bound absorbs one-off JIT work, as in the test above.
+                        seq = ingestInterleaved(state, messages, messageSizes, seq, 30_000);
+                        final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                        Assert.assertTrue("30,000 interleaved frames allocated " + allocated + " bytes", allocated < 64 * 1024);
+                    }
+                    Assert.assertEquals(seq - 1, state.getHighestProcessedSequence());
+                }
+            } finally {
+                for (int t = 0; t < spellings.length; t++) {
+                    if (messages[t] != 0) {
+                        Unsafe.free(messages[t], messageSizes[t], MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), sum(val) FROM ALLOC_Ä").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n16500\t8250\n");
+            assertQuery("SELECT count(), sum(val) FROM ALLOC_Ж").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n16500\t41250\n");
+        });
+    }
+
+    @Test
     public void testPreparedMessageConsumesEachBlockOnce() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2731,6 +2784,50 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.onDisconnected();
                 state.close();
             }
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8TableNameReturnsParseError() throws Exception {
+        // The table lookup decoded a malformed table name up to its first bad byte and
+        // wrote to the table those chars name: "t", 0xC3, "z" went to table t.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer table = new QwpTableBuffer("tzz")) {
+                    table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
+                    table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                    table.nextRow();
+                    final int length = encoder.encode(table);
+                    final long address = encoder.getBuffer().getBufferPtr();
+                    // A correct client never sends this name, so the frame gets it by a patch.
+                    int nameOffset = -1;
+                    for (int i = 0; i + 3 <= length && nameOffset < 0; i++) {
+                        if (Unsafe.getByte(address + i) == 't'
+                                && Unsafe.getByte(address + i + 1) == 'z'
+                                && Unsafe.getByte(address + i + 2) == 'z') {
+                            nameOffset = i;
+                        }
+                    }
+                    Assert.assertTrue("the frame carries the table name", nameOffset > 0);
+                    Unsafe.putByte(address + nameOffset + 1, (byte) 0xC3);
+                    state.addData(address, address + length);
+                }
+                state.processMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                Assert.assertEquals("table name is not valid UTF-8", state.getErrorText().toString());
+                Assert.assertEquals("no table took the frame", 0, state.getCachedTableCount());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
     }
 

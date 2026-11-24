@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
@@ -3319,6 +3320,33 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue("Error should mention empty table name: " + e.getMessage(),
                         e.getMessage().contains("table name cannot be empty"));
             }
+        });
+    }
+
+    @Test
+    public void testFlushUnderSpellingsOfOneTableCommitsOnce() throws Exception {
+        // The client keeps a buffer per spelling of a table name, so one flush carries
+        // blocks for "ж_tä", "Ж_TÄ" and "ж_Tä", which the engine resolves to one table.
+        // The server folded only ASCII case, kept a writer per non-ASCII spelling, and
+        // committed the flush once per writer.
+        runInContext((port) -> {
+            execute("CREATE TABLE \"ж_tä\" (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("ж_tä");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+            final String[] spellings = {"ж_tä", "Ж_TÄ", "ж_Tä"};
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                for (int i = 0; i < 30; i++) {
+                    sender.table(spellings[i % spellings.length])
+                            .longColumn("v", i)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                }
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+                Assert.assertEquals("one transaction", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), count_distinct(v), min(v), max(v) FROM \"Ж_tÄ\"").noLeakCheck()
+                    .noRandomAccess().expectSize().returns("count\tcount_distinct\tmin\tmax\n30\t30\t0\t29\n");
         });
     }
 
