@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -128,6 +129,54 @@ public class PartitionEncoder {
             long squashTracker,
             long seqTxn
     ) {
+        return encodeWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                bloomFilterColumnIndexesPtr,
+                bloomFilterColumnCount,
+                bloomFilterFpp,
+                minCompressionRatio,
+                parquetMetaFd,
+                squashTracker,
+                seqTxn,
+                ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET
+        );
+    }
+
+    /**
+     * Encodes the partition, see {@link #encodeWithOptions(PartitionDescriptor, Path, long, boolean, boolean, long,
+     * long, int, long, int, double, double, int, long, long)}.
+     *
+     * @param dedupSortVersion the dedup version that {@code _pm} records for every row group, see
+     *                         {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: the caller vouches that the
+     *                         rows of the descriptor are in that order.
+     *                         {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim. Without a
+     *                         {@code parquetMetaFd} nothing records it.
+     */
+    public static long encodeWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long squashTracker,
+            long seqTxn,
+            long dedupSortVersion
+    ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
         assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
@@ -161,7 +210,8 @@ public class PartitionEncoder {
                     minCompressionRatio,
                     parquetMetaFd,
                     squashTracker,
-                    seqTxn
+                    seqTxn,
+                    dedupSortVersion
             );
         } finally {
             descriptor.clear();
@@ -327,7 +377,8 @@ public class PartitionEncoder {
             double minCompressionRatio,
             int parquetMetaFd,
             long squashTracker,
-            long seqTxn
+            long seqTxn,
+            long dedupSortVersion
     ) throws CairoException;
 
     static {

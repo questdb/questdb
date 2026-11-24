@@ -3266,7 +3266,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else if (hasSchemaChange) {
                     copyRowGroupWithNullColumns(partitionUpdater, rg, metadata, tableToParquetIdx);
                 } else {
-                    partitionUpdater.copyRowGroup(rg);
+                    // the copy keeps the rows and their order, and with them the dedup version they claim
+                    partitionUpdater.copyRowGroup(rg, parquetMeta.getRowGroupDedupSortVersion(rg));
                 }
                 outputRowOffset += parquetMeta.getRowGroupSize(rg);
             }
@@ -4483,6 +4484,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     // Copies an existing row group to the new file of a parquet rewrite. The copy re-encodes the row
     // group with the current schema when a column changed its type or the file needs a full re-encode,
     // adds null chunks for the columns that the file lacks after a schema change, or copies the bytes.
+    // A copy of the bytes keeps the dedup version that the row group claims, as an in-place update keeps
+    // it for a row group it leaves in place. A copy that changes the schema makes no claim: a column it
+    // drops or reads as NULL may be a key of that version.
     private static void copyRowGroupToRewrite(
             O3ParquetMergeContext ctx,
             ParquetPartitionDecoder partitionDecoder,
@@ -4530,7 +4534,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableToParquetIdx
             );
         } else {
-            partitionUpdater.copyRowGroup(rowGroupIndex);
+            partitionUpdater.copyRowGroup(rowGroupIndex, partitionDecoder.metadata().getRowGroupDedupSortVersion(rowGroupIndex));
         }
         tableWriter.addPhysicallyWrittenRows(rowCount);
     }
@@ -4793,9 +4797,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * The claim is for the rows as a reader decodes them, while the commit orders the values it holds in memory. The
      * two orders are the same when the parquet encoder and decoder give every key back with the bytes it had, as
      * they do for the types listed below: the NULL of each, if it has one, is a single value, which the decoder
-     * restores. FLOAT and DOUBLE are not among them. WAL apply compares their bits as an integer, the encoder stores
-     * every NaN as a NULL and the decoder gives one NaN for a NULL: a NaN with the sign bit set sorts first in memory
-     * and last when decoded. A type that is not listed makes no claim.
+     * restores. FLOAT and DOUBLE are among them although the encoder stores every NaN as a NULL and the decoder gives
+     * one NaN for a NULL: WAL apply compares every NaN as that one NaN. A type that is not listed makes no claim.
      */
     private static long getParquetDedupSortVersion(TableWriter tableWriter) {
         final long commitDedupSortVersion = tableWriter.getCommitDedupSortVersion();
@@ -4809,8 +4812,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (i != timestampIndex && columnType > 0 && metadata.isDedupKey(i)) {
                 final boolean isKeyOrderKept = switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
-                         ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.SYMBOL, ColumnType.IPv4,
-                         ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG,
+                         ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP,
+                         ColumnType.SYMBOL, ColumnType.IPv4, ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT,
+                         ColumnType.GEOLONG,
                          ColumnType.UUID, ColumnType.LONG256, ColumnType.STRING, ColumnType.VARCHAR,
                          ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
                          ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> true;
@@ -4854,6 +4858,41 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return rowGroupIndex == rowGroupIndexHi && parquetMeta.getRowGroupDedupSortVersion(rowGroupIndex) == commitDedupSortVersion
                 ? commitDedupSortVersion
                 : ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+    }
+
+    /**
+     * As {@link #getStoredOrderDedupSortVersion(TableWriter, ParquetMetaFileReader, int, int)}, for a merge whose
+     * index is built: when the stored row groups make no claim, one pass over the merge index checks the key order
+     * of the rows of each timestamp, comparing keys only where timestamps are equal. The row groups claim the
+     * commit's version when the rows are in that order. The dedup key columns at {@code dedupColSinkAddr} describe
+     * the merge.
+     */
+    private static long getStoredOrderDedupSortVersion(
+            TableWriter tableWriter,
+            ParquetMetaFileReader parquetMeta,
+            int rowGroupIndex,
+            int rowGroupIndexHi,
+            long mergeIndexAddr,
+            long mergeRowCount,
+            long dedupColSinkAddr
+    ) {
+        final long storedOrderDedupSortVersion = getStoredOrderDedupSortVersion(tableWriter, parquetMeta, rowGroupIndex, rowGroupIndexHi);
+        if (storedOrderDedupSortVersion != ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET) {
+            return storedOrderDedupSortVersion;
+        }
+        final long commitDedupSortVersion = getParquetDedupSortVersion(tableWriter);
+        if (commitDedupSortVersion == ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET) {
+            return ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+        }
+        // the designated timestamp is not the only key, see getStoredOrderDedupSortVersion()
+        final long unorderedTimestamps = Vect.dedupMergeIndexSortKeys(
+                mergeIndexAddr,
+                mergeRowCount,
+                tableWriter.getDedupCommitAddresses().getColumnCount(),
+                DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
+                false
+        );
+        return unorderedTimestamps == 0 ? commitDedupSortVersion : ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
     }
 
     /**
@@ -5356,7 +5395,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 tableWriter,
                                 decoder.metadata(),
                                 action.rowGroupIndex,
-                                action.rowGroupIndexHi
+                                action.rowGroupIndexHi,
+                                mergeIndexAddr,
+                                ctx.getMergeRowCount(),
+                                dedupColSinkAddr
                         ));
                         ctx.setMergeKeySortPending(false);
                         ctx.keepRowGroupMerge(i, duplicateCount, false);
@@ -5823,12 +5865,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
                     isSkipMode
             );
-            if (dedupRows > rowGroupSize && tableWriter.getCommitDedupSortVersion() != PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET) {
+            if ((dedupRows > rowGroupSize || mergeDedupSortVersion == ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET)
+                    && tableWriter.getCommitDedupSortVersion() != PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET) {
                 // The merge keeps the stored row order and adds the new keys of a timestamp after its rows. Put the
-                // rows of each timestamp in key order, as a native merge does. The new keys may all be past the
-                // partition max, where the UPSERT identity check still compares the index with the stored rows by
-                // position, see isUpsertIdenticalUpToPartitionMax(): an UPSERT first stage of the keys only, which
-                // the check prepares, leaves the pass to sortPendingMergeKeys(), which runs once the check is done.
+                // rows of each timestamp in key order, as a native merge does, when the commit adds a key or when the
+                // stored rows do not claim that order: the merge writes every row again anyway, and the pass sorts
+                // only the timestamps whose rows are out of order. The new keys may all be past the partition max,
+                // where the UPSERT identity check still compares the index with the stored rows by position, see
+                // isUpsertIdenticalUpToPartitionMax(): an UPSERT first stage of the keys only, which the check
+                // prepares, leaves the pass to sortPendingMergeKeys(), which runs once the check is done.
                 if (isKeyColumnsOnly && !isSkipMode) {
                     ctx.setMergeKeySortPending(true);
                 } else {
@@ -8017,7 +8062,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     minCompressionRatio,
                     Files.toOsFd(parquetMetaFd),
                     -1L,
-                    seqTxn
+                    seqTxn,
+                    // the partition holds O3 rows only, in the dedup key order of the commit, see copyO3ToRowGroup()
+                    getParquetDedupSortVersion(tableWriter)
             );
 
             parquetFileSize = ff.length(parquetPath.$());

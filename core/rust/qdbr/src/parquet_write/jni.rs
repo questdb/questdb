@@ -1,6 +1,6 @@
 use super::{compression_from_i64, version_from_i32};
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
-use crate::parquet_metadata::types::SeqTxn;
+use crate::parquet_metadata::types::{SeqTxn, DEDUP_SORT_VERSION_UNSET};
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
 };
@@ -27,6 +27,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *mut ParquetUpdater,
     rg_index: jint,
+    dedup_sort_version: jlong,
 ) {
     let env = &mut env;
     if updater.is_null() {
@@ -36,7 +37,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 
     let parquet_updater = unsafe { &mut *updater };
-    match parquet_updater.copy_row_group(rg_index) {
+    let mut copy = || -> ParquetResult<()> {
+        parquet_updater.copy_row_group(rg_index)?;
+        parquet_updater.set_last_row_group_dedup_sort_version(dedup_sort_version)
+    };
+    match copy() {
         Ok(_) => (),
         Err(mut err) => {
             err.add_context(format!("could not copy row group {rg_index}"));
@@ -643,6 +648,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     parquet_meta_fd: jint,
     squash_tracker: jlong,
     seq_txn: jlong,
+    dedup_sort_version: jlong,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
@@ -770,8 +776,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .map(|i| i as i32)
             .unwrap_or(-1);
 
+        // The caller vouches that every row is in the key order of the dedup version, so every row group is.
+        let dedup_sort_versions = if dedup_sort_version == DEDUP_SORT_VERSION_UNSET {
+            Vec::new()
+        } else {
+            vec![dedup_sort_version; chunked.row_groups().len()]
+        };
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-            crate::parquet_metadata::generate_parquet_metadata(
+            crate::parquet_metadata::convert::generate_parquet_metadata_with_dedup_sort_versions(
                 &col_infos,
                 chunked.row_groups(),
                 designated_ts,
@@ -782,6 +794,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                &dedup_sort_versions,
             )
             .context("generate_parquet_metadata failed")?;
 

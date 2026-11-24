@@ -102,9 +102,25 @@ public class PartitionUpdater implements QuietCloseable {
         commitParquetMeta(ptr, sync);
     }
 
+    /**
+     * Copies row group {@code rowGroupIndex} of the source file as it is, which makes no claim about dedup key order,
+     * see {@link #copyRowGroup(int, long)}.
+     */
     public void copyRowGroup(int rowGroupIndex) {
+        copyRowGroup(rowGroupIndex, ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET);
+    }
+
+    /**
+     * Copies row group {@code rowGroupIndex} of the source file as it is.
+     *
+     * @param dedupSortVersion the dedup version that {@code _pm} records for the copy, see
+     *                         {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: the copy keeps the rows
+     *                         and their order, so the version of the source row group holds for it.
+     *                         {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim.
+     */
+    public void copyRowGroup(int rowGroupIndex, long dedupSortVersion) {
         assert ptr != 0;
-        copyRowGroup(ptr, rowGroupIndex);
+        copyRowGroup(ptr, rowGroupIndex, dedupSortVersion);
     }
 
     /**
@@ -327,7 +343,8 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void copyRowGroup(
             long impl,
-            int rowGroupIndex
+            int rowGroupIndex,
+            long dedupSortVersion
     ) throws CairoException;
 
     private static native void copyRowGroupWithNullColumns(

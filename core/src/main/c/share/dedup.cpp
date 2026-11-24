@@ -346,11 +346,15 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
                     break;
                 }
                 case 4: {
-                    diff = compare_dedup_column_fixed<int32_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    diff = (ColumnType) col_key->column_type == ColumnType::FLOAT
+                           ? compare_dedup_column_fixed<float_key, TIdx>(col_key, l, r, segment_bits, segment_mask)
+                           : compare_dedup_column_fixed<int32_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 8: {
-                    diff = compare_dedup_column_fixed<int64_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    diff = (ColumnType) col_key->column_type == ColumnType::DOUBLE
+                           ? compare_dedup_column_fixed<double_key, TIdx>(col_key, l, r, segment_bits, segment_mask)
+                           : compare_dedup_column_fixed<int64_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 16: {
@@ -957,10 +961,14 @@ inline int compare_merge_index_rows(const dedup_column *keys, int32_t key_count,
                 diff = compare_merge_index_fixed<int16_t>(col, l, r);
                 break;
             case 4:
-                diff = compare_merge_index_fixed<int32_t>(col, l, r);
+                diff = (ColumnType) col->column_type == ColumnType::FLOAT
+                       ? compare_merge_index_fixed<float_key>(col, l, r)
+                       : compare_merge_index_fixed<int32_t>(col, l, r);
                 break;
             case 8:
-                diff = compare_merge_index_fixed<int64_t>(col, l, r);
+                diff = (ColumnType) col->column_type == ColumnType::DOUBLE
+                       ? compare_merge_index_fixed<double_key>(col, l, r)
+                       : compare_merge_index_fixed<int64_t>(col, l, r);
                 break;
             case 16:
                 diff = compare_merge_index_fixed<__int128>(col, l, r);
@@ -1186,6 +1194,15 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case 4: {
+                if ((ColumnType) col_key->column_type == ColumnType::FLOAT) {
+                    return merge_dedup_long_index_int_keys(
+                            src, data_lo, data_hi,
+                            index, index_lo, index_hi,
+                            index_tmp,
+                            *reinterpret_cast<const MergeColumnComparer<float_key> *>(src_keys),
+                            skip_mode
+                    );
+                }
                 return merge_dedup_long_index_int_keys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi,
@@ -1195,6 +1212,15 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case 8: {
+                if ((ColumnType) col_key->column_type == ColumnType::DOUBLE) {
+                    return merge_dedup_long_index_int_keys(
+                            src, data_lo, data_hi,
+                            index, index_lo, index_hi,
+                            index_tmp,
+                            *reinterpret_cast<const MergeColumnComparer<double_key> *>(src_keys),
+                            skip_mode
+                    );
+                }
                 return merge_dedup_long_index_int_keys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi,
@@ -1279,13 +1305,19 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     break;
                 }
                 case 4: {
-                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int32_t> *>(col_key);
-                    diff = comparer(l, r);
+                    if ((ColumnType) col_key->column_type == ColumnType::FLOAT) {
+                        diff = (*reinterpret_cast<const MergeColumnComparer<float_key> *>(col_key))(l, r);
+                    } else {
+                        diff = (*reinterpret_cast<const MergeColumnComparer<int32_t> *>(col_key))(l, r);
+                    }
                     break;
                 }
                 case 8: {
-                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int64_t> *>(col_key);
-                    diff = comparer(l, r);
+                    if ((ColumnType) col_key->column_type == ColumnType::DOUBLE) {
+                        diff = (*reinterpret_cast<const MergeColumnComparer<double_key> *>(col_key))(l, r);
+                    } else {
+                        diff = (*reinterpret_cast<const MergeColumnComparer<int64_t> *>(col_key))(l, r);
+                    }
                     break;
                 }
                 case 16: {
@@ -1374,12 +1406,26 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             skip_mode
                     );
                 case 4:
+                    if ((ColumnType) col_key->column_type == ColumnType::FLOAT) {
+                        return dedup_sorted_timestamp_index_with_keys(
+                                index_in, index_count, index_out, index_temp,
+                                *reinterpret_cast<const SortColumnComparer<float_key> *>(src_keys),
+                                skip_mode
+                        );
+                    }
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int32_t> *>(src_keys),
                             skip_mode
                     );
                 case 8:
+                    if ((ColumnType) col_key->column_type == ColumnType::DOUBLE) {
+                        return dedup_sorted_timestamp_index_with_keys(
+                                index_in, index_count, index_out, index_temp,
+                                *reinterpret_cast<const SortColumnComparer<double_key> *>(src_keys),
+                                skip_mode
+                        );
+                    }
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int64_t> *>(src_keys),
@@ -1444,13 +1490,19 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         break;
                     }
                     case 4: {
-                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int32_t> *>(col_key);
-                        diff = comparer(l, r);
+                        if ((ColumnType) col_key->column_type == ColumnType::FLOAT) {
+                            diff = (*reinterpret_cast<const SortColumnComparer<float_key> *>(col_key))(l, r);
+                        } else {
+                            diff = (*reinterpret_cast<const SortColumnComparer<int32_t> *>(col_key))(l, r);
+                        }
                         break;
                     }
                     case 8: {
-                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int64_t> *>(col_key);
-                        diff = comparer(l, r);
+                        if ((ColumnType) col_key->column_type == ColumnType::DOUBLE) {
+                            diff = (*reinterpret_cast<const SortColumnComparer<double_key> *>(col_key))(l, r);
+                        } else {
+                            diff = (*reinterpret_cast<const SortColumnComparer<int64_t> *>(col_key))(l, r);
+                        }
                         break;
                     }
                     case 16: {

@@ -65,7 +65,7 @@ import java.util.List;
  * on 2024-01-02. The O3 commit updates the parquet file in place or rewrites it, see {@link #setProperties()}.
  * <p>
  * A claim holds for the rows as a reader decodes them. Parquet stores every NaN of a FLOAT or a DOUBLE as a NULL,
- * which decodes as one NaN, while WAL apply orders the NaNs by their bits: no row group claims a version when a
+ * which decodes as one NaN, and WAL apply compares every NaN as that one NaN: a row group claims a version when a
  * dedup key has such a type, see the tests of {@code DOUBLE} and {@code FLOAT} keys.
  */
 @RunWith(Parameterized.class)
@@ -147,19 +147,21 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
                     cur | 3=7/0/4 3=9/0/3 4=1/0/7 5=1/0/8
                     """);
 
-            // A replacement at the tied timestamp merges both row groups again and keeps the stored order. The
-            // merge splits its rows wherever its row count puts the boundary, so the claims of the row groups it
-            // read do not carry over to the ones it writes.
+            // A replacement at the tied timestamp merges both row groups again. The merge splits its rows wherever
+            // its row count puts the boundary, so the claims of the row groups it read do not carry over to the ones
+            // it writes: the merge checks the key order of all its rows, and claims the commit's version.
             insert("('2024-01-01T03:00:00.000000Z', 6, 'b', 200)");
             assertRowGroups("""
-                    - | 1=1/0/1 2=1/0/2 3=3/0/6 3=5/0/5 3=6/0/200
-                    - | 3=7/0/4 3=9/0/3 4=1/0/7 5=1/0/8
+                    cur | 1=1/0/1 2=1/0/2 3=3/0/6 3=5/0/5 3=6/0/200
+                    cur | 3=7/0/4 3=9/0/3 4=1/0/7 5=1/0/8
                     """);
         });
     }
 
     @Test
-    public void testDedupSettingChangeLeavesNoCurrentClaim() throws Exception {
+    public void testCopyWithSchemaChangeMakesNoClaim() throws Exception {
+        // A rewrite that copies a row group into a new schema makes no claim for the copy: a column that the copy
+        // drops or reads as NULL may be a key of the version the row group claims. The merged row group claims.
         setProperties();
         assertMemoryLeak(() -> {
             createTable(STORED_ROWS);
@@ -167,11 +169,29 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
             insert("('2024-01-01T01:00:00.000000Z', 5, 'b', 100)");
             assertRowGroups("cur | 1=3/0/4 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
 
-            // Other keys are another dedup version. A replacement keeps the stored order, which the row group
-            // claimed under the old version only: the row group it writes makes no claim.
+            execute("ALTER TABLE pt ADD COLUMN x INT");
+            insert("('2024-01-01T04:00:00.000000Z', 3, 'b', 200, 1)");
+            assertRowGroups("""
+                    - | 1=3/0/4 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1
+                    cur | 3=6/0/6 3=8/0/5 4=2/0/8 4=3/0/200 4=4/0/7
+                    """);
+        });
+    }
+
+    @Test
+    public void testDedupSettingChangeClaimsNewVersion() throws Exception {
+        setProperties();
+        assertMemoryLeak(() -> {
+            createTable(STORED_ROWS);
+            enableDedup("UPSERT KEYS(ts, k, s)");
+            insert("('2024-01-01T01:00:00.000000Z', 5, 'b', 100)");
+            assertRowGroups("cur | 1=3/0/4 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
+
+            // Other keys are another dedup version, which the row group does not claim. The merge of a replacement
+            // puts the rows in the order of the new keys, which they already have, and claims the new version.
             enableDedup("UPSERT KEYS(ts, k)");
             insert("('2024-01-01T01:00:00.000000Z', 5, 'b', 200)");
-            assertRowGroups("- | 1=3/0/4 1=5/0/200 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
+            assertRowGroups("cur | 1=3/0/4 1=5/0/200 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
 
             // a new key puts the rows in the order of the new keys
             insert("('2024-01-01T01:00:00.000000Z', 4, 'b', 300)");
@@ -190,52 +210,33 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDoubleKeyMergeWithNewKeyMakesNoClaim() throws Exception {
-        assertFloatingPointKeyMergeWithNewKeyMakesNoClaim("DOUBLE");
+    public void testDoubleKeyMergeWithNewKeyClaimsCommitVersion() throws Exception {
+        assertFloatingPointKeyMergeWithNewKeyClaimsCommitVersion("DOUBLE");
     }
 
     @Test
-    public void testDoubleKeyNewRowGroupFromO3RowsMakesNoClaim() throws Exception {
-        assertFloatingPointKeyNewRowGroupFromO3RowsMakesNoClaim("DOUBLE", NEGATED_NULL_DOUBLE_BITS);
+    public void testDoubleKeyNewRowGroupFromO3RowsClaimsCommitVersion() throws Exception {
+        assertFloatingPointKeyNewRowGroupFromO3RowsClaimsCommitVersion("DOUBLE", NEGATED_NULL_DOUBLE_BITS);
     }
 
     @Test
-    public void testDoubleKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxMakesNoClaim() throws Exception {
-        assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxMakesNoClaim("DOUBLE");
+    public void testDoubleKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim() throws Exception {
+        assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim("DOUBLE");
     }
 
     @Test
-    public void testDroppedDoubleKeyNoLongerStopsTheClaim() throws Exception {
-        // d is a dedup key of a type whose order parquet does not keep: no row group claims a version while the
-        // table has it. Once the column is dropped, the commit orders its rows by the keys that are left.
-        setProperties();
-        assertMemoryLeak(() -> {
-            createTable(STORED_ROWS);
-            execute("ALTER TABLE pt ADD COLUMN d DOUBLE");
-            enableDedup("UPSERT KEYS(ts, k, s, d)");
-            insert("('2024-01-01T01:00:00.000000Z', 5, 'b', 100, 1.5)");
-            assertRowGroups("- | 1=3/0/4 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
-
-            execute("ALTER TABLE pt DROP COLUMN d");
-            drainWalQueue();
-            insert("('2024-01-01T01:00:00.000000Z', 4, 'b', 200)");
-            assertRowGroups("cur | 1=3/0/4 1=4/0/200 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
-        });
+    public void testFloatKeyMergeWithNewKeyClaimsCommitVersion() throws Exception {
+        assertFloatingPointKeyMergeWithNewKeyClaimsCommitVersion("FLOAT");
     }
 
     @Test
-    public void testFloatKeyMergeWithNewKeyMakesNoClaim() throws Exception {
-        assertFloatingPointKeyMergeWithNewKeyMakesNoClaim("FLOAT");
+    public void testFloatKeyNewRowGroupFromO3RowsClaimsCommitVersion() throws Exception {
+        assertFloatingPointKeyNewRowGroupFromO3RowsClaimsCommitVersion("FLOAT", NEGATED_NULL_FLOAT_BITS);
     }
 
     @Test
-    public void testFloatKeyNewRowGroupFromO3RowsMakesNoClaim() throws Exception {
-        assertFloatingPointKeyNewRowGroupFromO3RowsMakesNoClaim("FLOAT", NEGATED_NULL_FLOAT_BITS);
-    }
-
-    @Test
-    public void testFloatKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxMakesNoClaim() throws Exception {
-        assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxMakesNoClaim("FLOAT");
+    public void testFloatKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim() throws Exception {
+        assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim("FLOAT");
     }
 
     @Test
@@ -286,6 +287,10 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
             assertKeyTypeClaimsCommitVersion("CHAR", "'\uAC00'", "'a'", "'b'", "'\u4E2D'");
             assertKeyTypeClaimsCommitVersion("INT", "NULL", "-5", "3", "7");
             assertKeyTypeClaimsCommitVersion("LONG", "NULL", "-5", "3", "7");
+            // a FLOAT or DOUBLE compares its bits as a signed integer, so -1 sorts before -5, and every NaN, which is
+            // NULL, as the one NaN, which sorts after the numbers
+            assertKeyTypeClaimsCommitVersion("FLOAT", "-1.0", "-5.0", "3.0", "NULL");
+            assertKeyTypeClaimsCommitVersion("DOUBLE", "-1.0", "-5.0", "3.0", "NULL");
             assertKeyTypeClaimsCommitVersion("DATE", "NULL", "'1969-12-31T00:00:00.000Z'", "'1970-01-02T00:00:00.000Z'", "'2024-01-01T00:00:00.000Z'");
             assertKeyTypeClaimsCommitVersion("TIMESTAMP", "NULL", "'1969-12-31T00:00:00.000000Z'", "'1970-01-02T00:00:00.000000Z'", "'2024-01-01T00:00:00.000000Z'");
             assertKeyTypeClaimsCommitVersion("TIMESTAMP_NS", "NULL", "'1969-12-31T00:00:00.000000Z'", "'1970-01-02T00:00:00.000000Z'", "'2024-01-01T00:00:00.000000Z'");
@@ -435,6 +440,21 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNewPartitionFromO3RowsClaimsCommitVersion() throws Exception {
+        // A FORMAT PARQUET table writes a new partition from the rows of the commit, in the key order WAL apply gave
+        // them: every row group claims the commit's version.
+        setProperties();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (ts " + timestampType.getTypeName() + ", k LONG, s SYMBOL, v INT) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL DEDUP UPSERT KEYS(ts, k, s)");
+            insert(STORED_ROWS);
+            assertRowGroups("""
+                    cur | 1=3/0/4 1=7/0/2 1=7/1/3 1=9/0/1
+                    cur | 3=6/0/6 3=8/0/5 4=2/0/8 4=4/0/7
+                    """);
+        });
+    }
+
+    @Test
     public void testNewRowGroupFromO3RowsClaimsCommitVersion() throws Exception {
         // The O3 rows at 02:00 lie between the two row groups and the ones at 05:00 after the last one: each run
         // becomes a row group of its own, which holds the commit's rows in the key order WAL apply gave them.
@@ -554,16 +574,37 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplacementsKeepStoredOrderWithoutClaim() throws Exception {
+    public void testReplacementsPutRowGroupWithoutClaimInKeyOrder() throws Exception {
         setProperties();
         assertMemoryLeak(() -> {
             createTable(STORED_ROWS);
             enableDedup("UPSERT KEYS(ts, k, s)");
-            // the replacements keep the stored order, which is no key order
+            // the stored rows are in no key order and claim nothing: the merges put them in key order, as a native
+            // merge does, and claim the commit's version
             insert("('2024-01-01T01:00:00.000000Z', 7, 'a', 100), ('2024-01-01T04:00:00.000000Z', 2, 'b', 101)");
             assertRowGroups("""
-                    - | 1=9/0/1 1=7/0/2 1=7/1/100 1=3/0/4
-                    - | 3=8/0/5 3=6/0/6 4=4/0/7 4=2/0/101
+                    cur | 1=3/0/4 1=7/0/2 1=7/1/100 1=9/0/1
+                    cur | 3=6/0/6 3=8/0/5 4=2/0/101 4=4/0/7
+                    """);
+            assertUpdateMode();
+        });
+    }
+
+    @Test
+    public void testRewriteCopyKeepsClaim() throws Exception {
+        // the second commit merges into the second row group only: an in-place update leaves the first one in
+        // place, a rewrite copies it, and either way it keeps its claim
+        setProperties();
+        assertMemoryLeak(() -> {
+            createTable(STORED_ROWS);
+            enableDedup("UPSERT KEYS(ts, k, s)");
+            insert("('2024-01-01T01:00:00.000000Z', 5, 'b', 100)");
+            assertRowGroups("cur | 1=3/0/4 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1\n" + STORED_ROW_GROUP_1);
+
+            insert("('2024-01-01T04:00:00.000000Z', 3, 'b', 200)");
+            assertRowGroups("""
+                    cur | 1=3/0/4 1=5/0/100 1=7/0/2 1=7/1/3 1=9/0/1
+                    cur | 3=6/0/6 3=8/0/5 4=2/0/8 4=3/0/200 4=4/0/7
                     """);
             assertUpdateMode();
         });
@@ -599,10 +640,36 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
             assertUpdateMode();
 
             // An in-place update leaves the second row group and its claim in place. A rewrite copies the row group
-            // and writes no claim for the copy.
+            // and its claim.
             insert("('2024-01-01T01:00:00.000000Z', 0, 'a', 200)");
             assertRowGroups("cur | 1=0/1/200 1=0/1/200 1=0/1/200 1=0/1/200\n"
-                    + (isRewrite ? "-" : "cur") + " | 3=0/0/100 3=0/0/100 3=0/0/101 4=4/0/7 4=2/0/8\n");
+                    + "cur | 3=0/0/100 3=0/0/100 3=0/0/101 4=4/0/7 4=2/0/8\n");
+        });
+    }
+
+    @Test
+    public void testUpsertOfIdenticalRowsInKeyOrderWithRowsPastPartitionMaxClaimsCommitVersion() throws Exception {
+        // As testUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsStoredOrderWithoutClaim, with the stored rows of
+        // the last row group in key order although they claim nothing: the merge keeps them as they are, checks
+        // their key order and claims the commit's version.
+        setProperties();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            createSmallLastRowGroupTable("""
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1),
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1)
+                    """);
+            enableDedup("UPSERT KEYS(ts, k, s)");
+            assertRowGroups(firstRowGroupOf16() + "- | 5=7/0/50/1 5=9/0/50/1\n");
+
+            insert("""
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1),
+                    ('2024-01-01T06:00:00.000000Z', 2, 'b', 200, 1),
+                    ('2024-01-01T06:00:00.000000Z', 1, 'b', 201, 1)
+                    """);
+            assertRowGroups(firstRowGroupOf16() + "cur | 5=7/0/50/1 5=9/0/50/1 6=1/0/201/1 6=2/0/200/1\n");
+            assertUpdateMode();
         });
     }
 
@@ -733,6 +800,22 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
         });
     }
 
+    // Compares two fixed-size values of the given size as WAL apply compares them: as signed integers.
+    private static int compareFixedSizeKeys(int size, long addr1, long addr2, int columnType) {
+        return switch (size) {
+            case Byte.BYTES -> Byte.compare(Unsafe.getUnsafe().getByte(addr1), Unsafe.getUnsafe().getByte(addr2));
+            case Short.BYTES -> Short.compare(Unsafe.getUnsafe().getShort(addr1), Unsafe.getUnsafe().getShort(addr2));
+            case Integer.BYTES -> Integer.compare(Unsafe.getUnsafe().getInt(addr1), Unsafe.getUnsafe().getInt(addr2));
+            case Long.BYTES -> Long.compare(Unsafe.getUnsafe().getLong(addr1), Unsafe.getUnsafe().getLong(addr2));
+            case 2 * Long.BYTES -> compareInt128(addr1, addr2);
+            case 4 * Long.BYTES -> {
+                final int diff = compareInt128(addr1 + 2 * Long.BYTES, addr2 + 2 * Long.BYTES);
+                yield diff != 0 ? diff : compareInt128(addr1, addr2);
+            }
+            default -> throw new AssertionError("unexpected column type: " + ColumnType.nameOf(columnType));
+        };
+    }
+
     // Compares the 16 bytes at the two addresses as WAL apply compares a 16-byte dedup key: as signed 128-bit
     // integers, the low long first.
     private static int compareInt128(long addr1, long addr2) {
@@ -741,7 +824,8 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
     }
 
     // Compares the values of a dedup key column in two rows of a decoded row group as WAL apply compares them. A
-    // fixed-size value is a signed integer of its size, whatever its type: the bits of a FLOAT or a DOUBLE too.
+    // fixed-size value is a signed integer of its size, whatever its type: the bits of a FLOAT or a DOUBLE too, with
+    // every NaN as the one NaN.
     // WAL apply takes 32 bytes as two signed 128-bit integers, the high one last. A var-size value compares by its
     // length, -1 for NULL, and then by its bytes.
     private static int compareKeys(RowGroupBuffers buffers, int chunk, int columnType, int row1, int row2) {
@@ -763,17 +847,16 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
         final int size = ColumnType.sizeOf(columnType);
         final long addr1 = addr + (long) row1 * size;
         final long addr2 = addr + (long) row2 * size;
-        return switch (size) {
-            case Byte.BYTES -> Byte.compare(Unsafe.getUnsafe().getByte(addr1), Unsafe.getUnsafe().getByte(addr2));
-            case Short.BYTES -> Short.compare(Unsafe.getUnsafe().getShort(addr1), Unsafe.getUnsafe().getShort(addr2));
-            case Integer.BYTES -> Integer.compare(Unsafe.getUnsafe().getInt(addr1), Unsafe.getUnsafe().getInt(addr2));
-            case Long.BYTES -> Long.compare(Unsafe.getUnsafe().getLong(addr1), Unsafe.getUnsafe().getLong(addr2));
-            case 2 * Long.BYTES -> compareInt128(addr1, addr2);
-            case 4 * Long.BYTES -> {
-                final int diff = compareInt128(addr1 + 2 * Long.BYTES, addr2 + 2 * Long.BYTES);
-                yield diff != 0 ? diff : compareInt128(addr1, addr2);
-            }
-            default -> throw new AssertionError("unexpected column type: " + ColumnType.nameOf(columnType));
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.FLOAT -> Integer.compare(
+                    Float.floatToIntBits(Unsafe.getUnsafe().getFloat(addr1)),
+                    Float.floatToIntBits(Unsafe.getUnsafe().getFloat(addr2))
+            );
+            case ColumnType.DOUBLE -> Long.compare(
+                    Double.doubleToLongBits(Unsafe.getUnsafe().getDouble(addr1)),
+                    Double.doubleToLongBits(Unsafe.getUnsafe().getDouble(addr2))
+            );
+            default -> compareFixedSizeKeys(size, addr1, addr2, columnType);
         };
     }
 
@@ -786,7 +869,7 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
         return sb.append('\n').toString();
     }
 
-    // the first row group of the table of assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxMakesNoClaim()
+    // the first row group of the table of assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim()
     private static String floatingPointKeyFirstRowGroupOf16() {
         final StringBuilder sb = new StringBuilder("- |");
         for (int i = 1; i <= 16; i++) {
@@ -858,9 +941,9 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
         }
     }
 
-    // A merge with a new key puts its rows in key order, the NaN with the sign bit set first, as a negative integer.
-    // Parquet stores that NaN as a NULL, which decodes as the NaN that sorts last.
-    private void assertFloatingPointKeyMergeWithNewKeyMakesNoClaim(String keyType) throws Exception {
+    // A merge with a new key puts its rows in key order. The NaN with the sign bit set compares as the one NaN, which
+    // sorts last, and decodes as that NaN: parquet stores it as a NULL.
+    private void assertFloatingPointKeyMergeWithNewKeyClaimsCommitVersion(String keyType) throws Exception {
         setProperties();
         assertMemoryLeak(() -> {
             createFloatingPointKeyTable(keyType, FLOATING_POINT_KEY_STORED_ROWS);
@@ -869,15 +952,14 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
 
             // the negated NULL is a new key at 01:00, where the row group holds the keys 4 and 2
             insertNegatedKeys("('2024-01-01T01:00:00.000000Z', NULL, 100, 1)");
-            assertRowGroups("- | 1=100/1 1=2/1 1=1/1 2=4/1 2=3/1\n" + FLOATING_POINT_KEY_STORED_ROW_GROUP_1);
+            assertRowGroups("cur | 1=2/1 1=1/1 1=100/1 2=4/1 2=3/1\n" + FLOATING_POINT_KEY_STORED_ROW_GROUP_1);
             assertUpdateMode();
         });
     }
 
     // O3 rows past the last row group become a row group of their own, in the key order WAL apply gave them: the
-    // NaN with the sign bit set first, as a negative integer. Parquet stores that NaN as a NULL, which decodes as
-    // the NaN that sorts last.
-    private void assertFloatingPointKeyNewRowGroupFromO3RowsMakesNoClaim(String keyType, long negatedNullBits) throws Exception {
+    // NaN with the sign bit set compares as the one NaN, which sorts last, and decodes as that NaN.
+    private void assertFloatingPointKeyNewRowGroupFromO3RowsClaimsCommitVersion(String keyType, long negatedNullBits) throws Exception {
         setProperties();
         assertMemoryLeak(() -> {
             createFloatingPointKeyTable(keyType, FLOATING_POINT_KEY_STORED_ROWS);
@@ -890,16 +972,15 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
 
             // the keys 1 and the negated NULL at 05:00
             insertNegatedKeys("('2024-01-01T05:00:00.000000Z', -1, 100, 1), ('2024-01-01T05:00:00.000000Z', NULL, 101, 1)");
-            assertRowGroups(FLOATING_POINT_KEY_STORED_ROW_GROUP_0 + FLOATING_POINT_KEY_STORED_ROW_GROUP_1 + "- | 5=101/1 5=100/1\n");
+            assertRowGroups(FLOATING_POINT_KEY_STORED_ROW_GROUP_0 + FLOATING_POINT_KEY_STORED_ROW_GROUP_1 + "cur | 5=100/1 5=101/1\n");
             assertUpdateMode();
         });
     }
 
     // As testUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim(): the merge keeps the stored rows of the last
     // row group in their stored order and adds the O3 rows past the partition max after them, in the key order WAL
-    // apply gave them, the NaN with the sign bit set first. Parquet stores that NaN as a NULL, which decodes as the
-    // NaN that sorts last.
-    private void assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxMakesNoClaim(String keyType) throws Exception {
+    // apply gave them, the NaN with the sign bit set last: it compares as the one NaN, which it decodes as.
+    private void assertFloatingPointKeyUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsClaim(String keyType) throws Exception {
         setProperties();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
         assertMemoryLeak(() -> {
@@ -920,7 +1001,7 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
                     ('2024-01-01T06:00:00.000000Z', -1, 200, 1),
                     ('2024-01-01T06:00:00.000000Z', NULL, 201, 1)
                     """);
-            assertRowGroups(floatingPointKeyFirstRowGroupOf16() + "- | 5=50/1 5=100/1 5=50/1 6=201/1 6=200/1\n");
+            assertRowGroups(floatingPointKeyFirstRowGroupOf16() + "cur | 5=50/1 5=100/1 5=50/1 6=200/1 6=201/1\n");
             assertUpdateMode();
         });
     }
