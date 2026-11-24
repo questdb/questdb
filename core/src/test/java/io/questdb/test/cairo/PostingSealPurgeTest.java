@@ -1627,6 +1627,73 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         });
     }
 
+    // A one-shot build never queues the purge of its live generation; removing that generation would break the index.
+    @Test
+    public void testRemoveSupersededGenerationsRejectsHeadPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "headpurge", COLUMN_NAME_TXN_NONE)) {
+                final long supersededSealTxn = sealOneGeneration(writer);
+                writer.scheduleHeadPurgeForTesting();
+                try {
+                    writer.removeSupersededGenerations();
+                    fail("the purge of the live generation must trip the assertion");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "superseded generation is the live chain head [sealTxn=" + (supersededSealTxn + 1) + ']');
+                }
+                final int plen = path.size();
+                assertTrue(configuration.getFilesFacade().exists(
+                        PostingIndexUtils.valueFileName(path.trimTo(plen), "headpurge", COLUMN_NAME_TXN_NONE, supersededSealTxn + 1)));
+            }
+        });
+    }
+
+    // The value file of the superseded generation goes, its cover file stays: the purge must still find the cover file.
+    @Test
+    public void testRemoveSupersededGenerationsKeepsPurgeWhenCoverUnlinkFails() throws Exception {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (Utf8s.containsAscii(name, ".pc0.")) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final long colRows = 8;
+            final long colAddr = Unsafe.malloc(colRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "lockedcover", COLUMN_NAME_TXN_NONE)) {
+                Unsafe.setMemory(colAddr, colRows * Integer.BYTES, (byte) 0);
+                writer.configureCovering(
+                        new long[]{colAddr}, new long[]{0L},
+                        new int[]{2}, new int[]{0},
+                        new int[]{ColumnType.INT}, 1
+                );
+                final long supersededSealTxn = sealOneGeneration(writer);
+                final int plen = path.size();
+                final LPSZ supersededCoverFile = PostingIndexUtils.coverDataFileName(
+                        path, "lockedcover", 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn);
+                assertTrue(ff.exists(supersededCoverFile));
+                path.trimTo(plen);
+
+                writer.removeSupersededGenerations();
+                assertEquals(1, writer.getPendingPurgesSizeForTesting());
+                assertEquals(supersededSealTxn, writer.getPendingPurgeSealTxnForTesting(0));
+                assertFalse(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "lockedcover", COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(
+                        path.trimTo(plen), "lockedcover", 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                // the sealed generation stays
+                assertTrue(ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "lockedcover", COLUMN_NAME_TXN_NONE, supersededSealTxn + 1)));
+                assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(
+                        path.trimTo(plen), "lockedcover", 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn + 1)));
+            } finally {
+                Unsafe.free(colAddr, colRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
     @Test
     public void testRemoveSupersededGenerationsKeepsPurgeWhenUnlinkFails() throws Exception {
         final boolean[] isFailing = {true};

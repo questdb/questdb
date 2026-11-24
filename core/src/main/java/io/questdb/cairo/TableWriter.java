@@ -12538,7 +12538,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
 
                 indexWriter.setMaxValue(indexRowCount - 1);
                 indexer.seal();
-                // Only the ADD INDEX build: the O3/squash covering reseal runs while readers may hold the files.
+                // Not the O3/squash covering reseal, which runs while readers may hold the files. The ADD INDEX build
+                // and the parquet rewrite reindex build an index no reader opened, the latter into a new partition
+                // directory that no _txn names yet.
                 if (allowDestructiveRecovery) {
                     indexWriter.removeSupersededGenerations();
                 }

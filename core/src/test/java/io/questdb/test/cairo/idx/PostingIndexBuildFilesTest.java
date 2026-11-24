@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.idx;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -97,6 +98,25 @@ public class PostingIndexBuildFilesTest extends AbstractCairoTest {
         });
     }
 
+    // The parquet rewrite reindexes every indexed column of a parquet partition into a new directory version.
+    @Test
+    public void testForceReindexParquet() throws Exception {
+        // Under ADAPTIVE the rewrite's seal waits for the save point, and the purge deletes the superseded generation.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createTable(true, "BYPASS WAL");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01', '1970-01-02'");
+            final List<Path> parquetPartitions = partitionDirs();
+            execute("ALTER TABLE t FORCE REINDEX PARQUET");
+            final List<Path> partitions = partitionDirs();
+            for (int i = 0; i < 2; i++) {
+                Assert.assertNotEquals("the reindex wrote a new directory version", parquetPartitions.get(i), partitions.get(i));
+            }
+            assertOneGenerationPerPartition(DAYS);
+            assertIndexMatchesScan();
+        });
+    }
+
     @Test
     public void testReindex() throws Exception {
         assertMemoryLeak(() -> {
@@ -118,11 +138,7 @@ public class PostingIndexBuildFilesTest extends AbstractCairoTest {
     }
 
     private void assertOneGenerationPerPartition(int partitionCount) throws IOException {
-        final TableToken token = engine.verifyTableName("t");
-        final List<Path> partitions = new ArrayList<>();
-        try (Stream<Path> paths = Files.list(Paths.get(root, token.getDirName()))) {
-            paths.filter(p -> Files.isDirectory(p) && p.getFileName().toString().startsWith("1970-")).forEach(partitions::add);
-        }
+        final List<Path> partitions = partitionDirs();
         Assert.assertEquals(partitions.toString(), partitionCount, partitions.size());
         for (Path partition : partitions) {
             final List<String> valueFiles = new ArrayList<>();
@@ -167,5 +183,15 @@ public class PostingIndexBuildFilesTest extends AbstractCairoTest {
 
     private String includeClause() {
         return isCovering ? " INCLUDE (c0, c1, c2)" : "";
+    }
+
+    // The partition directories of t, in partition order.
+    private List<Path> partitionDirs() throws IOException {
+        final TableToken token = engine.verifyTableName("t");
+        final List<Path> partitions = new ArrayList<>();
+        try (Stream<Path> paths = Files.list(Paths.get(root, token.getDirName()))) {
+            paths.filter(p -> Files.isDirectory(p) && p.getFileName().toString().startsWith("1970-")).sorted().forEach(partitions::add);
+        }
+        return partitions;
     }
 }
