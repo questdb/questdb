@@ -186,7 +186,7 @@ stages:
           jobName: RunContinuousSoak
           displayName: "continuous soak"
           # Exclude every dedicated schedule and manual durability run from the soak.
-          condition: and(ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'), ne(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), ne('${{ parameters.forceDurability }}', 'true'))
+          condition: and(succeeded(), ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'), ne(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), ne('${{ parameters.forceDurability }}', 'true'))
           timeoutInMinutes: 90
           testSets:
             hetzner:
@@ -297,7 +297,7 @@ stages:
         parameters:
           jobName: RunAdaptiveCrashNightly
           displayName: "adaptive crash nightly"
-          condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+          condition: and(succeeded(), eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'))
           timeoutInMinutes: 180
           testTimeoutInMinutes: 165
           artifactNameSuffix: "-$(System.JobName)"
@@ -306,7 +306,7 @@ stages:
               includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
               excludeTests: ""
             crash_sweeps:
-              includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java,**/cairo/crash/AdaptiveRowExpiryCrashSweepTest.java"
+              includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveQwpCommitBatchCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java,**/cairo/crash/AdaptiveRowExpiryCrashSweepTest.java"
               excludeTests: ""
             soak_self_check:
               includeTests: "**/cairo/crash/AdaptiveCrashSweepSelfCheckTest.java,**/cairo/crash/AdaptiveSoakCrashTest.java"
@@ -324,7 +324,7 @@ stages:
         parameters:
           jobName: RunFullSuiteNightly
           displayName: "full suite nightly"
-          condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+          condition: and(succeeded(), eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'))
           timeoutInMinutes: 330
           testTimeoutInMinutes: 315
           artifactNameSuffix: "-$(System.JobName)"
@@ -366,7 +366,7 @@ stages:
         # for a manual queue, so clicking Run cannot boot a VM by accident and forceDurability
         # is the deliberate way in. A boolean parameter interpolates as "True"/"False", which
         # is safe in a condition() but not in bash -- the window gate below tests both.
-        condition: or(eq(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), eq('${{ parameters.forceDurability }}', 'true'))
+        condition: and(succeeded(), or(eq(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), eq('${{ parameters.forceDurability }}', 'true')))
         workspace:
           clean: all
         pool:

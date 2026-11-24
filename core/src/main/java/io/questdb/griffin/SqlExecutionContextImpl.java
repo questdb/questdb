@@ -99,6 +99,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private SqlExecutionResources executionResources;
     private CharSequence expiryMaterializingViewName;
     private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
@@ -106,6 +107,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
     private boolean isMetadataProbe;
+    private boolean isViewCompile;
+    private boolean isViewMetadataSubquery;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -327,6 +330,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public Decimal64 getDecimal64() {
         return decimal64;
+    }
+
+    @Override
+    public @Nullable SqlExecutionResources getExecutionResources() {
+        return executionResources;
     }
 
     @Override
@@ -557,6 +565,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isViewCompile() {
+        return isViewCompile;
+    }
+
+    @Override
+    public boolean isViewMetadataSubquery() {
+        return isViewMetadataSubquery;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return false;
     }
@@ -734,6 +752,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setExecutionResources(@Nullable SqlExecutionResources resources) {
+        this.executionResources = resources;
+    }
+
+    @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
     }
@@ -828,6 +851,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             // Route all authorization through a no-op view of the security context.
             validationSecurityContext = securityContext.asValidationContext();
         }
+    }
+
+    @Override
+    public void setViewCompile(boolean value) {
+        isViewCompile = value;
+    }
+
+    @Override
+    public void setViewMetadataSubquery(boolean value) {
+        isViewMetadataSubquery = value;
     }
 
     @Override
@@ -949,8 +982,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         setLiveViewCompile(false);
         this.tableFunctionView = null;
         isMetadataProbe = false;
+        isViewCompile = false;
+        isViewMetadataSubquery = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
+        this.executionResources = null;
         this.memoryTracker = null;
         this.queryRegistryOwnerId = -1;
         // Defensive: a query reusing this per-connection context must never inherit a

@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -40,7 +42,8 @@ import org.junit.Test;
 /**
  * Durability of the partition rebuilds the compaction job runs off a reader and the writer swaps in: the parquet
  * conversion of a logical partition ({@code swapMergedLogicalPartition}) and the parquet copy beside a native
- * partition ({@code installGeneratedParquet}). They hold the barriers {@code CONVERT PARTITION TO PARQUET} holds:
+ * partition ({@code installGeneratedParquet}), and of the writer's own parquet rebuild
+ * ({@code compactParquetPartition}). They hold the barriers {@code CONVERT PARTITION TO PARQUET} holds:
  * under SYNC each name they create is durable before the {@code _txn} that names it, and a failed flush under SYNC
  * or ADAPTIVE poisons the engine. Under ADAPTIVE a crash before the next save point rewinds to a save point that
  * still names the native partition, which must still read back.
@@ -116,6 +119,63 @@ public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest 
         assertFailStop(true, true, new SyncFailureFacade("installGeneratedParquet", false));
     }
 
+    @Test
+    public void testSyncWriterParquetRebuildFailedDataFsyncIsFailStop() throws Exception {
+        assertWriterRebuildFailStop(new SyncFailureFacade("compactParquetPartition", false));
+    }
+
+    @Test
+    public void testSyncWriterParquetRebuildFailedTxnMsyncIsFailStop() throws Exception {
+        assertWriterRebuildFailStop(new SyncFailureFacade("publishCompactedParquetPartition", true));
+    }
+
+    @Test
+    public void testSyncWriterParquetRebuildSurvivesCrash() throws Exception {
+        for (String indexClause : INDEX_CLAUSES) {
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            runWithCrashFacade(() -> {
+                final TableToken token = createNotCompactParquetTable(indexClause);
+                final long sourceNameTxn;
+                try (TableReader reader = engine.getReader(token)) {
+                    sourceNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                }
+                markDurableBaseline();
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                try (TableWriter writer = engine.getWriter(token, "test")) {
+                    Assert.assertTrue(writer.compactParquetPartition(0));
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                recoverAfterCrash(new TableToken[]{token});
+                Assert.assertFalse("the table must not be suspended", anyTableSuspended(token));
+                try (TableReader reader = engine.getReader(token)) {
+                    Assert.assertNotEquals("the commit that named the rebuild must survive", sourceNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                }
+                final boolean isCovering = indexClause.contains("INCLUDE");
+                assertQuery("SELECT ts, s, v FROM x WHERE ts IN '2024-01-01'").timestamp("ts").returns("""
+                        ts\ts\tv
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-01T01:00:00.000000Z\tb\t4.0
+                        2024-01-01T02:00:00.000000Z\ta\t5.0
+                        """);
+                assertQuery("SELECT ts, v FROM x WHERE ts IN '2024-01-01' AND s = 'a'")
+                        .timestamp("ts")
+                        .supportsRandomAccess(!isCovering)
+                        .expectSize(isCovering)
+                        .withPlanContaining("on: s")
+                        .returns("""
+                                ts\tv
+                                2024-01-01T00:00:00.000000Z\t1.0
+                                2024-01-01T02:00:00.000000Z\t5.0
+                                """);
+                execute("DROP TABLE x");
+                drainWalQueue();
+                releaseEngineHandles();
+            });
+        }
+    }
+
     private static void assertFirstDayParquet(boolean expected) {
         try (TableReader reader = engine.getReader("x")) {
             final TxReader tx = reader.getTxFile();
@@ -181,6 +241,53 @@ public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest 
             Assert.assertEquals("the injected failure must have been reached", 1, ff.failureCount);
             Assert.assertTrue("a failed data sync under SYNC must poison the engine", isPoisoned);
         });
+    }
+
+    private void assertWriterRebuildFailStop(SyncFailureFacade ff) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        assertMemoryLeak(ff, () -> {
+            final TableToken token = createNotCompactParquetTable("INDEX");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            boolean isDistressed = false;
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                ff.isArmed = true;
+                try {
+                    writer.compactParquetPartition(0);
+                    Assert.fail("the injected failure must surface");
+                } catch (CairoError | CairoException expected) {
+                    isDistressed = writer.isDistressed();
+                } finally {
+                    ff.isArmed = false;
+                }
+            }
+            final boolean isPoisoned = engine.isDurabilityFailed();
+            engine.resetDurabilityFailure();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            Assert.assertEquals("the injected failure must have been reached", 1, ff.failureCount);
+            Assert.assertTrue("the writer must not go on after a failed flush", isDistressed);
+            Assert.assertTrue("a failed data sync under SYNC must poison the engine", isPoisoned);
+        });
+    }
+
+    private TableToken createNotCompactParquetTable(String indexClause) throws Exception {
+        execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL " + indexClause + ", v DOUBLE, w LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0, 10),
+                    ('2024-01-01T01:00:00.000000Z', 'b', 4.0, 40),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 5.0, 50),
+                    ('2024-01-02T00:00:00.000000Z', 'b', 2.0, 20),
+                    ('2024-01-03T00:00:00.000000Z', 'a', 3.0, 30)
+                """);
+        drainWalQueue();
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        // The file keeps LONG, which makes the partition not compact.
+        execute("ALTER TABLE x ALTER COLUMN w TYPE INT");
+        drainWalQueue();
+        return engine.verifyTableName("x");
     }
 
     private void assertRowsAndIndex() throws Exception {

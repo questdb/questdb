@@ -36,6 +36,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.arr.VarcharArrayParser;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1114,6 +1115,22 @@ public class SqlUtil {
         final IQueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
         return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
+    }
+
+    @Nullable
+    public static Function getBindVariableFunction(@Nullable BindVariableService bindVariableService, CharSequence token) {
+        if (bindVariableService == null) {
+            return null;
+        }
+        if (Chars.startsWith(token, ':')) {
+            return bindVariableService.getFunction(token);
+        }
+        try {
+            final int index = Numbers.parseInt(token, 1, token.length());
+            return index > 0 ? bindVariableService.getFunction(index - 1) : null;
+        } catch (NumericException e) {
+            return null;
+        }
     }
 
     /**
