@@ -263,11 +263,18 @@ impl FooterFeatureFlags {
     /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
     pub const INDEX_ROW_MAP_BIT: u64 = 1 << 32;
 
-    /// The header's `IS_ASCII` column flags hold for every row group of this snapshot. Only `_pm`
-    /// files written by QuestDB 10.2.0 and older flag columns in the header. The header is written
-    /// once, so an update that appends a footer cannot clear a flag there; its footer carries this
-    /// bit only when no flagged column holds a non-ASCII value. The first footer of the chain needs
-    /// no bit: the header was written with it. No section.
+    /// Readers trust the header's `IS_ASCII` column flags for every row group of this snapshot.
+    /// Only `_pm` files written by QuestDB 10.2.0 and older flag columns in the header. The header
+    /// is written once, so an update that appends a footer cannot clear a flag there. Its footer
+    /// carries this bit only when every chunk the update writes of a flagged column is ASCII and
+    /// the row groups it keeps are trusted: the snapshot before is the first of the chain or
+    /// carries the bit, or the update decoded their values and found them ASCII. The first
+    /// snapshot needs no bit: readers and writers trust its header flags without a check. They can
+    /// be wrong: QuestDB 9.4.0 to 10.2.0 built some first snapshots from a parquet footer whose
+    /// `ascii` 9.3.4 or 9.3.5 left true over non-ASCII values
+    /// (<https://github.com/questdb/questdb/issues/8570>), and an in-place update that writes
+    /// ASCII values into such a file sets this bit over the wrong flag. So the bit does not prove
+    /// that the values were checked. No section.
     pub const HEADER_ASCII_VALID_BIT: u64 = 1 << 2;
 
     pub const KNOWN_REQUIRED: u64 = Self::INDEX_ROW_MAP_BIT;
@@ -693,10 +700,10 @@ impl TryFrom<u8> for FieldRepetition {
 ///
 /// Layout:
 /// - bit 0: LOCAL_KEY_IS_GLOBAL (symbol columns)
-/// - bit 1: IS_ASCII (varchar columns): every value of the column was ASCII when the file was
-///   created. Written only by QuestDB 10.2.0 and older; later versions flag chunks instead
-///   ([`ChunkFlags`]). It holds for a later snapshot only under
-///   [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`].
+/// - bit 1: IS_ASCII (varchar columns): the writer said every value of the column was ASCII when
+///   it created the file. Written only by QuestDB 10.2.0 and older; later versions flag chunks
+///   instead ([`ChunkFlags`]). Readers trust it for the first snapshot, and for a later one only
+///   under [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`]; it can be wrong, see there.
 /// - bits 2-3: FIELD_REPETITION (2 bits)
 /// - bit 4: DESCENDING (for sorted columns)
 /// - bits 5-31: reserved

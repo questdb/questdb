@@ -218,7 +218,7 @@ file otherwise. Feature sections are ordered by bit position.
 | --- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0   | SEQ_TXN            | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
 | 1   | SCRATCHPAD         | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
-| 2   | HEADER_ASCII_VALID | None. The `IS_ASCII` column flags of the header hold for every row group of this snapshot. See "ASCII flags" below.                              |
+| 2   | HEADER_ASCII_VALID | None. Readers trust the `IS_ASCII` column flags of the header for every row group of this snapshot. See "ASCII flags" below.                     |
 | 32  | INDEX_ROW_MAP      | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
 
 Header bit 2 (SORTING_IS_DTS_ASC) indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
@@ -325,14 +325,20 @@ file alone, without the `_pm` of the file it describes, flags no chunk.
 
 The header's `IS_ASCII` column flag comes from QuestDB 10.2.0 and older, which set it when they
 created the file and trusted it alone; later versions do not set it. The header is written once and
-every snapshot of the file shares it, so the flag is true for the snapshot the file was created
-with, and no later update can clear it. The `HEADER_ASCII_VALID` footer flag says that every column
-the header flags is still ASCII in all row groups of the snapshot. An update that adds or replaces
-row groups sets it only when every chunk it writes of a flagged column is flagged ASCII, and the
-previous snapshot carries the answer for the row groups it keeps: it is the first of the chain or
-carries `HEADER_ASCII_VALID`, or the update decoded the flagged columns of those row groups and found
-their values ASCII. The parquet footer's `ascii` cannot answer, for the reason above. A footer that
-keeps the row groups of the previous one inherits its answer.
+every snapshot of the file shares it, so no later update can clear the flag. Readers and writers
+trust it for the first snapshot of the chain without a check, and it can be wrong there: QuestDB
+9.4.0 to 10.2.0 built some first snapshots from a parquet footer whose `ascii` 9.3.4 or 9.3.5 left
+true over non-ASCII values ([#8570](https://github.com/questdb/questdb/issues/8570)).
+
+The `HEADER_ASCII_VALID` footer flag says that every column the header flags is still ASCII in all
+row groups of the snapshot, as far as the writer of the footer knows. An update that adds or
+replaces row groups sets it only when every chunk it writes of a flagged column is flagged ASCII,
+and the previous snapshot carries the answer for the row groups it keeps: it is the first of the
+chain or carries `HEADER_ASCII_VALID`, or the update decoded the flagged columns of those row groups
+and found their values ASCII. The parquet footer's `ascii` cannot answer, for the reason above. A
+footer that keeps the row groups of the previous one inherits its answer. So the flag does not prove
+that the values were checked: an in-place update that writes ASCII values into a file whose first
+snapshot is wrong sets `HEADER_ASCII_VALID` over the wrong flag.
 
 A reader takes a chunk for ASCII when the chunk flag is set, or when the header flags the column
 and the snapshot is the first of the chain (`PREV_PARQUET_META_FILE_SIZE` is 0) or carries
