@@ -115,6 +115,7 @@ fn bench_row_group(c: &mut Criterion) {
                     &compressions,
                     &bloom_cols,
                     false,
+                    false,
                 )
                 .expect("row group");
                 // Drain the iter to consume all column chunks.
@@ -151,6 +152,7 @@ fn bench_row_group(c: &mut Criterion) {
                     options,
                     &compressions,
                     &bloom_cols,
+                    false,
                     false,
                 )
                 .expect("row group");

@@ -541,6 +541,79 @@ mod tests {
     }
 
     #[test]
+    fn writer_checks_varchar_bytes_only_when_it_tracks_chunk_flags() {
+        use crate::parquet_write::varchar::ARE_BYTES_ASCII_CALLS;
+        // VARCHAR defaults to DeltaLengthByteArray, whose pages the check reads with
+        // are_bytes_ascii
+        let frame = || Partition {
+            table: "t".to_string(),
+            columns: vec![varchar_column("v", 0, &[Some("a"), Some("b")])],
+        };
+        let calls = || ARE_BYTES_ASCII_CALLS.with(|calls| calls.get());
+        for is_tracking in [false, true] {
+            let partition = frame();
+            let (schema, _) = to_parquet_schema(&partition, false, -1, SeqTxn::UNSET).unwrap();
+            let mut buf = Vec::new();
+            let mut chunked = ParquetWriter::new(&mut buf)
+                .chunked_with_compressions(
+                    schema,
+                    to_encodings(&partition),
+                    to_compressions(&partition),
+                )
+                .unwrap();
+            if is_tracking {
+                chunked.track_chunk_ascii();
+            }
+            let before = calls();
+            chunked.write_chunk(&partition).unwrap();
+            assert_eq!(calls() > before, is_tracking, "write_chunk");
+            let before = calls();
+            let mut acc = FrameAccumulator::new(2);
+            acc.push(frame(), ());
+            acc.write_remaining(&mut chunked).unwrap();
+            assert_eq!(calls() > before, is_tracking, "frames");
+        }
+    }
+
+    #[test]
+    fn row_group_flags_varchar_chunks_only_when_asked() {
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                varchar_column("v", 0, &[Some("a"), Some("b")]),
+                long_column("x", &[1, 2], 0),
+            ],
+        };
+        let (schema, _) = to_parquet_schema(&partition, false, -1, SeqTxn::UNSET).unwrap();
+        let options = crate::parquet_write::file::WriteOptions {
+            write_statistics: true,
+            version: parquet2::write::Version::V2,
+            compression: parquet2::compression::CompressionOptions::Uncompressed,
+            row_group_size: None,
+            data_page_size: None,
+            raw_array_encoding: false,
+            bloom_filter_fpp: 0.01,
+            min_compression_ratio: 0.0,
+        };
+        for check_ascii in [false, true] {
+            let (_, _, is_chunk_ascii) = crate::parquet_write::file::create_row_group(
+                &partition,
+                0,
+                2,
+                schema.fields(),
+                &to_encodings(&partition),
+                options,
+                &to_compressions(&partition),
+                &std::collections::HashSet::new(),
+                false,
+                check_ascii,
+            )
+            .unwrap();
+            assert_eq!(is_chunk_ascii, [check_ascii, false]);
+        }
+    }
+
+    #[test]
     fn frames_flag_varchar_chunks_by_the_rows_of_each_row_group() {
         // Row groups of four rows: a, b, c from the first frame and d from the second; then the
         // second frame's non-ASCII value and the third frame, whose first row lies under its

@@ -847,6 +847,7 @@ impl ParquetUpdater {
             &to_compressions(partition),
             &self.bloom_filter_columns,
             false,
+            true, // check_ascii
         )?;
         self.track_varchar_all_ascii(partition, &is_chunk_ascii);
 
@@ -933,6 +934,7 @@ impl ParquetUpdater {
             &to_compressions(partition),
             &self.bloom_filter_columns,
             false,
+            true, // check_ascii
         )?;
         self.track_varchar_all_ascii(partition, &is_chunk_ascii);
 
@@ -1672,6 +1674,7 @@ impl ParquetUpdater {
             &to_compressions(partition),
             &changed_bloom_columns,
             false,
+            true, // check_ascii
         )?;
         self.track_varchar_all_ascii(partition, &is_changed_chunk_ascii);
         for (&target_pos, &is_ascii) in changed_target_positions.iter().zip(&is_changed_chunk_ascii)
@@ -4187,6 +4190,7 @@ mod tests {
             &to_compressions(&new_partition),
             &bloom_filter_columns,
             false,
+            true,
         )?;
 
         let (replace_row_group, replace_bloom_hashes, _) = create_row_group(
@@ -4199,6 +4203,7 @@ mod tests {
             &to_compressions(&new_partition),
             &bloom_filter_columns,
             false,
+            true,
         )?;
 
         let orig_offset = buf.position();
@@ -5851,6 +5856,7 @@ mod tests {
             &compressions_rg0,
             &bloom_cols,
             false,
+            true,
         )?;
         let compressions_rg1 = to_compressions(&partition_rg1);
         let (rg1, bloom1, _) = create_row_group(
@@ -5863,6 +5869,7 @@ mod tests {
             &compressions_rg1,
             &bloom_cols,
             false,
+            true,
         )?;
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -5963,6 +5970,7 @@ mod tests {
             &compressions_new,
             &bloom_cols,
             false,
+            true,
         )?;
 
         let mut new_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -6158,6 +6166,7 @@ mod tests {
                     compressions,
                     bloom_filter_columns,
                     false,
+                    true,
                 )
                 .map(|_| ())
             }))

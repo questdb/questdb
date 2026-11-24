@@ -68,12 +68,14 @@ pub fn encode_column_chunk(
         last_partition_end,
         options,
         bloom_set,
+        false,
     )
     .map(|(pages, _)| pages)
 }
 
-/// [`encode_column_chunk`] that also returns whether the chunk is VARCHAR and the bytes of
-/// every value it encoded are ASCII.
+/// [`encode_column_chunk`] that, with `check_ascii`, also returns whether the chunk is VARCHAR
+/// and the bytes of every value it encoded are ASCII. Without `check_ascii` the VARCHAR encoders
+/// check no byte and the flag is `false`: only a writer that keeps the flags pays for the check.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_column_chunk_checking_ascii(
     encoding: Encoding,
@@ -83,6 +85,7 @@ pub(crate) fn encode_column_chunk_checking_ascii(
     last_partition_end: usize,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    check_ascii: bool,
 ) -> ParquetResult<(Vec<Page>, bool)> {
     if columns.is_empty() {
         return Err(fmt_err!(
@@ -103,6 +106,7 @@ pub(crate) fn encode_column_chunk_checking_ascii(
                 last_partition_end,
                 options,
                 bloom_set,
+                check_ascii,
             );
         }
     }
@@ -849,7 +853,8 @@ fn encode_double_dispatch(
     }
 }
 
-/// VARCHAR pages, and whether the bytes of every value are ASCII.
+/// VARCHAR pages, and with `check_ascii` whether the bytes of every value are ASCII.
+#[allow(clippy::too_many_arguments)]
 fn encode_varchar_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -858,6 +863,7 @@ fn encode_varchar_dispatch(
     last_partition_end: usize,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    check_ascii: bool,
 ) -> ParquetResult<(Vec<Page>, bool)> {
     let encode = match encoding {
         Encoding::Plain => plain::encode_varchar,
@@ -872,6 +878,7 @@ fn encode_varchar_dispatch(
         pt,
         options,
         bloom_set,
+        check_ascii,
     )
 }
 
@@ -1978,6 +1985,7 @@ mod tests {
             last_partition_end,
             options,
             None,
+            true,
         )
         .unwrap();
         let data_pages = pages.iter().filter(|p| matches!(p, Page::Data(_))).count();
@@ -2053,6 +2061,71 @@ mod tests {
     }
 
     #[test]
+    fn encode_column_chunk_checks_varchar_bytes_only_when_asked() {
+        use crate::parquet_write::varchar::ARE_BYTES_ASCII_CALLS;
+        // ASCII bytes behind cleared ASCII bits: only a check of the bytes can flag them
+        let values = [Some("a"), None, Some("abcdefghijk")];
+        let (col, _keep) = varchar_column_marked(&values, false);
+        let page_bytes = |pages: &[Page]| -> Vec<Vec<u8>> {
+            pages
+                .iter()
+                .map(|page| match page {
+                    Page::Data(page) => page.buffer.clone(),
+                    Page::Dict(page) => page.buffer.clone(),
+                })
+                .collect()
+        };
+        // DeltaLengthByteArray checks its pages with are_bytes_ascii, which counts its calls
+        let calls = || ARE_BYTES_ASCII_CALLS.with(|calls| calls.get());
+        for encoding in VARCHAR_ENCODINGS {
+            let encode = |check_ascii| {
+                let before = calls();
+                let (pages, is_ascii) = encode_column_chunk_checking_ascii(
+                    encoding,
+                    &parquet_type_for(ColumnTypeTag::Varchar),
+                    &[col],
+                    0,
+                    values.len(),
+                    write_options(),
+                    None,
+                    check_ascii,
+                )
+                .unwrap();
+                (pages, is_ascii, calls() - before)
+            };
+            let (unchecked_pages, is_unchecked_ascii, unchecked_calls) = encode(false);
+            let (checked_pages, is_checked_ascii, checked_calls) = encode(true);
+            assert!(!is_unchecked_ascii, "{encoding:?}");
+            assert!(is_checked_ascii, "{encoding:?}");
+            assert_eq!(unchecked_calls, 0, "{encoding:?}");
+            assert_eq!(
+                checked_calls > 0,
+                encoding == Encoding::DeltaLengthByteArray,
+                "{encoding:?}"
+            );
+            // the check reads the pages and never changes them
+            assert_eq!(
+                page_bytes(&unchecked_pages),
+                page_bytes(&checked_pages),
+                "{encoding:?}"
+            );
+        }
+        // encode_column_chunk() returns no flag, so it checks nothing
+        let before = calls();
+        encode_column_chunk(
+            Encoding::DeltaLengthByteArray,
+            &parquet_type_for(ColumnTypeTag::Varchar),
+            &[col],
+            0,
+            values.len(),
+            write_options(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(calls(), before);
+    }
+
+    #[test]
     fn encode_column_chunk_rejects_unsupported_varchar_encoding() {
         let (col, _keep) = varchar_column_marked(&[Some("a")], true);
         let err = encode_column_chunk_checking_ascii(
@@ -2063,6 +2136,7 @@ mod tests {
             1,
             write_options(),
             None,
+            true,
         )
         .unwrap_err();
         assert!(
@@ -2082,6 +2156,7 @@ mod tests {
             col.row_count,
             write_options(),
             None,
+            true,
         )
         .unwrap();
         assert!(!is_ascii);

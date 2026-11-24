@@ -233,7 +233,7 @@ fn dict_chunk_stats_varchar() {
 
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let (pages, _) =
-        encode_varchar(&[col1, col2], 0, 3, &pt, write_options(), None).expect("encode");
+        encode_varchar(&[col1, col2], 0, 3, &pt, write_options(), None, true).expect("encode");
     let datas = data_pages(&pages);
     assert_eq!(datas.len(), 1);
 
@@ -559,7 +559,7 @@ fn dict_varchar_corrupt_offset_errors() {
     let data: Vec<u8> = vec![];
     let col = build_varchar_column(&aux, &data);
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
-    let result = encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None);
+    let result = encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None, true);
     assert!(result.is_err());
 }
 

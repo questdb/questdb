@@ -164,8 +164,8 @@ pub fn encode_binary(
     )
 }
 
-/// Encode a Varchar column as RleDictionary pages. Also returns whether the bytes of every value
-/// are ASCII.
+/// Encode a Varchar column as RleDictionary pages. With `check_ascii`, also returns whether the
+/// bytes of every value are ASCII; without it, returns `false` and checks no value.
 pub fn encode_varchar(
     columns: &[Column],
     first_partition_start: usize,
@@ -173,8 +173,9 @@ pub fn encode_varchar(
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    check_ascii: bool,
 ) -> ParquetResult<(Vec<Page>, bool)> {
-    let mut is_ascii = true;
+    let mut is_ascii = false;
     let pages = encode_byte_slices(
         columns,
         first_partition_start,
@@ -183,7 +184,7 @@ pub fn encode_varchar(
         options,
         bloom_set,
         visit_varchar_aux_byte_slices,
-        Some(&mut is_ascii),
+        check_ascii.then_some(&mut is_ascii),
     )?;
     Ok((pages, is_ascii))
 }

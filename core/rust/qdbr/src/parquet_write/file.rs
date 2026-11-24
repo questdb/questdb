@@ -360,6 +360,7 @@ impl<W: Write> ChunkedWriter<W> {
                 &self.per_column_compressions,
                 &self.bloom_filter_columns,
                 self.parallel,
+                self.chunk_ascii.is_some(),
             )?;
             self.writer.write(row_group, &bloom_hashes)?;
             if let Some(chunk_ascii) = self.chunk_ascii.as_mut() {
@@ -386,6 +387,7 @@ impl<W: Write> ChunkedWriter<W> {
             &self.per_column_compressions,
             &self.bloom_filter_columns,
             self.parallel,
+            self.chunk_ascii.is_some(),
         )?;
         self.writer.write(row_group, &bloom_hashes)?;
         if let Some(chunk_ascii) = self.chunk_ascii.as_mut() {
@@ -441,6 +443,7 @@ pub fn create_row_group(
     per_column_compressions: &[Option<CompressionOptions>],
     bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
+    check_ascii: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes, Vec<bool>)> {
     // A single-partition row group is a degenerate multi-partition write with
     // one partition; the bounds collapse to (offset, offset + length).
@@ -455,6 +458,7 @@ pub fn create_row_group(
         per_column_compressions,
         bloom_filter_columns,
         parallel,
+        check_ascii,
     )
 }
 
@@ -473,8 +477,9 @@ pub fn create_row_group(
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
 ///
-/// Also returns, by column, whether the column is VARCHAR and the bytes of every value the row
-/// group holds are ASCII.
+/// With `check_ascii`, also returns, by column, whether the column is VARCHAR and the bytes of
+/// every value the row group holds are ASCII. Without it every flag is `false` and no byte is
+/// checked.
 #[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions(
     partitions: &[&Partition],
@@ -486,6 +491,7 @@ pub fn create_row_group_from_partitions(
     per_column_compressions: &[Option<CompressionOptions>],
     bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
+    check_ascii: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes, Vec<bool>)> {
     if partitions.is_empty() {
         return Err(fmt_err!(
@@ -555,6 +561,7 @@ pub fn create_row_group_from_partitions(
             last_partition_end,
             col_options,
             bloom_set,
+            check_ascii,
         )?;
 
         let compressor = Compressor::new(

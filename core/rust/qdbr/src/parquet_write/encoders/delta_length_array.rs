@@ -105,8 +105,8 @@ pub fn encode_binary(
     )
 }
 
-/// Encode a Varchar column as DeltaLengthByteArray pages. Also returns whether the bytes of every
-/// value are ASCII.
+/// Encode a Varchar column as DeltaLengthByteArray pages. With `check_ascii`, also returns whether
+/// the bytes of every value are ASCII; without it, returns `false` and checks no value.
 pub fn encode_varchar(
     columns: &[Column],
     first_partition_start: usize,
@@ -114,9 +114,10 @@ pub fn encode_varchar(
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    check_ascii: bool,
 ) -> ParquetResult<(Vec<Page>, bool)> {
     let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let mut is_ascii = true;
+    let mut is_ascii = check_ascii;
     let pages = encode_per_partition(
         columns,
         first_partition_start,
@@ -354,7 +355,7 @@ mod tests {
         .unwrap();
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
         let (pages, _) =
-            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None, true).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 3);
@@ -440,7 +441,8 @@ mod tests {
         // Sanity: this Column has column_top=10 (set via from_raw_data) and 3 data rows.
         // We pass last_partition_end = 13 to cover top + data.
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let (pages, _) = encode_varchar(&[col], 0, 13, &pt, write_options(), None).expect("encode");
+        let (pages, _) =
+            encode_varchar(&[col], 0, 13, &pt, write_options(), None, true).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, _) = v2_header(&pages[0]);
         assert_eq!(num_values, 13);
@@ -632,7 +634,7 @@ mod tests {
         let col = build_varchar_column(&aux, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
         let (pages, _) =
-            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None, true).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 4);
@@ -686,7 +688,7 @@ mod tests {
         let col = build_varchar_column(&aux, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
         let (pages, _) =
-            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None, true).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, _) = v2_header(&pages[0]);
         assert_eq!(num_values, 3);
@@ -805,8 +807,16 @@ mod tests {
         let col1 = build_varchar_column(&aux1, &data);
         let col2 = build_varchar_column(&aux2, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let (pages, _) = encode_varchar(&[col1, col2], 0, aux2.len(), &pt, write_options(), None)
-            .expect("encode");
+        let (pages, _) = encode_varchar(
+            &[col1, col2],
+            0,
+            aux2.len(),
+            &pt,
+            write_options(),
+            None,
+            true,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 2);
         let (nv0, nn0, _) = v2_header(&pages[0]);
         let (nv1, nn1, _) = v2_header(&pages[1]);

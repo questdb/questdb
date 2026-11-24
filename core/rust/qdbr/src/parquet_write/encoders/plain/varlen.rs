@@ -88,8 +88,8 @@ pub fn encode_binary(
     )
 }
 
-/// Encode a Varchar column as Plain pages. Also returns whether the bytes of every value are
-/// ASCII.
+/// Encode a Varchar column as Plain pages. With `check_ascii`, also returns whether the bytes of
+/// every value are ASCII; without it, returns `false` and checks no value.
 pub fn encode_varchar(
     columns: &[Column],
     first_partition_start: usize,
@@ -97,6 +97,7 @@ pub fn encode_varchar(
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    check_ascii: bool,
 ) -> ParquetResult<(Vec<Page>, bool)> {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_varlen_segments(
@@ -108,7 +109,7 @@ pub fn encode_varchar(
         |column| Ok(unsafe { transmute_slice(column.secondary_data) }),
         |column| column.primary_data,
     )?;
-    let mut is_ascii = true;
+    let mut is_ascii = check_ascii;
     let pages = encode_column_chunk(
         columns,
         first_partition_start,
@@ -769,13 +770,14 @@ pub fn varchar_to_page(
         primitive_type,
         encoding,
         bloom_hashes,
-        &mut true,
+        &mut false,
     )
 }
 
 /// [`varchar_to_page`] that also clears `is_ascii` when the bytes of a value of the page are not
-/// ASCII. The per-value ASCII bit of the aux plays no part: a SQL copy keeps the bit of the value
-/// it copies, which a scan of an earlier version could have set over non-ASCII bytes.
+/// ASCII; an `is_ascii` that is already `false` checks no value. The per-value ASCII bit of the
+/// aux plays no part: a SQL copy keeps the bit of the value it copies, which a scan of an earlier
+/// version could have set over non-ASCII bytes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn varchar_to_page_checking_ascii(
     aux: &[[u8; 16]],

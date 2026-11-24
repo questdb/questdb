@@ -43,10 +43,20 @@ pub fn is_column_ascii(aux: &[[u8; 16]]) -> bool {
     true
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Calls of [`are_bytes_ascii`] on this thread: tests count them to prove that a writer
+    /// which keeps no ASCII flags skips the check.
+    pub(crate) static ARE_BYTES_ASCII_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Whether every byte is ASCII. Faster than `<[u8]>::is_ascii` on the large slices the VARCHAR
 /// writers check, the values of a page: it ORs the bytes in blocks the compiler vectorizes and
 /// stops at the first block with a non-ASCII byte.
 pub fn are_bytes_ascii(bytes: &[u8]) -> bool {
+    #[cfg(test)]
+    ARE_BYTES_ASCII_CALLS.with(|calls| calls.set(calls.get() + 1));
     const LANES: usize = 64;
     const BLOCK: usize = 4096;
     let mut blocks = bytes.chunks_exact(BLOCK);

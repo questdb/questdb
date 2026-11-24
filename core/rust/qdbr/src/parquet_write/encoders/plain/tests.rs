@@ -540,7 +540,7 @@ fn encode_varchar_inlined_and_split() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let (pages, _) =
-        encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+        encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None, true).expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 4);
@@ -1396,6 +1396,7 @@ fn encode_varchar_with_bloom_and_column_top() {
         &pt,
         write_options(),
         Some(bloom.clone()),
+        true,
     )
     .expect("encode");
     assert_eq!(pages.len(), 1);
@@ -1534,8 +1535,16 @@ fn encode_varchar_with_nulls_and_column_top() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let (pages, _) =
-        encode_varchar(&[col], 0, 4, &pt, write_options(), Some(bloom.clone())).expect("encode");
+    let (pages, _) = encode_varchar(
+        &[col],
+        0,
+        4,
+        &pt,
+        write_options(),
+        Some(bloom.clone()),
+        true,
+    )
+    .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 4);
@@ -1621,7 +1630,7 @@ fn encode_varchar_no_stats() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let opts = WriteOptions { write_statistics: false, ..write_options() };
-    let (pages, _) = encode_varchar(&[col], 0, aux.len(), &pt, opts, None).expect("encode");
+    let (pages, _) = encode_varchar(&[col], 0, aux.len(), &pt, opts, None, true).expect("encode");
     assert_eq!(pages.len(), 1);
 }
 
