@@ -5,6 +5,7 @@ some topics that can help you get started:
 
 - 📜 [License and conduct](#license-and-conduct)
 - 🎯 [Contribution expectations](#contribution-expectations)
+- 🤝 [Contribution process](#contribution-process)
 - 💡 [Bugs and features](#bugs-and-features)
 - 🧭 [Navigation](#navigation)
 - 🔧 [Environment setup](#environment-setup)
@@ -49,6 +50,36 @@ QuestDB Inc maintains QuestDB Open Source. We use GitHub issues internally for p
 We reserve the right to prioritize any issue according to our roadmap, even if a
 contribution is in progress but proceeding slower than required.
 
+# Contribution process
+
+Only QuestDB maintainers and invited collaborators can open pull requests in
+this repository. This keeps our review time for changes we have agreed to take.
+We still welcome code from everyone: every change starts as an issue, and once
+a maintainer agrees to it, they open the pull request from your fork.
+
+1. **Propose the change.** Read the
+   [contribution expectations](#contribution-expectations), then open an
+   [issue](https://github.com/questdb/questdb/issues) or comment on an existing
+   one. Describe the problem and how you plan to solve it. Do not start coding
+   until you get the go-ahead.
+2. **Get the go-ahead.** A maintainer reviews your proposal. If they agree with
+   it, they assign the issue to you. If the issue is already assigned to
+   someone else, please pick another one.
+3. **Implement the change in your fork.** Work on a branch of your fork of this
+   repository and follow [Before you submit](#before-you-submit).
+4. **Ask for a pull request.** When your branch is ready for review, comment on
+   the issue with a link to the branch and the pull request description that
+   the [pull request checklist](#pull-request-checklist) asks for.
+5. **A maintainer opens the pull request** from your branch. To address review
+   comments, push to the same branch: the pull request picks up your new
+   commits. You can reply to reviews on the pull request itself.
+6. **A maintainer squash-merges the pull request** and adds a `Co-authored-by:`
+   line with your name and email to the commit message, so GitHub lists you as
+   a co-author of the commit.
+
+Contributors with several merged changes may be invited as collaborators, which
+lets them open pull requests directly.
+
 # Bugs and features
 
 Whether it's a bug report or feature request, you're welcome to raise an
@@ -68,10 +99,9 @@ it.
 
 ## Claiming an issue
 
-Before commenting on an issue to claim it, make sure you have read and understood
-the [contribution expectations](#contribution-expectations) section above. Once you
-are confident you can meet the requirements, comment on the issue to let maintainers
-know you're working on it.
+To work on an issue, follow the [contribution process](#contribution-process):
+propose your approach in a comment, and start coding once a maintainer assigns
+the issue to you.
 
 # Navigation
 
@@ -180,7 +210,7 @@ The web console will be available at [localhost:9000](http://localhost:9000).
 
 Code is formatted using configuration files in the `.idea` directory.
 To minimize conflicts when merging and problems in CI, all contributed code should be formatted
-before submitting a PR.
+before it goes into a pull request.
 
 In IntelliJ IDEA you can:
 - Automate formatting (preferable):
@@ -311,8 +341,8 @@ The development environment for the frontend can run on its own, but it requires
 ## Testing
 
 We have a lot of tests, most of which are of the "integration" type (e.g., a test
-starts a server, interacts with it, and asserts the outcome). We expect all
-contributors to submit PRs with tests. Please reach out to us via Slack if
+starts a server, interacts with it, and asserts the outcome). We expect every
+contribution to include tests. Please reach out to us via Slack if
 you're uncertain how to test, or you think an existing test can be improved.
 
 Typical Maven commands:
@@ -389,12 +419,13 @@ test(ilp): add regression test for issue #1234
 
 ## Pull request checklist
 
-Before opening a PR, please ensure:
+Before you ask for a pull request, or open one as a collaborator, make sure that:
 - Code is formatted as per the repo's settings (see Code formatting).
 - Tests pass locally; add/adjust tests for your changes.
 - No new third-party dependencies are introduced.
 - Commit messages follow Conventional Commits.
-- The PR description must include:
+- The PR description must include the following (if a maintainer opens the PR
+  for you, post the description on the issue):
   - Link to the relevant issue
   - Clear explanation of **why** the change is needed
   - Technical rationale and approach taken
@@ -479,9 +510,10 @@ is the first thing that reads the code:
 
 ## Branching
 
-External contributors should contribute from forks of the repository. Internal
-contributors (QuestDB team members) must prefix branch names with their initials
-(e.g., `jd/fix-parser-bug`).
+External contributors work on a branch of their own fork; a maintainer opens the
+pull request from that branch (see [Contribution process](#contribution-process)).
+Internal contributors (QuestDB team members) must prefix branch names with their
+initials (e.g., `jd/fix-parser-bug`).
 
 ## Pull request review process
 
@@ -523,6 +555,53 @@ In case of ESET products, the following steps may resolve the issue:
   filtering off.
 
 # For maintainers
+
+## Handling external contributions
+
+External contributors cannot open pull requests in this repository, so
+maintainers open them on their behalf (see
+[Contribution process](#contribution-process)):
+
+1. To accept a proposal, assign the issue to the contributor. GitHub lets you
+   assign anyone who has commented on the issue.
+2. When the contributor asks for a pull request, check that the branch
+   implements the agreed approach and meets the
+   [contribution expectations](#contribution-expectations). If it does not,
+   reply on the issue instead of opening a pull request.
+3. Open the pull request from the contributor's branch, with a Conventional
+   Commits title and the description the contributor posted. End the
+   description with `Contributed by @<user>. Fixes #<issue>.`, so GitHub
+   subscribes the contributor to the pull request and links the issue,
+   followed by the contributor's `Co-authored-by:` line, which the first
+   command below prints:
+
+   ```bash
+   gh api repos/questdb/questdb/compare/master...<user>:<branch> \
+     --jq '.commits[].commit.author | "Co-authored-by: \(.name) <\(.email)>"' | sort -u
+   gh pr create --repo questdb/questdb --base master --head <user>:<branch> \
+     --title "<type>(<scope>): <description>" --body-file description.md
+   ```
+
+4. When you squash-merge the pull request, copy the `Co-authored-by:` line from
+   the description into the commit message, which is empty by default. The
+   squash commit names only the person who opened the pull request as its
+   author, so without this line the contributor gets no credit. Pull requests
+   from forks never get the required `PR title` check, so only a maintainer
+   who can bypass the `master` rules can merge one (`--admin` in the CLI):
+
+   ```bash
+   gh pr merge <number> --squash --admin --body "Co-authored-by: Jane Doe <jane@example.com>"
+   ```
+
+## Inviting collaborators
+
+A contributor with several merged changes can be invited to the repository with
+the write role, which lets them open pull requests themselves. The write role
+also lets them push branches to this repository, and workflows on those
+branches run with the repository's Actions secrets, so invite only contributors
+you trust with that access.
+
+## Organizing issues
 
 We have an
 [engineering project board](https://github.com/orgs/questdb/projects/2/views/8)
