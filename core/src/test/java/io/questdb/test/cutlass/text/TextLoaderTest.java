@@ -2351,6 +2351,86 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoTimestampFailedEmptyRow() throws Exception {
+        // A non-partitioned import into a table without a designated timestamp: a row of empty fields only, after a row
+        // that is not committed yet. append() writes the NULL of x, and the NULL of s needs the next page of s.d, which
+        // cannot be allocated. append() throws and the import fails; the rollback of the writer, which holds the row
+        // in progress, distresses it. The committed rows stay, and the next INSERT lands with a new writer.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        assertMemoryLeak(stringPageFailingFacade(isArmed), () -> {
+            // 'abcdef' takes 16 bytes of s.d: the committed rows and the first row of the import end its first page
+            final long n = Files.PAGE_SIZE / 16 - 1;
+            execute("CREATE TABLE test (x LONG, s STRING)");
+            execute("INSERT INTO test SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+            final String csv = "s,x\nabcdef," + (n + 1) + "\n,\n";
+            try (TextLoader textLoader = new TextLoader(engine)) {
+                configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
+                textLoader.setForceHeaders(true);
+                isArmed.set(true);
+                try {
+                    playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertFalse(isArmed.get());
+            }
+            assertQuery("SELECT count(), sum(x) FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + n + '\t' + n * (n + 1) / 2 + '\n');
+            execute("INSERT INTO test VALUES (" + (n + 2) + ", 'abcdef'), (" + (n + 3) + ", NULL)");
+            assertQuery("SELECT x, s FROM test WHERE x >= " + (n - 1) + " OR x IS NULL")
+                    .noLeakCheck()
+                    .returns("x\ts\n" + (n - 1) + "\tabcdef\n" + n + "\tabcdef\n" + (n + 2) + "\tabcdef\n" + (n + 3) + "\t\n");
+        });
+    }
+
+    @Test
+    public void testNoTimestampFailedStringRowSkipRow() throws Exception {
+        // A non-partitioned import into a table without a designated timestamp: the STRING value of a row, its first
+        // field, crosses the end of the page of s.d, which cannot be allocated. The row marks no column; SKIP_ROW
+        // cancels it, and the rows after it land as they are.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        assertMemoryLeak(stringPageFailingFacade(isArmed), () -> {
+            // 'abcdef' takes 16 bytes of s.d: the committed rows and the first row of the import end s.d 32 bytes
+            // before the end of its first page, and the value of 30 chars takes 64
+            final long n = Files.PAGE_SIZE / 16 - 3;
+            execute("CREATE TABLE test (x LONG, s STRING)");
+            execute("INSERT INTO test SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+            final String csv = "s,x\n"
+                    + "abcdef," + (n + 1) + '\n'
+                    + "z".repeat(30) + ',' + (n + 2) + '\n'
+                    + "next," + (n + 3) + '\n'
+                    + ',' + (n + 4) + '\n';
+            try (TextLoader textLoader = new TextLoader(engine)) {
+                configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
+                textLoader.setForceHeaders(true);
+                isArmed.set(true);
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.assertFalse(isArmed.get());
+                Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            }
+            assertQuery("SELECT x, s FROM test WHERE x >= " + (n - 1) + " OR x IS NULL")
+                    .noLeakCheck()
+                    .returns("x\ts\n"
+                            + (n - 1) + "\tabcdef\n"
+                            + n + "\tabcdef\n"
+                            + (n + 1) + "\tabcdef\n"
+                            + (n + 3) + "\tnext\n"
+                            + (n + 4) + "\t\n");
+            assertQuery("SELECT count(), sum(x) FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + (n + 3) + '\t' + (n * (n + 1) / 2 + n + 1 + n + 3 + n + 4) + '\n');
+        });
+    }
+
+    @Test
     public void testNonTabularText() throws Exception {
         assertNoLeak(textLoader -> {
             String text = """
@@ -4072,6 +4152,29 @@ public class TextLoaderTest extends AbstractCairoTest {
     @SafeVarargs
     private static <T> Set<T> setOf(T... elements) {
         return new HashSet<>(Arrays.asList(elements));
+    }
+
+    // fails, once when armed, the allocation of disk space for s.d of table test
+    private static FilesFacade stringPageFailingFacade(AtomicBoolean isArmed) {
+        final AtomicLong stringFd = new AtomicLong(-1);
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (fd == stringFd.get() && isArmed.compareAndSet(true, false)) {
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + "test~") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
+                    stringFd.set(fd);
+                }
+                return fd;
+            }
+        };
     }
 
     private static String timestampOf(long micros) {

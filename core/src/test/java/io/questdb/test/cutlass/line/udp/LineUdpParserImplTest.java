@@ -48,6 +48,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -64,6 +65,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
@@ -911,6 +913,68 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 """;
         String lines = "system uptime_format=\" 1:18\" 1575990360000000000";
         assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testNoTimestampFailedLine() throws Exception {
+        // A table without a designated timestamp: the STRING value of a line, its first field, crosses the end of the
+        // page of s.d, which cannot be allocated. The row marks no column. The parser logs the error and leaves the row
+        // in progress; the newRow() of the next line cancels it, and the lines after the failed one land as they are.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicLong stringFd = new AtomicLong(-1);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (fd == stringFd.get() && isArmed.compareAndSet(true, false)) {
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + "udp_nots~") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
+                    stringFd.set(fd);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE udp_nots (x LONG, s STRING)");
+            // 'abcdef' takes 16 bytes of s.d: the committed rows and the first line end s.d 48 bytes before the end of
+            // its first page, and the value of 30 chars takes 64
+            final long n = Files.PAGE_SIZE / 16 - 4;
+            execute("INSERT INTO udp_nots SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                isArmed.set(true);
+                parseDatagram(lexer, "udp_nots s=\"abcdef\",x=" + (n + 1) + "i\n"
+                        + "udp_nots s=\"" + "z".repeat(30) + "\",x=" + (n + 2) + "i\n"
+                        + "udp_nots s=\"next\",x=" + (n + 3) + "i\n"
+                        + "udp_nots x=" + (n + 4) + "i\n");
+                lexer.parseLast();
+                parser.commitAll();
+                Assert.assertFalse(isArmed.get());
+            }
+            assertQuery("SELECT x, s FROM udp_nots WHERE x >= " + (n - 1) + " OR x IS NULL")
+                    .noLeakCheck()
+                    .returns("x\ts\n"
+                            + (n - 1) + "\tabcdef\n"
+                            + n + "\tabcdef\n"
+                            + (n + 1) + "\tabcdef\n"
+                            + (n + 3) + "\tnext\n"
+                            + (n + 4) + "\t\n");
+            assertQuery("SELECT count(), sum(x) FROM udp_nots")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + (n + 3) + '\t' + (n * (n + 1) / 2 + n + 1 + n + 3 + n + 4) + '\n');
+        });
     }
 
     @Test

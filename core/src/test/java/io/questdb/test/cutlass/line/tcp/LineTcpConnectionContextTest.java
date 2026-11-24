@@ -52,6 +52,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assume.assumeFalse;
 
@@ -1890,6 +1891,41 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testNoTimestampFailedEmptyFieldsLine() throws Exception {
+        // A line of empty fields only, after a line that is not committed yet: append() writes the NULL of x, and the
+        // NULL of s needs the next page of s.d, which cannot be allocated. The row marks no column.
+        final String table = "noTsEmptyFields";
+        // 'abcdef' takes 16 bytes of s.d: the committed rows and the first line end its first page
+        final long n = Files.PAGE_SIZE / 16 - 1;
+        assertNoTimestampFailedLine(
+                table,
+                n,
+                table + " x=" + (n + 1) + "i,s=\"abcdef\"\n"
+                        + table + " x=,s=\n"
+                        + table + " x=" + (n + 3) + "i,s=\"next\"\n"
+                        + table + " x=" + (n + 4) + "i\n"
+        );
+    }
+
+    @Test
+    public void testNoTimestampFailedStringLine() throws Exception {
+        // After a line that is not committed yet, the STRING value of a line, its first field, crosses the end of the
+        // page of s.d, which cannot be allocated. The row marks no column.
+        final String table = "noTsString";
+        // the committed rows and the first line end s.d 48 bytes before the end of its first page, and the value of
+        // 30 chars takes 64
+        final long n = Files.PAGE_SIZE / 16 - 4;
+        assertNoTimestampFailedLine(
+                table,
+                n,
+                table + " s=\"abcdef\",x=" + (n + 1) + "i\n"
+                        + table + " s=\"" + "z".repeat(30) + "\",x=" + (n + 2) + "i\n"
+                        + table + " s=\"next\",x=" + (n + 3) + "i\n"
+                        + table + " x=" + (n + 4) + "i\n"
+        );
+    }
+
+    @Test
     public void testNonAsciiTableNameWithUtf16SurrogateChar() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         String table = "\uD834\uDD1E g-clef";
@@ -2234,6 +2270,60 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         }
         AbstractCairoTest.create(model);
         engine.releaseInactive();
+    }
+
+    // A table without a designated timestamp, so not WAL, holds the rows x = 1..n of 'abcdef'. Of the lines, rows
+    // n + 1..n + 4, the second fails where s.d needs its next page. ILP logs the error, cancels the row and keeps the
+    // writer: the line before, not committed yet, and the lines after the failed one land as they are.
+    private void assertNoTimestampFailedLine(String table, long n, String lines) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        // the lines commit when the context closes
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1000);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicLong stringFd = new AtomicLong(-1);
+        runInContext(
+                new TestFilesFacadeImpl() {
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (fd == stringFd.get() && isArmed.compareAndSet(true, false)) {
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, int opts) {
+                        final long fd = super.openRW(name, opts);
+                        if (Utf8s.containsAscii(name, Files.SEPARATOR + table + '~') && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
+                            stringFd.set(fd);
+                        }
+                        return fd;
+                    }
+                },
+                () -> {
+                    execute("CREATE TABLE " + table + " (x LONG, s STRING)");
+                    execute("INSERT INTO " + table + " SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+                    isArmed.set(true);
+                    recvBuffer = lines;
+                    handleIO();
+                    closeContext();
+                    Assert.assertFalse(isArmed.get());
+                    assertQuery("SELECT x, s FROM " + table + " WHERE x >= " + (n - 1) + " OR x IS NULL")
+                            .noLeakCheck()
+                            .returns("x\ts\n"
+                                    + (n - 1) + "\tabcdef\n"
+                                    + n + "\tabcdef\n"
+                                    + (n + 1) + "\tabcdef\n"
+                                    + (n + 3) + "\tnext\n"
+                                    + (n + 4) + "\t\n");
+                    assertQuery("SELECT count(), sum(x) FROM " + table)
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\tsum\n" + (n + 3) + '\t' + (n * (n + 1) / 2 + n + 1 + n + 3 + n + 4) + '\n');
+                },
+                null
+        );
     }
 
     private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {

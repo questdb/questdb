@@ -746,6 +746,16 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void rewindAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
+        // Each aux entry holds the data offset of its row, so the data vector keeps the bytes of the cancelled row,
+        // which no row points at, and only the aux vector goes back.
+        final long auxOffset = getAuxVectorOffset(pos);
+        if (auxMem.getAppendOffset() != auxOffset) {
+            auxMem.jumpTo(auxOffset);
+        }
+    }
+
+    @Override
     public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         if (rowCount == 0) {
             auxMem.jumpTo(0);

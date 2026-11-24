@@ -20276,6 +20276,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // Moves each column that a cancelled row moved back to the start of row rowCount. Only a column past its row
+    // start moves, into a page that holds bytes the column wrote, so the cancel needs no disk space.
+    private void rewindAppendPosition(long rowCount) {
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) { // Not deleted
+                    final long pos = Math.max(0, rowCount - getColumnTop(i));
+                    if (ColumnType.isVarSize(columnType)) {
+                        ColumnType.getDriver(columnType).rewindAppendPosition(pos, getSecondaryColumn(i), getPrimaryColumn(i));
+                    } else {
+                        final MemoryMA dataMem = getPrimaryColumn(i);
+                        final long offset = pos << ColumnType.pow2SizeOf(columnType);
+                        if (dataMem.getAppendOffset() != offset) {
+                            dataMem.jumpTo(offset);
+                        }
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+    }
+
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
         final int metadataEffectiveCommitMode = metaSwapCommitMode(getFlushCommitMode());
         // create new _meta.swp
@@ -23699,8 +23723,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // we are staying within the same partition, prepare append positions for row count
             boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
             if (!rowChanged) {
-                // verify if any of the columns have been changed
-                // if not - we don't have to do
                 for (int i = 0; i < columnCount; i++) {
                     if (rowValueIsNotNull.getQuick(i) == masterRef) {
                         rowChanged = true;
@@ -23709,9 +23731,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // if no column has been changed we take easy option and do nothing
+            // A designated timestamp or a put that returned means the row wrote columns, so every column goes back to
+            // the row start. Without either, a put that failed part way, and the NULLs that rowAppend() writes until
+            // one of them fails, can still have moved columns: rewindAppendPosition() moves back those that moved and
+            // maps no page the files lack, so that a cancel on a full disk keeps the writer usable.
             if (rowChanged) {
                 setAppendPosition(dirtyTransientRowCount - 1, false);
+            } else {
+                rewindAppendPosition(dirtyTransientRowCount - 1);
             }
         }
         rowValueIsNotNull.fill(0, columnCount, --masterRef);

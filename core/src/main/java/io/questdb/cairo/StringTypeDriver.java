@@ -336,6 +336,19 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void rewindAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
+        // aux[pos], which the row before put, is where the row starts in the data vector (the read is
+        // setAppendAuxMemAppendPosition()'s). Putting it back, rather than jumping to (pos + 1) << SHL, leaves the
+        // aux memory at the row start without mapping the next page when the entry ends a page.
+        auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
+        final long dataOffset = pos > 0 ? Unsafe.getLong(auxMem.getAppendAddress()) : 0;
+        auxMem.putLong(dataOffset);
+        if (dataMem.getAppendOffset() != dataOffset) {
+            dataMem.jumpTo(dataOffset);
+        }
+    }
+
+    @Override
     public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         // For STRING storage aux vector (mem) contains N+1 offsets. Where N is the
         // row count. Offset indexes are 0 based, so reading Nth element of the vector gives
