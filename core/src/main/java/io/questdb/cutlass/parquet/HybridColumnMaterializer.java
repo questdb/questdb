@@ -163,7 +163,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final IntList computedSourceTypes = new IntList();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
-    // Reuse pool for RowGroupBuffers released by releasePinnedBuffers()
+    // Reuse pool for RowGroupBuffers released by releasePinnedBuffers() and releaseFrameBuffers()
     private final ObjList<RowGroupBuffers> decodeBufferPool = new ObjList<>();
     // Per Parquet frame: the [parquetIdx, columnType] pairs of the base columns the file holds
     private final DirectIntList decodeColumns = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
@@ -181,7 +181,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final ObjList<RowGroupBuffers> pinnedDecodeBuffers = new ObjList<>();
     private RecordMetadata baseMetadata;
     private int computedCount;
-    // The decoded row group of the current Parquet frame; pinned when the next frame starts
+    // The decoded row group of the current Parquet frame; pinned when the next frame starts, unless
+    // releaseFrameBuffers() returned it
     private @Nullable RowGroupBuffers decodeBuffers;
     private @Nullable MemoryTracker decodeMemoryTracker;
     private VirtualFunctionRecord functionRecord;
@@ -351,6 +352,19 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     public IntList getBaseColumnMap() {
         return baseColumnMap;
+    }
+
+    /**
+     * Returns the current frame's buffers for the next frame to reuse: the decoded row group to the
+     * pool, and the computed values, truncated in place. Call it once the writer holds none of the
+     * frame's rows.
+     */
+    public void releaseFrameBuffers() {
+        if (decodeBuffers != null) {
+            decodeBufferPool.add(decodeBuffers);
+            decodeBuffers = null;
+        }
+        truncateComputedBuffers();
     }
 
     /**
@@ -593,8 +607,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     // Decodes the row group of a Parquet frame into fresh buffers and points pageFrameMemory at
-    // them. The encoder reads the pass-through columns from these buffers until it writes the
-    // row group they land in, so they stay pinned until releasePinnedBuffers().
+    // them. The encoder reads the pass-through columns from these buffers, so they stay pinned
+    // until the writer has written their last row.
     private void decodeParquetFrame(PageFrameCursor cursor, PageFrame frame) {
         final ParquetDecoder decoder = frame.getParquetDecoder();
         decodeParquetColumns.reopen();
@@ -698,13 +712,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             }
         } else {
             // First call or empty buffers: truncate in place.
-            for (int i = 0; i < computedCount; i++) {
-                dataBuffers.getQuick(i).truncate();
-                MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
-                if (auxBuf != null) {
-                    auxBuf.truncate();
-                }
-            }
+            truncateComputedBuffers();
         }
 
         // Write the zero offset of the first string in a STRING data column.
@@ -713,6 +721,16 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         for (int k = 0; k < computedCount; k++) {
             if (ColumnType.tagOf(computedOutputTypes.getQuick(k)) == ColumnType.STRING) {
                 auxBuffers.getQuick(computedBufferIdx.getQuick(computedColumnIndices.getQuick(k))).putLong(0);
+            }
+        }
+    }
+
+    private void truncateComputedBuffers() {
+        for (int i = 0; i < computedCount; i++) {
+            dataBuffers.getQuick(i).truncate();
+            MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+            if (auxBuf != null) {
+                auxBuf.truncate();
             }
         }
     }

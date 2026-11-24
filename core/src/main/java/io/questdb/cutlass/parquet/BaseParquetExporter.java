@@ -59,9 +59,10 @@ public abstract class BaseParquetExporter {
 
     /**
      * Releases what the frames before the current one hold: the materializer's pinned buffers and the
-     * partitions before the current frame's. Call it once a write that flushed a row group has finished:
-     * drainHybridFrames() does after such a write, and an export that a slow client suspended inside such
-     * a write does once onResume() has finished it.
+     * partitions before the current frame's. Once the writer holds none of the current frame's rows, it
+     * also releases the current frame's buffers for the next frame to reuse. Call it once a write that
+     * flushed a row group has finished: drainHybridFrames() does after such a write, and an export that a
+     * slow client suspended inside such a write does once onResume() has finished it.
      */
     protected static void releaseWrittenFrames(
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
@@ -74,6 +75,10 @@ public abstract class BaseParquetExporter {
         assert exporter.getTotalRows() - exporter.getRowsWrittenToRowGroups() <= exporter.getCurrentFrameRowCount()
                 : "the writer still holds rows of an earlier frame";
         mat.releasePinnedBuffers();
+        if (exporter.getTotalRows() == exporter.getRowsWrittenToRowGroups()) {
+            // The writer has written the current frame's last row and dropped the frame.
+            mat.releaseFrameBuffers();
+        }
         if (pfc != null) {
             pfc.releaseOpenPartitions();
         }

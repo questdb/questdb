@@ -964,7 +964,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         // and the partition of the frame. When the client reads slower than the server writes, the server
         // waits inside the write of a row group and resumes the export once the client has read it. The
         // resumed export releases what that row group finished with, as an export that never waits does,
-        // so it holds one output row group plus the frame it reads, however many row groups it writes.
+        // so it holds the frames whose rows wait for the next output row group plus the frame it reads,
+        // however many row groups it writes.
         // The forced send fragmentation makes every row group wait: a chunk over 512 bytes waits, and a
         // row group of these tables takes about 10 KB.
         final AtomicLong queryMemoryLimit = new AtomicLong();
@@ -991,10 +992,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     engine.execute("INSERT INTO tp VALUES (0, 'z', '2024-01-02T00:00:00.000000Z')", sqlExecutionContext);
                     engine.execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
 
-                    // A computed column takes a 1 MiB buffer a frame. The export holds the buffers of the
-                    // frame it reads and of at most one frame before it, 2 MiB, and maps the partition it
-                    // reads and at most one before it, 456_000 bytes. This export is the first read of th,
-                    // so no pooled reader maps its partitions yet.
+                    // A computed column takes a 1 MiB buffer a frame. In row groups of 1000 rows, each
+                    // frame's write writes all of its rows, so the next frame reuses its buffer: the export
+                    // holds 1 MiB. It maps the partition it reads and at most one before it, 456_000 bytes.
+                    // This export is the first read of th, so no pooled reader maps its partitions yet.
                     Assert.assertEquals(
                             0,
                             assertSlowClientExport(
@@ -1009,11 +1010,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     "slow_native"
                             )
                     );
-                    Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 8L * Numbers.SIZE_1MB);
+                    Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 3L * Numbers.SIZE_1MB / 2);
                     Assert.assertTrue("mapped partitions grew by " + nf.getReaderMemoryGrowth(), nf.getReaderMemoryGrowth() < 2L * Numbers.SIZE_1MB);
 
                     // A row-wise export materializes every column into 1 MiB buffers, four a batch (a2, s
-                    // data and aux, ts), and holds those of the batch it reads and of at most one before it.
+                    // data and aux, ts). A batch of ROW_GROUP_SIZE rows is a row group, whose write writes
+                    // all of its rows, so the next batch reuses its buffers: the export holds 4 MiB.
                     Assert.assertEquals(
                             0,
                             assertSlowClientExport(
@@ -1028,7 +1030,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     "slow_cursor"
                             )
                     );
-                    Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 24L * Numbers.SIZE_1MB);
+                    Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 6L * Numbers.SIZE_1MB);
 
                     // A computed VARCHAR of at most 9 bytes takes no bytes in its data buffer, only a 1 MiB aux buffer
                     // a frame. In row groups of 1500 rows, the export holds the buffers of the frame it reads and of at
@@ -1050,19 +1052,22 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 8L * Numbers.SIZE_1MB);
 
                     // The decoded row groups count against the query memory limit. 2 MiB holds the decoded
-                    // frames of one output row group plus the frame the export reads, not the 32 of the
-                    // partition. A buffer the export releases goes to a pool that the next frame takes it
-                    // from, so the export allocates ceil(ROW_GROUP_SIZE / 1000) + 1 decode buffers: the
-                    // frames whose rows the writer still holds, and the frame it reads.
+                    // frames whose rows wait for the next output row group plus the frame the export reads,
+                    // not the 32 of the partition. A buffer the export releases goes to a pool that the next
+                    // frame takes it from, so the export allocates as many decode buffers as it holds at
+                    // most: the frames whose rows the writer still holds, and the frame it reads. In row
+                    // groups of 1000 rows, each frame's write writes all of its rows, so the next frame
+                    // decodes into its buffer.
                     final long exportMemoryLimit = 2L * Numbers.SIZE_1MB;
                     final String parquetQuery = "SELECT a * 2 a2, s, ts FROM tp";
                     Assert.assertEquals(
-                            2,
+                            1,
                             assertSlowClientExport(engine, sqlExecutionContext, nf, queryMemoryLimit, exportMemoryLimit, parquetQuery, ParquetExportMode.PAGE_FRAME_BACKED, 1000, "slow_parquet")
                     );
-                    // An output row group spans three frames.
+                    // An output row group spans three frames: the export holds the two whose rows wait and the
+                    // one it reads.
                     Assert.assertEquals(
-                            4,
+                            3,
                             assertSlowClientExport(engine, sqlExecutionContext, nf, queryMemoryLimit, exportMemoryLimit, parquetQuery, ParquetExportMode.PAGE_FRAME_BACKED, 3000, "slow_parquet_3000")
                     );
                     // Row groups that end inside a frame leave rows of the frame in the writer.
@@ -1071,13 +1076,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             assertSlowClientExport(engine, sqlExecutionContext, nf, queryMemoryLimit, exportMemoryLimit, parquetQuery, ParquetExportMode.PAGE_FRAME_BACKED, 400, "slow_parquet_400")
                     );
                     Assert.assertEquals(
-                            3,
+                            2,
                             assertSlowClientExport(engine, sqlExecutionContext, nf, queryMemoryLimit, exportMemoryLimit, parquetQuery, ParquetExportMode.PAGE_FRAME_BACKED, 1500, "slow_parquet_1500")
                     );
                     // The same with a computed VARCHAR of at most 9 bytes, whose values take a 1 MiB aux buffer for
                     // each of the two frames.
                     Assert.assertEquals(
-                            3,
+                            2,
                             assertSlowClientExport(
                                     engine,
                                     sqlExecutionContext,
@@ -1092,11 +1097,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     );
                     Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 8L * Numbers.SIZE_1MB);
                     // One row from each of three row groups, in row groups of one row: such a row group of
-                    // these two columns takes less than 512 bytes, so its write does not wait. The export
-                    // releases after each write that flushed a row group, so the third frame decodes into
-                    // the buffer of the first.
+                    // these two columns takes less than 512 bytes, so its write does not wait. Each frame's
+                    // write writes its row, so the next frame decodes into its buffer.
                     Assert.assertEquals(
-                            2,
+                            1,
                             assertSlowClientExport(
                                     engine,
                                     sqlExecutionContext,
@@ -1111,7 +1115,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     );
                     // read_parquet() of the file of 1000-row row groups.
                     Assert.assertEquals(
-                            2,
+                            1,
                             assertSlowClientExport(
                                     engine,
                                     sqlExecutionContext,
@@ -1125,19 +1129,32 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             )
                     );
 
-                    // 800 KiB holds three decoded frames, not four. The export releases decoded frames when
-                    // a row group flushes, so with 3000-row row groups it holds three of them through frame
-                    // 5 and allocates a fourth one for frame 6, row group 5 of the partition.
+                    // 800 KiB holds the three decoded frames the export holds in row groups of 3000 rows.
+                    Assert.assertEquals(
+                            3,
+                            assertSlowClientExport(
+                                    engine,
+                                    sqlExecutionContext,
+                                    nf,
+                                    queryMemoryLimit,
+                                    800 * 1024L,
+                                    parquetQuery,
+                                    ParquetExportMode.PAGE_FRAME_BACKED,
+                                    3000,
+                                    "slow_parquet_3000_limited"
+                            )
+                    );
+
+                    // 600 KiB holds two decoded frames, not three: the export fails when it decodes the third
+                    // frame, row group 2 of the partition, while the writer still holds the rows of the first
+                    // two. It has sent no row group yet, so the server answers with the error.
                     assertParquetExportMode(engine, sqlExecutionContext, parquetQuery, ParquetExportMode.PAGE_FRAME_BACKED);
-                    queryMemoryLimit.set(800 * 1024L);
+                    queryMemoryLimit.set(600 * 1024L);
                     try {
                         nf.startRecording(0);
                         try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
-                            requestParquetExport(httpClient, sink, parquetQuery, 3000);
-                            Assert.fail("the export must fail at the query memory limit");
-                        } catch (HttpClientException e) {
-                            // The response has started, so the client cannot read the failure as a response.
-                            TestUtils.assertContains(e.getMessage(), "malformed chunk");
+                            Assert.assertEquals("400", requestParquetExport(httpClient, sink, parquetQuery, 3000));
+                            TestUtils.assertContains(sink.toString(), "in row group 2: query memory limit exceeded");
                         }
                         assertEventually(() -> Assert.assertEquals(-1, engine.getCopyExportContext().getActiveExportId()));
                         try (TestHttpClient httpClient = new TestHttpClient()) {
@@ -1146,13 +1163,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     } finally {
                         queryMemoryLimit.set(0);
                     }
-                    assertQuery("SELECT phase, status, message ~ 'in row group 5: query memory limit exceeded' is_row_group_5 FROM sys.copy_export_log LIMIT -2")
+                    assertQuery("SELECT phase, status, message ~ 'in row group 2: query memory limit exceeded' is_row_group_2 FROM sys.copy_export_log LIMIT -2")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
                             .expectSize()
                             .returns("""
-                                    phase\tstatus\tis_row_group_5
+                                    phase\tstatus\tis_row_group_2
                                     stream_sending_data\tstarted\tfalse
                                     stream_sending_data\tfailed\ttrue
                                     """);
@@ -2032,14 +2049,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     );
 
                     // A decoded 1000-row frame of a and ts takes 12_000 bytes. 20 KiB holds the first frame, not
-                    // the second, which the export decodes while the writer still holds the first one: the
-                    // export fails after the first frame has charged the tracker.
+                    // the second. In row groups of 400 rows, the first frame's write sends two row groups and
+                    // leaves 200 of its rows in the writer, which still holds them when the export decodes the
+                    // second frame: the export fails after the first frame has charged the tracker.
                     final String query = "SELECT a * 2 a2, ts FROM tp";
                     assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.PAGE_FRAME_BACKED);
                     nf.track(engine, query);
                     queryMemoryLimit.set(20 * 1024L);
                     try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
-                        requestParquetExport(httpClient, sink, query, 1000);
+                        requestParquetExport(httpClient, sink, query, 400);
                         Assert.fail("the export must fail at the query memory limit");
                     } catch (HttpClientException e) {
                         // The response has started, so the client cannot read the failure as a response.

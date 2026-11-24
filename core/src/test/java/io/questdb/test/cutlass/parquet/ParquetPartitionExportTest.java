@@ -560,16 +560,42 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecodedFramesReleasedAtDefaultRowGroupSizes() throws Exception {
+        // At the server defaults, a Parquet partition holds row groups of 100_000 rows and the export
+        // writes row groups of 100_000 rows. Days 1 and 2 hold 150_000 rows each, which the export reads
+        // as frames of 100_000 and 50_000 rows. The first frame's write writes all of its rows, so the
+        // second frame decodes into its buffers. The rows of the second frame wait in the writer while
+        // the third frame decodes, and the third frame's write leaves 50_000 of its rows there while the
+        // fourth frame decodes into the buffers of the second: the export allocates two decode buffers.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+            execute("CREATE TABLE td (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO td SELECT x::INT, timestamp_sequence('2024-01-01', 500_000) FROM long_sequence(150_000)");
+            execute("INSERT INTO td SELECT (x + 150_000)::INT, timestamp_sequence('2024-01-02', 500_000) FROM long_sequence(150_000)");
+            execute("INSERT INTO td VALUES (0, '2024-01-03T00:00:00.000000Z')");
+            execute("ALTER TABLE td CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            final String query = "SELECT a * 2 a2, ts FROM td";
+            Assert.assertEquals("[0 0 0 100000][0 1 0 50000][1 0 0 100000][1 1 0 50000]", parquetFrames(engine, sqlExecutionContext, query));
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertEquals(2, runCopyCountingDecodeBuffers(job, query, "default_row_groups", ""));
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("default_row_groups"));
+            }
+        });
+    }
+
+    @Test
     public void testDecodedFramesReleasedPerRowGroup() throws Exception {
-        // The hybrid path keeps a decoded Parquet frame until the export writes the row group its rows
-        // land in, then decodes a later frame into its buffers: the export holds the decoded frames of
-        // one output row group plus the frame it reads, however many row groups the partition has, and
-        // allocates no more decode buffers than that. A decoded 1000-row group of this table takes
-        // 1000 * (4 + 16 + 200 + 8) = 228_000 bytes in the native layout (INT, VARCHAR aux and data,
-        // TIMESTAMP), charged to the query memory limit. 2 MiB holds the 2 frames the export holds at
-        // ROW_GROUP_SIZE 1000 and the 4 at ROW_GROUP_SIZE 3000, not the 32 of the partition; 320 KiB
-        // holds one frame, not two. Only the count of allocated buffers tells reuse from freeing a
-        // buffer and allocating a new one, which holds as little memory.
+        // The hybrid path keeps a decoded Parquet frame until the writer has written the frame's last
+        // row, then decodes a later frame into its buffers: the export holds the decoded frames whose
+        // rows wait for the next output row group plus the frame it reads, however many row groups the
+        // partition has, and allocates no more decode buffers than that. A decoded 1000-row group of
+        // this table takes 1000 * (4 + 16 + 200 + 8) = 228_000 bytes in the native layout (INT, VARCHAR
+        // aux and data, TIMESTAMP), charged to the query memory limit: 320 KiB holds one frame, not two,
+        // and 800 KiB holds three frames, not four. Only the count of allocated buffers tells reuse from
+        // freeing a buffer and allocating a new one, which holds as little memory.
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
             execute("CREATE TABLE tg (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -594,17 +620,30 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                         .returns("status\tis_second_frame\nfailed\ttrue\n");
                 Assert.assertFalse(exportFileExists("released_breached"));
 
+                // Under the same limit: in row groups of 100 and of 1000 rows, each frame's write writes
+                // all of its rows, so the next frame decodes into its buffers and the export holds one
+                // frame.
+                Assert.assertEquals(1, runCopyCountingDecodeBuffers(job, query, "released_100", " ROW_GROUP_SIZE 100"));
+                Assert.assertEquals(1, runCopyCountingDecodeBuffers(job, query, "released_1000", " ROW_GROUP_SIZE 1000"));
+
+                // An output row group spans three frames: the export holds the two whose rows wait and
+                // the one it reads.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 800 * 1024L);
+                Assert.assertEquals(3, runCopyCountingDecodeBuffers(job, query, "released_3000", " ROW_GROUP_SIZE 3000"));
+
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
-                Assert.assertEquals(2, runCopyCountingDecodeBuffers(job, query, "released_1000", " ROW_GROUP_SIZE 1000"));
-                // An output row group spans three frames.
-                Assert.assertEquals(4, runCopyCountingDecodeBuffers(job, query, "released_3000", " ROW_GROUP_SIZE 3000"));
+                // In row groups of 1500 rows, every other frame's write leaves 500 of its rows in the
+                // writer, which holds them while the export reads the next frame.
+                Assert.assertEquals(2, runCopyCountingDecodeBuffers(job, query, "released_1500", " ROW_GROUP_SIZE 1500"));
                 final String readParquetQuery = "SELECT a * 2 a2, s, ts FROM " + readParquet("released_source");
-                Assert.assertEquals(2, runCopyCountingDecodeBuffers(job, readParquetQuery, "released_read_parquet", " ROW_GROUP_SIZE 1000"));
+                Assert.assertEquals(1, runCopyCountingDecodeBuffers(job, readParquetQuery, "released_read_parquet", " ROW_GROUP_SIZE 1000"));
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             }
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_100"));
                 TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_1000"));
                 TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_3000"));
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_1500"));
                 TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_read_parquet"));
             }
         });
@@ -697,6 +736,46 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     @Test
     public void testDropColumnBeforeConversionWal() throws Exception {
         assertMemoryLeak(() -> assertDropColumnBeforeConversion(engine, sqlExecutionContext, "drop_before_wal", true));
+    }
+
+    @Test
+    public void testFullyWrittenFrameBuffersReused() throws Exception {
+        // Once the writer has written the last row of a frame, the export reuses the frame's buffers for
+        // the next frame: its decoded Parquet row group, and its computed values, truncated in place. The
+        // query computes a column of each kind of buffer: fixed-size, STRING, whose aux buffer starts with
+        // the offset of the first value, VARCHAR of over 9 bytes, VARCHAR of at most 9 bytes, which takes
+        // bytes in its aux buffer alone, arrays and NULL arrays, and STRING with NULLs. Day 1 holds three
+        // Parquet row groups of 1000 rows and days 2 to 4 stay native, 1000 rows each, so the export reads
+        // frames of 1000 rows, as it does from read_parquet() of a file of 1000-row row groups. In row
+        // groups of 1000 and of 500 rows, each frame's write writes all of its rows. In row groups of 1500
+        // rows, every other frame's write leaves 500 of its rows in the writer, which still reads them from
+        // the frame's buffers while the export reads the next frame.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+            execute("CREATE TABLE tf (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Row i holds a = i + 1.
+            execute("INSERT INTO tf SELECT x::INT, x || '-long-tail', timestamp_sequence('2024-01-01', 28_800_000) FROM long_sequence(3_000)");
+            execute("""
+                    INSERT INTO tf SELECT (x + 3_000)::INT, (x + 3_000) || '-long-tail', timestamp_sequence('2024-01-02', 86_400_000)
+                    FROM long_sequence(3_000)""");
+            convertFirstDay("tf");
+            final String query = """
+                    SELECT a * 2 a2, s::STRING ss, (s || '!')::VARCHAR sl, left(s, 6) s6, CASE WHEN a % 3 = 0 THEN NULL ELSE ARRAY[a / 2.0] END arr,
+                    CASE WHEN a % 5 = 0 THEN NULL ELSE a::STRING END sn, ts FROM tf""";
+            assertColumnType(query, "ss", "STRING");
+            assertColumnType(query, "sl", "VARCHAR");
+            assertColumnType(query, "s6", "VARCHAR");
+            assertColumnType(query, "arr", "DOUBLE[]");
+            assertColumnType(query, "sn", "STRING");
+            Assert.assertEquals("[0 0 0 1000][0 1 0 1000][0 2 0 1000]", parquetFrames(engine, sqlExecutionContext, query));
+            copyToParquet(engine, sqlExecutionContext, "SELECT * FROM tf", DIRECT_PAGE_FRAME, "reused_source", " ROW_GROUP_SIZE 1000");
+            final String readParquetQuery = query.replace("FROM tf", "FROM " + readParquet("reused_source"));
+            for (String rowGroupSize : new String[]{"1000", "500", "1500"}) {
+                final String options = " ROW_GROUP_SIZE " + rowGroupSize;
+                assertExportMatchesQuery(engine, sqlExecutionContext, query, PAGE_FRAME_BACKED, "reused_" + rowGroupSize, options);
+                assertExportMatchesQuery(engine, sqlExecutionContext, readParquetQuery, PAGE_FRAME_BACKED, "reused_read_parquet_" + rowGroupSize, options);
+            }
+        });
     }
 
     @Test
