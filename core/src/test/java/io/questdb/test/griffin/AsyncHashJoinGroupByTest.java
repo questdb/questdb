@@ -1690,9 +1690,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                  Reducers reducers = new Reducers()) {
                 MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
                 sqlExecutionContext.setMemoryTracker(tracker);
-                // All nine frames belong to workers, leaving the owner destination unopened.
-                // The frame cursor folds the short tail into the preceding frames.
-                CountDownLatch acquired = new CountDownLatch(9);
+                // All ten frames belong to workers, leaving the owner destination unopened.
+                // The row cap keeps the short tail in a separate frame.
+                CountDownLatch acquired = new CountDownLatch(10);
                 f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
                 hook.reduceTracker = tracker;
                 hook.reduceLimitAt = 20006; // 10003 readings, two matching build payloads each
@@ -1997,10 +1997,16 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
                 @Override
                 public void statefulThrowExceptionIfTrippedNoThrottle() {
-                    if (getState() == STATE_TIMEOUT) {
+                    // Decide on one read of the state. A reducer's hook may cancel while the owner
+                    // polls here; a second read through super would then report a timeout as a
+                    // cancellation.
+                    final int state = getState();
+                    if (state == STATE_TIMEOUT) {
                         throw CairoException.queryTimedOut();
                     }
-                    super.statefulThrowExceptionIfTrippedNoThrottle();
+                    if (state != STATE_OK) {
+                        throw CairoException.queryCancelled(-1);
+                    }
                 }
             };
             // A parallel build filters its frames on the workers, which reducer threads run.

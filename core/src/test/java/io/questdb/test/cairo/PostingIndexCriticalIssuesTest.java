@@ -255,6 +255,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingColumnThenWriteToPartitionRemovesNoHeldFile() throws Exception {
+        // ADD COLUMN creates the empty .pk and binds the writer's indexer to it. Every row of the partition is below
+        // the column top, so the O3 executor creates the index anew and removes that .pk first.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        ff = new HeldFileRemoveRefusingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_add_col_held (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_add_col_held VALUES (1, '2020-01-01T01:00'), (2, '2020-01-01T02:00')");
+            drainWalQueue();
+            execute("ALTER TABLE t_add_col_held ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO t_add_col_held (x, s, ts) VALUES (3, 'a', '2020-01-01T03:00')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t_add_col_held")));
+            assertQuery("SELECT x FROM t_add_col_held WHERE s = 'a'").sizeMayVary().returns("x\n3\n");
+        });
+    }
+
+    @Test
     public void testAlterRenameColumnRebindCarriesArmedTxnAtSeal() throws Exception {
         // TableWriter.renameColumn rebinds the column's indexer to the new
         // (name, columnNameTxn) so later seals write .pv files under the new
@@ -2577,6 +2595,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * pre-commit txn could still map it), so it is routed to the scoreboard-gated
      * deferred purge instead. After the commit and a purge-job run, exactly one
      * value file must remain -- the case that leaked before the deferred purge.
+     * The in-place rebuild writes under a new column name txn, so the committed
+     * version's .pv is superseded as a whole and goes to the column purge. With no
+     * reader pinned it is gone by the time the O3 commit returns, except under
+     * ADAPTIVE: there a save point still names it, so the column purge job removes
+     * it once the durable epoch moves past it.
      */
     @Test
     public void testInPlaceParquetPostingResealSpillReclaimsValueFile() throws Exception {
@@ -2608,6 +2631,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
             execute("ALTER TABLE t_pq_inplace CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
+            final long nameTxnBeforeO3;
+            try (TableReader reader = engine.getReader("t_pq_inplace")) {
+                nameTxnBeforeO3 = reader.getTxFile().getPartitionNameTxn(0);
+            }
             // O3 into the parquet partition; with the config above this updates in
             // place (isRewrite=false) and rebuilds the index over all 2000+ 'A'
             // rows, tripping the spill budget -> commitDense seals -> deferred purge.
@@ -2617,6 +2644,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     ('2024-01-01T00:20:00.500000Z', 'A')
                     """);
             drainWalQueue();
+            try (TableReader reader = engine.getReader("t_pq_inplace")) {
+                Assert.assertEquals("the O3 must update the parquet partition in place", nameTxnBeforeO3, reader.getTxFile().getPartitionNameTxn(0));
+            }
 
             completeDurableEpoch("t_pq_inplace");
             // The update in place moved the index to a new version while the previous one was live. The column
@@ -7335,7 +7365,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // Plant a committed-visible base head plus a page-spanning fully
             // future head on the historic first partition.
-            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn, "sym");
 
             // Source .pk size right before the rename links (and recovers) it.
             final long srcColumnNameTxn;
@@ -7445,6 +7475,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     newColumnNameTxn,
                     "link recovery truncated the renamed column's .pk below its header regionLimit"
             );
+        });
+    }
+
+    @Test
+    public void testRenameColumnLinkRecoveryLogsMultiByteName() throws Exception {
+        // Link-time recovery logs the column whose future chain entry it drops. A name with 2-, 3- and 4-byte UTF-8
+        // characters must reach the log as valid UTF-8: test log paranoia fails the rename on any other record.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_link_multibyte (
+                        ts TIMESTAMP,
+                        "prix_é_符号😀" SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_link_multibyte VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_link_multibyte");
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            // The rename's link recovery drops the future head, and logs it
+            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn, "prix_é_符号😀");
+
+            execute("ALTER TABLE t_link_multibyte RENAME COLUMN \"prix_é_符号😀\" TO \"nouveau_é_符号😀\"");
+            assertQuery("SELECT price FROM t_link_multibyte WHERE \"nouveau_é_符号😀\" = 'A'")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: nouveau_é_符号😀")
+                    .returns("""
+                            price
+                            1.0
+                            """);
         });
     }
 
@@ -13140,7 +13212,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             TableToken token,
             long partitionTimestamp,
             long partitionNameTxn,
-            long currentTxn
+            long currentTxn,
+            String columnName
     ) {
         // gens sized so the future head's entry region spans at least one OS
         // page; dropping it rewinds regionLimit across a page boundary, the
@@ -13153,7 +13226,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final int plen = path.size();
             // No setCurrentTableTxn: recovery must not run on this open, or it
             // would drop the future head we are about to plant.
-            writer.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, false);
+            writer.of(path.trimTo(plen), columnName, COLUMN_NAME_TXN_NONE, false);
 
             // Committed-visible base head. discardForRebuild rotates sealTxn so
             // this commit takes the appendNewEntry branch (a fresh entry chained
@@ -14071,6 +14144,117 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int getFailureCount() {
             return failureCount;
+        }
+    }
+
+    /**
+     * Removes posting index files the way Windows does: never while the file is open or mapped.
+     */
+    private static class HeldFileRemoveRefusingFacade extends TestFilesFacadeImpl {
+        private final ConcurrentHashMap<String, Integer> holdCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Long, String> mappedPaths = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Long, String> openPaths = new ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            release(openPaths.remove(fd));
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            return onMapped(super.mmap(fd, len, offset, flags, memoryTag), fd);
+        }
+
+        @Override
+        public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+            return onMapped(super.mmapNoCache(fd, len, offset, flags, memoryTag), fd);
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            return onRemapped(super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag), addr);
+        }
+
+        @Override
+        public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            return onRemapped(super.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag), addr);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            release(mappedPaths.remove(address));
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openCleanRW(LPSZ name, long size) {
+            return onOpened(super.openCleanRW(name, size), name);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return onOpened(super.openRO(name), name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            return onOpened(super.openRONoCache(name), name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return onOpened(super.openRW(name, opts), name);
+        }
+
+        @Override
+        public long openRWNoCache(LPSZ name, int opts) {
+            return onOpened(super.openRWNoCache(name, opts), name);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String path = Utf8s.stringFromUtf8Bytes(name);
+            if ((path.contains(".pk.") || path.contains(".pv.")) && holdCounts.getOrDefault(path, 0) > 0) {
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        private void hold(String path) {
+            holdCounts.merge(path, 1, Integer::sum);
+        }
+
+        private long onMapped(long address, long fd) {
+            final String path = openPaths.get(fd);
+            if (address != -1 && path != null) {
+                mappedPaths.put(address, path);
+                hold(path);
+            }
+            return address;
+        }
+
+        private long onOpened(long fd, LPSZ name) {
+            if (fd > -1) {
+                final String path = Utf8s.stringFromUtf8Bytes(name);
+                openPaths.put(fd, path);
+                hold(path);
+            }
+            return fd;
+        }
+
+        private long onRemapped(long newAddress, long oldAddress) {
+            final String path = mappedPaths.remove(oldAddress);
+            if (path != null && newAddress != -1) {
+                mappedPaths.put(newAddress, path);
+            }
+            return newAddress;
+        }
+
+        private void release(String path) {
+            if (path != null) {
+                holdCounts.merge(path, -1, Integer::sum);
+            }
         }
     }
 
