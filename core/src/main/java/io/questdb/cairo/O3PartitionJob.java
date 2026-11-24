@@ -29,6 +29,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -808,7 +809,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int covType = metadata.getColumnType(covCol);
                 coverNames.add(metadata.getColumnName(covCol));
                 coverNameTxns.add(versions.getColumnNameTxn(partitionTimestamp, covCol));
-                coverTops.add(Math.max(0, versions.getColumnTop(partitionTimestamp, covCol)));
+                coverTops.add(PostingIndexUtils.coveredColumnTop(versions.getColumnTop(partitionTimestamp, covCol)));
                 coverShifts.add(ColumnType.pow2SizeOf(covType));
                 coverIndices.add(covCol);
                 coverTypes.add(covType);

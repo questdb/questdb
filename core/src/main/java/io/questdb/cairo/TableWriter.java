@@ -9125,7 +9125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int covType = metadata.getColumnType(covCol);
             coveringNames.add(metadata.getColumnName(covCol));
             coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
-            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringTops.add(PostingIndexUtils.coveredColumnTop(columnVersionWriter.getColumnTop(partitionTimestamp, covCol)));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);

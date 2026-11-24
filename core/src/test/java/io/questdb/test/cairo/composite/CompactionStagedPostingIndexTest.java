@@ -67,6 +67,61 @@ public class CompactionStagedPostingIndexTest extends AbstractCairoTest {
         assertMergeBuildsPostingIndexes(false);
     }
 
+    /**
+     * The staged directory holds the covered column {@code w} under a column top, and none of the covered column
+     * {@code z}: the rebuilt index reads {@code w} from its top on and {@code z} as NULL in every row.
+     */
+    @Test
+    public void testRewriteBuildsCoveredValuesOfColumnsAddedAfterTheDay() throws Exception {
+        // Merge-append on: the backfill lands inside 2020-01-01 and cuts it into pieces, which the sweep rewrites.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        final PostingFileCounter ff = new PostingFileCounter();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cx (i INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE cx_oracle (i INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            insert("SELECT x::INT i, ('sym' || (x % 7))::SYMBOL sym, timestamp_sequence('2020-01-01', 15 * 1_000_000L) ts" +
+                    " FROM long_sequence(5760)");
+            insert("SELECT x::INT + 90_000 i, ('sym' || (x % 7))::SYMBOL sym, timestamp_sequence('2020-01-03', 60 * 1_000_000L) ts" +
+                    " FROM long_sequence(50)");
+            // The backfill fills w, so 2020-01-01 holds it under a column top.
+            execute("ALTER TABLE cx ADD COLUMN w LONG");
+            execute("ALTER TABLE cx_oracle ADD COLUMN w LONG");
+            insert("SELECT x::INT + 70_000 i, ('sym' || (x % 7))::SYMBOL sym, timestamp_sequence('2020-01-01T04:00:07', 5 * 1_000_000L) ts," +
+                    " x * 7 w FROM long_sequence(200)");
+            // Added after the last insert: 2020-01-01 holds no rows of z.
+            execute("ALTER TABLE cx ADD COLUMN z VARCHAR");
+            execute("ALTER TABLE cx_oracle ADD COLUMN z VARCHAR");
+            execute("ALTER TABLE cx ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (w, z)");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("cx")) {
+                Assert.assertTrue("2020-01-01 must be composite", reader.getTxFile().isPartitionComposite(0));
+                final int zWriterIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("z"));
+                Assert.assertEquals("2020-01-01 must hold no rows of z", -1,
+                        reader.getColumnVersionReader().getColumnTop(reader.getTxFile().getPartitionTimestampByIndex(0), zWriterIndex));
+            }
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            sweep(ff, configuration.getMicrosecondClock());
+            try (TableReader reader = engine.getReader("cx")) {
+                Assert.assertFalse("the sweep must rewrite 2020-01-01", reader.getTxFile().isPartitionComposite(0));
+            }
+
+            assertQuery("SELECT w, z, ts FROM cx WHERE sym = 'sym3'").assertsPlanContaining("CoveringIndex on: sym");
+            for (int k = 0; k < 7; k++) {
+                TestUtils.assertSqlCursors(
+                        engine, sqlExecutionContext,
+                        "SELECT w, z, ts FROM cx_oracle WHERE sym = 'sym" + k + "'",
+                        "SELECT w, z, ts FROM cx WHERE sym = 'sym" + k + "'",
+                        LOG
+                );
+            }
+        });
+    }
+
     @Test
     public void testRewriteBuildsPostingIndexesOfAddedColumns() throws Exception {
         assertRewriteBuildsPostingIndexes(true);
