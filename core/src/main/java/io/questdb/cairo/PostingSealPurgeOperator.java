@@ -33,7 +33,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntLongHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
@@ -48,8 +47,7 @@ import java.io.Closeable;
  * visibility window of the superseded sealed version.
  * <p>
  * Stateless aside from the reused {@link Path} buffer, {@link TxReader},
- * the .pk view and chain scratch of the visibility check, and the txn the
- * last {@code _txn} flush of each table covered;
+ * and the .pk view and chain scratch of the visibility check;
  * {@link PostingSealPurgeJob} owns one instance and feeds it tasks
  * sequentially.
  */
@@ -58,16 +56,11 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
     // A writer that publishes an entry between the length read and the walk leaves the header past that length
     private static final int CHAIN_READ_ATTEMPTS = 3;
-    // The tables whose flushed txn the operator remembers; it forgets them all when one more would grow the map.
-    private static final int FLUSHED_TXN_TABLES_MAX = 64;
     private final PostingIndexChainEntry.Snapshot chainEntryScratch = new PostingIndexChainEntry.Snapshot();
     private final PostingIndexChainHeader.Snapshot chainHeaderScratch = new PostingIndexChainHeader.Snapshot();
     private final CairoEngine engine;
     private final FilesFacade ff;
-    // The table txn the last _txn flush of each table covered, by table id.
-    private final IntLongHashMap flushedTxnByTableId = new IntLongHashMap(FLUSHED_TXN_TABLES_MAX);
     private final PostingIndexKeyFileView keyFile = new PostingIndexKeyFileView();
-    private final LiveCoverFlusher liveCoverFlusher = new LiveCoverFlusher();
     private final Path path;
     private final int pathRootLen;
     private boolean scanAllCoversRemoved;
@@ -184,11 +177,10 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
         final long fromTxn = task.getFromTableTxn();
         long toTxn = task.getToTableTxn();
-        SeqTxnTracker tracker = null;
         boolean safe;
         try {
             if (liveToken.isWal()) {
-                tracker = engine.getTableSequencerAPI().getTxnTracker(liveToken);
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(liveToken);
                 // The pin before the scoreboard: the scoreboard check raises the scoreboard's max txn to toTxn, and
                 // a reader cannot open below that max.
                 if (!tracker.isRangeAvailableToEpoch(fromTxn, toTxn)) {
@@ -218,7 +210,13 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
         path.trimTo(pathRootLen).concat(liveToken.getDirName());
         int pathTableLen = path.size();
-        setPartitionPath(task);
+        TableUtils.setPathForNativePartition(
+                path,
+                task.getTimestampType(),
+                task.getPartitionBy(),
+                task.getPartitionTimestamp(),
+                task.getPartitionNameTxn()
+        );
         int pathPartitionLen = path.size();
 
         // Liveness guard against sealTxn reuse -- the C1 endgame the publish-time
@@ -269,14 +267,6 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .I$();
             return true;
         }
-
-        if (!isSupersedingStateDurable(liveToken, tracker, task, toTxn, pathPartitionLen)) {
-            path.trimTo(pathRootLen);
-            return false;
-        }
-        // The flushes leave the name of a file of the table in the path
-        path.trimTo(pathTableLen);
-        setPartitionPath(task);
 
         boolean allRemoved = true;
         path.trimTo(pathPartitionLen);
@@ -387,83 +377,6 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         return done;
     }
 
-    // A file that does not exist has nothing to flush: the head of a chain whose seal staged no cover files, or an
-    // index whose .pk is gone.
-    private void flushFileIfExists(LPSZ file) {
-        if (ff.exists(file)) {
-            TableUtils.fsyncFileDurable(ff, file);
-        }
-    }
-
-    /**
-     * Makes the state that supersedes the generation of {@code task} durable before the purge deletes it: the files of
-     * the live generation, then the {@code .pk} that names it, then the table's {@code _txn}. Without them on disk, a
-     * power loss after the delete leaves a {@code .pk} that names the deleted generation, or new files with no
-     * content, or a {@code _txn} below the txn of the chain entry that superseded it, which makes the writer's
-     * recovery walk fall back to the deleted generation. Under SYNC every commit flushed them already, and on a WAL
-     * table with a save point pin the pin keeps the superseded files until the save point flushed them.
-     *
-     * @return false when a flush failed, or the committed txn is still below {@code toTxn}: the job retries later
-     */
-    private boolean isSupersedingStateDurable(
-            TableToken token,
-            SeqTxnTracker tracker,
-            PostingSealPurgeTask task,
-            long toTxn,
-            int pathPartitionLen
-    ) {
-        if (engine.getResolvedCommitMode() == CommitMode.SYNC || (tracker != null && tracker.getPinnedEpochTxn() >= 0)) {
-            return true;
-        }
-        final CharSequence columnName = task.getIndexColumnName();
-        final long postingColumnNameTxn = task.getPostingColumnNameTxn();
-        try {
-            path.trimTo(pathPartitionLen);
-            final long headSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                    ff, PostingIndexUtils.keyFileName(path, columnName, postingColumnNameTxn));
-            if (headSealTxn > -1) {
-                path.trimTo(pathPartitionLen);
-                flushFileIfExists(PostingIndexUtils.valueFileName(path, columnName, postingColumnNameTxn, headSealTxn));
-                liveCoverFlusher.of(columnName, postingColumnNameTxn, headSealTxn, pathPartitionLen);
-                PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, columnName, postingColumnNameTxn, liveCoverFlusher);
-                path.trimTo(pathPartitionLen);
-                flushFileIfExists(PostingIndexUtils.coverInfoFileName(path, columnName, postingColumnNameTxn));
-            }
-            path.trimTo(pathPartitionLen);
-            flushFileIfExists(PostingIndexUtils.keyFileName(path, columnName, postingColumnNameTxn));
-            // An orphan purge targets a generation no chain entry named: no _txn on disk can make the .pk name it.
-            if (task.getToTableTxn() == Long.MAX_VALUE || flushedTxnByTableId.get(token.getTableId()) >= toTxn) {
-                return true;
-            }
-            // Read before the flush: the flush makes at least this txn durable.
-            final long committedTxn = readCommittedTxn(token, task);
-            path.trimTo(pathRootLen).concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME);
-            TableUtils.fsyncFileDurable(ff, path.$());
-            rememberFlushedTxn(token.getTableId(), committedTxn);
-            if (committedTxn < toTxn) {
-                LOG.info().$("posting seal purge: table txn is below the purge window, retrying [table=")
-                        .$(token.getTableName())
-                        .$(", column=").$(columnName)
-                        .$(", sealTxn=").$(task.getSealTxn())
-                        .$(", txn=").$(committedTxn)
-                        .$(", toTableTxn=").$(toTxn)
-                        .I$();
-                return false;
-            }
-            return true;
-        } catch (CairoException ex) {
-            LOG.error().$("posting seal purge: cannot flush the superseding state, retrying [table=")
-                    .$(token.getTableName())
-                    .$(", column=").$(columnName)
-                    .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
-                    .$(", sealTxn=").$(task.getSealTxn())
-                    .$(", errno=").$(ex.getErrno())
-                    .$(", msg=").$safe(ex.getFlyweightMessage())
-                    .I$();
-            return false;
-        }
-    }
-
     /**
      * Whether a reader pinned at or above {@code toTxn}, which the scoreboard check of the purge does not cover, can
      * see a chain entry that names the sealTxn of {@code task}. A .pk that cannot be read proves nothing, as for the
@@ -520,53 +433,6 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         } finally {
             txReader.close();
             path.trimTo(pathRootLen);
-        }
-    }
-
-    private void rememberFlushedTxn(int tableId, long txn) {
-        int index = flushedTxnByTableId.keyIndex(tableId);
-        if (index > -1 && flushedTxnByTableId.size() >= FLUSHED_TXN_TABLES_MAX - 1) {
-            flushedTxnByTableId.clear();
-            index = flushedTxnByTableId.keyIndex(tableId);
-        }
-        flushedTxnByTableId.putAt(index, tableId, txn);
-    }
-
-    private void setPartitionPath(PostingSealPurgeTask task) {
-        TableUtils.setPathForNativePartition(
-                path,
-                task.getTimestampType(),
-                task.getPartitionBy(),
-                task.getPartitionTimestamp(),
-                task.getPartitionNameTxn()
-        );
-    }
-
-    // Flushes the cover files of the live generation that the scan reports.
-    private class LiveCoverFlusher implements PostingIndexUtils.SealedFileVisitor {
-        private CharSequence columnName;
-        private long headSealTxn;
-        private int partitionPathLen;
-        private long postingColumnNameTxn;
-
-        @Override
-        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-            if (sealTxn == headSealTxn) {
-                flushFileIfExists(PostingIndexUtils.coverDataFileName(path.trimTo(partitionPathLen),
-                        columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
-                path.trimTo(partitionPathLen);
-            }
-        }
-
-        @Override
-        public void onValueFile(long sealTxn) {
-        }
-
-        void of(CharSequence columnName, long postingColumnNameTxn, long headSealTxn, int partitionPathLen) {
-            this.columnName = columnName;
-            this.postingColumnNameTxn = postingColumnNameTxn;
-            this.headSealTxn = headSealTxn;
-            this.partitionPathLen = partitionPathLen;
         }
     }
 }
