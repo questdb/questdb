@@ -29,6 +29,7 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -122,6 +123,9 @@ public final class TableUtils {
     // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
     public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";
+    // Delta state of one partition version: <partition>/_delta/_catalog.
+    public static final String DELTA_CATALOG_FILE_NAME = "_catalog";
+    public static final String DELTA_DIR_NAME = "_delta";
     public static final String DETACHED_DIR_MARKER = ".detached";
     // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
     public static final String DETACHING_DIR_MARKER = ".detaching";
@@ -181,6 +185,7 @@ public final class TableUtils {
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
+    public static final String PARQUET_METADATA_B_FILE_NAME = "_pm.b";
     public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
@@ -343,6 +348,8 @@ public final class TableUtils {
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
     private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
+    // The column name txn of an index file name isSupersededIndexFile() cannot classify; such a file is not superseded.
+    private static final long UNKNOWN_COLUMN_NAME_TXN = Long.MIN_VALUE;
     private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
     // Counts _txn partition-table hash terms; TxnBodyChecksumCacheTest relies on it. It lives in TableUtils
     // because every partition-table hash passes through this class, whatever the caller: a full hash through
@@ -1780,6 +1787,55 @@ public final class TableUtils {
      */
     public static boolean isParquetConfigExplicit(int packed) {
         return (packed & PARQUET_CONFIG_EXPLICIT_FLAG) != 0;
+    }
+
+    /**
+     * Whether {@code fileName} is an index file of an indexed column of {@code metadata} under a column name txn other
+     * than the one {@code columnVersionReader} names for the column in the partition at {@code partitionTimestamp}.
+     * Unclassifiable names do not count as superseded.
+     */
+    public static boolean isSupersededIndexFile(
+            CharSequence fileName,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
+        // Column names cannot contain a dot, so the first one ends the column name.
+        final int nameHi = Chars.indexOf(fileName, '.');
+        if (nameHi < 1) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(fileName, 0, nameHi);
+        if (columnIndex < 0 || !metadata.isColumnIndexed(columnIndex)) {
+            return false;
+        }
+        final long liveColumnNameTxn = columnVersionReader.getColumnNameTxn(
+                partitionTimestamp,
+                metadata.getWriterIndex(columnIndex)
+        );
+        final int len = fileName.length();
+        final int kindLo = nameHi + 1;
+        int kindHi = Chars.indexOf(fileName, kindLo, len, '.');
+        if (kindHi < 0) {
+            kindHi = len;
+        }
+        final long fileColumnNameTxn;
+        if (isUnsealedIndexFileKind(fileName, kindLo, kindHi)) {
+            fileColumnNameTxn = parseUnsealedIndexFileColumnNameTxn(fileName, kindHi);
+        } else {
+            // The sealed posting files, .pv and .pc<N>
+            final long sealedFileColumnNameTxn = PostingIndexUtils.sealedFileColumnNameTxn(fileName, kindLo);
+            if (sealedFileColumnNameTxn == PostingIndexUtils.PARSE_FAIL) {
+                fileColumnNameTxn = UNKNOWN_COLUMN_NAME_TXN;
+            } else if (fileName.charAt(kindLo + 1) == 'c'
+                    && sealedFileColumnNameTxn == PostingIndexUtils.coverFileHostTxn(liveColumnNameTxn)) {
+                // A cover data file spells COLUMN_NAME_TXN_NONE and txn 0 alike, as 0.
+                fileColumnNameTxn = liveColumnNameTxn;
+            } else {
+                fileColumnNameTxn = sealedFileColumnNameTxn;
+            }
+        }
+        return fileColumnNameTxn != UNKNOWN_COLUMN_NAME_TXN && fileColumnNameTxn != liveColumnNameTxn;
     }
 
     public static boolean isSymbolCached(MemoryR metaMem, int columnIndex) {
@@ -3433,8 +3489,9 @@ public final class TableUtils {
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
-        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // A table that currently holds composite or Delta partitions, or is downgrade-locked because its _cv
+        // carries checksum trailers, carries a version in (ColumnType.VERSION, ColumnType.MAX_STORAGE_VERSION]
+        // rather than ColumnType.VERSION; all are readable by this binary, so accept the whole
         // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
         // that predates a migration (migrations bring it up before it is opened), and a version
         // above maxVersion comes from a newer binary this one cannot read.
@@ -3676,6 +3733,37 @@ public final class TableUtils {
             return false;
         }
         return maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl);
+    }
+
+    /**
+     * Whether {@code fileName[kindLo, kindHi)} is the kind of an index file that carries one version per column name
+     * txn and no seal txn: bitmap {@code .k} and {@code .v}, posting {@code .pk} and {@code .pci}.
+     */
+    private static boolean isUnsealedIndexFileKind(CharSequence fileName, int kindLo, int kindHi) {
+        return Chars.equals("k", fileName, kindLo, kindHi)
+                || Chars.equals("v", fileName, kindLo, kindHi)
+                || Chars.equals("pk", fileName, kindLo, kindHi)
+                || Chars.equals("pci", fileName, kindLo, kindHi);
+    }
+
+    /**
+     * Parses the column name txn that follows the kind in an unsealed index file name:
+     * {@code sym.k} gives {@link #COLUMN_NAME_TXN_NONE} and {@code sym.k.12} gives 12.
+     * Returns {@link #UNKNOWN_COLUMN_NAME_TXN} when the rest of the name is not one numeric segment.
+     */
+    private static long parseUnsealedIndexFileColumnNameTxn(CharSequence fileName, int kindHi) {
+        final int len = fileName.length();
+        if (kindHi == len) {
+            return COLUMN_NAME_TXN_NONE;
+        }
+        if (kindHi + 1 == len || Chars.indexOf(fileName, kindHi + 1, len, '.') >= 0) {
+            return UNKNOWN_COLUMN_NAME_TXN;
+        }
+        try {
+            return Numbers.parseLong(fileName, kindHi + 1, len);
+        } catch (NumericException e) {
+            return UNKNOWN_COLUMN_NAME_TXN;
+        }
     }
 
     // Utility method for debugging. This method is not used in production.

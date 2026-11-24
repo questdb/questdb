@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.BuildInformationHolder;
 import io.questdb.FreeOnExit;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -107,7 +108,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 fos.close();
             }
             properties.load(is);
-            serverConf = new PropServerConfiguration(root, properties, null, LOG, null);
+            serverConf = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }

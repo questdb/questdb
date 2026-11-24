@@ -2757,6 +2757,131 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnCastToSymbolKey() throws Exception {
+        // A master key cast to SYMBOL has no static symbol table, so SymbolTranslatingRecord resolves
+        // each master key through the view the cast hands out, taken at the first cache miss, while
+        // the scan keeps minting keys. Only a serial horizon join takes such a master, in every shape:
+        // keyed and not keyed, with one and two right-hand tables, and the projection.
+        assertMemoryLeak(() -> {
+            createHorizonTradesAndQuoteTables();
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:04.000000Z', NULL, 50.0)");
+            // the same data keyed by an INT, whose cast gives '1', '2' and '3' for A, B and C
+            executeWithRewriteTimestamp("CREATE TABLE trades_id (ts #TIMESTAMP, id INT, sym_id SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE quotes_id (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids_id (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO trades_id
+                    SELECT ts, id, id::string
+                    FROM (SELECT ts, CASE sym WHEN 'A' THEN 1 WHEN 'B' THEN 2 WHEN 'C' THEN 3 END id FROM trades)
+                    """);
+            execute("""
+                    INSERT INTO quotes_id
+                    SELECT ts, (CASE sym WHEN 'A' THEN 1 WHEN 'B' THEN 2 WHEN 'C' THEN 3 END)::string, bid
+                    FROM quotes
+                    """);
+            execute("INSERT INTO bids_id SELECT ts, sym, bid FROM quotes_id");
+
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            // the NULL key matches no quote
+            final String keyedOneTable = """
+                    k\toffset\ta
+                    \t0\tnull
+                    \t#1s\tnull
+                    #A\t0\t20.0
+                    #A\t#1s\t40.0
+                    #B\t0\t20.0
+                    #B\t#1s\t60.0
+                    #C\t0\t40.0
+                    #C\t#1s\t40.0
+                    """;
+            final String keyedTwoTables = """
+                    k\toffset\ta\tb
+                    \t0\tnull\tnull
+                    \t#1s\tnull\tnull
+                    #A\t0\t20.0\t20.0
+                    #A\t#1s\t40.0\t40.0
+                    #B\t0\t20.0\t20.0
+                    #B\t#1s\t60.0\t60.0
+                    #C\t0\t40.0\t40.0
+                    #C\t#1s\t40.0\t40.0
+                    """;
+            // one row per trade and offset, in trade order and then offset order
+            final String projection = """
+                    k\toffset\ta
+                    #A\t0\t10.0
+                    #A\t#1s\t50.0
+                    #B\t0\t20.0
+                    #B\t#1s\t60.0
+                    #A\t0\t30.0
+                    #A\t#1s\t30.0
+                    #C\t0\t40.0
+                    #C\t#1s\t40.0
+                    \t0\tnull
+                    \t#1s\tnull
+                    """;
+            final String[][] keys = {
+                    // the cast key, the SYMBOL column holding the same text, the master table, the two
+                    // right-hand tables, and the keys of A, B and C
+                    {"sym::varchar::symbol", "sym", "trades", "quotes", "bids", "A", "B", "C"},
+                    {"sym::string::symbol", "sym", "trades", "quotes", "bids", "A", "B", "C"},
+                    {"id::symbol", "sym_id", "trades_id", "quotes_id", "bids_id", "1", "2", "3"},
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String[] key : keys) {
+                    final String master = "(SELECT ts, " + key[0] + " k FROM " + key[2] + ") t";
+                    final String symbolMaster = "(SELECT ts, " + key[1] + " k FROM " + key[2] + ") t";
+                    final String oneTable = " HORIZON JOIN " + key[3] + " q ON (t.k = q.sym) LIST (0s, 1s) AS h";
+                    final String twoTables = " HORIZON JOIN " + key[3] + " q ON (t.k = q.sym) HORIZON JOIN "
+                            + key[4] + " b ON (t.k = b.sym) LIST (0s, 1s) AS h";
+
+                    assertHorizonJoinOnCastToSymbolKey(
+                            "SELECT t.k, h.offset, avg(q.bid) a FROM #M" + oneTable + " ORDER BY t.k, h.offset",
+                            master,
+                            symbolMaster,
+                            "Horizon Join offsets: 2",
+                            keyedOneTable.replace("#1s", oneSecond).replace("#A", key[5]).replace("#B", key[6]).replace("#C", key[7]),
+                            true
+                    );
+                    assertHorizonJoinOnCastToSymbolKey(
+                            "SELECT t.k, h.offset, avg(q.bid) a, avg(b.bid) b FROM #M" + twoTables + " ORDER BY t.k, h.offset",
+                            master,
+                            symbolMaster,
+                            "Multi Horizon Join offsets: 2",
+                            keyedTwoTables.replace("#1s", oneSecond).replace("#A", key[5]).replace("#B", key[6]).replace("#C", key[7]),
+                            true
+                    );
+                    // 280 / 8: the NULL key matches no quote, and avg() skips its NULL bids
+                    assertHorizonJoinOnCastToSymbolKey(
+                            "SELECT avg(q.bid) a FROM #M" + oneTable,
+                            master,
+                            symbolMaster,
+                            "Horizon Join offsets: 2",
+                            "a\n35.0\n",
+                            false
+                    );
+                    assertHorizonJoinOnCastToSymbolKey(
+                            "SELECT avg(q.bid) a, avg(b.bid) b FROM #M" + twoTables,
+                            master,
+                            symbolMaster,
+                            "Multi Horizon Join offsets: 2",
+                            "a\tb\n35.0\t35.0\n",
+                            false
+                    );
+                    assertHorizonJoinOnCastToSymbolKey(
+                            "SELECT t.k, h.offset, q.bid a FROM #M" + oneTable,
+                            master,
+                            symbolMaster,
+                            "Horizon Join Projection offsets: 2",
+                            projection.replace("#1s", oneSecond).replace("#A", key[5]).replace("#B", key[6]).replace("#C", key[7]),
+                            false
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinOrderByExpressionOverNonSelectedColumn() throws Exception {
         // ORDER BY an expression over a column that the select list does not output, such as
         // t.price * 2, adds the expression to the horizon model as a hidden key, so the groups split
@@ -9532,6 +9657,27 @@ public class HorizonJoinTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(sql)) {
             TestUtils.assertFactoryInTree(factory, factoryClass, sql);
         }
+    }
+
+    // Runs the query over the master that casts its key to SYMBOL, pinned to the serial factory, and
+    // checks it against the expected rows and against the same query over the master's SYMBOL column.
+    private void assertHorizonJoinOnCastToSymbolKey(
+            String query,
+            String castMaster,
+            String symbolMaster,
+            String serialPlan,
+            String expected,
+            boolean hasRandomAccess
+    ) throws Exception {
+        final String sql = query.replace("#M", castMaster);
+        assertQuery(sql)
+                .noLeakCheck()
+                .supportsRandomAccess(hasRandomAccess)
+                .expectSize()
+                .withPlanContaining(serialPlan)
+                .withPlanNotContaining("Async", "workers:")
+                .returns(expected);
+        assertSqlCursors(query.replace("#M", symbolMaster), sql);
     }
 
     private void assertHorizonJoinScanModesMatchAsOfJoin() throws Exception {

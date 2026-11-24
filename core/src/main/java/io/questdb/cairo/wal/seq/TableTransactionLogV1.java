@@ -87,8 +87,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final long TAIL_CHECK_READ_RECORDS = 4096;
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
-    // ~2300 records per extension; the file is at least this big on disk.
-    private static final long EXTEND_SEGMENT_SIZE = 64 * 1024;
+    // Each extension runs fallocate and mremap under the sequencer write lock, so _txnlog grows in
+    // large steps: ~9300 records per extension. The file is at least this big on disk.
+    private static final long EXTEND_SEGMENT_SIZE = 256 * 1024;
     private final Supplier<long[]> committedTableTxn;
     private final CairoConfiguration configuration;
     private final LocalDurabilityPolicy durabilityPolicy;
