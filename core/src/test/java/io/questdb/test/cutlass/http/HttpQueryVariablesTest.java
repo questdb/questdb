@@ -186,6 +186,15 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "SELECT @a",
                     "@a := 1 SELECT 2"
             );
+            // after characters of 2, 3 and 4 bytes in UTF-8, the position counts UTF-16 characters,
+            // as positions in the query do
+            final String multiByte = "@s := 'é€\uD83D\uDE00', @b := nope_fn()";
+            assertGet(
+                    "{\"query\":\"SELECT @s s, @b b\",\"error\":\"unknown function name: nope_fn()\",\"position\":"
+                            + multiByte.indexOf("nope_fn") + ",\"errorSource\":\"variables\"}",
+                    "SELECT @s s, @b b",
+                    multiByte
+            );
             // at the very end of the variables, 19 characters into "@a := now() at time"
             assertGet(
                     "{\"query\":\"SELECT 1\",\"error\":\"did you mean 'at time zone <tz>'?\",\"position\":19,\"errorSource\":\"variables\"}",
@@ -510,6 +519,15 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "{\"query\":\"SELECT @s x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"a&b?c=d+e#f%g h\"]],\"count\":1}",
                     "SELECT @s x",
                     "@s := 'a&b?c=d+e#f%g h'"
+            );
+            // characters of 2, 3 and 4 bytes in UTF-8 arrive as they were sent, and length() counts
+            // their UTF-16 characters
+            final String multiByte = "héllo€\uD83D\uDE00";
+            assertGet(
+                    "{\"query\":\"SELECT @s x, length(@s) l\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"},{\"name\":\"l\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[\""
+                            + multiByte + "\"," + multiByte.length() + "]],\"count\":1}",
+                    "SELECT @s x, length(@s) l",
+                    "@s := '" + multiByte + "'"
             );
             // an empty parameter declares nothing
             assertGet(

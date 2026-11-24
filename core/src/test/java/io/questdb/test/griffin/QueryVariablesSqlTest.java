@@ -128,7 +128,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             executeWithVariables("@v := 41 + 1, @s := 'x' || @v", "INSERT INTO t SELECT @v, @s");
             executeWithVariables("@v := 7", "WITH c AS (SELECT @v v) INSERT INTO t SELECT v, 'cte' FROM c");
             drainWalQueue();
-            assertQuery("SELECT * FROM t").expectSize().returns("""
+            assertQuery("SELECT * FROM t").noLeakCheck().expectSize().returns("""
                     v\ts
                     42\tx42
                     7\tcte
@@ -151,12 +151,12 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     capture.start();
                     // the same assignment in a DECLARE block, where AND sits 28 characters in
                     final String reference = "DECLARE @a := true OR false AND false SELECT @a value";
-                    assertQuery(reference).withCompiler(compiler).expectSize().returns("value\nfalse\n");
+                    assertQuery(reference).withCompiler(compiler).noLeakCheck().expectSize().returns("value\nfalse\n");
                     capture.waitFor(advisory(reference, 28));
                     // AND sits 20 characters into the variables
                     final String variables = "@a := true OR false AND false";
                     final String sql = "SELECT @a value";
-                    withVariables(variables, sql, () -> assertQuery(sql).withCompiler(compiler).expectSize().returns("value\nfalse\n"));
+                    withVariables(variables, sql, () -> assertQuery(sql).withCompiler(compiler).noLeakCheck().expectSize().returns("value\nfalse\n"));
                     capture.waitFor(advisory(variables, 20));
                 }
             });
@@ -206,7 +206,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // as SELECT @a without the variables
             for (String variables : new String[]{"", "  \n\t", "-- no variables", "/* none */"}) {
-                withVariables(variables, "SELECT @a", () -> assertQuery("SELECT @a").fails(7, "Invalid column: @a"));
+                withVariables(variables, "SELECT @a", () -> assertQuery("SELECT @a").noLeakCheck().fails(7, "Invalid column: @a"));
             }
         });
     }
@@ -291,20 +291,20 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             final String variables = "@a := 2";
             // implicit SELECT
             final String implicitSelect = "t WHERE v >= @a";
-            withVariables(variables, implicitSelect, () -> assertQuery(implicitSelect).returns("""
+            withVariables(variables, implicitSelect, () -> assertQuery(implicitSelect).noLeakCheck().returns("""
                     v
                     2
                     3
                     """));
             // CTE, sub-query in FROM, set operation branches, IN list
             final String cte = "WITH c AS (SELECT @a x) SELECT x FROM c";
-            withVariables(variables, cte, () -> assertQuery(cte).expectSize().returns("x\n2\n"));
+            withVariables(variables, cte, () -> assertQuery(cte).noLeakCheck().expectSize().returns("x\n2\n"));
             final String subQuery = "SELECT * FROM (SELECT v FROM t WHERE v < @a)";
-            withVariables(variables, subQuery, () -> assertQuery(subQuery).returns("v\n1\n"));
+            withVariables(variables, subQuery, () -> assertQuery(subQuery).noLeakCheck().returns("v\n1\n"));
             final String union = "SELECT @a x UNION ALL SELECT @a + 1";
-            withVariables(variables, union, () -> assertQuery(union).expectSize().noRandomAccess().returns("x\n2\n3\n"));
+            withVariables(variables, union, () -> assertQuery(union).noLeakCheck().expectSize().noRandomAccess().returns("x\n2\n3\n"));
             final String in = "t WHERE v IN (@a, 3)";
-            withVariables(variables, in, () -> assertQuery(in).returns("v\n2\n3\n"));
+            withVariables(variables, in, () -> assertQuery(in).noLeakCheck().returns("v\n2\n3\n"));
         });
     }
 
@@ -433,10 +433,12 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1), (2)");
             drainWalQueue();
             withVariables("@q := (SELECT v FROM t WHERE v > 1)", "SELECT * FROM @q", () -> assertQuery("SELECT * FROM @q")
+                    .noLeakCheck()
                     .returns("v\n2\n"));
             // "@q := (SELECT * FROM nope)": nope sits 21 characters into the assignments
             final String sql = "SELECT * FROM @q";
             withVariables("@q := (SELECT * FROM nope)", sql, () -> assertQuery(sql)
+                    .noLeakCheck()
                     .fails(SqlParser.QUERY_VARIABLES_POSITION + 21, "table does not exist [table=nope]"));
         });
     }
@@ -568,9 +570,9 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String variables = "@a := 1, @b := @a + 1, @c := ('x', 'y')";
             final String scalars = "SELECT @a a, @b b";
-            withVariables(variables, scalars, () -> assertQuery(scalars).expectSize().returns("a\tb\n1\t2\n"));
+            withVariables(variables, scalars, () -> assertQuery(scalars).noLeakCheck().expectSize().returns("a\tb\n1\t2\n"));
             final String list = "SELECT 'x' IN @c a, 'z' IN @c b";
-            withVariables(variables, list, () -> assertQuery(list).expectSize().returns("a\tb\ntrue\tfalse\n"));
+            withVariables(variables, list, () -> assertQuery(list).noLeakCheck().expectSize().returns("a\tb\ntrue\tfalse\n"));
         });
     }
 
@@ -626,7 +628,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             drainWalQueue();
             // brackets inside a CTE body, and a list of CTEs
             final String select = "WITH c AS (SELECT ((@a)) x), d AS (SELECT x + 1 y FROM c) SELECT y FROM d";
-            withVariables("@a := 2", select, () -> assertQuery(select).expectSize().returns("y\n3\n"));
+            withVariables("@a := 2", select, () -> assertQuery(select).noLeakCheck().expectSize().returns("y\n3\n"));
             // an UPDATE after brackets and a list of CTEs still skips the variables
             final String update = "WITH c AS (SELECT (1) x), d AS (SELECT @a y) UPDATE t SET v = d.y FROM d";
             withVariables("@a := 2", update, () -> assertExceptionNoLeakCheck(update, 39, "Invalid column: @a"));

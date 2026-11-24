@@ -82,6 +82,12 @@ public class SelectCacheKeyTest {
                 SelectCacheKey.of("s", "c", "@a := 11:s", sink).toString(),
                 SelectCacheKey.of("s", "1:sc", "@a := 1", sink).toString()
         );
+        // A scope that ends with what follows it in another key: only the scope's length tells
+        // these apart, "ab" + "c" against "a" + "bc".
+        Assert.assertNotEquals(
+                SelectCacheKey.of("ab", "c", "@a := 1", sink).toString(),
+                SelectCacheKey.of("a", "bc", "@a := 1", sink).toString()
+        );
         // a key with variables starts with a NUL and a 'V'; a scoped key without them starts with
         // a NUL and the scope's length, even when the scope starts with a 'V'
         Assert.assertEquals('\u0000', keyA.charAt(0));
