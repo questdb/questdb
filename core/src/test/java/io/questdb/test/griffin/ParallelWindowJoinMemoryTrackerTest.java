@@ -217,7 +217,6 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // A tiny limit breaches on the keyed atom's first tracked allocation, which is one of the
         // maps initTimeFrameCursors() charges at the head of the first drain; the loop verifies reuse.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -225,6 +224,8 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
@@ -338,7 +339,6 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // Non-keyed variant of testKeyedWindowJoinOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -346,6 +346,8 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
