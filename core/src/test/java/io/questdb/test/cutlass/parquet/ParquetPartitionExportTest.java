@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
@@ -37,6 +38,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
@@ -349,6 +351,152 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testComputedShortVarcharColumnTop() throws Exception {
+        // Days 1 to 3 hold no v, which a later ALTER adds, so their frames compute NULL from it. Row i holds
+        // x = i + 1, and v = 'w' || x from day 4 on.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tt (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tt SELECT x, timestamp_sequence('2024-01-01', 86_400_000) FROM long_sequence(3_000)");
+            execute("ALTER TABLE tt ADD COLUMN v VARCHAR");
+            execute("INSERT INTO tt SELECT x + 3_000, timestamp_sequence('2024-01-04', 86_400_000), 'w' || (x + 3_000) FROM long_sequence(3_000)");
+            final String query = "SELECT ts, left(v, 6) w FROM tt";
+            assertColumnType(query, "w", "VARCHAR");
+            assertExportMatchesQuery(engine, sqlExecutionContext, query, PAGE_FRAME_BACKED, "column_top", " ROW_GROUP_SIZE 1500");
+            // Rows 2999, 3000 and 5999.
+            assertQuery("SELECT ts, w, w IS NULL is_null FROM " + readParquet("column_top")
+                    + " WHERE ts IN ('2024-01-03T23:58:33.600000Z', '2024-01-04T00:00:00.000000Z', '2024-01-06T23:58:33.600000Z')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tw\tis_null
+                            2024-01-03T23:58:33.600000Z\t\ttrue
+                            2024-01-04T00:00:00.000000Z\tw3001\tfalse
+                            2024-01-06T23:58:33.600000Z\tw6000\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testComputedShortVarcharCoveringIndexScan() throws Exception {
+        // A covering index scan of several keys merges the rows of the keys in each partition into a frame,
+        // here of about 667 rows. The expected rows come from the same query without the covering index, in
+        // ts order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (sym SYMBOL INDEX TYPE POSTING INCLUDE (ts), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tc SELECT 's' || (x % 3), timestamp_sequence('2024-01-01', 86_400_000) FROM long_sequence(6_000)");
+            final String query = "SELECT ts, sym::VARCHAR s FROM tc WHERE sym IN ('s1', 's2')";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("CoveringIndex");
+            assertColumnType(query, "s", "VARCHAR");
+            copyToParquet(engine, sqlExecutionContext, query, PAGE_FRAME_BACKED, "covering", " ROW_GROUP_SIZE 1500");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(
+                        compiler,
+                        sqlExecutionContext,
+                        "SELECT /*+ no_covering(tc) */ ts, sym::VARCHAR s FROM tc WHERE sym IN ('s1', 's2') ORDER BY ts",
+                        readParquet("covering")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testComputedShortVarcharDefaultRowGroupSize() throws Exception {
+        // The default row group of 100_000 rows takes a frame of 70_000 rows, whose computed values take more
+        // than one buffer page, and the first 30_000 rows of the next frame, of 40_000 rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tb (a LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tb SELECT x + 1_000_000, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(70_000)");
+            execute("INSERT INTO tb SELECT x + 1_070_000, timestamp_sequence('2024-01-02', 1_000_000) FROM long_sequence(40_000)");
+            // Values of 7 bytes.
+            final String castQuery = "SELECT ts, a::VARCHAR s FROM tb";
+            assertColumnType(castQuery, "s", "VARCHAR");
+            assertExportMatchesQuery(engine, sqlExecutionContext, castQuery, PAGE_FRAME_BACKED, "default_row_group_cast", "");
+            final String constantQuery = "SELECT ts, 'abc'::VARCHAR c FROM tb";
+            assertColumnType(constantQuery, "c", "VARCHAR");
+            assertExportMatchesQuery(engine, sqlExecutionContext, constantQuery, PAGE_FRAME_BACKED, "default_row_group_constant", "");
+        });
+    }
+
+    @Test
+    public void testComputedShortVarcharExportFailsAtQueryMemoryLimit() throws Exception {
+        // An export that fails frees the computed values it holds for the writer. A decoded 1000-row group of
+        // s and ts takes 1000 * (16 + 200 + 8) = 224_000 bytes, charged to the query memory limit: 600 KiB
+        // holds two of them, not three. The rows of the first two frames wait in the writer for a 3000-row
+        // row group when the third frame decodes.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+            execute("CREATE TABLE tg (s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tg SELECT rpad(x::VARCHAR, 200, 'v'), timestamp_sequence('2024-01-01', 2_000_000) FROM long_sequence(32_000)");
+            execute("INSERT INTO tg VALUES ('z', '2024-01-02T00:00:00.000000Z')");
+            convertFirstDay("tg");
+            assertRowGroupCount("tg", 32);
+            final String query = "SELECT left(s, 6) s6, ts FROM tg";
+            assertColumnType(query, "s6", "VARCHAR");
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 600 * 1024L);
+                runCopy(job, query, PAGE_FRAME_BACKED, "short_limit_breached", " ROW_GROUP_SIZE 3000");
+                assertQuery("SELECT status, message ~ 'in row group 2: query memory limit exceeded' is_third_frame FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\tis_third_frame\nfailed\ttrue\n");
+                Assert.assertFalse(exportFileExists("short_limit_breached"));
+
+                // The same job exports the table once the limit allows it.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                runCopy(job, query, PAGE_FRAME_BACKED, "short_limit_lifted", " ROW_GROUP_SIZE 3000");
+                assertExportFinished(engine, sqlExecutionContext);
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("short_limit_lifted"));
+            }
+        });
+    }
+
+    @Test
+    public void testComputedShortVarcharFrames() throws Exception {
+        // A computed VARCHAR value of at most 9 bytes or NULL, and a NULL array, take no bytes in the data
+        // buffer of the column, only in its aux buffer. The export holds the computed values of a frame until
+        // it writes the row group that the last rows of the frame land in. Table t has five days of 1000 rows
+        // and one of 300, which the export reads as frames of the same rows. In row groups of 1500 rows, the
+        // writer still holds rows of a frame when the export computes the next one.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+            execute("CREATE TABLE t (sym SYMBOL, v VARCHAR, u VARCHAR, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Row i holds x = i + 1 at 2024-01-01 plus i * 86.4 seconds. v takes 16 bytes, and u 7 bytes with a
+            // 2-byte and a 4-byte character.
+            execute("""
+                    INSERT INTO t SELECT 's' || x, (x + 100_000)::VARCHAR || '-long-tail', 'ü😀' || (x % 10), x,
+                    timestamp_sequence('2024-01-01', 86_400_000)
+                    FROM long_sequence(5_300)""");
+            assertShortVarcharExports("native");
+
+            // Parquet partitions of 1000-row row groups.
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02', '2024-01-04'");
+            drainWalQueue();
+            Assert.assertEquals("[0 0 0 1000][1 0 0 1000][3 0 0 1000]", parquetFrames(engine, sqlExecutionContext, "SELECT ts, sym::VARCHAR s FROM t"));
+            assertShortVarcharExports("parquet");
+        });
+    }
+
+    @Test
+    public void testComputedShortVarcharPageFrameMaxRows() throws Exception {
+        // A table without partitions reads as frames of cairo.sql.page.frame.max.rows rows. Row i holds x = i + 1.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1000);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+            execute("CREATE TABLE tn (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tn SELECT 's' || x, x, timestamp_sequence('2024-01-01', 86_400_000) FROM long_sequence(3_300)");
+            final String symbolQuery = "SELECT ts, sym::VARCHAR s FROM tn";
+            assertColumnType(symbolQuery, "s", "VARCHAR");
+            assertExportMatchesQuery(engine, sqlExecutionContext, symbolQuery, PAGE_FRAME_BACKED, "max_rows_symbol", " ROW_GROUP_SIZE 1500");
+            // Rows 1000 to 1999 compute NULL.
+            final String nullQuery = "SELECT ts, CASE WHEN x > 1000 AND x <= 2000 THEN NULL ELSE sym::VARCHAR END s FROM tn";
+            assertColumnType(nullQuery, "s", "VARCHAR");
+            assertExportMatchesQuery(engine, sqlExecutionContext, nullQuery, PAGE_FRAME_BACKED, "max_rows_null", " ROW_GROUP_SIZE 1500");
+        });
+    }
+
+    @Test
     public void testConstantFalseWindowJoin() throws Exception {
         // A WINDOW JOIN whose ON clause folds to false pages through its master table and pads
         // the aggregates with NULL columns that no table, and no Parquet file, holds.
@@ -594,7 +742,8 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         // half of the queries take an interval at whole hours within days 1 to 4, whose bounds may
         // cut the row group of a Parquet day, so that a frame starts or ends inside it. About a
         // third hold a CASE whose branches are all NULL, which the export writes as a STRING
-        // column of NULLs, so the query engine reads that CASE cast to STRING.
+        // column of NULLs, so the query engine reads that CASE cast to STRING. Half of the others
+        // compute a column whose values take no bytes in its data buffer in some frames.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             createAllTypesTable("tr", rnd.nextBoolean());
@@ -606,6 +755,7 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 // The NULL CASE goes before column nullCaseColumn, or after the last one when that
                 // is columnCount; -1 for none.
                 final int nullCaseColumn = rnd.nextInt(3) == 0 ? rnd.nextInt(columnCount + 1) : -1;
+                final boolean isShortComputed = !isComputed && nullCaseColumn < 0 && rnd.nextBoolean();
                 for (int c = 0; c < columnCount; c++) {
                     if (c > 0) {
                         sink.put(", ");
@@ -622,6 +772,8 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 }
                 if (isComputed) {
                     sink.put(", id * ").put(rnd.nextInt(100)).put(" computed");
+                } else if (isShortComputed) {
+                    putShortComputed(sink, rnd);
                 }
                 sink.put(" FROM tr");
                 if (rnd.nextBoolean()) {
@@ -640,7 +792,7 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                         sqlExecutionContext,
                         query,
                         query.replace("THEN NULL END", "THEN NULL::STRING END"),
-                        isComputed || nullCaseColumn >= 0 ? PAGE_FRAME_BACKED : DIRECT_PAGE_FRAME,
+                        isComputed || isShortComputed || nullCaseColumn >= 0 ? PAGE_FRAME_BACKED : DIRECT_PAGE_FRAME,
                         "random_" + i,
                         " ROW_GROUP_SIZE " + (1 + rnd.nextInt(60))
                 );
@@ -832,6 +984,15 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         });
     }
 
+    // A computed STRING column takes bytes in its data buffer whatever its values, so a test that means to
+    // compute VARCHAR or array values checks the type of the column.
+    private static void assertColumnType(String query, String columnName, String expectedType) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            Assert.assertEquals(query, expectedType, ColumnType.nameOf(metadata.getColumnType(metadata.getColumnIndex(columnName))));
+        }
+    }
+
     private static void assertExportMode(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -941,6 +1102,19 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     // to 10.
     private static void putNullCase(StringSink sink, Rnd rnd) {
         sink.put("CASE WHEN id % ").put(1 + rnd.nextInt(10)).put(" = 0 THEN NULL END n");
+    }
+
+    // A column named computed whose values take no bytes in its data buffer in some frames: a VARCHAR of at
+    // most 9 bytes or NULL, or a NULL array. The CASEs compute NULL on days 1 and 2, and the CASE of a_varchar
+    // computes values of over 9 bytes on odd ids after them.
+    private static void putShortComputed(StringSink sink, Rnd rnd) {
+        switch (rnd.nextInt(5)) {
+            case 0 -> sink.put(", a_symbol::VARCHAR computed");
+            case 1 -> sink.put(", left(a_varchar, ").put(1 + rnd.nextInt(9)).put(") computed");
+            case 2 -> sink.put(", CASE WHEN ts >= '2024-01-03' THEN left(a_varchar, 5) END computed");
+            case 3 -> sink.put(", CASE WHEN ts >= '2024-01-03' THEN a_varchar END computed");
+            default -> sink.put(", CASE WHEN ts >= '2024-01-03' THEN an_array END computed");
+        }
     }
 
     private static String readParquet(String fileName) {
@@ -1208,6 +1382,110 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
             }
             Assert.assertTrue(parquetPartitionCount > 0);
         }
+    }
+
+    // Exports the query in row groups of 1500 rows, and compares the file with the rows of the query engine.
+    // columnName names the computed column, of type columnType.
+    private void assertShortVarcharExport(
+            String query,
+            String columnName,
+            String columnType,
+            ParquetExportMode expectedMode,
+            String fileName
+    ) throws Exception {
+        assertColumnType(query, columnName, columnType);
+        assertExportMatchesQuery(engine, sqlExecutionContext, query, expectedMode, fileName, " ROW_GROUP_SIZE 1500");
+    }
+
+    // Exports queries of table t of testComputedShortVarcharFrames() whose computed column takes no bytes in
+    // its data buffer in some frames, and compares the files with the rows of the query engine and, at some
+    // rows, with the values that t holds.
+    private void assertShortVarcharExports(String prefix) throws Exception {
+        final String symbolQuery = "SELECT ts, sym::VARCHAR s FROM t";
+        assertColumnType(symbolQuery, "s", "VARCHAR");
+        // In row groups of 1000 rows the frames end on row group boundaries, and in row groups of
+        // 2_147_483_647 rows the writer holds every frame until the export ends.
+        for (String rowGroupSize : new String[]{"1000", "1500", "2_147_483_647"}) {
+            final String fileName = prefix + "_symbol_" + rowGroupSize;
+            assertExportMatchesQuery(engine, sqlExecutionContext, symbolQuery, PAGE_FRAME_BACKED, fileName, " ROW_GROUP_SIZE " + rowGroupSize);
+            // Rows 999, 1000, 1499, 1500 and 5299.
+            assertQuery("SELECT ts, s FROM " + readParquet(fileName)
+                    + " WHERE ts IN ('2024-01-01T23:58:33.600000Z', '2024-01-02T00:00:00.000000Z', '2024-01-02T11:58:33.600000Z',"
+                    + " '2024-01-02T12:00:00.000000Z', '2024-01-06T07:10:33.600000Z')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T23:58:33.600000Z\ts1000
+                            2024-01-02T00:00:00.000000Z\ts1001
+                            2024-01-02T11:58:33.600000Z\ts1500
+                            2024-01-02T12:00:00.000000Z\ts1501
+                            2024-01-06T07:10:33.600000Z\ts5300
+                            """);
+        }
+        // read_parquet() reads the file of 1000-row row groups as frames of 1000 rows.
+        assertShortVarcharExport("SELECT ts, left(s, 9) s9 FROM " + readParquet(prefix + "_symbol_1000"), "s9", "VARCHAR", PAGE_FRAME_BACKED, prefix + "_read_parquet");
+        assertShortVarcharExport("SELECT ts, left(v, 6) v6 FROM t", "v6", "VARCHAR", PAGE_FRAME_BACKED, prefix + "_left");
+        // Days 2 and 5 compute NULL.
+        assertShortVarcharExport(
+                "SELECT ts, CASE WHEN ts IN '2024-01-02' OR ts IN '2024-01-05' THEN NULL ELSE sym::VARCHAR END s FROM t",
+                "s",
+                "VARCHAR",
+                PAGE_FRAME_BACKED,
+                prefix + "_null"
+        );
+        // Values of 6 bytes on day 1, and of 16 bytes after it.
+        assertShortVarcharExport(
+                "SELECT ts, CASE WHEN x > 1000 THEN left(v, 30) ELSE left(v, 6) END w FROM t",
+                "w",
+                "VARCHAR",
+                PAGE_FRAME_BACKED,
+                prefix + "_short_then_long"
+        );
+        // NULL arrays on day 1, and arrays after it.
+        assertShortVarcharExport(
+                "SELECT ts, CASE WHEN x > 1000 THEN ARRAY[x::DOUBLE, 1.0] END a FROM t",
+                "a",
+                "DOUBLE[]",
+                PAGE_FRAME_BACKED,
+                prefix + "_array"
+        );
+        assertShortVarcharExport(
+                "SELECT ts, CASE WHEN x > 1000 THEN ARRAY[[x::DOUBLE, 1.0], [2.0, 3.0]] END a FROM t",
+                "a",
+                "DOUBLE[][]",
+                PAGE_FRAME_BACKED,
+                prefix + "_array_2d"
+        );
+        // A class of values a day: empty, of 9 bytes, of 7 bytes with a 2-byte and a 4-byte character, NULL,
+        // and of 10 bytes, the shortest value that takes bytes in the data buffer.
+        assertShortVarcharExport(
+                """
+                        SELECT ts, (CASE WHEN x <= 1000 THEN '' WHEN x <= 2000 THEN rpad(x::VARCHAR, 9, 'z') WHEN x <= 3000 THEN u
+                        WHEN x <= 4000 THEN NULL ELSE rpad(x::VARCHAR, 10, 'z') END)::VARCHAR w FROM t""",
+                "w",
+                "VARCHAR",
+                PAGE_FRAME_BACKED,
+                prefix + "_classes"
+        );
+        // The first row of each class.
+        assertQuery("SELECT ts, w, w IS NULL is_null FROM " + readParquet(prefix + "_classes")
+                + " WHERE ts IN ('2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z',"
+                + " '2024-01-04T00:00:00.000000Z', '2024-01-05T00:00:00.000000Z')")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        ts\tw\tis_null
+                        2024-01-01T00:00:00.000000Z\t\tfalse
+                        2024-01-02T00:00:00.000000Z\t1001zzzzz\tfalse
+                        2024-01-03T00:00:00.000000Z\tü😀1\tfalse
+                        2024-01-04T00:00:00.000000Z\t\ttrue
+                        2024-01-05T00:00:00.000000Z\t4001zzzzzz\tfalse
+                        """);
+        // A computed LONG takes bytes in its data buffer in every frame.
+        assertShortVarcharExport("SELECT ts, x * 2 x2, sym::VARCHAR s FROM t", "s", "VARCHAR", PAGE_FRAME_BACKED, prefix + "_with_long");
+        // A join exports row-wise, in batches of one row group.
+        assertShortVarcharExport("SELECT t.sym::VARCHAR s FROM t CROSS JOIN long_sequence(1)", "s", "VARCHAR", ParquetExportMode.CURSOR_BASED, prefix + "_cursor");
     }
 
     private void copyToParquet(

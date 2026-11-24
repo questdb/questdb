@@ -551,6 +551,74 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExportComputedShortVarcharFrames() throws Exception {
+        // A computed VARCHAR value of at most 9 bytes or NULL, and a NULL array, take no bytes in the data buffer
+        // of the column, only in its aux buffer. The export holds the computed values of a frame until it writes
+        // the row group that the last rows of the frame land in. Table t has five days of 1000 rows and one of
+        // 300, which the export reads as frames of the same rows, natively and from Parquet partitions of
+        // 1000-row row groups. In row groups of 1500 rows, the writer still holds rows of a frame when the
+        // export computes the next one.
+        getExportTester()
+                .run(newExportConfiguration(1000, () -> 0), (HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE t (sym SYMBOL, v VARCHAR, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                    // Row i holds x = i + 1, and v takes 16 bytes.
+                    engine.execute("""
+                            INSERT INTO t SELECT 's' || x, (x + 100_000)::VARCHAR || '-long-tail', x, timestamp_sequence('2024-01-01', 86_400_000)
+                            FROM long_sequence(5_300)""", sqlExecutionContext);
+                    final String[] queries = {
+                            "SELECT ts, sym::VARCHAR s FROM t",
+                            // Days 2 and 5 compute NULL.
+                            "SELECT ts, CASE WHEN ts IN '2024-01-02' OR ts IN '2024-01-05' THEN NULL ELSE sym::VARCHAR END s FROM t",
+                            // Values of 6 bytes on day 1, and of 16 bytes after it.
+                            "SELECT ts, CASE WHEN x > 1000 THEN left(v, 30) ELSE left(v, 6) END w FROM t",
+                            // NULL arrays on day 1, and arrays after it.
+                            "SELECT ts, CASE WHEN x > 1000 THEN ARRAY[x::DOUBLE, 1.0] END a FROM t"
+                    };
+                    for (int i = 0; i < queries.length; i++) {
+                        assertExportMatchesQuery(engine, sqlExecutionContext, queries[i], ParquetExportMode.PAGE_FRAME_BACKED, 1500, "short_native_" + i);
+                    }
+
+                    engine.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02', '2024-01-04'", sqlExecutionContext);
+                    assertQuery("SELECT name, numRows, isParquet FROM table_partitions('t')")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    name\tnumRows\tisParquet
+                                    2024-01-01\t1000\ttrue
+                                    2024-01-02\t1000\ttrue
+                                    2024-01-03\t1000\tfalse
+                                    2024-01-04\t1000\ttrue
+                                    2024-01-05\t1000\tfalse
+                                    2024-01-06\t300\tfalse
+                                    """);
+                    for (int i = 0; i < queries.length; i++) {
+                        assertExportMatchesQuery(engine, sqlExecutionContext, queries[i], ParquetExportMode.PAGE_FRAME_BACKED, 1500, "short_parquet_" + i);
+                    }
+
+                    // A covering index scan of several keys merges the rows of the keys in each partition into a
+                    // frame, here of about 667 rows.
+                    engine.execute(
+                            "CREATE TABLE tc (sym SYMBOL INDEX TYPE POSTING INCLUDE (ts), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            "INSERT INTO tc SELECT 's' || (x % 3), timestamp_sequence('2024-01-01', 86_400_000) FROM long_sequence(6_000)",
+                            sqlExecutionContext
+                    );
+                    final String coveringQuery = "SELECT ts, sym::VARCHAR s FROM tc WHERE sym IN ('s1', 's2')";
+                    assertQuery(coveringQuery)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("CoveringIndex");
+                    assertExportMatchesQuery(engine, sqlExecutionContext, coveringQuery, ParquetExportMode.PAGE_FRAME_BACKED, 1500, "short_covering");
+                });
+    }
+
+    @Test
     public void testExportCutOffWhileParkedLogsCancelled() throws Exception {
         // A client that stops reading parks the export until the socket drains. When the connection
         // drops instead, sys.copy_export_log must end the export as cancelled, as it does when the
@@ -902,6 +970,25 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     );
                     Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 24L * Numbers.SIZE_1MB);
 
+                    // A computed VARCHAR of at most 9 bytes takes no bytes in its data buffer, only a 1 MiB aux buffer
+                    // a frame. In row groups of 1500 rows, the export holds the buffers of the frame it reads and of at
+                    // most one frame before it, whose rows the writer still holds.
+                    Assert.assertEquals(
+                            0,
+                            assertSlowClientExport(
+                                    engine,
+                                    sqlExecutionContext,
+                                    nf,
+                                    queryMemoryLimit,
+                                    0,
+                                    "SELECT left(s, 6) s6, ts FROM th",
+                                    ParquetExportMode.PAGE_FRAME_BACKED,
+                                    1500,
+                                    "slow_short_native"
+                            )
+                    );
+                    Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 8L * Numbers.SIZE_1MB);
+
                     // The decoded row groups count against the query memory limit. 2 MiB holds the decoded
                     // frames of one output row group plus the frame the export reads, not the 32 of the
                     // partition. A buffer the export releases goes to a pool that the next frame takes it
@@ -927,6 +1014,23 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             3,
                             assertSlowClientExport(engine, sqlExecutionContext, nf, queryMemoryLimit, exportMemoryLimit, parquetQuery, ParquetExportMode.PAGE_FRAME_BACKED, 1500, "slow_parquet_1500")
                     );
+                    // The same with a computed VARCHAR of at most 9 bytes, whose values take a 1 MiB aux buffer for
+                    // each of the two frames.
+                    Assert.assertEquals(
+                            3,
+                            assertSlowClientExport(
+                                    engine,
+                                    sqlExecutionContext,
+                                    nf,
+                                    queryMemoryLimit,
+                                    exportMemoryLimit,
+                                    "SELECT left(s, 6) s6, ts FROM tp",
+                                    ParquetExportMode.PAGE_FRAME_BACKED,
+                                    1500,
+                                    "slow_short_parquet"
+                            )
+                    );
+                    Assert.assertTrue("exporter memory grew by " + nf.getExporterMemoryGrowth(), nf.getExporterMemoryGrowth() < 8L * Numbers.SIZE_1MB);
                     // One row from each of three row groups, in row groups of one row: such a row group of
                     // these two columns takes less than 512 bytes, so its write does not wait. The export
                     // releases after each write that flushed a row group, so the third frame decodes into
@@ -3248,6 +3352,31 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    // Exports the query through /exp in row groups of rowGroupSize rows, and asserts that the export finished and
+    // that the file, fileName.parquet in the export root, holds the rows of the query.
+    private void assertExportMatchesQuery(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            ParquetExportMode expectedMode,
+            int rowGroupSize,
+            String fileName
+    ) throws Exception {
+        assertParquetExportMode(engine, sqlExecutionContext, query, expectedMode);
+        try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
+            Assert.assertEquals(query, "200", requestParquetExport(httpClient, sink, query, rowGroupSize));
+            // The queries that check the export run once the server has ended it and freed what it held.
+            awaitEndedRequests(httpClient);
+            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, fileName + ".parquet");
+        }
+        assertExportLog(engine, sqlExecutionContext, """
+                phase\tstatus\tmessage
+                stream_sending_data\tstarted\t
+                stream_sending_data\tfinished\t
+                success\tfinished\t
+                """);
     }
 
     // Exports a query with a NULL column n of five rows, a bare NULL or a CASE whose branches are all

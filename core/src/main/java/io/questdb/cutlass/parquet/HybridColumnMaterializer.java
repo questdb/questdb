@@ -669,16 +669,18 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     private void resetBuffers() {
-        // Check if any buffer has data that Rust may still reference.
-        boolean hasData = false;
+        // Check if any buffer holds rows that Rust may still reference. A VARCHAR value of at most
+        // 9 bytes, a NULL VARCHAR and a NULL array take bytes in the aux buffer alone.
+        boolean hasRows = false;
         for (int i = 0; i < computedCount; i++) {
-            if (dataBuffers.getQuick(i).getAppendOffset() > 0) {
-                hasData = true;
+            final MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+            if (dataBuffers.getQuick(i).getAppendOffset() > 0 || (auxBuf != null && auxBuf.getAppendOffset() > 0)) {
+                hasRows = true;
                 break;
             }
         }
 
-        if (hasData) {
+        if (hasRows) {
             // Pin current buffers (Rust still references them via pending_partitions)
             // and allocate fresh ones for the next frame.
             for (int i = 0; i < computedCount; i++) {
