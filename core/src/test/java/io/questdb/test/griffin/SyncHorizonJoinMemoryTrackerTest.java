@@ -198,7 +198,6 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // A tiny limit breaches the cursor's of() at the first reopen() before any row; reusing the
         // factory catches a failed open that would otherwise leave isOpen set (the next open would
         // skip reopen() and not breach). The getCursor() catch frees the cursor under the tracker.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -206,6 +205,8 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.sym, array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
@@ -285,13 +286,14 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
         // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.sym, array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
@@ -564,12 +566,13 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testProjectionOpenFailureReleasesAllocations() throws Exception {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, compiler, ctx) -> {
                 createTrades(engine, ctx, 100, 8);
                 createPrices(engine, ctx, 1_000, 8);
+                // Tiny limit set after table creation so the populating INSERT does not breach it.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                 try (RecordCursorFactory factory = compiler.compile("""
                         SELECT t.sym, p.price FROM trades t
                         HORIZON JOIN prices p ON (sym) RANGE FROM -2s TO 2s STEP 1s AS h
