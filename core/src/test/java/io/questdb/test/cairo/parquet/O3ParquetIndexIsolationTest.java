@@ -57,8 +57,8 @@ import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * An in-place O3 update of a parquet partition keeps its index files, so symbol indexes store index rows: kept row
- * groups keep theirs, written ones get fresh rows appended. Cursors opened before a commit keep their snapshot.
+ * An in-place O3 update of a parquet partition rebuilds its symbol indexes in index rows: kept row groups keep
+ * theirs, written ones get fresh rows. Cursors opened before a commit keep their snapshot.
  * <p>
  * The parquet partition holds 12 rows in 3 row groups of 4 rows:
  * RG0 01:00-04:00, RG1 05:00-08:00, RG2 09:00-12:00.
@@ -500,14 +500,15 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testRewriteDropsIndexRowMap() throws Exception {
-        // zero ratio: the first commit is in place, its unused bytes make the second one rewrite
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.0");
         assertMemoryLeak(() -> {
             createParquetPartition("", true);
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('a', 100, '2024-01-01T00:30:00.000000Z')", true);
             Assert.assertTrue(hasIndexRowMap());
+            // zero ratio: the bytes the second commit would leave unused make it rewrite
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.0");
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('b', 101, '2024-01-01T02:30:00.000000Z')", false);
             Assert.assertFalse(hasIndexRowMap());
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T10:30:00.000000Z')", true);
         });
     }
