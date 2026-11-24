@@ -45,6 +45,10 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.Arrays;
+
 /**
  * Tests for TICK expression parsing with tick calendars.
  * Uses TestTickCalendarService with hardcoded XNYS and XHKG schedules for 2025,
@@ -478,6 +482,44 @@ public class TickCalendarTest {
                 "[$today..$today+10d#XNYS]",
                 nowTimestamp
         );
+    }
+
+    @Test
+    public void testDateVariableRangesInAnyOrderWithExchangeFilterAndDuration() throws SqlException {
+        // 200 later days first, then the 201 days before them, two 1-minute slots a day: 802 intervals,
+        // which merge after each day once there are 256 of them, in front of the later days, before
+        // the tick calendar runs. It keeps the slots of the XNYS sessions, then the duration ends each
+        // an hour later, and the final union joins the two: 14:30 to 16:30:59Z on each of the 250
+        // sessions of 2025 in the 401 days around 2025-07-01, the same as with the days in order and
+        // as with a bind variable.
+        final LocalDate[] holidays = {
+                LocalDate.of(2025, 1, 1), LocalDate.of(2025, 1, 9), LocalDate.of(2025, 1, 20), LocalDate.of(2025, 2, 17),
+                LocalDate.of(2025, 4, 18), LocalDate.of(2025, 5, 26), LocalDate.of(2025, 6, 19), LocalDate.of(2025, 7, 4),
+                LocalDate.of(2025, 9, 1), LocalDate.of(2025, 11, 27), LocalDate.of(2025, 12, 25)
+        };
+        final String laterDaysFirst = "[$today+1d..$today+200d, $today-200d..$today]T[14:30,15:30]#XNYS;1h";
+        final String inOrder = "[$today-200d..$today+200d]T[14:30,15:30]#XNYS;1h";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = " [" + ColumnType.nameOf(timestampType) + ']';
+            final LongList expected = new LongList();
+            for (LocalDate day = LocalDate.of(2025, 1, 1); day.getYear() == 2025; day = day.plusDays(1)) {
+                if (day.getDayOfWeek() != DayOfWeek.SATURDAY && day.getDayOfWeek() != DayOfWeek.SUNDAY && !Arrays.asList(holidays).contains(day)) {
+                    final long dayStart = driver.fromDays((int) day.toEpochDay());
+                    expected.add(dayStart + driver.fromMinutes(14 * 60 + 30), dayStart + driver.fromMinutes(16 * 60 + 31) - 1);
+                }
+            }
+            Assert.assertEquals(context, 2 * 250, expected.size());
+            final String expectedText = intervalToString(driver, expected);
+            final long now = driver.parseFloorLiteral("2025-07-01T12:00:00.000000Z");
+            for (String expression : new String[]{laterDaysFirst, inOrder}) {
+                try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+                    Assert.assertFalse(expression + context, compiled.isParsedOnEvaluation());
+                }
+                Assert.assertEquals(expression + context, expectedText, evaluateCompiledTickExpr(driver, expression, now));
+                Assert.assertEquals(expression + context, expectedText, parseTickExpr(driver, expression, now));
+            }
+        }
     }
 
     @Test

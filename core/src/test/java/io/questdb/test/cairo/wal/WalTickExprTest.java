@@ -379,6 +379,40 @@ public class WalTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiteralWithLaterDaysFirstAppliesInFull() throws Exception {
+        // 200 later days, then the 401 days before them: from the 256th interval on, each day merges
+        // into the intervals so far, in front of the 200 later ones. The apply evaluates the literal
+        // without the interval limit, and updates the row at 09:30 of each of the 601 days, from
+        // 2023-12-21 to 2025-08-12.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wr (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            // a row at 09:30 and one at 10:30 of each day from 2023-12-11 to 2025-08-22
+            execute("""
+                    INSERT INTO wr
+                    SELECT dateadd('h', ((x - 1) % 2)::INT, dateadd('d', ((x - 1) / 2)::INT, '2023-12-11T09:30:00.000000Z'::TIMESTAMP)), 1
+                    FROM long_sequence(1_242)
+                    """);
+            drainWalQueue();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+            try {
+                update("UPDATE wr SET v = 2 WHERE ts IN '[$today+1d..$today+200d, $today-400d..$today]T09:00;1h'");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("wr")));
+                assertQuery("SELECT v, count(), min(ts), max(ts) FROM wr ORDER BY v")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tcount\tmin\tmax
+                                1\t641\t2023-12-11T09:30:00.000000Z\t2025-08-22T10:30:00.000000Z
+                                2\t601\t2023-12-21T09:30:00.000000Z\t2025-08-12T09:30:00.000000Z
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testNonWalUpdateFailsOnTickExpression() throws Exception {
         // an UPDATE that runs when the client sends it keeps failing, as a query does
         assertMemoryLeak(() -> {

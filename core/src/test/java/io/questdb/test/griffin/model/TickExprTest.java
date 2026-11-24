@@ -39,6 +39,7 @@ import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -54,8 +55,13 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.math.BigInteger;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.Month;
+import java.time.temporal.TemporalAdjusters;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.function.Predicate;
 
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
@@ -81,6 +87,13 @@ public class TickExprTest {
     static final String[] FUZZ_UNKNOWN_UNIT_DURATIONS = {";1x", ";1H", ";2D", ";1h1x", ";1-"};
     private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
     private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
+    // the suffixes of the long date ranges of testCompiledDateRangeMergeFuzz(): durations of none,
+    // zero, which makes each interval end before it starts, less than a day back, and more than a
+    // day, time slots in any order, and a timezone with days when the clocks change
+    private static final String[] FUZZ_LONG_RANGE_DAY_FILTERS = {"", "", "#Sat", "#workday"};
+    private static final String[] FUZZ_LONG_RANGE_DURATIONS = {"", ";1h", ";0h", ";-23h", ";25h", ";30m"};
+    private static final String[] FUZZ_LONG_RANGE_TIMES = {"", "T09:00", "T01:30", "T[15:00,09:00]", "T[09:00,14:30,01:30]"};
+    private static final String[] FUZZ_LONG_RANGE_ZONES = {"", "@Europe/London", "@+02:00"};
     // time parts that the grammar rejects
     private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
     private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09", FUZZ_BUSINESS_DAY_RANGE_END};
@@ -798,6 +811,408 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2018-05-01T00:00:00.000000Z, hi=2018-05-31T23:59:59.999999Z}]",
                 "2018-[5]"
+        );
+    }
+
+    @Test
+    public void testCompiledDateRangeMergeCount() throws SqlException {
+        // Once a compiled date range holds as many intervals as the merge threshold, it merges each
+        // day's intervals into the merged ones so far. The days of a range come in order, so a day
+        // lands after every merged interval: the merge sorts the day's intervals, compares them with
+        // the last merged one, and merges them with it, and never sorts the merged ones again. The
+        // count is of the intervals that the merges sort, merge with, move and compare with; the
+        // first merge of an evaluation is a union of all intervals. 2025-01-24 is a Friday.
+        final TimestampDriver driver = timestampType.getDriver();
+        final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+        final LocalDate today = LocalDate.of(2025, 1, 24);
+        final long nine = driver.fromHours(9);
+        final long hour = driver.fromHours(1);
+        final long minute = driver.fromMinutes(1);
+        final LongList expected = new LongList();
+
+        // 1,001 days from 2022-04-30, with 2024-02-29: a union of the first 256, then each of 745 days
+        // adds one interval and merges it with the last merged one, after one comparison
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(1000), today, null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(configuration, "[$today-1000d..$today]T09:00;1h", now, expected, 256 + 745 * 3);
+
+        // 1,000 Saturdays in 7,001 days: the other days add no interval and merge nothing
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(7000), today, day -> day.getDayOfWeek() == DayOfWeek.SATURDAY, nine, nine + hour - 1);
+        assertDateRangeMergeCount(configuration, "[$today-7000d..$today]T09:00#Sat;1h", now, expected, 256 + 744 * 3);
+
+        // two intervals a day, in reverse order: a union after 128 days, then 373 days each sort two
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(500), today, null, nine, nine + hour - 1, nine + 6 * hour, nine + 7 * hour - 1);
+        assertDateRangeMergeCount(configuration, "[$today-500d..$today]T[15:00,09:00];1h", now, expected, 256 + 373 * 4);
+
+        // 401 business days from Friday 2023-07-14: a range whose end is in business days skips the
+        // weekends before the merge
+        expected.clear();
+        addDayIntervals(
+                expected,
+                today.minusDays(560),
+                today,
+                day -> day.getDayOfWeek() != DayOfWeek.SATURDAY && day.getDayOfWeek() != DayOfWeek.SUNDAY,
+                nine,
+                nine + minute - 1
+        );
+        assertDateRangeMergeCount(configuration, "[$today-560d..$today+0bd]T09:00", now, expected, 256 + 145 * 3);
+
+        // days of 3 days that overlap: the 256 intervals of the first merge become one, then the
+        // next 255 merge after the 511th day and the 766th, and the last 235 only in the final union
+        expected.clear();
+        expected.add(driver.fromDays((int) today.minusDays(1000).toEpochDay()) + nine, driver.fromDays((int) today.plusDays(3).toEpochDay()) + nine - 1);
+        assertDateRangeMergeCount(configuration, "[$today-1000d..$today]T09:00;3d", now, expected, 256 + 2 * (255 + 1 + 1));
+
+        // fewer intervals than the threshold merge only in the final union
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(100), today, null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(configuration, "[$today-100d..$today]T09:00;1h", now, expected, 0);
+
+        // 255, 256 and 257 days: the first merge comes with the 256th
+        for (int days = 255; days <= 257; days++) {
+            expected.clear();
+            addDayIntervals(expected, today.minusDays(days - 1), today, null, nine, nine + hour - 1);
+            assertDateRangeMergeCount(
+                    configuration,
+                    "[$today-" + (days - 1) + "d..$today]T09:00;1h",
+                    now,
+                    expected,
+                    days < 256 ? 0 : 256 + (days - 256) * 3
+            );
+        }
+
+        // a threshold of 8 and a limit of 16
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(15), today, null, nine, nine + minute - 1);
+        assertDateRangeMergeCount(intervalLimitConfiguration(8, 16), "[$today-15d..$today]T09:00", now, expected, 8 + 8 * 3);
+
+        // a threshold that no range reaches: one union at the end, of the same intervals
+        final CairoConfiguration noMerge = intervalLimitConfiguration(1_000_000, 2_000_000);
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(1000), today, null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(noMerge, "[$today-1000d..$today]T09:00;1h", now, expected, 0);
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(500), today.plusDays(500), null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(noMerge, "[$today+1d..$today+500d, $today-500d..$today]T09:00;1h", now, expected, 0);
+
+        // before 1970, across 1968-02-29, and in 2200
+        for (String day : new String[]{"1969-01-15", "2200-01-01"}) {
+            final LocalDate otherToday = LocalDate.parse(day);
+            expected.clear();
+            addDayIntervals(expected, otherToday.minusDays(400), otherToday, null, nine, nine + hour - 1);
+            assertDateRangeMergeCount(
+                    configuration,
+                    "[$today-400d..$today]T09:00;1h",
+                    driver.parseFloorLiteral(day + "T12:00:00.000000Z"),
+                    expected,
+                    256 + 145 * 3
+            );
+        }
+    }
+
+    @Test
+    public void testCompiledDateRangeMergeCountAcrossDstChange() throws SqlException {
+        // 01:30 to 02:30 in London, on the 401 days to 2024-12-01: on the days the clocks go back,
+        // 2023-10-29 and 2024-10-27, 01:30 to 02:00 comes twice and the day has two intervals, the
+        // second time after the first merge; on 2024-03-31 the day starts at the change, at 01:00Z
+        final TimestampDriver driver = timestampType.getDriver();
+        final long now = driver.parseFloorLiteral("2024-12-01T12:00:00.000000Z");
+        final LocalDate today = LocalDate.of(2024, 12, 1);
+        final long hour = driver.fromHours(1);
+        final long halfHour = driver.fromMinutes(30);
+        final LocalDate springForward = LocalDate.of(2024, 3, 31);
+        final LocalDate[] fallBacks = {LocalDate.of(2023, 10, 29), LocalDate.of(2024, 10, 27)};
+        final LongList expected = new LongList();
+        for (LocalDate day = today.minusDays(400); !day.isAfter(today); day = day.plusDays(1)) {
+            final long dayStart = driver.fromDays((int) day.toEpochDay());
+            if (day.equals(fallBacks[0]) || day.equals(fallBacks[1])) {
+                expected.add(dayStart + halfHour, dayStart + hour - 1);
+                expected.add(dayStart + hour + halfHour, dayStart + 2 * hour + halfHour - 1);
+            } else if (day.equals(springForward)) {
+                expected.add(dayStart + hour, dayStart + hour + halfHour - 1);
+            } else if (day.isBefore(fallBacks[0]) || (day.isAfter(springForward) && day.isBefore(fallBacks[1]))) {
+                // British Summer Time, UTC+1
+                expected.add(dayStart + halfHour, dayStart + hour + halfHour - 1);
+            } else {
+                expected.add(dayStart + hour + halfHour, dayStart + 2 * hour + halfHour - 1);
+            }
+        }
+        Assert.assertEquals(2 * 403, expected.size());
+        // a union of the first 256 intervals after 255 days, to 2024-07-08, then 145 days of one
+        // interval, and 2024-10-27, whose two intervals sort and merge with the last merged one
+        assertDateRangeMergeCount(configuration, "[$today-400d..$today]T01:30@Europe/London;1h", now, expected, 256 + 145 * 3 + (2 + 1 + 1));
+    }
+
+    @Test
+    public void testCompiledDateRangeMergeCountKeepsMergedIntervalsAcrossRanges() throws SqlException {
+        // The merged intervals of a range stay merged for the next range of the list, also across a
+        // range that starts after it ends, which adds no interval without the range order check, and
+        // across a range between two points in time, which adds its interval without a merge. Each
+        // day of the next range then merges with the last merged interval, as in one range.
+        final TimestampDriver driver = timestampType.getDriver();
+        final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+        final LocalDate today = LocalDate.of(2025, 1, 24);
+        final long nine = driver.fromHours(9);
+        final long hour = driver.fromHours(1);
+        final LongList expected = new LongList();
+        addDayIntervals(expected, today.minusDays(1000), today, null, nine, nine + hour - 1);
+        // 501 days, then 500 days that come after them
+        assertDateRangeMergeCount(configuration, "[$today-1000d..$today-500d, $today-499d..$today]T09:00;1h", now, expected, 256 + 245 * 3 + 500 * 3);
+
+        final String reversed = "[$today-1000d..$today-500d, $today..$yesterday, $today-499d..$today]T09:00;1h";
+        final String pointInTime = "[$today-1000d..$today-500d, $now-1h..$now, $today-499d..$today]T09:00;1h";
+        try (
+                CompiledTickExpression reversedRange = IntervalUtils.compileTickExpr(driver, configuration, reversed, 0, reversed.length(), 7);
+                CompiledTickExpression pointInTimeRange = IntervalUtils.compileTickExpr(driver, configuration, pointInTime, 0, pointInTime.length(), 7)
+        ) {
+            // validate() checks only the interval limit, so the range that starts after it ends adds no
+            // interval there
+            long countBefore = reversedRange.getRangeMergeIntervalCountForTesting();
+            reversedRange.validate(now);
+            Assert.assertEquals(256 + 245 * 3 + 500 * 3, reversedRange.getRangeMergeIntervalCountForTesting() - countBefore);
+            out.clear();
+            try {
+                reversedRange.evaluate(out, now);
+                Assert.fail(reversed);
+            } catch (CairoException e) {
+                TestUtils.assertEquals(RANGE_ORDER_ERROR, e.getFlyweightMessage());
+                Assert.assertEquals(7, e.getPosition());
+            }
+
+            // the interval from 11:00 to 12:00 goes after the merged ones: the first day of the next
+            // range sorts the two and merges them with the last merged one, and each day after that
+            // lands before 11:00, so a binary search over the merged ones finds its place, and 11:00
+            // to 12:00 moves after it; the binary searches compare 4,482 merged intervals
+            final long expectedCount = 256 + 245 * 3 + (2 + 1 + 1) + 499 * 4 + 4_482;
+            countBefore = pointInTimeRange.getRangeMergeIntervalCountForTesting();
+            pointInTimeRange.validate(now);
+            Assert.assertEquals(expectedCount, pointInTimeRange.getRangeMergeIntervalCountForTesting() - countBefore);
+            final long todayStart = driver.fromDays((int) today.toEpochDay());
+            expected.add(todayStart + 11 * hour, todayStart + 12 * hour);
+            assertDateRangeMergeCount(pointInTimeRange, pointInTime, now, expected, expectedCount);
+        }
+    }
+
+    @Test
+    public void testCompiledDateRangeMergeCountWithElementsLaterInTimeFirst() throws SqlException {
+        // Merged intervals of the elements before a range can lie later in time than the days of the
+        // range, which then land in front of them. The merge finds the place of a day by a binary
+        // search, merges it with the merged interval before that place, and moves the merged
+        // intervals after it once their number before them changes. No merged interval sorts again.
+        final TimestampDriver driver = timestampType.getDriver();
+        final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+        final LocalDate today = LocalDate.of(2025, 1, 24);
+        final long nine = driver.fromHours(9);
+        final long hour = driver.fromHours(1);
+        final long minute = driver.fromMinutes(1);
+        final LongList expected = new LongList();
+
+        // 500 later days, then 501 days before them: each of these lands after its own days and before
+        // the 500 later ones, which move by one interval, after a binary search of up to 10 steps:
+        // the binary searches compare 4,793 merged intervals, besides 9 for the first day
+        final long reachBackCount = 256 + 244 * 3 + (1 + 500 + 1 + 9) + 500 * (1 + 1 + 500 + 1) + 4_793;
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(500), today.plusDays(500), null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(configuration, "[$today+1d..$today+500d, $today-500d..$today]T09:00;1h", now, expected, reachBackCount);
+        // a duration of 0 makes each interval end right before it starts, and changes no merge
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(500), today.plusDays(500), null, nine, nine - 1);
+        assertDateRangeMergeCount(configuration, "[$today+1d..$today+500d, $today-500d..$today]T09:00;0h", now, expected, reachBackCount);
+
+        // 1,000 static dates from 2200, then 10,001 days from today that merge into one interval: a
+        // union of all 1,001 intervals after the first day, then each day merges with the first merged
+        // one, after a comparison with the last one and a binary search of 10 steps over 1,001
+        final StringBuilder hostile = new StringBuilder("[");
+        final LongList staticDays = new LongList();
+        for (LocalDate day = LocalDate.of(2200, 1, 1), last = day.plusDays(1998); !day.isAfter(last); day = day.plusDays(2)) {
+            hostile.append(day).append(", ");
+            final long dayStart = driver.fromDays((int) day.toEpochDay());
+            staticDays.add(dayStart, dayStart + driver.fromDays(1) - 1);
+        }
+        hostile.append("$today..$today+10000d]");
+        Assert.assertEquals(2000, staticDays.size());
+        expected.clear();
+        expected.add(driver.fromDays((int) today.toEpochDay()), driver.fromDays((int) today.plusDays(10_001).toEpochDay()) - 1);
+        expected.addAll(staticDays);
+        assertDateRangeMergeCount(configuration, hostile.toString(), now, expected, 1001 + 10_000 * (1 + 1 + 1 + 10));
+
+        // a later day first: each day of the range lands before it, and moves it
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(1000), today, null, nine, nine + minute - 1);
+        addDayIntervals(expected, today.plusDays(5), today.plusDays(5), null, nine, nine + minute - 1);
+        assertDateRangeMergeCount(configuration, "[$today+5d, $today-1000d..$today]T09:00", now, expected, 256 + 746 * (1 + 1 + 1 + 1) + 6_458);
+
+        // 11 later days first: each day of the range moves them
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(1000), today, null, nine, nine + minute - 1);
+        assertDateRangeMergeCount(configuration, "[$today-10d..$today, $today-1000d..$today-11d]T09:00", now, expected, 256 + 745 * (1 + 1 + 11 + 1) + 6_906);
+
+        // an earlier day after a merged range: the first day of the next range, which comes after the
+        // merged ones, and the earlier day sort and merge with all 501 merged intervals, after a
+        // binary search of 9 steps
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(1000), today.minusDays(1000), null, nine, nine + hour - 1);
+        addDayIntervals(expected, today.minusDays(500), today.plusDays(5), null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(
+                configuration,
+                "[$today-500d..$today, $today-1000d, $today+1d..$today+5d]T09:00;1h",
+                now,
+                expected,
+                256 + 245 * 3 + (2 + 501 + 1 + 9) + 4 * 3
+        );
+
+        // a limit of 10,000: 2,000 later days, then 2,001 days that move them
+        expected.clear();
+        addDayIntervals(expected, today.minusDays(2000), today.plusDays(2000), null, nine, nine + hour - 1);
+        assertDateRangeMergeCount(
+                intervalLimitConfiguration(256, 10_000),
+                "[$today+1d..$today+2000d, $today-2000d..$today]T09:00;1h",
+                now,
+                expected,
+                256 + 1744 * 3 + (1 + 2000 + 1 + 11) + 2000 * (1 + 1 + 2000 + 1) + 23_175
+        );
+    }
+
+    @Test
+    public void testCompiledDateRangeMergeFuzz() throws SqlException {
+        // Long date ranges next to ranges, days, static dates and points in time that lie earlier or
+        // later, in any order, with time slots in any order, durations, day filters and timezones. The
+        // compiled form must evaluate to what the parser parses, a union of all intervals after each
+        // day, or fail with the parser's error. questdb.fuzz.tickExpressions sets the number of
+        // expressions for each configuration; the parser merges all intervals after each day, which
+        // makes a run of 10,000 take about a minute.
+        final int expressionCount = Integer.getInteger("questdb.fuzz.tickExpressions", 1_000);
+        final TimestampDriver driver = timestampType.getDriver();
+        final LocalDate today = LocalDate.of(2025, 1, 24);
+        final long[] nows = {driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z"), driver.parseFloorLiteral("2024-10-27T00:30:00.000000Z")};
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final StringSink expression = new StringSink();
+        final StringSink parseSink = new StringSink();
+        final LongList parsed = new LongList();
+        final LongList compiled = new LongList();
+        for (int[] limits : new int[][]{{256, 1024}, {8, 64}}) {
+            final CairoConfiguration limitConfiguration = intervalLimitConfiguration(limits[0], limits[1]);
+            final LongRangeShapes shapes = new LongRangeShapes();
+            int irCount = 0;
+            int limitErrorCount = 0;
+            for (int i = 0; i < expressionCount; i++) {
+                expression.clear();
+                appendRandomLongRangeTickExpr(rnd, expression, today, limits[0], shapes);
+                final String text = expression.toString();
+                try (CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(driver, limitConfiguration, text, 0, text.length(), 0)) {
+                    irCount += compiledExpr.isParsedOnEvaluation() ? 0 : 1;
+                    for (long now : nows) {
+                        parsed.clear();
+                        String parsedText;
+                        try {
+                            IntervalUtils.parseTickExpr(driver, limitConfiguration, text, 0, text.length(), 0, parsed, IntervalOperation.INTERSECT, parseSink, true, now);
+                            parsedText = intervalToString(driver, parsed).toString();
+                        } catch (SqlException e) {
+                            parsedText = "error: " + e.getFlyweightMessage();
+                        }
+                        compiled.clear();
+                        String compiledText;
+                        try {
+                            compiledExpr.evaluate(compiled, now);
+                            compiledText = intervalToString(driver, compiled).toString();
+                        } catch (CairoException e) {
+                            compiledText = "error: " + e.getFlyweightMessage();
+                            if (Chars.startsWith(e.getFlyweightMessage(), "Date range expansion produces too many intervals")) {
+                                limitErrorCount++;
+                            }
+                        }
+                        if (!parsedText.equals(compiledText)) {
+                            sink.clear();
+                            driver.append(sink, now);
+                            Assert.fail(text + " at " + sink + " [mergeThreshold=" + limits[0] + ", maxIntervals=" + limits[1]
+                                    + "]\nparsed:   " + parsedText + "\ncompiled: " + compiledText);
+                        }
+                    }
+                } catch (SqlException e) {
+                    Assert.fail(text + " does not compile: " + e.getFlyweightMessage());
+                }
+            }
+            LOG.info().$("long date range fuzz [mergeThreshold=").$(limits[0])
+                    .$(", maxIntervals=").$(limits[1])
+                    .$(", expressions=").$(expressionCount)
+                    .$(", ir=").$(irCount)
+                    .$(", limitErrors=").$(limitErrorCount)
+                    .$(", laterElementBeforeRange=").$(shapes.laterElementBeforeRangeCount)
+                    .$(", earlierElementAfterMergedRange=").$(shapes.earlierElementAfterMergedRangeCount)
+                    .$(", emptyDaysAfterFirstMerge=").$(shapes.emptyDaysAfterFirstMergeCount)
+                    .$(", dstSplitAfterFirstMerge=").$(shapes.dstSplitAfterFirstMergeCount)
+                    .I$();
+            if (expressionCount >= 1_000) {
+                Assert.assertTrue(irCount > 0);
+                Assert.assertTrue(limitErrorCount > 0);
+                Assert.assertTrue(shapes.laterElementBeforeRangeCount > 0);
+                Assert.assertTrue(shapes.earlierElementAfterMergedRangeCount > 0);
+                Assert.assertTrue(shapes.emptyDaysAfterFirstMergeCount > 0);
+                Assert.assertTrue(shapes.dstSplitAfterFirstMergeCount > 0);
+            }
+        }
+    }
+
+    @Test
+    public void testCompiledDateRangeMergeKeepsLimitError() throws SqlException {
+        // A merge after a day of a date range fails on more merged intervals than the limit, after
+        // the same day as a union of all intervals, and leaves the intervals that the list held
+        // before the expression. Nothing of the failed evaluation stays for the next one.
+        final TimestampDriver driver = timestampType.getDriver();
+        final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+        final LocalDate today = LocalDate.of(2025, 1, 24);
+        final long nine = driver.fromHours(9);
+        final long hour = driver.fromHours(1);
+        final CairoConfiguration limit16 = intervalLimitConfiguration(8, 16);
+        // 10 later days, then 6 days before them: 16 intervals, the limit; one more day fails
+        assertDateRangeLimit(
+                limit16,
+                "[$today+1d..$today+10d, $today-5d..$today]T09:00;1h",
+                "[$today+1d..$today+10d, $today-6d..$today]T09:00;1h",
+                now,
+                today.minusDays(5),
+                today.plusDays(10),
+                nine,
+                nine + hour - 1,
+                "Date range expansion produces too many intervals (max 16)"
+        );
+        // a merge after 2 intervals and a limit of 3: the first merge is of all intervals
+        assertDateRangeLimit(
+                intervalLimitConfiguration(2, 3),
+                "[$today+1d..$today+1d, $today-1d..$today]T09:00;1h",
+                "[$today+1d..$today+1d, $today-2d..$today]T09:00;1h",
+                now,
+                today.minusDays(1),
+                today.plusDays(1),
+                nine,
+                nine + hour - 1,
+                "Date range expansion produces too many intervals (max 3)"
+        );
+        // a merge after every day and a limit of 2
+        assertDateRangeLimit(
+                intervalLimitConfiguration(1, 2),
+                "[$today+1d..$today+1d, $today..$today]T09:00;1h",
+                "[$today+1d..$today+1d, $today-1d..$today]T09:00;1h",
+                now,
+                today,
+                today.plusDays(1),
+                nine,
+                nine + hour - 1,
+                "Date range expansion produces too many intervals (max 2)"
+        );
+        // the default limit of 1,024
+        assertDateRangeLimit(
+                configuration,
+                "[$today-1023d..$today]T09:00",
+                "[$today-1024d..$today]T09:00",
+                now,
+                today.minusDays(1023),
+                today,
+                nine,
+                nine + driver.fromMinutes(1) - 1,
+                "Date range expansion produces too many intervals (max 1024)"
         );
     }
 
@@ -3658,7 +4073,7 @@ public class TickExprTest {
         // on "now" but that the detector misses keeps, in a cached plan, the intervals of the time the
         // query compiled at. The checker parses each expression at several "now" values and requires a
         // detected date variable when the results differ.
-        final DateVariableDetectionChecker checker = new DateVariableDetectionChecker(timestampType.getDriver());
+        final DateVariableDetectionChecker checker = new DateVariableDetectionChecker(timestampType.getDriver(), configuration);
         // every bare date variable followed by every suffix, where the end of the variable name meets
         // the start of the suffix
         for (String variable : FUZZ_VARIABLES) {
@@ -3730,6 +4145,27 @@ public class TickExprTest {
                 "no random expression with a static element with a bracketed time part under a time of the list parsed on evaluation",
                 checker.staticElementBracketedTimeParsedCount > sweptStaticElementBracketedTimeParsedCount
         );
+    }
+
+    @Test
+    public void testDateVariableDetectionFuzzAtSmallMergeThresholds() {
+        // The random expressions of testDateVariableDetectionFuzz(), whose date ranges merge their
+        // days into the intervals so far after 2 or 4 intervals, with a limit of 1,024 or 16. Their
+        // elements come in any order, so a range often follows elements that lie later in time.
+        for (int[] limits : new int[][]{{2, 1024}, {4, 16}}) {
+            final DateVariableDetectionChecker checker = new DateVariableDetectionChecker(
+                    timestampType.getDriver(),
+                    intervalLimitConfiguration(limits[0], limits[1])
+            );
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final StringSink expression = new StringSink();
+            for (int i = 0; i < 10_000; i++) {
+                expression.clear();
+                final boolean isMalformed = appendRandomTickExpr(rnd, expression);
+                checker.check(expression.toString(), isMalformed);
+            }
+            checker.assertNoFailures();
+        }
     }
 
     @Test
@@ -8237,6 +8673,16 @@ public class TickExprTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    /**
+     * Appends $today shifted by a number of days.
+     */
+    private static void appendDayOffset(StringSink sink, int days) {
+        sink.put("$today");
+        if (days != 0) {
+            sink.put(days > 0 ? " + " : " - ").put(Math.abs(days)).put('d');
+        }
+    }
+
     private static void appendRandomDateVariableExpr(Rnd rnd, StringSink sink) {
         sink.put(pick(rnd, FUZZ_VARIABLES));
         if (rnd.nextBoolean()) {
@@ -8315,6 +8761,113 @@ public class TickExprTest {
             sink.put(dayFilter).put(duration);
         }
         return isMalformed;
+    }
+
+    /**
+     * Appends a list of one to three elements, one of them a date range of 250 to 1,100 days, the
+     * others ranges, days, static dates and points in time that lie earlier or later, in any order,
+     * then a time part, timezone, day filter and duration. Counts the shapes that its choices make at
+     * a "now" on {@code today}, with the merge threshold, in {@code shapes}.
+     */
+    private static void appendRandomLongRangeTickExpr(Rnd rnd, StringSink sink, LocalDate today, int mergeThreshold, LongRangeShapes shapes) {
+        final int elementCount = 1 + rnd.nextInt(3);
+        final int longRangeIndex = rnd.nextInt(elementCount);
+        // now and then a long range, then a day or a static date before it, then a range
+        final boolean isEarlierAfterRange = elementCount == 3 && rnd.nextInt(4) == 0;
+        // the first and the last day of each element, as days after today
+        final int[] firstDays = new int[elementCount];
+        final int[] lastDays = new int[elementCount];
+        final boolean[] isRange = new boolean[elementCount];
+        sink.put('[');
+        for (int i = 0; i < elementCount; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            final int kind = isEarlierAfterRange ? (i == 1 ? 2 + rnd.nextInt(2) : rnd.nextInt(2)) : (i == longRangeIndex ? 0 : rnd.nextInt(5));
+            switch (kind) {
+                case 0, 1 -> {
+                    // a long range, or a short one
+                    final int length = kind == 0 || (isEarlierAfterRange && i == 0) ? 250 + rnd.nextInt(851) : 1 + rnd.nextInt(30);
+                    firstDays[i] = length >= 250 ? -1500 + rnd.nextInt(1900) : -1600 + rnd.nextInt(3200);
+                    lastDays[i] = firstDays[i] + length - 1;
+                    isRange[i] = true;
+                    appendDayOffset(sink, firstDays[i]);
+                    sink.put("..");
+                    appendDayOffset(sink, lastDays[i]);
+                }
+                case 2, 3 -> {
+                    // a day, or a static date, before the range when it follows one
+                    firstDays[i] = lastDays[i] = isEarlierAfterRange ? firstDays[0] - 1 - rnd.nextInt(100) : -1600 + rnd.nextInt(3200);
+                    if (kind == 2) {
+                        appendDayOffset(sink, firstDays[i]);
+                    } else {
+                        sink.put(today.plusDays(firstDays[i]).toString());
+                    }
+                }
+                default -> {
+                    // a range between two points in time, which ends now
+                    firstDays[i] = lastDays[i] = 0;
+                    sink.put("$now - ").put(1 + rnd.nextInt(48)).put("h..$now");
+                }
+            }
+        }
+        sink.put(']');
+        final String time = pick(rnd, FUZZ_LONG_RANGE_TIMES);
+        final String zone = pick(rnd, FUZZ_LONG_RANGE_ZONES);
+        final String dayFilter = pick(rnd, FUZZ_LONG_RANGE_DAY_FILTERS);
+        sink.put(time).put(zone).put(dayFilter).put(pick(rnd, FUZZ_LONG_RANGE_DURATIONS));
+
+        final int slotCount = time.length() - time.replace(",", "").length() + 1;
+        final Predicate<LocalDate> isIncluded = switch (dayFilter) {
+            case "#Sat" -> day -> day.getDayOfWeek() == DayOfWeek.SATURDAY;
+            case "#workday" -> day -> day.getDayOfWeek() != DayOfWeek.SATURDAY && day.getDayOfWeek() != DayOfWeek.SUNDAY;
+            default -> day -> true;
+        };
+        boolean hasLaterElementBeforeRange = false;
+        boolean hasEarlierElementAfterMergedRange = false;
+        boolean hasEmptyDaysAfterFirstMerge = false;
+        boolean hasDstSplitAfterFirstMerge = false;
+        for (int i = 0; i < elementCount; i++) {
+            if (!isRange[i]) {
+                continue;
+            }
+            for (int j = 0; j < i; j++) {
+                hasLaterElementBeforeRange |= firstDays[j] > lastDays[i];
+            }
+            // the days of the range up to the one that reaches the threshold on its own, and the days
+            // after that one which the day filter leaves without an interval, or on which London
+            // turns the clocks back at 01:00 local time for the second time
+            int intervalCount = 0;
+            for (LocalDate day = today.plusDays(firstDays[i]), last = today.plusDays(lastDays[i]); !day.isAfter(last); day = day.plusDays(1)) {
+                final boolean isMerged = intervalCount >= mergeThreshold;
+                if (isIncluded.test(day)) {
+                    intervalCount += slotCount;
+                } else {
+                    hasEmptyDaysAfterFirstMerge |= isMerged;
+                }
+                hasDstSplitAfterFirstMerge |= isMerged
+                        && dayFilter.isEmpty()
+                        && "@Europe/London".equals(zone)
+                        && time.contains("01:30")
+                        && day.getMonth() == Month.OCTOBER
+                        && day.equals(day.with(TemporalAdjusters.lastInMonth(DayOfWeek.SUNDAY)));
+            }
+            // a merged range, then an element that lies earlier, then another range: the first day of
+            // that range merges with intervals before and after all merged ones
+            if (intervalCount >= mergeThreshold) {
+                for (int j = i + 1; j < elementCount; j++) {
+                    if (!isRange[j] && lastDays[j] < firstDays[i]) {
+                        for (int k = j + 1; k < elementCount; k++) {
+                            hasEarlierElementAfterMergedRange |= isRange[k];
+                        }
+                    }
+                }
+            }
+        }
+        shapes.laterElementBeforeRangeCount += hasLaterElementBeforeRange ? 1 : 0;
+        shapes.earlierElementAfterMergedRangeCount += hasEarlierElementAfterMergedRange ? 1 : 0;
+        shapes.emptyDaysAfterFirstMergeCount += hasEmptyDaysAfterFirstMerge ? 1 : 0;
+        shapes.dstSplitAfterFirstMergeCount += hasDstSplitAfterFirstMerge ? 1 : 0;
     }
 
     /**
@@ -8467,6 +9020,24 @@ public class TickExprTest {
      * Returns the minute at the time of the day, an interval at microsecond precision, after a
      * comma.
      */
+    /**
+     * Returns a configuration with the given number of intervals after which a date range merges each
+     * day's intervals into the ones so far, and the given limit on the merged intervals.
+     */
+    private static CairoConfiguration intervalLimitConfiguration(int mergeThreshold, int maxIntervals) {
+        return new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return mergeThreshold;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return maxIntervals;
+            }
+        };
+    }
+
     private static String minute(String date, String time) {
         return ",{lo=" + date + 'T' + time + ":00.000000Z, hi=" + date + 'T' + time + ":59.999999Z}";
     }
@@ -8493,6 +9064,23 @@ public class TickExprTest {
 
     private static String pick(Rnd rnd, String[] values) {
         return values[rnd.nextInt(values.length)];
+    }
+
+    /**
+     * Adds, for each day from first to last that isIncluded accepts, or for every day when it is
+     * null, the intervals [day + bounds[0], day + bounds[1]], [day + bounds[2], day + bounds[3]] and
+     * so on, in the units of the timestamp type.
+     */
+    private void addDayIntervals(LongList out, LocalDate first, LocalDate last, Predicate<LocalDate> isIncluded, long... bounds) {
+        final TimestampDriver driver = timestampType.getDriver();
+        for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+            if (isIncluded == null || isIncluded.test(day)) {
+                final long dayStart = driver.fromDays((int) day.toEpochDay());
+                for (int i = 0; i < bounds.length; i += 2) {
+                    out.add(dayStart + bounds[i], dayStart + bounds[i + 1]);
+                }
+            }
+        }
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
@@ -8708,6 +9296,106 @@ public class TickExprTest {
                         : expected,
                 sink
         );
+    }
+
+    /**
+     * Asserts that the compiled form of withinLimit evaluates to [day + lo, day + hi] for each day
+     * from firstDay to lastDay, after the intervals that the list holds before it, and that
+     * overLimit fails with the error at the position of the expression, as the parser does, and
+     * leaves the list as it found it, every time it evaluates, and as it validates.
+     */
+    private void assertDateRangeLimit(
+            CairoConfiguration configuration,
+            String withinLimit,
+            String overLimit,
+            long now,
+            LocalDate firstDay,
+            LocalDate lastDay,
+            long lo,
+            long hi,
+            String expectedError
+    ) throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        // the intervals of another expression, which the list holds before these
+        final LongList head = new LongList();
+        head.add(1L, 2L);
+        head.add(5L, 6L);
+        final String headText = intervalToString(driver, head).toString();
+        final LongList expected = new LongList();
+        expected.addAll(head);
+        addDayIntervals(expected, firstDay, lastDay, null, lo, hi);
+        final String expectedText = intervalToString(driver, expected).toString();
+        try (
+                CompiledTickExpression within = IntervalUtils.compileTickExpr(driver, configuration, withinLimit, 0, withinLimit.length(), 7);
+                CompiledTickExpression over = IntervalUtils.compileTickExpr(driver, configuration, overLimit, 0, overLimit.length(), 7)
+        ) {
+            Assert.assertFalse(withinLimit, within.isParsedOnEvaluation());
+            Assert.assertFalse(overLimit, over.isParsedOnEvaluation());
+            for (int i = 0; i < 2; i++) {
+                out.clear();
+                out.addAll(head);
+                within.evaluate(out, now);
+                TestUtils.assertEquals(withinLimit, expectedText, intervalToString(driver, out));
+                out.clear();
+                out.addAll(head);
+                try {
+                    over.evaluate(out, now);
+                    Assert.fail(overLimit);
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(overLimit, expectedError, e.getFlyweightMessage());
+                    Assert.assertEquals(overLimit, 7, e.getPosition());
+                }
+                TestUtils.assertEquals(overLimit, headText, intervalToString(driver, out));
+            }
+            within.validate(now);
+            try {
+                over.validate(now);
+                Assert.fail(overLimit);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(overLimit, expectedError, e.getFlyweightMessage());
+                Assert.assertEquals(overLimit, 7, e.getPosition());
+            }
+        }
+        // the parser, which a bind variable takes
+        out.clear();
+        try {
+            IntervalUtils.parseTickExpr(driver, configuration, overLimit, 0, overLimit.length(), 7, out, IntervalOperation.INTERSECT, new StringSink(), true, now);
+            Assert.fail(overLimit);
+        } catch (SqlException e) {
+            TestUtils.assertEquals(overLimit, expectedError, e.getFlyweightMessage());
+            Assert.assertEquals(overLimit, 7, e.getPosition());
+        }
+    }
+
+    /**
+     * Asserts that the compiled form of the expression evaluates through its IR to the expected
+     * intervals, twice, and that the merges after the days of its date ranges count the expected
+     * number of intervals each time, see CompiledTickExpression#getRangeMergeIntervalCountForTesting.
+     */
+    private void assertDateRangeMergeCount(
+            CairoConfiguration configuration,
+            String expression,
+            long now,
+            LongList expected,
+            long expectedMergeCount
+    ) throws SqlException {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampType.getDriver(), configuration, expression, 0, expression.length(), 0)) {
+            assertDateRangeMergeCount(compiled, expression, now, expected, expectedMergeCount);
+        }
+    }
+
+    private void assertDateRangeMergeCount(CompiledTickExpression compiled, String expression, long now, LongList expected, long expectedMergeCount) {
+        final TimestampDriver driver = timestampType.getDriver();
+        Assert.assertFalse(expression, compiled.isParsedOnEvaluation());
+        final String expectedText = intervalToString(driver, expected).toString();
+        for (int i = 0; i < 2; i++) {
+            final long countBefore = compiled.getRangeMergeIntervalCountForTesting();
+            out.clear();
+            compiled.evaluate(out, now);
+            final long mergeCount = compiled.getRangeMergeIntervalCountForTesting() - countBefore;
+            TestUtils.assertEquals(expression, expectedText, intervalToString(driver, out));
+            Assert.assertEquals(expression, expectedMergeCount, mergeCount);
+        }
     }
 
     /**
@@ -9271,6 +9959,8 @@ public class TickExprTest {
     private static class DateVariableDetectionChecker {
         private static final String ERROR = "error";
         private static final int MAX_REPORTED_FAILURES = 20;
+        // the interval merge threshold and limit of both forms
+        private final CairoConfiguration configuration;
         private final StringSink failures = new StringSink();
         private final LongList intervals = new LongList();
         private final long[] nows = new long[FUZZ_NOWS.length];
@@ -9289,8 +9979,9 @@ public class TickExprTest {
         // compiled expressions with a duration unit that the drivers do not add, which failed at some "now"
         private int unknownUnitErrorCount;
 
-        DateVariableDetectionChecker(TimestampDriver timestampDriver) {
+        DateVariableDetectionChecker(TimestampDriver timestampDriver, CairoConfiguration configuration) {
             this.timestampDriver = timestampDriver;
+            this.configuration = configuration;
             for (int i = 0; i < FUZZ_NOWS.length; i++) {
                 nows[i] = timestampDriver.parseFloorLiteral(FUZZ_NOWS[i]);
             }
@@ -9419,6 +10110,21 @@ public class TickExprTest {
                 return ERROR;
             }
         }
+    }
+
+    /**
+     * The shapes of the expressions of testCompiledDateRangeMergeFuzz(), which the generator counts
+     * from its own choices.
+     */
+    private static class LongRangeShapes {
+        // a range in London whose 01:30 comes twice on a day the clocks go back, after its first merge
+        int dstSplitAfterFirstMergeCount;
+        // a range that merged, then an element that lies earlier, then a range
+        int earlierElementAfterMergedRangeCount;
+        // a range whose day filter leaves days without an interval after its first merge
+        int emptyDaysAfterFirstMergeCount;
+        // an element that lies later than a range, before it in the list
+        int laterElementBeforeRangeCount;
     }
 
     /**

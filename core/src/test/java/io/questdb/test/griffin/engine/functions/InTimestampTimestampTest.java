@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
@@ -31,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -38,6 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.MutationStep;
@@ -1186,6 +1189,156 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongTickDateRangeInEveryFilterPath() throws Exception {
+        // Date ranges of 1,001 days, whose days merge into the intervals so far once there are 256 of
+        // them: in order, and as 500 later days first, then the 501 days before them. The table has a
+        // row at 09:30 and one at 10:30 of each day from 2022-04-01 to 2026-07-01, and "now" is
+        // 2025-01-24T12:00Z: the ranges select 2022-04-30 to 2025-01-24, and 2023-09-12 to 2026-06-08.
+        assertMemoryLeak(() -> {
+            for (String timestampType : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                execute("DROP TABLE IF EXISTS t");
+                createLongRangeTable(timestampType);
+                final String fraction = "TIMESTAMP_NS".equals(timestampType) ? "000000000" : "000000";
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+                try {
+                    assertLongTickDateRangeRows("[$today-1000d..$today]T09:00;1h", "2022-04-30", "2025-01-24", fraction);
+                    assertLongTickDateRangeRows("[$today+1d..$today+500d, $today-500d..$today]T09:00;1h", "2023-09-12", "2026-06-08", fraction);
+                } finally {
+                    setCurrentMicros(-1);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLongTickDateRangeInParallelFilter() throws Exception {
+        // The row filter of each worker evaluates a copy of the expression of its own, whose date
+        // ranges merge their days into the intervals so far. Every worker must select the rows that
+        // the filter of the query thread selects.
+        final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, compiler, context) -> {
+                    engine.execute(longRangeTableDdl("TIMESTAMP"), context);
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+                    final boolean isParallelFilterEnabled = context.isParallelFilterEnabled();
+                    try {
+                        context.initNow();
+                        for (String[] range : new String[][]{
+                                {"[$today-1000d..$today]T09:00;1h", "2022-04-30", "2025-01-24"},
+                                {"[$today+1d..$today+500d, $today-500d..$today]T09:00;1h", "2023-09-12", "2026-06-08"}
+                        }) {
+                            final String expected = "count\tmin\tmax\n1001\t" + range[1] + "T09:30:00.000000Z\t" + range[2] + "T09:30:00.000000Z\n";
+                            for (boolean isParallel : new boolean[]{true, false}) {
+                                context.setParallelFilterEnabled(isParallel);
+                                assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + range[0] + "' OR v = -1")
+                                        .withEngine(engine)
+                                        .withContext(context)
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .withPlanContaining(isParallel ? "workers: 4" : "Filter filter: (ts in [")
+                                        .returns(expected);
+                            }
+                        }
+                    } finally {
+                        context.setParallelFilterEnabled(isParallelFilterEnabled);
+                        setCurrentMicros(-1);
+                    }
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testLongTickDateRangeMergingEveryTwoIntervals() throws Exception {
+        // With a merge after every 2 intervals, the days of 3 later days, then of the 4 days before
+        // them, merge into the intervals so far. EXPLAIN shows the 7 intervals, a factory that the
+        // query holds follows the day it runs on, and a bind variable selects the same rows.
+        setProperty(PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 16);
+        final String tickExpr = "[$today+1d..$today+3d, $today-3d..$today]T09:00;1h";
+        final String query = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "'";
+        assertMemoryLeak(() -> {
+            createLongRangeTable("TIMESTAMP");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+            try {
+                final StringBuilder intervals = new StringBuilder("intervals: [");
+                for (int day = 21; day <= 27; day++) {
+                    intervals.append(day > 21 ? "," : "")
+                            .append("(\"2025-01-").append(day).append("T09:00:00.000000Z\",\"2025-01-").append(day).append("T09:59:59.999999Z\")");
+                }
+                assertQuery(query).noLeakCheck().assertsPlanContaining(intervals.append(']'));
+
+                // the same factory runs a day later, after a row outside the ranges arrives each time
+                final ObjList<MutationStep> steps = new ObjList<>();
+                steps.add(MutationStep.of(
+                        "INSERT INTO t VALUES ('2026-12-01T09:30:00.000000Z', -2)",
+                        "count\tmin\tmax\n7\t2025-01-21T09:30:00.000000Z\t2025-01-27T09:30:00.000000Z\n"
+                ));
+                steps.add(MutationStep.of(
+                        () -> setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-25T12:00:00.000000Z")),
+                        "INSERT INTO t VALUES ('2026-12-02T09:30:00.000000Z', -3)",
+                        "count\tmin\tmax\n7\t2025-01-22T09:30:00.000000Z\t2025-01-28T09:30:00.000000Z\n"
+                ));
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .mutateStepwise(steps);
+
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tmin\tmax\n7\t2025-01-22T09:30:00.000000Z\t2025-01-28T09:30:00.000000Z\n");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testLongTickDateRangeOverIntervalLimitFailsAsQueryCompilesAndRuns() throws Exception {
+        // 10 later days, then the 7 days before them up to "now", with a merge after every 8
+        // intervals and a limit of 16. At 08:00 the range holds 16 intervals, as 09:00 today is still
+        // to come; at 12:00 it holds 17: a query that compiled at 08:00 fails when it runs at 12:00,
+        // and one that compiles at 12:00 fails as it compiles.
+        setProperty(PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 8);
+        setProperty(PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 16);
+        final String sql = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '[$today+1d..$today+10d, $today-6d..$now]T09:00;1h'";
+        final String error = "Date range expansion produces too many intervals (max 16)";
+        assertMemoryLeak(() -> {
+            createLongRangeTable("TIMESTAMP");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T08:00:00.000000Z"));
+            try {
+                try (RecordCursorFactory factory = select(sql)) {
+                    assertFactory(factory)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n16\t2025-01-18T09:30:00.000000Z\t2025-02-03T09:30:00.000000Z\n");
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+                    assertRunFails(factory, sql, sql.indexOf('\''), error);
+                }
+                assertExceptionNoLeakCheck(sql, sql.indexOf('\''), error);
+                // the table keeps answering
+                assertQuery("SELECT count() FROM t")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n3106\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testMalformedLiteralFailsWhenQueryCompiles() throws Exception {
         // SQL parses a literal that the compiled form cannot represent every time the query runs, and
         // once as the query compiles, so a malformed one fails before a prepared statement or a WAL
@@ -2326,6 +2479,13 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         execute("INSERT INTO t SELECT timestamp_sequence('2024-03-28T00:00:00.000000Z', 3_600_000_000L) ts FROM long_sequence(168)");
     }
 
+    /**
+     * Creates table t of {@link #longRangeTableDdl}.
+     */
+    private static void createLongRangeTable(String timestampType) throws SqlException {
+        execute(longRangeTableDdl(timestampType));
+    }
+
     private static String insertEveryTenMinutes(String from, int count) {
         return "INSERT INTO t SELECT ts, ts FROM (SELECT '" + from + "'::timestamp + (x - 1) * 600_000_000 ts FROM long_sequence(" + count + "))";
     }
@@ -2337,6 +2497,15 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         return "INSERT INTO t VALUES ('" + day + "T09:00:00.000000Z', '" + day + "T09:00:00.000000Z'), ('"
                 + day + "T10:30:00.000000Z', '" + day + "T10:30:00.000000Z'), ('"
                 + day + "T14:30:00.000000Z', '" + day + "T14:30:00.000000Z')";
+    }
+
+    /**
+     * Returns the DDL of table t, with a row at 09:30 and one at 10:30 of each day from 2022-04-01 to
+     * 2026-07-01, 3,106 rows, in a designated timestamp of the type, and a column v of 1 to 3,106.
+     */
+    private static String longRangeTableDdl(String timestampType) {
+        return "CREATE TABLE t AS (SELECT dateadd('h', ((x - 1) % 2)::INT, dateadd('d', ((x - 1) / 2)::INT, '2022-04-01T09:30:00.000000Z'::"
+                + timestampType + ")) ts, x v FROM long_sequence(3_106)) TIMESTAMP(ts) PARTITION BY MONTH";
     }
 
     /**
@@ -2457,6 +2626,61 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 TestUtils.assertContains(sql, e.getFlyweightMessage(), expectedError);
                 Assert.assertEquals(sql, sql.indexOf("'" + tickExpr), e.getPosition());
             }
+        }
+    }
+
+    /**
+     * Asserts the 1,001 rows at 09:30 that the tick expression selects from table t of
+     * {@link #longRangeTableDdl}, from the first day to the last, in the interval scan, in the row
+     * filter with the JIT on and off, through an offset of the designated timestamp, and with a bind
+     * variable, and the 2,105 other rows under NOT IN. The fraction of a second has the digits of the
+     * timestamp type.
+     */
+    private void assertLongTickDateRangeRows(String tickExpr, String firstDay, String lastDay, String fraction) throws Exception {
+        final String selected = "count\tmin\tmax\n1001\t" + firstDay + "T09:30:00." + fraction + "Z\t" + lastDay + "T09:30:00." + fraction + "Z\n";
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Interval forward scan")
+                .returns(selected);
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(mode);
+                assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "' OR v = -1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("filter: (ts in [")
+                        .returns(selected);
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
+        // the rows outside the ranges, from the first row to the last
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts NOT IN '" + tickExpr + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\tmin\tmax\n2105\t2022-04-01T09:30:00." + fraction + "Z\t2026-07-01T10:30:00." + fraction + "Z\n");
+        // an hour before the rows at 10:30
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE dateadd('h', -1, ts) IN '" + tickExpr + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\tmin\tmax\n1001\t" + firstDay + "T10:30:00." + fraction + "Z\t" + lastDay + "T10:30:00." + fraction + "Z\n");
+        // the parser, which a bind variable takes
+        bindVariableService.clear();
+        bindVariableService.setStr(0, tickExpr);
+        try {
+            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(selected);
+        } finally {
+            bindVariableService.clear();
         }
     }
 

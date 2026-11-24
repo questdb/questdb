@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * A Function that represents a pre-parsed tick expression containing date variables
@@ -133,6 +134,9 @@ public class CompiledTickExpression extends UntypedFunction {
     // resolves to no interval there instead of failing
     private boolean isLenient;
     private long now;
+    // the intervals that the merges after the days of date ranges sorted, merged, moved or compared,
+    // over all evaluations of this expression
+    private long rangeMergeIntervalCount;
 
     CompiledTickExpression(
             TimestampDriver timestampDriver,
@@ -229,6 +233,8 @@ public class CompiledTickExpression extends UntypedFunction {
             return;
         }
         final int outStart = outIntervals.size();
+        // the end of the intervals that the last merge after a day of a range left merged
+        int mergedEnd = outStart;
 
         // Emit the intervals of each element, and run its day filter and timezone steps on them,
         // or on the intervals of each day of a range
@@ -247,7 +253,7 @@ public class CompiledTickExpression extends UntypedFunction {
                 applyElementSteps(outIntervals, elementStart);
                 pos += 3;
             } else {
-                emitRange(word, ir.getQuick(pos + 1), outIntervals, outStart);
+                mergedEnd = emitRange(word, ir.getQuick(pos + 1), outIntervals, outStart, mergedEnd);
                 pos += 2;
             }
         }
@@ -262,8 +268,17 @@ public class CompiledTickExpression extends UntypedFunction {
 
         // Sort and merge the intervals, then check the final count, as the parser does
         if (outIntervals.size() > outStart + 2) {
-            unionAndCheckLimit(outIntervals, outStart, "Bracket expansion");
+            unionAndCheckLimit(outIntervals, outStart, outStart, "Bracket expansion");
         }
+    }
+
+    /**
+     * Returns the number of intervals that the merges after the days of date ranges sorted, merged,
+     * moved or compared to find where the new ones land, over all evaluations of this expression.
+     */
+    @TestOnly
+    public long getRangeMergeIntervalCountForTesting() {
+        return rangeMergeIntervalCount;
     }
 
     @Override
@@ -455,7 +470,12 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
-    private void emitRange(long startEncoded, long endEncoded, LongList out, int outStart) {
+    /**
+     * Emits the intervals of a date variable range, and returns the end of the intervals that the
+     * last merge after one of its days left merged, or {@code mergedEnd}, that of an earlier range,
+     * when none of its days merged.
+     */
+    private int emitRange(long startEncoded, long endEncoded, LongList out, int outStart, int mergedEnd) {
         long start = evaluateExpr(startEncoded);
         long end = evaluateExpr(endEncoded);
         // The expression, not its value, decides whether an endpoint is a whole day or a point
@@ -471,20 +491,21 @@ public class CompiledTickExpression extends UntypedFunction {
             if ((checks & IntervalUtils.TICK_CHECK_RANGE_ORDER) != 0) {
                 throw CairoException.nonCritical().position(position).put("Invalid date range: start is after end");
             }
-            return;
+            return mergedEnd;
         }
 
         if (!isStartDay && !isEndDay) {
             final int rangeStart = out.size();
             out.add(start, end);
             applyElementSteps(out, rangeStart);
-            return;
+            return mergedEnd;
         }
 
         // Iterate the days of the range, and clip their intervals to the endpoint that is a point
         // in time, if any. A whole-day endpoint covers its entire day. Like the parser, run the
         // steps of each day on its intervals, then merge all intervals so far once there are
-        // enough of them, and stop when the merged ones exceed the limit.
+        // enough of them, and stop when the merged ones exceed the limit. Only the intervals after
+        // mergedEnd are new to a merge: the ones before it are the output of the last merge.
         final boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
         final boolean isClipped = !isStartDay || !isEndDay;
         final long clipLo = isStartDay ? Long.MIN_VALUE : start;
@@ -507,10 +528,12 @@ public class CompiledTickExpression extends UntypedFunction {
             }
             applyElementSteps(out, dayStart);
             if ((out.size() - outStart) / 2 >= mergeThreshold) {
-                unionAndCheckLimit(out, outStart, "Date range expansion");
+                rangeMergeIntervalCount += unionAndCheckLimit(out, outStart, mergedEnd, "Date range expansion");
+                mergedEnd = out.size();
             }
             currentDay = timestampDriver.addDays(currentDay, 1);
         }
+        return mergedEnd;
     }
 
     private void emitSingleVar(long encoded, LongList out) {
@@ -559,18 +582,22 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     /**
-     * Sorts and merges the intervals from {@code outStart} on, and fails when more of them remain
-     * than the limit, as the parser does after each day of a date variable range, and at the end.
-     * Without the interval limit check, it only merges.
+     * Sorts and merges the intervals from {@code outStart} on, where those before {@code mergedEnd}
+     * are the output of the last merge, see {@link IntervalUtils#unionAppendedIntervals}, and fails
+     * when more of them remain than the limit, as the parser does after each day of a date variable
+     * range, and at the end. Without the interval limit check, it only merges.
+     *
+     * @return the number of intervals that the merge sorted, merged, moved or compared
      */
-    private void unionAndCheckLimit(LongList out, int outStart, String expansion) {
-        IntervalUtils.unionBracketExpandedIntervals(out, outStart);
+    private int unionAndCheckLimit(LongList out, int outStart, int mergedEnd, String expansion) {
+        final int mergeCount = IntervalUtils.unionAppendedIntervals(out, outStart, mergedEnd);
         final int maxIntervals = configuration.getSqlIntervalMaxIntervalsAfterMerge();
         if ((checks & IntervalUtils.TICK_CHECK_INTERVAL_LIMIT) != 0 && (out.size() - outStart) / 2 > maxIntervals) {
             out.setPos(outStart);
             throw CairoException.nonCritical().position(position)
                     .put(expansion).put(" produces too many intervals (max ").put(maxIntervals).put(')');
         }
+        return mergeCount;
     }
 
     /**

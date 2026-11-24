@@ -1427,6 +1427,20 @@ public final class IntervalUtils {
     }
 
     /**
+     * Exposes the package-private {@link #unionAppendedIntervals(LongList, int, int)} to tests that
+     * live outside this package.
+     *
+     * @param out        list of intervals to union in place
+     * @param startIndex index of the first interval to union; earlier intervals stay untouched
+     * @param mergedEnd  end of the intervals from startIndex on that an earlier union left merged
+     * @return the number of intervals that the union sorted, merged, moved or compared
+     */
+    @TestOnly
+    public static int unionAppendedIntervalsForTesting(LongList out, int startIndex, int mergedEnd) {
+        return unionAppendedIntervals(out, startIndex, mergedEnd);
+    }
+
+    /**
      * Exposes the package-private {@link #unionBracketExpandedIntervals(LongList, int)}
      * to tests that live outside this package.
      *
@@ -4687,6 +4701,11 @@ public final class IntervalUtils {
         return true;
     }
 
+    // the order of LongGroupSort over (lo, hi) groups, which a union sorts intervals by
+    private static boolean isGroupBefore(long lo1, long hi1, long lo2, long hi2) {
+        return lo1 < lo2 || (lo1 == lo2 && hi1 < hi2);
+    }
+
     /**
      * Checks if a bracket contains a time list (has ':' in content).
      * Time list brackets contain full time values like [09:00,14:30] vs numeric expansion like [09,14].
@@ -5616,6 +5635,125 @@ public final class IntervalUtils {
 
     static long resolveDurationLo(long anchor, long endExclusive) {
         return endExclusive >= anchor ? anchor : endExclusive;
+    }
+
+    /**
+     * Unions the intervals from {@code startIndex} on, and leaves the list exactly as
+     * {@link #unionBracketExpandedIntervals(LongList, int)} from {@code startIndex} would, where the
+     * intervals in [{@code startIndex}, {@code mergedEnd}) are the output of an earlier union that
+     * nothing changed since. The intervals from {@code mergedEnd} on can land anywhere among the
+     * merged ones. The union joins an interval only to the group before it in sorted order, so they
+     * change only the merged group before the place where they land and the merged groups they
+     * reach from there: this sorts only them, finds where they land with a binary search, merges
+     * them with those groups, and moves the merged groups after those only when the number of
+     * groups before them changed. Without merged intervals, {@code mergedEnd} equal to
+     * {@code startIndex}, it unions all intervals.
+     *
+     * @return the number of intervals that it sorted, merged, moved, or compared to find where the
+     * new ones land
+     */
+    static int unionAppendedIntervals(LongList out, int startIndex, int mergedEnd) {
+        final int size = out.size();
+        assert startIndex <= mergedEnd && mergedEnd <= size && ((mergedEnd - startIndex) & 1) == 0;
+        if (mergedEnd == startIndex) {
+            unionBracketExpandedIntervals(out, startIndex);
+            return (size - startIndex) / 2;
+        }
+        if (mergedEnd == size) {
+            // a union leaves its own output as it is
+            return 0;
+        }
+        LongGroupSort.quickSort(2, out, mergedEnd / 2, size / 2);
+        final long firstLo = out.getQuick(mergedEnd);
+        final long firstHi = out.getQuick(mergedEnd + 1);
+        // the number of merged groups that sort before the first new one, as the union sorts: by lo,
+        // then by hi
+        final int mergedCount = (mergedEnd - startIndex) / 2;
+        int comparedCount = 1;
+        int landing;
+        if (isGroupBefore(out.getQuick(mergedEnd - 2), out.getQuick(mergedEnd - 1), firstLo, firstHi)) {
+            landing = mergedCount;
+        } else {
+            int lo = 0;
+            int hi = mergedCount - 1;
+            while (lo < hi) {
+                final int mid = (lo + hi) >>> 1;
+                final int index = startIndex + 2 * mid;
+                comparedCount++;
+                if (isGroupBefore(out.getQuick(index), out.getQuick(index + 1), firstLo, firstHi)) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            landing = lo;
+        }
+        // The merged groups before the landing place stay. Run the union's merge pass from the last of
+        // them, or from the first new group, over the merged and the new groups in sorted order, and
+        // write its output after the list. Once the new groups run out, stop at the first merged group
+        // that does not join: the union writes it and every merged group after it as they are.
+        final int regionLo;
+        int mergedIndex;
+        int appendedIndex = mergedEnd;
+        long curLo;
+        long curHi;
+        if (landing > 0) {
+            regionLo = startIndex + 2 * (landing - 1);
+            curLo = out.getQuick(regionLo);
+            curHi = out.getQuick(regionLo + 1);
+            mergedIndex = regionLo + 2;
+        } else {
+            regionLo = startIndex;
+            curLo = firstLo;
+            curHi = firstHi;
+            appendedIndex += 2;
+            mergedIndex = startIndex;
+        }
+        while (true) {
+            final long lo;
+            final long hi;
+            if (appendedIndex < size) {
+                final long appendedLo = out.getQuick(appendedIndex);
+                final long appendedHi = out.getQuick(appendedIndex + 1);
+                if (mergedIndex < mergedEnd && isGroupBefore(out.getQuick(mergedIndex), out.getQuick(mergedIndex + 1), appendedLo, appendedHi)) {
+                    lo = out.getQuick(mergedIndex);
+                    hi = out.getQuick(mergedIndex + 1);
+                    mergedIndex += 2;
+                } else {
+                    lo = appendedLo;
+                    hi = appendedHi;
+                    appendedIndex += 2;
+                }
+            } else if (mergedIndex < mergedEnd && (out.getQuick(mergedIndex) <= curHi || out.getQuick(mergedIndex) == curHi + 1)) {
+                lo = out.getQuick(mergedIndex);
+                hi = out.getQuick(mergedIndex + 1);
+                mergedIndex += 2;
+            } else {
+                break;
+            }
+            // the merge rule of unionBracketExpandedIntervals()
+            if (lo <= curHi || lo == curHi + 1) {
+                curHi = Math.max(hi, curHi);
+            } else {
+                out.add(curLo, curHi);
+                curLo = lo;
+                curHi = hi;
+            }
+        }
+        out.add(curLo, curHi);
+        // replace the merged groups [regionLo, mergedIndex) with the output, after moving the merged
+        // groups that follow them when the output has another number of groups
+        final int outputLongs = out.size() - size;
+        final int tailLongs = mergedEnd - mergedIndex;
+        final int tailLo = regionLo + outputLongs;
+        int movedLongs = 0;
+        if (tailLo != mergedIndex && tailLongs > 0) {
+            out.arrayCopy(mergedIndex, tailLo, tailLongs);
+            movedLongs = tailLongs;
+        }
+        out.arrayCopy(size, regionLo, outputLongs);
+        out.setPos(tailLo + tailLongs);
+        return (size - mergedEnd + mergedIndex - regionLo + movedLongs) / 2 + comparedCount;
     }
 
     /**
