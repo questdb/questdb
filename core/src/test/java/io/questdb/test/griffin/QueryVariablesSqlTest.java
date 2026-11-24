@@ -215,23 +215,36 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     public void testOnlyAssignments() throws Exception {
         assertMemoryLeak(() -> {
             final String sql = "SELECT @a";
-            // Positions in the assignments, from QUERY_VARIABLES_POSITION on. Each case fails as
-            // the same assignments in DECLARE <assignments> SELECT 1 do, at the same place.
-            final Object[][] cases = {
-                    {"1", 0, "unexpected token [1]"},
-                    {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
+            // Positions in the assignments, from QUERY_VARIABLES_POSITION on. A malformed
+            // assignment fails as it does in a DECLARE block that opens the statement, at the same
+            // place, which the statement with that block checks.
+            final String declare = "DECLARE ";
+            final Object[][] malformed = {
                     {"@a := 1,,", 8, "missing declaration"},
                     {"@a := 1 @b := 2", 8, "',' expected"},
                     {"@a 1", 3, "expected variable assignment operator `:=`"},
-                    // as DECLARE @a := at the end of a statement, 8 characters into it
                     {"@a :=", 3, "too few arguments for ':=' [found=1,expected=2]"},
+                    {"@a := @b", 6, "tried to use undeclared variable `@b`"},
+            };
+            for (Object[] c : malformed) {
+                final String assignments = (String) c[0];
+                final int offset = (int) c[1];
+                final String message = (String) c[2];
+                assertQuery(declare + assignments + ' ' + sql).noLeakCheck().fails(declare.length() + offset, message);
+                withVariables(assignments, sql, () -> assertQuery(sql).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + offset, message));
+            }
+            // These refusals are the parameter's own. Such a block leaves a token that opens no
+            // assignment to the statement, reports DECLARE as a second block, and accepts the
+            // OVERRIDABLE and AUDITED markers, which mean nothing for a client's variables.
+            final Object[][] refused = {
+                    {"1", 0, "unexpected token [1]"},
+                    {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
                     {"OVERRIDABLE @a := 1", 12, "variables cannot be OVERRIDABLE"},
                     {"@b := 1, OVERRIDABLE @a := 1", 21, "variables cannot be OVERRIDABLE"},
                     {"AUDITED @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
-                    {"@a := @b", 6, "tried to use undeclared variable `@b`"},
             };
-            for (Object[] c : cases) {
-                withVariables((String) c[0], sql, () -> assertQuery(sql).fails(SqlParser.QUERY_VARIABLES_POSITION + (int) c[1], (String) c[2]));
+            for (Object[] c : refused) {
+                withVariables((String) c[0], sql, () -> assertQuery(sql).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + (int) c[1], (String) c[2]));
             }
         });
     }

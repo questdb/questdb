@@ -216,8 +216,6 @@ public class SqlParser {
     private final ObjList<IQueryModel> pivotSubQueryModelsInAuditedView = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    // parses the variables a client declared outside the statement's text, see parseQueryVariables()
-    private final GenericLexer queryVariablesLexer;
     // the variables' assignments, at QUERY_VARIABLES_POSITION, see parseQueryVariables()
     private final QueryVariablesText queryVariablesText = new QueryVariablesText();
     // One entry per reference to an audited view, in the order the parser expanded them, less the
@@ -376,7 +374,6 @@ public class SqlParser {
         this.characterStore = characterStore;
         this.viewAuditModelPool = new ObjectPool<>(ViewAuditModel.FACTORY, configuration.getViewLexerPoolCapacity());
         this.viewLexers = new ObjectPool<>(this::createLexer, configuration.getViewLexerPoolCapacity());
-        this.queryVariablesLexer = createLexer();
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -8226,19 +8223,24 @@ public class SqlParser {
                     .put(Integer.MAX_VALUE - QUERY_VARIABLES_POSITION).put(']');
         }
         queryVariablesText.of(variables);
-        queryVariablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
+        // The tokens of the model this parses are windows over the lexer's text, so the lexer stays
+        // with the statement until clear(), as one that reads a view body does. It comes from the
+        // same pool: a lexer of its own would sit in every compiler, though only a statement sent
+        // with variables reads them.
+        final GenericLexer variablesLexer = viewLexers.next();
+        variablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
 
-        CharSequence tok = optTok(queryVariablesLexer);
+        CharSequence tok = optTok(variablesLexer);
         if (tok == null) {
             // blank, or only comments
             return null;
         }
         if (isDeclareKeyword(tok)) {
-            throw SqlException.$(queryVariablesLexer.lastTokenPosition(), "variables are the assignments of a DECLARE block, without the DECLARE keyword");
+            throw SqlException.$(variablesLexer.lastTokenPosition(), "variables are the assignments of a DECLARE block, without the DECLARE keyword");
         }
         // parseDeclare() reads each variable from the lexer's position, which a token handed
         // back would leave past it: start the lexer over instead
-        queryVariablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
+        variablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
         // The statement parses the variables once, as it does its own text, so they count towards
         // its parse budget, see checkParseBudget(). Their position does not: the blanks ahead of
         // them are no text.
@@ -8255,14 +8257,14 @@ public class SqlParser {
         withScope = model.getWithClauses();
         try {
             // not a top-level block: a variable cannot be marked AUDITED
-            parseDeclare(queryVariablesLexer, model, sqlParserCallback, false);
+            parseDeclare(variablesLexer, model, sqlParserCallback, false);
         } finally {
             withScope = withScopeBefore;
         }
-        tok = optTok(queryVariablesLexer);
+        tok = optTok(variablesLexer);
         if (tok != null) {
             // not an assignment, or a value that ended early, as `1 SELECT 2` does
-            throw SqlException.unexpectedToken(queryVariablesLexer.lastTokenPosition(), tok);
+            throw SqlException.unexpectedToken(variablesLexer.lastTokenPosition(), tok);
         }
 
         final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
