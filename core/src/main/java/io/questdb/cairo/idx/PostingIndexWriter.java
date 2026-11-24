@@ -1824,10 +1824,13 @@ public class PostingIndexWriter implements IndexWriter {
             final PendingSealPurge entry = pendingPurges.getQuick(i);
             if (entry.postingColumnNameTxn == postingColumnNameTxn) {
                 // A one-shot build starts from an empty chain, so its outbox holds only generations its seals
-                // superseded, each below the head: the generation counter never goes back.
-                assert !chain.hasHead() || chain.getHeadSealTxn() != entry.sealTxn
-                        : "superseded generation is the live chain head [sealTxn=" + entry.sealTxn + ']';
-                sealTxns.add(entry.sealTxn);
+                // superseded, each below the head: the generation counter never goes back. Without assertions the
+                // live head is left alone, never unlinked.
+                final boolean isHead = chain.hasHead() && chain.getHeadSealTxn() == entry.sealTxn;
+                assert !isHead : "superseded generation is the live chain head [sealTxn=" + entry.sealTxn + ']';
+                if (!isHead) {
+                    sealTxns.add(entry.sealTxn);
+                }
             }
         }
         if (sealTxns.size() == 0) {
