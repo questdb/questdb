@@ -129,6 +129,8 @@ pub struct RowGroupBlockBuilder {
     /// Footer-side per-row-group entry, not part of the block bytes; see
     /// `FooterFeatureFlags::DEDUP_SORT_VERSION_BIT`.
     dedup_sort_version: i64,
+    /// Footer-side too: the dedup keys of the first and the last row, empty when unknown.
+    dedup_sort_keys: (Vec<u8>, Vec<u8>),
 }
 
 impl RowGroupBlockBuilder {
@@ -141,6 +143,7 @@ impl RowGroupBlockBuilder {
             bloom_filters: Vec::new(),
             external_bloom_filters: Vec::new(),
             dedup_sort_version: DEDUP_SORT_VERSION_UNSET,
+            dedup_sort_keys: (Vec::new(), Vec::new()),
         }
     }
 
@@ -156,6 +159,19 @@ impl RowGroupBlockBuilder {
 
     pub fn set_dedup_sort_version(&mut self, version: i64) -> &mut Self {
         self.dedup_sort_version = version;
+        self
+    }
+
+    /// The dedup keys of the first and the last row, in the order of the dedup sort
+    /// version; empty when unknown.
+    pub fn dedup_sort_keys(&self) -> &(Vec<u8>, Vec<u8>) {
+        &self.dedup_sort_keys
+    }
+
+    /// Records the dedup keys of the first and the last row. They mean something only
+    /// with a dedup sort version.
+    pub fn set_dedup_sort_keys(&mut self, first: Vec<u8>, last: Vec<u8>) -> &mut Self {
+        self.dedup_sort_keys = (first, last);
         self
     }
 

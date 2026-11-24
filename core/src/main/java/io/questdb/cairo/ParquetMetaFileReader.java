@@ -121,8 +121,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
-    // Optional footer flag, section [i64 dedupSortVersion; rowGroupCount]: the dedup version whose keys sort
-    // each row group within equal designated timestamps, DEDUP_SORT_VERSION_UNSET for no claim.
+    // Optional footer flag, section [u32 keyEnd; 2 * rowGroupCount][u8 keys][i64 dedupSortVersion; rowGroupCount]:
+    // the first and last dedup key of each row group, then the dedup version whose keys sort each row group within
+    // equal designated timestamps, DEDUP_SORT_VERSION_UNSET for no claim. The versions end the section.
     private static final long DEDUP_SORT_VERSION_FOOTER_FLAG = 1L << 2;
     // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COL_DESC_COL_TYPE_OFF = 12;
@@ -1120,13 +1121,16 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         final long indexRowMapSize = hasIndexRowMap ? Long.BYTES + rowGroupCountLong * Long.BYTES : 0;
         final boolean hasDedupSortVersions = (footerFeatureFlags & DEDUP_SORT_VERSION_FOOTER_FLAG) != 0;
         final long dedupSortVersionsSize = hasDedupSortVersions ? rowGroupCountLong * Long.BYTES : 0;
+        // The dedup sort section also holds the key ends and the variable-size keys before its versions.
+        final long dedupSortSectionMinSize = hasDedupSortVersions ? 2 * rowGroupCountLong * Long.BYTES : 0;
         long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
         long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK & ~DEDUP_SORT_VERSION_FOOTER_FLAG;
+        final long expectedFooterLength = baseFooterLength + dedupSortSectionMinSize + indexRowMapSize;
         if (knownOptionalFeatureFlags == 0
                 && knownOptionalFooterFeatureFlags == 0
-                && currentFooterLength != baseFooterLength + dedupSortVersionsSize + indexRowMapSize) {
+                && (hasDedupSortVersions ? currentFooterLength < expectedFooterLength : currentFooterLength != expectedFooterLength)) {
             throw CairoException.critical(0)
-                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength + dedupSortVersionsSize + indexRowMapSize)
+                    .put("unexpected _pm footer feature bytes [expected=").put(expectedFooterLength)
                     .put(", actual=").put(currentFooterLength)
                     .put(']');
         }
