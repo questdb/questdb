@@ -103,6 +103,10 @@ public class AppendPageFailureTest extends AbstractCairoTest {
     // where the committed rows end a data file in testNoTimestampFailedRowEveryColumnFile: at the end of its first
     // page, after values of 100 bytes and one of the rest
     private static final long DATA_PAGE_END = -2;
+    // the data page of the tables of FailedRowFuzz: a multiple of Files.PAGE_SIZE on every OS (4 KiB on Linux x64,
+    // 16 KiB on macOS aarch64, the 64 KiB allocation granularity on Windows), so that a seed fills the pages at the
+    // same rows and takes the same random path on each
+    private static final long FUZZ_PAGE_SIZE = 64 * 1024;
     // rows of 8 bytes that fill the first page of a column file
     private static final long ROWS_PER_PAGE = Files.PAGE_SIZE / Long.BYTES;
     // U+1F600, 4 bytes in UTF-8, 2 chars in UTF-16
@@ -1254,16 +1258,15 @@ public class AppendPageFailureTest extends AbstractCairoTest {
 
     @Test
     public void testNoTimestampFailedRowRandomShapes() throws Exception {
-        // the random test makes, on these seeds, each shape of failed row that the cancel must take back
+        // the random test makes, on these seeds, each shape of failed row that the cancel must take back; its tables
+        // have pages of FUZZ_PAGE_SIZE, so the seeds make the same shapes on every OS
         final long[][] seeds = {
-                // a STRING put at the start of a page, an aux page, a disk-full run
-                {23L, 24L},
-                // all-NULL rows that fail after an array and a fixed-size column
-                {4L, 5L},
-                // all-NULL rows that fail after a VARCHAR and a STRING column
-                {35L, 36L},
-                // a BINARY put, a mapping that fails in the cancel
-                {31L, 32L},
+                // a STRING put at the start of a page, STRING and BINARY puts, an aux page, disk-full runs,
+                // mappings that fail in the cancel
+                {333L, 334L},
+                // all-NULL rows that fail after a fixed-size, a VARCHAR, an array and a STRING column, a fixed-size
+                // page
+                {462L, 463L},
         };
         final FailedRowShapes shapes = new FailedRowShapes();
         for (long[] seed : seeds) {
@@ -1770,7 +1773,7 @@ public class AppendPageFailureTest extends AbstractCairoTest {
 
     // Random rows through the writers of t and ref, with failed rows of t: see FailedRowFuzz
     private static void assertFailedRowFuzz(Rnd rnd, FailedRowShapes shapes) throws Exception {
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, FUZZ_PAGE_SIZE);
         final RandomFailureFacade ff = new RandomFailureFacade();
         assertMemoryLeak(ff, () -> {
             // x and 1-8 columns of the types of ALL_TYPES, half of them var-size, in random order
@@ -2530,7 +2533,7 @@ public class AppendPageFailureTest extends AbstractCairoTest {
                     } else {
                         counts.binaryDataPuts++;
                     }
-                    if (dataSizes[column] % Files.PAGE_SIZE == 0) {
+                    if (dataSizes[column] % FUZZ_PAGE_SIZE == 0) {
                         counts.valuesAtPageStart++;
                     }
                 }
@@ -2561,7 +2564,7 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         // and the row fails
         private void failRow(int column, String file, boolean isMmapFailing) {
             ff.arm(file, isMmapFailing);
-            for (int i = 0, n = 4 * (int) Files.PAGE_SIZE; i < n; i++) {
+            for (int i = 0, n = 4 * (int) FUZZ_PAGE_SIZE; i < n; i++) {
                 nextRow(column, rnd.nextInt(5) == 0);
                 if (!appendRow()) {
                     followFailedRow(true);
@@ -2577,7 +2580,7 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         private void failRowsOnFullDisk() {
             ff.isFull.set(true);
             int rowsLeft = -1;
-            for (int i = 0, n = 4 * (int) Files.PAGE_SIZE; i < n && rowsLeft != 0; i++) {
+            for (int i = 0, n = 4 * (int) FUZZ_PAGE_SIZE; i < n && rowsLeft != 0; i++) {
                 nextRow(-1, true);
                 final boolean isLanded = appendRow();
                 if (!isLanded) {
