@@ -487,6 +487,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void truncate() {
+        truncateKeepHeader(0);
+    }
+
+    @Override
+    public void truncateKeepHeader(long headerSize) {
+        assert headerSize >= 0;
         if (pageAddress != 0) {
             // try to remap to min size
             final long fileSize = ff.length(fd);
@@ -504,10 +510,16 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                         memoryTag
                 );
             } catch (Throwable e) {
-                appendAddress = pageAddress;
+                appendAddress = pageAddress + headerSize;
                 // As in jumpTo(), the cursor goes back to 0 while the watermark may sit above it. Drop the
                 // watermark so a reused memory cannot skip the msync of rewritten bytes.
                 lastSyncedAppendOffset = 0;
+                if (headerSize > 0) {
+                    // The previous mapping is still in place: empty what follows the header in it, and leave the
+                    // file its length rather than cut the header off with the rest.
+                    Vect.memset(pageAddress + headerSize, size - headerSize, 0);
+                    throw e;
+                }
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
                 if (truncatedToSize != 0) {
                     if (truncatedToSize > 0) {
@@ -521,14 +533,15 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 throw e;
             }
 
+            assert sz >= headerSize : "header does not fit the minimum mapping [headerSize=" + headerSize + ", size=" + sz + ']';
             this.size = sz;
             lastSyncedSize = sz;
-            // truncate() resets the append cursor to the mapping base and zeroes the page, so the
-            // last-synced append offset resets too.
+            // truncate() resets the append cursor to the end of the header and zeroes the rest of the page, so
+            // the last-synced append offset resets too.
             lastSyncedAppendOffset = 0;
             this.lim = pageAddress + sz;
-            appendAddress = pageAddress;
-            Vect.memset(pageAddress, sz, 0);
+            appendAddress = pageAddress + headerSize;
+            Vect.memset(pageAddress + headerSize, sz - headerSize, 0);
 
             // try to truncate the file to remove tail data
             if (ff.truncate(fd, Files.ceilPageSize(size))) {

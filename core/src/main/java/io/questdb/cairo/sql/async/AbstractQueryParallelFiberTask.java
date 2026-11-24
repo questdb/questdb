@@ -205,10 +205,6 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         dispatcher.signalOwnerProgress(progressState);
     }
 
-    protected final void signalQueueProgress() {
-        dispatcher.signalQueueProgress();
-    }
-
     private static Throwable addFailure(@Nullable Throwable primary, Throwable failure) {
         if (primary == null) {
             return failure;

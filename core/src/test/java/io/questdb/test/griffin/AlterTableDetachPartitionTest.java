@@ -1369,6 +1369,54 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testCannotAttachPartitionWithDelta() throws Exception {
+        // DETACH refuses a delta-active partition, so a _delta folder marks a directory ATTACH refuses.
+        assertMemoryLeak(() -> {
+            String tableName = "tabAttachDelta";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(configuration.getDbRoot()).concat(tableToken)
+                    .concat("2022-06-01").put(configuration.getAttachPartitionSuffix())
+                    .concat(DELTA_DIR_NAME).slash$();
+            Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+            final int deltaDirLen = path.size();
+            Assert.assertTrue(ff.touch(path.concat(DELTA_CATALOG_FILE_NAME).$()));
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'",
+                    "could not attach partition [table=" + tableName + ", detachStatus=ATTACH_ERR_DELTA"
+            );
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n5\n");
+            Assert.assertTrue(ff.exists(path.$()));
+
+            // Without _delta the directory attaches as an ordinary partition.
+            Assert.assertTrue(ff.rmdir(path.trimTo(deltaDirLen)));
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
+        });
+    }
+
+    @Test
     public void testCannotCopyColumnVersions() throws Exception {
         assertCannotCopyMeta("testCannotCopyColumnVersions", 2);
     }
@@ -1393,9 +1441,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testCannotDetachRemotelyServedPartition() throws Exception {
+    public void testCannotDetachDeltaActivePartition() throws Exception {
+        // The Delta catalog changes in place, so DETACH refuses the partition, at SQL time and in the writer.
         assertMemoryLeak(() -> {
-            String tableName = "tabDetachRemote";
+            String tableName = "tabDetachDelta";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab.timestamp("ts", timestampType.getTimestampType())
@@ -1405,27 +1454,79 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "2022-06-01",
                     2
             );
-            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
-
+            final long timestamp = timestampType.getDriver().parseFloorLiteral("2022-06-01");
             try (TableWriter writer = getWriter(tableName)) {
-                TxWriter tx = writer.getTxWriter();
-                Assert.assertTrue(tx.isPartitionParquet(0));
-                tx.setPartitionParquetGenerated(0, false);
-                tx.setPartitionRemote(0, true);
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(timestamp);
                 writer.bumpPartitionTableVersion();
                 writer.commit();
-                Assert.assertTrue(tx.isPartitionRemotelyServed(0));
             }
 
             assertFailure(
                     "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'",
-                    "could not detach partition [table=" + tableName + ", detachStatus=DETACH_ERR_REMOTE"
+                    "cannot detach partition, partition is delta-active [table=" + tableName + ", partition=2022-06-01]"
             );
-
-            // The rejection left the partition attached and still remotely served.
             try (TableWriter writer = getWriter(tableName)) {
-                Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(0));
+                Assert.assertEquals(DETACH_ERR_DELTA, writer.detachPartition(timestamp));
+                Assert.assertTrue(writer.getTxWriter().isPartitionDeltaActive(0));
             }
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName))
+                    .concat("2022-06-01").put(DETACHED_DIR_MARKER).$();
+            Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
+        });
+    }
+
+    @Test
+    public void testCannotDetachReadOnlyPartition() throws Exception {
+        // SQL refuses a read-only partition on the issuing node. The writer refuses only a remotely served one.
+        assertMemoryLeak(() -> {
+            String tableName = "tabDetachReadOnly";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    15,
+                    "2022-06-01",
+                    3
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-02'", sqlExecutionContext);
+            try (TableWriter writer = getWriter(tableName)) {
+                TxWriter tx = writer.getTxWriter();
+                tx.setPartitionReadOnly(0, true);
+                Assert.assertTrue(tx.isPartitionParquet(1));
+                tx.setPartitionParquetGenerated(1, false);
+                tx.setPartitionRemote(1, true);
+                tx.setPartitionReadOnly(1, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                Assert.assertFalse(tx.isPartitionRemotelyServed(0));
+                Assert.assertTrue(tx.isPartitionRemotelyServed(1));
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            for (String partition : new String[]{"2022-06-01", "2022-06-02"}) {
+                assertFailure(
+                        "ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partition + "'",
+                        "cannot detach partition, partition is read-only [table=" + tableName + ", partition=" + partition + "]"
+                );
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+                Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
+            }
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertEquals(DETACH_ERR_REMOTE, writer.detachPartition(timestampType.getDriver().parseFloorLiteral("2022-06-02")));
+                Assert.assertTrue(writer.getTxWriter().isPartitionReadOnly(0));
+                Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(1));
+            }
+            assertQuery("SELECT count() FROM " + tableName + " WHERE ts < '2022-06-03'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
         });
     }
 
@@ -1723,6 +1824,31 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
             assertContent(expected, tableName);
+        });
+    }
+
+    @Test
+    public void testDetachAttachParquetPartitionAfterAddColumn() throws Exception {
+        // y, added while the partition is detached, has no Parquet column: attach skips it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-01T12:00:00.000000Z', 2),
+                        ('2024-01-02T00:00:00.000000Z', 3)
+                    """);
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE tab ADD COLUMN y INT");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            assertQuery("SELECT * FROM tab").timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
+                    ts\tx\ty
+                    2024-01-01T00:00:00.000000Z\t1\tnull
+                    2024-01-01T12:00:00.000000Z\t2\tnull
+                    2024-01-02T00:00:00.000000Z\t3\tnull
+                    """));
         });
     }
 

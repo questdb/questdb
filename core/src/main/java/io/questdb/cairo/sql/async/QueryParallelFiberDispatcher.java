@@ -76,10 +76,9 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private final FiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
     private final MessageBus messageBus;
     private final NanosecondClock nanosecondClock;
-    private final AtomicLong progressVersion = new AtomicLong();
-    private final FiberEventWaitQueue progressWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
     private final AtomicInteger quiesceState = new AtomicInteger(QUIESCE_OPEN);
+    private final FiberEventWaitQueue quiesceWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private final FiberRuntime runtime;
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
@@ -163,7 +162,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     public boolean awaitProgress(
             AsyncQueryProgressState progressState,
             long observedVersion,
-            long observedGlobalVersion,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
@@ -177,37 +175,44 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
             }
         }
-        final int reason = awaitProgress(
-                progressState,
-                observedVersion,
-                observedGlobalVersion,
-                cancellationSignal,
-                cancellationSignalGeneration
-        );
-        return switch (reason) {
-            case FiberWaitCoordinator.REASON_CANCEL, FiberWaitCoordinator.REASON_TIMER -> {
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
-                yield true;
-            }
-            case FiberWaitCoordinator.REASON_PROGRESS -> true;
-            case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
-            default -> throw new IllegalStateException(
-                    "unexpected query parallel progress wait reason [reason=" + reason + ']'
+        while (true) {
+            final int reason = awaitProgress(
+                    progressState,
+                    observedVersion,
+                    cancellationSignal,
+                    cancellationSignalGeneration
             );
-        };
+            switch (reason) {
+                case FiberWaitCoordinator.REASON_TIMER ->
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                case FiberWaitCoordinator.REASON_CANCEL -> {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                    return true;
+                }
+                case FiberWaitCoordinator.REASON_PROGRESS -> {
+                    return true;
+                }
+                case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> {
+                    return false;
+                }
+                default -> throw new IllegalStateException(
+                        "unexpected query parallel progress wait reason [reason=" + reason + ']'
+                );
+            }
+        }
     }
 
     /**
      * Drain loops must run to latch completion before their callers release native state, so this
      * variant never throws; the loop-top breaker check surfaces the error after the drain. A
-     * non-null breaker lets its cancellation wake the Fiber without escaping the drain. Once the
-     * caller has observed the trip and cancelled its workers it must pass null, so an already
-     * cancelled signal cannot make the drain spin.
+     * non-null breaker lets its cancellation wake the Fiber without escaping the drain, and a timer
+     * wake returns only once that breaker reports a trip. Once the caller has observed the trip and
+     * cancelled its workers it must pass null, so an already cancelled signal cannot make the drain
+     * spin.
      */
     public boolean awaitProgressWhileDraining(
             AsyncQueryProgressState progressState,
             long observedVersion,
-            long observedGlobalVersion,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         FiberCancellationSignal cancellationSignal = null;
@@ -225,22 +230,30 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 }
             }
         }
-        final int reason = awaitProgress(
-                progressState,
-                observedVersion,
-                observedGlobalVersion,
-                cancellationSignal,
-                cancellationSignalGeneration
-        );
-        return switch (reason) {
-            case FiberWaitCoordinator.REASON_CANCEL,
-                 FiberWaitCoordinator.REASON_PROGRESS,
-                 FiberWaitCoordinator.REASON_TIMER -> true;
-            case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
-            default -> throw new IllegalStateException(
-                    "unexpected query parallel drain wait reason [reason=" + reason + ']'
+        while (true) {
+            final int reason = awaitProgress(
+                    progressState,
+                    observedVersion,
+                    cancellationSignal,
+                    cancellationSignalGeneration
             );
-        };
+            switch (reason) {
+                case FiberWaitCoordinator.REASON_TIMER -> {
+                    if (circuitBreaker != null && circuitBreaker.checkIfTrippedNoThrottle()) {
+                        return true;
+                    }
+                }
+                case FiberWaitCoordinator.REASON_CANCEL, FiberWaitCoordinator.REASON_PROGRESS -> {
+                    return true;
+                }
+                case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> {
+                    return false;
+                }
+                default -> throw new IllegalStateException(
+                        "unexpected query parallel drain wait reason [reason=" + reason + ']'
+                );
+            }
+        }
     }
 
     @Override
@@ -248,7 +261,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         if (!quiesceState.compareAndSet(QUIESCE_OPEN, QUIESCE_REQUESTED)) {
             return;
         }
-        progressWaitQueue.fireAll();
+        quiesceWaitQueue.fireAll();
         while (true) {
             final long current = publicationAdmission.get();
             if ((current & PUBLICATION_OPEN) == 0
@@ -288,7 +301,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             failure = addFailure(failure, th);
         }
         try {
-            progressWaitQueue.shutdown();
+            quiesceWaitQueue.shutdown();
         } catch (Throwable th) {
             failure = addFailure(failure, th);
         }
@@ -547,10 +560,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         return mergeShardTaskPool.getCreatedCount();
     }
 
-    public long getProgressVersion() {
-        return progressVersion.get();
-    }
-
     @TestOnly
     public int getVectorAggregateCreatedTaskCount() {
         return vectorAggregateTaskPool.getCreatedCount();
@@ -612,13 +621,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     @TestOnly
-    public void runWithQueueWaitQueueLockedForTesting(Runnable action) {
-        synchronized (progressWaitQueue) {
-            action.run();
-        }
-    }
-
-    @TestOnly
     public void setBatchCheckRowsForTesting(long batchCheckRows) {
         batchPolicy.setCheckRows(batchCheckRows);
     }
@@ -632,11 +634,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         if (progressState != null) {
             progressState.signalProgress();
         }
-    }
-
-    public void signalQueueProgress() {
-        progressVersion.incrementAndGet();
-        progressWaitQueue.fire();
     }
 
     public boolean tryAcquirePublication() {
@@ -693,7 +690,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private int awaitProgress(
             AsyncQueryProgressState progressState,
             long observedVersion,
-            long observedGlobalVersion,
             @Nullable FiberCancellationSignal cancellationSignal,
             long cancellationSignalGeneration
     ) {
@@ -714,7 +710,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
         try {
             if (!coordinator.armEvent(token, progressState.getWaitQueue())
-                    || !coordinator.armEvent(token, progressWaitQueue)) {
+                    || !coordinator.armEvent(token, quiesceWaitQueue)) {
                 throw new IllegalStateException("query parallel progress wait registration failed");
             }
             if (cancellationSignal != null
@@ -727,7 +723,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (isClosed || quiesceState.get() != QUIESCE_OPEN) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
-            if (progressState.getVersion() != observedVersion || progressVersion.get() != observedGlobalVersion) {
+            if (progressState.getVersion() != observedVersion) {
                 return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
@@ -777,11 +773,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     ) {
         try {
             subSeq.done(cursor);
-        } catch (Throwable cleanupFailure) {
-            addSuppressed(failure, cleanupFailure);
-        }
-        try {
-            signalQueueProgress();
         } catch (Throwable cleanupFailure) {
             addSuppressed(failure, cleanupFailure);
         }
@@ -896,11 +887,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                     try {
                         subSeq.done(cursor);
                     } finally {
-                        try {
-                            signalQueueProgress();
-                        } finally {
-                            signalOwnerProgress(progressState);
-                        }
+                        signalOwnerProgress(progressState);
                     }
                 }
             } else {
@@ -933,11 +920,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                         try {
                             subSeq.done(cursor);
                         } finally {
-                            try {
-                                signalQueueProgress();
-                            } finally {
-                                signalOwnerProgress(progressState);
-                            }
+                            signalOwnerProgress(progressState);
                         }
                     }
                 }
@@ -971,11 +954,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                         try {
                             subSeq.done(cursor);
                         } finally {
-                            try {
-                                signalQueueProgress();
-                            } finally {
-                                signalOwnerProgress(progressState);
-                            }
+                            signalOwnerProgress(progressState);
                         }
                     }
                 }
@@ -1010,11 +989,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                     try {
                         subSeq.done(cursor);
                     } finally {
-                        try {
-                            signalQueueProgress();
-                        } finally {
-                            signalOwnerProgress(progressState);
-                        }
+                        signalOwnerProgress(progressState);
                     }
                 }
             } else {

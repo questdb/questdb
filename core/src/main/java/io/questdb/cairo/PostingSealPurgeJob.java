@@ -44,6 +44,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
 import org.jetbrains.annotations.TestOnly;
@@ -63,6 +64,10 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private static final long ERROR_BACKOFF_MICROS = 60L * 1_000_000L;
     private static final int FROM_TABLE_TXN_COLUMN = 9;
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeJob.class);
+    // The reopen of the log after a log failure waits a delay that starts at 0, then 1 s, and doubles up to 60 s, as
+    // MetricsPersistenceJob waits to reopen its writer
+    private static final long LOG_RETRY_DELAY_MAX_MICROS = Micros.MINUTE_MICROS;
+    private static final long LOG_RETRY_DELAY_START_MICROS = Micros.SECOND_MICROS;
     private static final int MAX_ERRORS = 11;
     private static final int PARTITION_BY_COLUMN = 8;
     private static final int PARTITION_NAME_TXN_COLUMN = 7;
@@ -75,7 +80,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TO_TABLE_TXN_COLUMN = 10;
     private final MicrosecondClock clock;
     private final Path completedPath;
-    private final int completedWriterIndex;
+    private final CairoEngine engine;
     private final FilesFacade ff;
     private final RingQueue<PostingSealPurgeTask> inQueue;
     private final SCSequence inSubSequence;
@@ -87,7 +92,15 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private final TableToken tableToken;
     private long completedFd = -1;
     private long completedFdPartitionTimestamp = Long.MIN_VALUE;
+    private int completedWriterIndex;
     private int errorCount;
+    // the clock at the reopen of the log writer the job holds
+    private long logReopenTimestamp;
+    // The delay of the reopen after the next log failure. A commit that saves rows through a writer held since its
+    // reopen for at least this delay resets it to 0.
+    private long logRetryDelay;
+    // the clock from which the job reopens the log, after a log failure
+    private long logRetryTimestamp;
     private long longBuf;
     private long nextErrorRetryAtMicros;
     private PostingSealPurgeOperator operator;
@@ -97,6 +110,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     public PostingSealPurgeJob(CairoEngine engine) throws SqlException {
         try {
+            this.engine = engine;
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
             this.ff = configuration.getFilesFacade();
@@ -124,6 +138,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             this.completedWriterIndex = writer.getMetadata().getColumnIndex("completed");
             this.operator = new PostingSealPurgeOperator(engine);
             recoverOpenTasks(engine);
+            reopenLogWriterIfDue();
         } catch (Throwable th) {
             close();
             throw th;
@@ -192,10 +207,10 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     @TestOnly
     public boolean isJobAliveForTesting() {
-        // Returns true while the job is still attempting work. Before the
-        // fix, hitting MAX_ERRORS called close() and made this false
-        // forever; after the fix, error overflow only throttles via a
-        // backoff window and the job remains alive.
+        // Whether the job holds its log writer. Error overflow only throttles
+        // the job via a backoff window, and never closes it. The job also
+        // drains and purges without the log writer, which it reopens on a
+        // retry schedule after a log failure, see reopenLogWriterIfDue().
         return writer != null;
     }
 
@@ -328,11 +343,14 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private void commit() {
         if (writer != null) {
             try {
+                final boolean isSavingRows = writer.getUncommittedRowCount() > 0;
                 writer.commit();
+                // the log took rows through a writer that the job has held for the retry delay since its reopen
+                if (isSavingRows && logRetryDelay > 0 && clock.getTicks() - logReopenTimestamp >= logRetryDelay) {
+                    logRetryDelay = 0;
+                }
             } catch (Throwable th) {
-                LOG.error().$("posting seal purge: log commit failed, disabling writer [err=").$(th).I$();
-                errorCount++;
-                writer = Misc.free(writer);
+                releaseLogWriter("could not commit", th);
             }
         }
     }
@@ -403,23 +421,25 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    // Without the log writer the entry keeps its row id, -1 for an entry the job drains then, and markCompleted() uses
+    // none until the reopen writes the entry back.
     private void persistTask(RetryEntry entry) {
         if (writer == null) {
             return;
         }
         try {
-            entry.logRowId = appendTask(writer, entry, entry.scheduledAt);
+            // At or after the last row of the log, where rows of one timestamp keep the order of their appends: an
+            // out-of-order append would move the rows whose ids the queued entries keep.
+            entry.logRowId = appendTask(writer, entry, Math.max(entry.scheduledAt, writer.getMaxTimestamp()));
         } catch (Throwable th) {
-            LOG.error().$("posting seal purge: failed to persist task, log writer disabled [err=").$(th).I$();
-            errorCount++;
-            writer = Misc.free(writer);
+            releaseLogWriter("could not save purge task", th);
         }
     }
 
     private boolean processInQueue() {
         boolean useful = false;
         long now = clock.getTicks();
-        while (writer != null) {
+        while (true) {
             long cursor = inSubSequence.next();
             if (cursor < -1) {
                 Os.pause();
@@ -441,6 +461,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         if (useful) {
             commit();
         }
+        reopenLogWriterIfDue();
         return useful;
     }
 
@@ -551,8 +572,57 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             try {
                 writer.truncate();
             } catch (Throwable th) {
-                LOG.error().$("posting seal purge: failed to truncate log table [err=").$(th).I$();
+                releaseLogWriter("could not truncate", th);
             }
+        }
+    }
+
+    // Gives the log writer up after a log failure, and sets the reopen a retry delay ahead. The failure left the writer
+    // in an unknown state, so the job marks it distressed and the pool closes it: the pool keeps a writer whose failed
+    // row was the first since its last commit, see TableWriter.rollback(). The job drains and purges without the log
+    // meanwhile, and marks nothing. Log failures do not count as errors: the retry schedule paces them.
+    private void releaseLogWriter(CharSequence reason, Throwable cause) {
+        final TableWriter releasedWriter = writer;
+        writer = null;
+        closeCompletedFd();
+        logRetryTimestamp = clock.getTicks() + logRetryDelay;
+        logRetryDelay = logRetryDelay == 0 ? LOG_RETRY_DELAY_START_MICROS : Math.min(LOG_RETRY_DELAY_MAX_MICROS, 2 * logRetryDelay);
+        if (releasedWriter != null) {
+            releasedWriter.markDistressed();
+            Misc.free(releasedWriter, cause);
+        }
+        LOG.error().$("posting seal purge: log failed, purging without it until it reopens [table=").$(tableToken)
+                .$(", reason=").$(reason)
+                .$(", retryAt=").$ts(logRetryTimestamp)
+                .$(", error=").$(cause)
+                .I$();
+    }
+
+    // Reopens the log once the retry delay after a log failure has passed, and writes every queued entry back to it at
+    // fresh timestamps: the rows that the job wrote before may be gone or moved, so their ids name no entry any more.
+    private void reopenLogWriterIfDue() {
+        if (writer != null) {
+            return;
+        }
+        final long now = clock.getTicks();
+        if (now < logRetryTimestamp) {
+            return;
+        }
+        try {
+            writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            logReopenTimestamp = now;
+            completedWriterIndex = writer.getMetadata().getColumnIndex("completed");
+            for (RetryEntry entry : retryQueue) {
+                entry.scheduledAt = now;
+                persistTask(entry);
+                if (writer == null) {
+                    // persistTask() gave the writer up
+                    return;
+                }
+            }
+            commit();
+        } catch (Throwable th) {
+            releaseLogWriter("could not reopen", th);
         }
     }
 

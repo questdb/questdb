@@ -27,13 +27,16 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -45,6 +48,9 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -62,7 +68,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -101,6 +106,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -138,8 +144,13 @@ public class FuzzRunner {
     private static final int SNAPSHOT_SAMPLE_ROWS = 16;
     private static final int SNAPSHOT_TAIL_ROWS = 16;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
+    // Prepared commits that the WAL apply paths abandoned and sequenced, see commitWal() and rollbackWal().
+    private final AtomicInteger abandonedPreparedCommitCount = new AtomicInteger();
+    private final AtomicInteger sequencedPreparedCommitCount = new AtomicInteger();
     // the native conversions of every value of a type without a NULL sentinel, by source type and target type
     private final Map<String, Map<String, String>> noSentinelConversions = new HashMap<>();
+    // the purge log faults planted, by kind: those of the column purge log, then those of the posting seal purge log
+    private final AtomicIntegerArray plantedPurgeLogFaults = new AtomicIntegerArray(2 * FailureFileFacade.TableFailureKind.values().length);
     private final Map<TableReader, ReaderSnapshot> readerSnapshots = Collections.synchronizedMap(new IdentityHashMap<>());
     // the columns the generator widened from a type without a NULL sentinel, see setNoSentinelWideningChecked()
     private final ObjHashSet<String> widenedColumns = new ObjHashSet<>();
@@ -162,6 +173,7 @@ public class FuzzRunner {
     private FailureFileFacade ff;
     private int fuzzRowCount;
     private boolean hasApplySeeds;
+    private boolean hasPoolColumnPurgeJob;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
     private boolean isNoSentinelTypeChangeEnabled;
@@ -175,6 +187,13 @@ public class FuzzRunner {
     private double partitionDropProb;
     private double partitionToNativeProb;
     private double partitionToParquetProb;
+    // The chance that a WAL commit or rollback goes through WalWriter.prepareCommit(); 0 keeps the plain path.
+    private double preparedCommitProb;
+    // the chance that a run of the column purge job of an apply meets a fault of its log, and that one is planted for
+    // the posting seal purge job of a worker pool, see plantPurgeLogFault()
+    private double purgeLogFaultProb;
+    // the draws of the purge log faults: off the apply Rnd, so that a seed replays the same applies with or without them
+    private Rnd purgeLogFaultRnd;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
@@ -237,8 +256,8 @@ public class FuzzRunner {
     public void after() {
         readerSnapshots.clear();
         if (this.s0 != 0 || this.s1 != 0) {
-            LOG.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-            System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+            LOG.info().$("RNG state after warm-up: ").$(s0).$("L, ").$(s1).$('L').$();
+            System.out.printf("RNG state after warm-up: %dL, %dL%n", s0, s1);
         }
     }
 
@@ -366,7 +385,10 @@ public class FuzzRunner {
 
         calculateReplaceRanges(transactions);
 
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+        try (
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+                ColumnPurgeJob columnPurgeJob = openColumnPurgeJob()
+        ) {
             int transactionSize = transactions.size();
             Rnd rnd = newApplyRnd();
             int failuresObserved = 0;
@@ -463,7 +485,7 @@ public class FuzzRunner {
                 }
 
                 try {
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, reloadProbability);
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, columnPurgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
@@ -483,6 +505,7 @@ public class FuzzRunner {
                     }
                 }
             }
+            runColumnPurgeJob(columnPurgeJob);
         } finally {
             // Don't mess simulating failures anymore, we are done here.
             ff.clearFailures();
@@ -507,8 +530,11 @@ public class FuzzRunner {
             }
 
             Rnd tempRnd = newApplyRnd();
+            // A stream of its own, so that the draws of applyRnd and tempRnd stay as without prepared commits.
+            final Rnd prepareRnd = new Rnd(tempRnd.getSeed0() ^ 0x5DEECE66DL, tempRnd.getSeed1());
             for (int i = 0, n = transactions.size(); i < n; i++) {
-                WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+                final int activeWriterIndex = applyRnd.nextPositiveInt() % walWriterCount;
+                WalWriter writer = writers.getQuick(activeWriterIndex);
                 writer.goActive();
                 FuzzTransaction transaction = transactions.getQuick(i);
                 for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
@@ -526,7 +552,7 @@ public class FuzzRunner {
                     }
                 } else {
                     if (transaction.rollback) {
-                        writer.rollback();
+                        writers.setQuick(activeWriterIndex, rollbackWal(writer, prepareRnd));
                     } else {
                         if (transaction.hasReplaceRange()) {
                             writer.commitWithParams(
@@ -535,7 +561,7 @@ public class FuzzRunner {
                                     WAL_DEDUP_MODE_REPLACE_RANGE
                             );
                         } else {
-                            writer.commit();
+                            commitWal(writer, prepareRnd);
                         }
                     }
                 }
@@ -557,6 +583,29 @@ public class FuzzRunner {
             drainWalQueue(applyRnd, tableName);
         }
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+    }
+
+    /**
+     * Holds the index of every indexed SYMBOL column of the table against scans that read no index: for each distinct
+     * key, up to {@link #MAX_COVERED_KEYS_CHECKED} of them, {@code WHERE sym = key} must return through the index the
+     * rows a full scan returns. Unlike {@link #assertRandomIndexes}, it needs no second table, so it can check a table
+     * that no other table mirrors, such as one a checkpoint restore just left.
+     */
+    public void assertIndexesMatchScans(String tableName) throws SqlException {
+        final ObjList<String> indexedColumnNames = new ObjList<>();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                    indexedColumnNames.add(metadata.getColumnName(columnIndex));
+                }
+            }
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = indexedColumnNames.size(); i < n; i++) {
+                checkIndexAgainstScan(compiler, tableName, indexedColumnNames.getQuick(i));
+            }
+        }
     }
 
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
@@ -705,8 +754,18 @@ public class FuzzRunner {
         }
     }
 
-    public FilesFacade getFileFacade() {
+    public FailureFileFacade getFileFacade() {
         return ff;
+    }
+
+    // the faults of a kind that the runs planted on the column purge log, or on the posting seal purge log, and that fired
+    public int getFiredPurgeLogFaultCount(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return ff.getTableFailuresFired(isPostingSealLog ? postingSealPurgeLogTableName() : columnPurgeLogTableName(), kind);
+    }
+
+    // the faults of a kind that the runs planted on the column purge log, or on the posting seal purge log
+    public int getPlantedPurgeLogFaultCount(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return plantedPurgeLogFaults.get(purgeLogFaultIndex(isPostingSealLog, kind));
     }
 
     public int getTimestampType() {
@@ -717,9 +776,17 @@ public class FuzzRunner {
         return transactionCount;
     }
 
-    public void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
+    public void purgeAndReloadReaders(
+            Rnd reloadRnd,
+            TableReader rdr1,
+            TableReader rdr2,
+            O3PartitionPurgeJob purgeJob,
+            @Nullable ColumnPurgeJob columnPurgeJob,
+            double realoadThreashold
+    ) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
             purgeJob.run();
+            runColumnPurgeJob(columnPurgeJob);
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
         }
@@ -748,6 +815,20 @@ public class FuzzRunner {
      */
     public void setCreateWalAsParquet(boolean createWalAsParquet) {
         this.createWalAsParquet = createWalAsParquet;
+    }
+
+    /**
+     * The number of prepared commits the WAL apply paths abandoned since this runner was created.
+     */
+    public int getAbandonedPreparedCommitCount() {
+        return abandonedPreparedCommitCount.get();
+    }
+
+    /**
+     * The number of prepared commits the WAL apply paths sequenced since this runner was created.
+     */
+    public int getSequencedPreparedCommitCount() {
+        return sequencedPreparedCommitCount.get();
     }
 
     public void setFuzzCounts(
@@ -796,6 +877,14 @@ public class FuzzRunner {
         this.partitionCount = partitionCount;
         this.parallelWalCount = parallelWalCount;
         this.ioFailureCount = ioFailureCount;
+    }
+
+    /**
+     * Sends a share of the WAL commits and rollbacks through {@link WalWriter#prepareCommit()}: a commit then
+     * sequences the prepared record, a rollback abandons it and replaces the writer.
+     */
+    public void setPreparedCommitProbability(double preparedCommitProb) {
+        this.preparedCommitProb = preparedCommitProb;
     }
 
     public void setFuzzProbabilities(
@@ -990,6 +1079,14 @@ public class FuzzRunner {
     }
 
     /**
+     * Tells the applies that a worker pool runs a {@link ColumnPurgeJob}. A pool job that fails to save a purge gives
+     * the purge log up until it reopens it, and keeps draining the queue meanwhile, so the purge log cannot tell.
+     */
+    public void setHasPoolColumnPurgeJob(boolean hasPoolColumnPurgeJob) {
+        this.hasPoolColumnPurgeJob = hasPoolColumnPurgeJob;
+    }
+
+    /**
      * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
      * partition and those types back to text, with in-order writes only, see
      * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
@@ -1067,6 +1164,35 @@ public class FuzzRunner {
     }
 
     /**
+     * Plants a fault on the posting seal purge log, with the purge log fault chance, for the PostingSealPurgeJob of a
+     * worker pool that starts, whose first write opens a partition of its log, see {@link #setPurgeLogFaultProbability}
+     */
+    public void plantPostingSealPurgeLogFault() {
+        plantPurgeLogFault(true);
+    }
+
+    /**
+     * Plants a one-shot fault on the purge logs with this chance before each run of the column purge job of an apply:
+     * the failure of a page allocation or of a file open in a partition of the log, which the append of a row, the
+     * reopen of the log writer or the mark of a completed purge meets. The column purge log fault fires only in that
+     * run of the job of the apply, so this plants none when a worker pool runs the job. The posting seal purge log fault
+     * stays until the next write of a {@link PostingSealPurgeJob} to its log, not the direct persist of a TableWriter,
+     * meets it, or the next fault replaces it. The draws use a Rnd of their own, from the seeds.
+     * <p>
+     * No fault targets the commit of a log, which allocates disk space only as it grows the mapping of _txn: a log needs
+     * that only past dozens of monthly partitions, more with larger pages, and a run stamps the rows of the logs with
+     * the clock, within a month or two. ColumnPurgeJobTest and PostingSealPurgeTest step the clock month by month to
+     * fail those commits.
+     */
+    public void setPurgeLogFaultProbability(double purgeLogFaultProb, long seed0, long seed1) {
+        this.purgeLogFaultProb = purgeLogFaultProb;
+        this.purgeLogFaultRnd = new Rnd(seed0, seed1);
+        LOG.info().$("purge log fault seeds: ").$(seed0).$("L, ").$(seed1).$('L').$();
+        ff.watchTable(columnPurgeLogTableName());
+        ff.watchTable(postingSealPurgeLogTableName());
+    }
+
+    /**
      * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
      * picks it randomly, call this after it to pin the type.
      */
@@ -1113,6 +1239,10 @@ public class FuzzRunner {
             case ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE -> "null";
             default -> "";
         };
+    }
+
+    private static int purgeLogFaultIndex(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return (isPostingSealLog ? FailureFileFacade.TableFailureKind.values().length : 0) + kind.ordinal();
     }
 
     /**
@@ -1432,6 +1562,47 @@ public class FuzzRunner {
         if (checked == MAX_COVERED_KEYS_CHECKED) {
             LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
                     .$(" keys [table=").$safe(tableName).$(", column=").$safe(symbolColumnName).I$();
+        }
+    }
+
+    // Compares, key by key, the rows an equality filter on the indexed column reads through the index with those it
+    // reads from a scan that uses no index. Each comparison is a single-key equality, which both plans emit in the
+    // same order. The keys come from a scan too: a DISTINCT over a posting index reads them from that index, and so
+    // would never name a key the index lost. They come off the cursor rather than its printout, where the empty
+    // string, a key of its own, reads the same as NULL.
+    private void checkIndexAgainstScan(SqlCompiler compiler, String tableName, String symbolColumnName) throws SqlException {
+        final ObjList<String> keys = new ObjList<>();
+        try (
+                RecordCursorFactory factory = compiler.compile(
+                        "select /*+ no_index */ distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1",
+                        sqlExecutionContext
+                ).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final CharSequence key = record.getSymA(0);
+                keys.add(key != null ? key.toString() : null);
+            }
+        }
+        final StringSink plan = new StringSink();
+        int checked = 0;
+        for (int i = 0, n = keys.size(); i < n && checked < MAX_COVERED_KEYS_CHECKED; i++) {
+            final String key = keys.getQuick(i);
+            if (key != null && key.indexOf('\'') >= 0) {
+                continue; // a quote would need escaping; skip this key
+            }
+            checked++;
+            final String whereClause = " where \"" + symbolColumnName + "\" = " + (key != null ? "'" + key + "'" : "null");
+            final String indexed = "select * from " + tableName + whereClause;
+            plan.clear();
+            TestUtils.printSql(compiler, sqlExecutionContext, "explain " + indexed, plan);
+            Assert.assertTrue(
+                    "index not chosen for " + indexed + ", plan was:\n" + plan,
+                    Chars.contains(plan, "on: " + symbolColumnName)
+            );
+            LOG.info().$("checking index against scan: ").$safe(indexed).I$();
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select /*+ no_index */ * from " + tableName + whereClause, indexed, LOG);
         }
     }
 
@@ -1912,6 +2083,8 @@ public class FuzzRunner {
         }
 
         final Rnd tempRnd = newApplyRnd();
+        // A stream of its own, so that the draws of tempRnd stay as without prepared commits.
+        final Rnd prepareRnd = new Rnd(tempRnd.getSeed0() ^ 0x5DEECE66DL, tempRnd.getSeed1());
         return new Thread(() -> {
             int opIndex;
 
@@ -1983,7 +2156,12 @@ public class FuzzRunner {
                     } else {
                         if (transaction.rollback) {
                             assert !transaction.hasReplaceRange();
-                            walWriter.rollback();
+                            final WalWriter next = rollbackWal(walWriter, prepareRnd);
+                            if (next != walWriter) {
+                                synchronized (writers) {
+                                    writers.setQuick(writerIndex, next);
+                                }
+                            }
                         } else {
                             if (transaction.hasReplaceRange()) {
                                 walWriter.commitWithParams(
@@ -1993,7 +2171,7 @@ public class FuzzRunner {
                                 );
                                 increment = true;
                             } else {
-                                walWriter.commit();
+                                commitWal(walWriter, prepareRnd);
                             }
                         }
                     }
@@ -2029,6 +2207,7 @@ public class FuzzRunner {
         final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+             ColumnPurgeJob columnPurgeJob = openColumnPurgeJob();
              PartitionCompactionScanJob compactionJob = new PartitionCompactionScanJob(engine);
              TableReader rdr1 = getReaderWithRetries(tableName, null);
              TableReader rdr2 = getReaderWithRetries(tableName, null)
@@ -2046,13 +2225,14 @@ public class FuzzRunner {
                     break;
                 }
                 committedAtRelease = forceReleaseTableWriter(drainRnd, tableTokenBucket, committedAtRelease);
-                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
+                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, columnPurgeJob, 0.25);
             }
             // This path is the ONLY compaction coverage for single-writer tables driven through
             // applyWal() -> applyToWal() (walWriterCount=1 never goes through
             // applyManyWalParallel()'s waitApply thread pool below), so it needs its own sweep,
             // not just the threaded one.
             compactionJob.drain(0);
+            runColumnPurgeJob(columnPurgeJob);
         }
     }
 
@@ -2142,6 +2322,53 @@ public class FuzzRunner {
         return false;
     }
 
+    // Commits the writer's rows, through a prepared commit when prepareRnd draws one: the prepare, a segment roll that
+    // the prepared writer refuses, then the commit that sequences the record and the group flush it left due.
+    private void commitWal(WalWriter writer, Rnd prepareRnd) {
+        if (!isPreparedCommitDrawn(writer, prepareRnd)) {
+            writer.commit();
+            return;
+        }
+        writer.prepareCommit();
+        if (prepareRnd.nextBoolean()) {
+            try {
+                writer.rollSegment();
+                Assert.fail("a prepared writer must refuse a segment roll");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "while a WAL commit is prepared");
+            }
+            Assert.assertTrue(writer.isCommitPrepared());
+        }
+        writer.commit();
+        writer.flushDueGroupCommit();
+        sequencedPreparedCommitCount.incrementAndGet();
+    }
+
+    private boolean isPreparedCommitDrawn(WalWriter writer, Rnd prepareRnd) {
+        return preparedCommitProb > 0
+                && prepareRnd.nextDouble() < preparedCommitProb
+                && writer.getUncommittedRowCount() > 0
+                && !writer.isInColumnarWrite();
+    }
+
+    // Rolls the writer's rows back, or, when prepareRnd draws a prepared commit, prepares them and abandons the
+    // prepared commit, which distresses the writer: the pool discards it and the caller takes the returned writer.
+    private WalWriter rollbackWal(WalWriter writer, Rnd prepareRnd) {
+        if (!isPreparedCommitDrawn(writer, prepareRnd)) {
+            writer.rollback();
+            return writer;
+        }
+        writer.prepareCommit();
+        writer.rollback();
+        Assert.assertTrue(writer.isDistressed());
+        final TableToken tableToken = writer.getTableToken();
+        writer.close();
+        abandonedPreparedCommitCount.incrementAndGet();
+        final WalWriter next = engine.getWalWriter(tableToken);
+        next.goActive();
+        return next;
+    }
+
     private Rnd newApplyRnd() {
         if (!hasApplySeeds) {
             // The test did not call generateRandom(), draw the seeds from a fresh random
@@ -2151,6 +2378,23 @@ public class FuzzRunner {
             hasApplySeeds = true;
         }
         return new Rnd(applySeed0, applySeed1);
+    }
+
+    /**
+     * Opens the column purge job of an apply, or returns null when another job drains the queue, which takes one
+     * consumer: the job of a worker pool, see {@link #setHasPoolColumnPurgeJob}, or a job that holds the purge log.
+     */
+    private @Nullable ColumnPurgeJob openColumnPurgeJob() {
+        if (hasPoolColumnPurgeJob) {
+            return null;
+        }
+        try {
+            return new ColumnPurgeJob(engine);
+        } catch (EntryUnavailableException e) {
+            return null;
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private String printReaderRows(TableReader reader, LongList rowIds) {
@@ -2348,6 +2592,53 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * Runs the column purge job, which purges the column versions that the queue holds and no reader uses. The job
+     * swallows the failures of its file operations, so it does not run while a planted failure is pending: the failure
+     * belongs to the operation it was planted for. A purge log fault, see {@link #setPurgeLogFaultProbability}, fires
+     * only in this run of the job.
+     */
+    private void runColumnPurgeJob(@Nullable ColumnPurgeJob columnPurgeJob) {
+        plantPurgeLogFault(true);
+        if (columnPurgeJob != null && !ff.isArmed()) {
+            final boolean isPlanted = plantPurgeLogFault(false);
+            columnPurgeJob.run();
+            if (isPlanted) {
+                ff.disarmTableFailure(columnPurgeLogTableName());
+            }
+        }
+    }
+
+    private String columnPurgeLogTableName() {
+        return engine.getConfiguration().getSystemTableNamePrefix() + "column_versions_purge_log";
+    }
+
+    // Plants a one-shot fault on a purge log, with the purge log fault chance, and returns whether it did. The fault
+    // fires only in a write of the job of that log, not in the direct persist of a TableWriter.
+    private boolean plantPurgeLogFault(boolean isPostingSealLog) {
+        if (purgeLogFaultProb == 0) {
+            return false;
+        }
+        final FailureFileFacade.TableFailureKind kind;
+        synchronized (purgeLogFaultRnd) {
+            if (purgeLogFaultRnd.nextDouble() >= purgeLogFaultProb) {
+                return false;
+            }
+            kind = FailureFileFacade.TableFailureKind.values()[purgeLogFaultRnd.nextInt(FailureFileFacade.TableFailureKind.values().length)];
+        }
+        if (isPostingSealLog) {
+            ff.armTableFailure(postingSealPurgeLogTableName(), kind, PostingSealPurgeJob.class.getName(), "persistReadyTasksDirect");
+        } else {
+            ff.armTableFailure(columnPurgeLogTableName(), kind, ColumnPurgeJob.class.getName(), null);
+        }
+        plantedPurgeLogFaults.incrementAndGet(purgeLogFaultIndex(isPostingSealLog, kind));
+        return true;
+    }
+
+    private String postingSealPurgeLogTableName() {
+        return engine.getConfiguration().getSystemTableNamePrefix() + "posting_seal_purge_log";
+    }
+
     private void runPartitionCompactionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
         try {
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
@@ -2371,7 +2662,10 @@ public class FuzzRunner {
         // another worker fails first; this lets the open give up instead of stranding the thread.
         BooleanSupplier isRunOver = () -> done.get() != 0 || !errors.isEmpty();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            try (
+                    O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+                    ColumnPurgeJob columnPurgeJob = openColumnPurgeJob()
+            ) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
@@ -2398,15 +2692,17 @@ public class FuzzRunner {
                         }
                     }
                     int reader = runRnd.nextInt(tableCount);
-                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
+                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, columnPurgeJob, 0.25);
                     Os.sleep(50);
                 }
+                runColumnPurgeJob(columnPurgeJob);
             }
         } catch (Throwable e) {
             errors.add(e);
         } finally {
             Misc.freeObjList(readers);
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 

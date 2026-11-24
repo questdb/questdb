@@ -31,39 +31,54 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.cairo.TxnExtendFailingFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.Closeable;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -78,11 +93,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.LongFunction;
 import java.util.function.ObjIntConsumer;
 import java.util.regex.Pattern;
 
 @RunWith(Parameterized.class)
 public class ColumnPurgeJobTest extends AbstractCairoTest {
+    // the first microsecond of 1970-02-15 and 1970-03-01, in later months than the first rows of the purge log
+    private static final long FEB_15 = 45 * Micros.DAY_MICROS;
+    private static final long MAR_1 = 59 * Micros.DAY_MICROS;
     // the rows of y that insertRowsOfIndexReAddedAtTxnZero() writes, as ts, s, d, vc, l
     private static final String ROWS_OF_INDEX_RE_ADDED_AT_TXN_ZERO = """
             2024-01-01T01:00:00.000000Z\ty\t1.5\ta1\t10
@@ -96,6 +116,49 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             1970-01-01T02:00:00.000000Z\t1
             1970-01-04T02:00:00.000000Z\t4
             """;
+    // the columns of the purge log as the versions before partition_timestamp_raw created it
+    private static final String LEGACY_PURGE_LOG_COLUMNS = """
+            ts timestamp, table_name symbol, column_name symbol, table_id int, truncate_version long, columnType int, \
+            table_partition_by int, updated_txn long, column_version long, partition_timestamp timestamp, \
+            partition_name_txn long, completed timestamp""";
+    // the columns of the purge log, as table_columns() lists them
+    private static final String PURGE_LOG_COLUMNS = """
+            column\ttype
+            ts\tTIMESTAMP
+            table_name\tSYMBOL
+            column_name\tSYMBOL
+            table_id\tINT
+            truncate_version\tLONG
+            columnType\tINT
+            table_partition_by\tINT
+            updated_txn\tLONG
+            column_version\tLONG
+            partition_timestamp\tTIMESTAMP
+            partition_name_txn\tLONG
+            completed\tTIMESTAMP
+            partition_timestamp_raw\tLONG
+            """;
+    // the rows of t_split that createSplitTable() writes, as ts, x
+    private static final String ROWS_OF_SPLIT_TABLE = """
+            ts\tx
+            1970-01-01T02:00:00.000000Z\t1
+            1970-01-02T02:00:00.000000Z\t2
+            1970-01-03T01:00:00.000000Z\t3
+            1970-01-03T02:00:00.000000Z\t4
+            1970-01-03T03:00:00.000000Z\t5
+            1970-01-03T04:00:00.000000Z\t6
+            1970-01-03T05:00:00.000000Z\t7
+            1970-01-03T06:00:00.000000Z\t8
+            1970-01-03T07:00:00.000000Z\t9
+            1970-01-03T08:00:00.000000Z\t10
+            1970-01-03T09:00:00.000000Z\t11
+            1970-01-03T09:30:00.000000Z\t15
+            1970-01-03T10:00:00.000000Z\t12
+            1970-01-04T02:00:00.000000Z\t13
+            1970-01-05T02:00:00.000000Z\t14
+            """;
+    // the partition of t_split that the O3 row of createSplitTable() splits off 1970-01-03
+    private static final int SPLIT_PARTITION_INDEX = 3;
     private final TestTimestampType timestampType;
     // the entries that the purge job reported as refused because the truncate version changed, see
     // listenToTruncateRefusals()
@@ -368,7 +431,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup_part_o3_many~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
                                 1970-01-01T00:00:00.000010Z\tup_part_o3_many~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
@@ -388,7 +451,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000063Z\tup_part_o3_many~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
                                 1970-01-01T00:00:00.000063Z\tup_part_o3_many~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
                                 1970-01-01T00:00:00.000063Z\tup_part_o3_many~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -413,24 +476,24 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t
-                                """);
+                                """));
 
                 runPurgeJob(purgeJob);
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -499,7 +562,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -569,7 +632,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeLogTableName)
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
             }
         });
     }
@@ -641,7 +704,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .expectSize()
                             .timestamp("ts")
-                            .returns("""
+                            .returns(withRawPartitionTimestamps("""
                                     ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                     1970-02-02T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
                                     1970-02-02T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
@@ -652,7 +715,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                     1970-02-02T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
                                     1970-02-02T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
                                     1970-02-02T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z
-                                    """);
+                                    """));
                     Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
                 }
             }
@@ -726,7 +789,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
@@ -740,7 +803,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
-                                """);
+                                """));
 
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
@@ -802,7 +865,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     assertQuery(purgeJob.getLogTableName())
                             .noLeakCheck()
                             .timestamp("ts")
-                            .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                            .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
                     Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
                 }
             }
@@ -855,7 +918,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
@@ -869,7 +932,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -918,12 +981,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup~\tx\t2\t0\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000011Z\tup~\tstr\t2\t0\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup~\tsym2\t2\t0\t12\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -1611,7 +1674,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeLogTableName)
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
             }
         });
     }
@@ -1712,7 +1775,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
                                 1970-01-01T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
@@ -1723,7 +1786,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
                                 1970-01-01T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
                                 1970-01-01T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -1749,24 +1812,24 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t
-                                """);
+                                """));
 
                 runPurgeJob(purgeJob);
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z
-                                """);
+                                """));
             }
         });
     }
@@ -3614,7 +3677,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
             }
         });
     }
@@ -3895,6 +3958,767 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPurgeLogGainsRawPartitionTimestampColumn() throws Exception {
+        // A log that a version before partition_timestamp_raw created gets the column when the purge job starts,
+        // and from then on the job saves there the partition timestamps as _txn has them.
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createLegacyPurgeLog();
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                assertPurgeLogColumns(PURGE_LOG_COLUMNS);
+                dropColumnsWithReader(purgeJob, "c", "s");
+                assertRawPartitionTimestamps(purgeJob, "c", false);
+                assertRawPartitionTimestamps(purgeJob, "s", true);
+            }
+            replayPurgeLog("t_split");
+            Assert.assertEquals("", filesOfColumns("t_split", "c", "s"));
+            assertRowsOfSplitTable();
+        });
+    }
+
+    @Test
+    public void testPurgeLogIgnoresRawPartitionTimestampColumnOfAnotherType() throws Exception {
+        // The job did not write a partition_timestamp_raw of another type than LONG: it logs and replays without
+        // the column, as the versions before it did.
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createLegacyPurgeLog();
+            execute("ALTER TABLE '" + purgeLogTableName() + "' ADD COLUMN partition_timestamp_raw INT");
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropColumnsWithReader(purgeJob, "c", "s");
+                // six partitions of c, six of s and the symbol map of s
+                assertQuery("SELECT count(), count(partition_timestamp_raw) FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tcount1
+                                13\t0
+                                """);
+            }
+            replayPurgeLog("t_split");
+            assertReplayOfRowsWithoutRawPartitionTimestamp();
+        });
+    }
+
+    @Test
+    public void testPurgeLogWithoutRawPartitionTimestampWhenColumnAddDistressesWriter() throws Exception {
+        // The file of the new column fails to open, and so does the rollback of the metadata: the column add throws
+        // CairoError. The job takes a new writer, which restores the metadata of the log from _meta.prev.
+        final AtomicBoolean isColumnFileFailureArmed = new AtomicBoolean(true);
+        final AtomicBoolean isMetaFailureArmed = new AtomicBoolean();
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> assertPurgeLogWithoutRawPartitionTimestamp(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isRawColumnDataFile(name) && isColumnFileFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    isMetaFailureArmed.set(true);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isMetaFailureArmed.get() && TableUtils.META_FILE_NAME.equals(purgeLogFileName(name))) {
+                    failureCount.incrementAndGet();
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (TableUtils.META_FILE_NAME.equals(purgeLogFileName(from)) && isMetaFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        }, () -> Assert.assertEquals(3, failureCount.get())));
+    }
+
+    @Test
+    public void testPurgeLogWithoutRawPartitionTimestampWhenColumnFileFailsToOpen() throws Exception {
+        // The file of the new column fails to open: TableWriter rolls the metadata of the log back and asks for a
+        // new writer, which the job takes.
+        final AtomicBoolean isFailureArmed = new AtomicBoolean(true);
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> assertPurgeLogWithoutRawPartitionTimestamp(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isRawColumnDataFile(name) && isFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> Assert.assertEquals(1, failureCount.get())));
+    }
+
+    @Test
+    public void testPurgeLogWithoutRawPartitionTimestampWhenMetadataSwapFails() throws Exception {
+        // The column add fails before it changes the log: the writer stays usable.
+        final AtomicBoolean isFailureArmed = new AtomicBoolean(true);
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> assertPurgeLogWithoutRawPartitionTimestamp(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // every swap file the writer tries: _meta.swp, _meta.swp.1 and on
+                final String fileName = purgeLogFileName(name);
+                if (isFailureArmed.get() && fileName != null && fileName.startsWith(TableUtils.META_SWAP_FILE_NAME)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            Assert.assertTrue(failureCount.get() > 0);
+            isFailureArmed.set(false);
+        }));
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeHeldBySavePointWaitsForSnapshotTxn() throws Exception {
+        // Under ADAPTIVE a save point holds the replayed purge, and the job writes it back to the log for the running
+        // job, with the partitions the replay located and the snapshot txn it waits for. The first partition's own
+        // version died after the update that logged the row, at the second update: the save point between the two
+        // updates still names it, so the purge has to wait for it.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            final long firstUpdateTxn;
+            try (TableReader reader = getReader("t_same_us")) {
+                firstUpdateTxn = reader.getTxn();
+            }
+            // the save point names the txn of the first update, at which the first partition reads c2.d
+            releaseSavePointHolds("t_same_us");
+            update("UPDATE t_same_us SET c2 = 1 WHERE ts >= '2022-02-27T01:00:00.000000000Z' AND ts < '2022-02-27T01:00:00.000000201Z'");
+            drainWalQueue();
+            final long snapshotTxn;
+            final long firstTimestamp;
+            final long secondTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                snapshotTxn = reader.getTxn();
+                firstTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+                secondTimestamp = reader.getTxFile().getPartitionTimestampByIndex(2);
+            }
+            Assert.assertTrue(snapshotTxn > firstUpdateTxn);
+            final long firstTxn = getColumnNameTxn("t_same_us", "c2", 1);
+            final long secondTxn = getColumnNameTxn("t_same_us", "c2", 2);
+            Assert.assertEquals("c2.d c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // c2.d is dead in both partitions, and the save point holds both
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("c2.d c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+                Assert.assertEquals("c2.d c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+                assertQuery("SELECT column_version, partition_timestamp_raw, updated_txn, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("column_version\tpartition_timestamp_raw\tupdated_txn\tcompleted\n"
+                                + "-1\t" + firstTimestamp + "\t" + snapshotTxn + "\t\n"
+                                + "-1\t" + secondTimestamp + "\t" + snapshotTxn + "\t\n");
+                releaseSavePointHolds("t_same_us");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            Assert.assertEquals("c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            // c2 is x before 01:00 and 1 in the 22 rows of the first partition at 01:00
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts < '2022-02-27T01:00:00.000000201Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            122\t5072
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfDayPartitionInSameMicrosecond() throws Exception {
+        // The layout the server default split size gives a table whose day partition holds more rows in its first
+        // microsecond than that size, at a split size of 1 byte: an O3 row splits the day after those rows, and the
+        // split partition starts in the microsecond of the day partition. One commit rewrites both.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_day_us (ts TIMESTAMP_NS, v LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T00:00:00.000000000Z'::TIMESTAMP_NS, 1, 1)");
+            execute("INSERT INTO t_day_us SELECT '2022-02-27T00:00:00.000000500Z'::TIMESTAMP_NS, x + 1, x + 1 FROM long_sequence(10)");
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T02:00:00.000000000Z'::TIMESTAMP_NS, 100, 100)");
+            // splits the day after its rows at 00:00:00.000000500, so the new partition starts at 00:00:00.000000501
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T01:00:00.000000000Z'::TIMESTAMP_NS, 200, 200)");
+            // rows after 02:00 in the new partition, so that the next commit rewrites it rather than splits it
+            execute("INSERT INTO t_day_us SELECT ('2022-02-27T02:00:00.000000000Z'::TIMESTAMP_NS + x * 1_000_000_000L)::TIMESTAMP_NS, 100 + x, 100 + x FROM long_sequence(10)");
+            // one commit rewrites both, which then share their name txn
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T00:00:00.000000001Z'::TIMESTAMP_NS, 300, 300), ('2022-02-27T01:30:00.000000000Z'::TIMESTAMP_NS, 301, 301)");
+            try (TableReader reader = getReader("t_day_us")) {
+                final TimestampDriver driver = timestampType.getDriver();
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals(driver.parseFloorLiteral("2022-02-27"), reader.getTxFile().getPartitionTimestampByIndex(0));
+                Assert.assertEquals(driver.parseFloorLiteral("2022-02-27") + 501, reader.getTxFile().getPartitionTimestampByIndex(1));
+                Assert.assertEquals(reader.getTxFile().getPartitionNameTxn(0), reader.getTxFile().getPartitionNameTxn(1));
+            }
+            final String dayDir = partitionDir("t_day_us", 0);
+            final String splitDir = partitionDir("t_day_us", 1);
+            final String dayFiles = listFiles(dayDir);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_day_us")) {
+                    update("UPDATE t_day_us SET c2 = 0 WHERE ts >= '2022-02-27T00:00:00.000000501Z'");
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_day_us");
+            Assert.assertEquals(dayFiles, listFiles(dayDir));
+            Assert.assertEquals("c2.d." + getColumnNameTxn("t_day_us", "c2", 1), String.join(" ", filesWithPrefix(listFiles(splitDir), "c2.")));
+            // c2 is x in the day partition: 1, 2..11 and 300
+            assertQuery("SELECT count(), sum(c2) FROM t_day_us WHERE ts < '2022-02-27T00:00:00.000000501Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            12\t366
+                            """);
+            assertQuery("SELECT count(), sum(c2) FROM t_day_us WHERE ts >= '2022-02-27T00:00:00.000000501Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            13\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfPartitionInSameMicrosecond() throws Exception {
+        // A version before partition_timestamp_raw logged the partition timestamp in microseconds only. A replay that
+        // took the logged microsecond for the timestamp of the partition built the directory of the first partition of
+        // the microsecond, which has the same name txn, and removed the column versions that partition still reads.
+        // The replay locates the partitions of such a row in a snapshot of the table, and purges a version only where
+        // it is not live: here the second partition, the one the row was written for. s has a POSTING index.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                createSameMicrosecondTable(walMode);
+                final String firstDir = partitionDir("t_same_us", 1);
+                final String secondDir = partitionDir("t_same_us", 2);
+                final String firstFiles = listFiles(firstDir);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    updateSecondPartitionWithReader(purgeJob, "c2 = 0, s = 'b'");
+                    Assert.assertEquals(walMode, 2, purgeJob.getOutstandingPurgeTasks());
+                }
+                eraseRawPartitionTimestamps();
+                replayPurgeLog("t_same_us");
+                Assert.assertEquals(walMode, firstFiles, listFiles(firstDir));
+                final String secondFiles = listFiles(secondDir);
+                Assert.assertEquals(walMode, "c2.d." + getColumnNameTxn("t_same_us", "c2", 2), String.join(" ", filesWithPrefix(secondFiles, "c2.")));
+                Assert.assertEquals(walMode, "[]", filesOfInstance(secondFiles, "s", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                Assert.assertFalse(walMode, filesOfInstance(secondFiles, "s", getColumnNameTxn("t_same_us", "s", 2)).isEmpty());
+                assertRowsOfSameMicrosecondTable();
+                execute("DROP TABLE t_same_us");
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfPartitionRewrittenAfterUpdate() throws Exception {
+        // An O3 commit rewrote the second partition after the update, under another name txn, into a directory without
+        // the replaced versions. The first partition, which kept the name txn of the log row, reads its versions: the
+        // replay keeps its files.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String firstFiles = listFiles(firstDir);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0, s = 'b'");
+                Assert.assertEquals(2, purgeJob.getOutstandingPurgeTasks());
+            }
+            execute("INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000400Z'::TIMESTAMP_NS, 700, 0, 'b')");
+            Assert.assertNotEquals(getPartitionNameTxn("t_same_us", 1), getPartitionNameTxn("t_same_us", 2));
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals(firstFiles, listFiles(firstDir));
+            assertQuery("SELECT s, count(), sum(c2) FROM t_same_us ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tcount\tsum
+                            a\t122\t10260
+                            b\t4\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfPartitionSquashedIntoSibling() throws Exception {
+        // The squash folded the second partition into the first, in place, after the update: the first keeps its name
+        // txn and is the only partition of the microsecond the log row names, and its column files hold the rows of
+        // both. The replay keeps them, as the versions are live.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        // a save point would make the squash copy the partition under a new name txn
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final long firstNameTxn = getPartitionNameTxn("t_same_us", 1);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0, s = 'b'");
+                Assert.assertEquals(2, purgeJob.getOutstandingPurgeTasks());
+            }
+            // the next commit squashes the smallest pair of partitions of the day, as the day may have one split
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 2);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+            engine.releaseInactive();
+            execute("INSERT INTO t_same_us VALUES ('2022-02-28T00:00:00.000000000Z'::TIMESTAMP_NS, 900, 900, 'a')");
+            drainWalQueue();
+            try (TableReader reader = getReader("t_same_us")) {
+                final TimestampDriver driver = timestampType.getDriver();
+                Assert.assertEquals(3, reader.getPartitionCount());
+                Assert.assertEquals(driver.parseFloorLiteral("2022-02-27T01:00:00.000000Z"), reader.getTxFile().getPartitionTimestampByIndex(1));
+                Assert.assertEquals(firstNameTxn, reader.getTxFile().getPartitionNameTxn(1));
+                Assert.assertEquals(25, reader.getTxFile().getPartitionSize(1));
+            }
+            final String firstFiles = listFiles(firstDir);
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals(firstFiles, listFiles(firstDir));
+            assertQuery("SELECT s, count(), sum(c2) FROM t_same_us ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tcount\tsum
+                            a\t123\t11160
+                            b\t3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsVersionAtOrPastSnapshotTxn() throws Exception {
+        // A column version at or past the txn of the snapshot may belong to a transaction in flight, as VACUUM TABLE
+        // assumes, so the replay leaves it, in every partition of the microsecond the row names.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            createPurgeJob().close();
+            final TableToken tableToken = engine.verifyTableName("t_same_us");
+            final long tableTxn;
+            final long partitionTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                tableTxn = reader.getTxn();
+                partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+            }
+            final long futureTxn = tableTxn + 100;
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            Assert.assertTrue(new File(firstDir, "c2.d." + futureTxn).createNewFile());
+            Assert.assertTrue(new File(secondDir, "c2.d." + futureTxn).createNewFile());
+            execute("INSERT INTO '" + purgeLogTableName() + "' (ts, table_name, column_name, table_id, truncate_version, columnType, table_partition_by, updated_txn, column_version, partition_timestamp, partition_name_txn) VALUES ("
+                    + "0, '" + tableToken.getDirName() + "', 'c2', " + tableToken.getTableId() + ", 0, " + ColumnType.LONG + ", " + PartitionBy.DAY + ", " + tableTxn + ", "
+                    + futureTxn + ", " + timestampType.getDriver().toMicros(partitionTimestamp) + ", " + getPartitionNameTxn("t_same_us", 1) + ")");
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals("c2.d c2.d." + futureTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d c2.d." + futureTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeLeavesGeometryGeneration() throws Exception {
+        // The purge of a retired _geometry generation tells a newer incarnation of the file by the txn of the change
+        // that logged it, which the replay would have to raise, and a sibling's live generation can have the same
+        // number. The replay leaves the file of a generation that the log names in microseconds only.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            createPurgeJob().close();
+            final TableToken tableToken = engine.verifyTableName("t_same_us");
+            final long tableTxn;
+            final long partitionTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                tableTxn = reader.getTxn();
+                partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+            }
+            // a file that the purge of a generation would remove: its record at offset 0 does not verify
+            final File geometryFile = new File(partitionDir("t_same_us", 1), "_geometry.0");
+            Assert.assertTrue(geometryFile.createNewFile());
+            execute("INSERT INTO '" + purgeLogTableName() + "' (ts, table_name, column_name, table_id, truncate_version, columnType, table_partition_by, updated_txn, column_version, partition_timestamp, partition_name_txn) VALUES ("
+                    + "0, '" + tableToken.getDirName() + "', '" + TableUtils.PARTITION_GEOMETRY_FILE_NAME + "', " + tableToken.getTableId() + ", 0, " + ColumnType.NULL + ", " + PartitionBy.DAY + ", " + tableTxn + ", "
+                    + "0, " + timestampType.getDriver().toMicros(partitionTimestamp) + ", " + getPartitionNameTxn("t_same_us", 1) + ")");
+            replayPurgeLog("t_same_us");
+            Assert.assertTrue(geometryFile.exists());
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfExactEntriesWaitsForUpdateTxnOnly() throws Exception {
+        // The rows of a TIMESTAMP table name their partitions exactly in microseconds, and the rows of the table root
+        // name it with the root marker: the replay purges them as logged, so they wait only for the readers and save
+        // points before the change that logged them. Here a save point names the txn of the change, when the purged
+        // versions were already dead, and a later commit moves the table on.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_exact (ts " + timestampType.getTypeName() + ", x LONG, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_exact VALUES ('1970-01-01T02:00:00.000000Z', 1, 'a'), ('1970-01-02T02:00:00.000000Z', 2, 'b')");
+            drainWalQueue();
+            // a TIMESTAMP table updates x in every partition, a TIMESTAMP_NS table rebuilds the symbol map of s
+            final boolean isMicros = timestampType == TestTimestampType.MICRO;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_exact")) {
+                    execute(isMicros ? "UPDATE t_exact SET x = 0" : "ALTER TABLE t_exact ALTER COLUMN s SYMBOL CAPACITY 1024");
+                    drainWalQueue();
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            releaseSavePointHolds("t_exact");
+            execute("INSERT INTO t_exact VALUES ('1970-01-03T02:00:00.000000Z', 3, 'c')");
+            drainWalQueue();
+            final String column = isMicros ? "x" : "s";
+            final String before = filesOfColumns("t_exact", column);
+            Assert.assertTrue(before, isMicros ? before.contains("/x.d ") : before.contains(" s.c "));
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            final String after = filesOfColumns("t_exact", column);
+            // the versions of the column that the change replaced, txn NONE, are gone
+            Assert.assertFalse(after, isMicros ? after.contains("/x.d ") : after.contains(" s.c ") || after.contains(" s.o "));
+            assertQuery("SELECT x, s FROM t_exact")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(isMicros ? """
+                            x\ts
+                            0\ta
+                            0\tb
+                            3\tc
+                            """ : """
+                            x\ts
+                            1\ta
+                            2\tb
+                            3\tc
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfNonPartitionedTable() throws Exception {
+        // A non-partitioned table has one directory, whatever the logged timestamp: the replay takes the row as it is,
+        // without a snapshot of the table, so a table it cannot read still loses the dropped column.
+        final AtomicBoolean isFailureArmed = new AtomicBoolean();
+        final AtomicInteger failureCount = new AtomicInteger();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_none (ts " + timestampType.getTypeName() + ", x LONG, c LONG) TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL");
+            execute("INSERT INTO t_none VALUES ('1970-01-01T02:00:00.000000Z', 1, 10), ('1970-01-02T02:00:00.000000Z', 2, 20)");
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_none")) {
+                    execute("ALTER TABLE t_none DROP COLUMN c");
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            final String tableDir = engine.verifyTableName("t_none").getDirName();
+            final String defaultDir = new File(new File(configuration.getDbRoot().toString(), tableDir), TableUtils.DEFAULT_PARTITION_NAME).getPath();
+            Assert.assertEquals("c.d", String.join(" ", filesWithPrefix(listFiles(defaultDir), "c.")));
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (isFailureArmed.get() && Utf8s.endsWithAscii(name, tableDir + Files.SEPARATOR + TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                        failureCount.incrementAndGet();
+                        return -1;
+                    }
+                    return super.openRO(name);
+                }
+            };
+            isFailureArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            isFailureArmed.set(false);
+            Assert.assertEquals(0, failureCount.get());
+            Assert.assertEquals("", String.join(" ", filesWithPrefix(listFiles(defaultDir), "c.")));
+            assertQuery("SELECT * FROM t_none")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tx
+                            1970-01-01T02:00:00.000000Z\t1
+                            1970-01-02T02:00:00.000000Z\t2
+                            """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfTableThatCannotBeRead() throws Exception {
+        // The replay cannot open a reader of the table, so it cannot tell which partitions the rows that the log keeps
+        // in microseconds name, nor whether their versions are live there. It leaves their files to VACUUM TABLE, and
+        // purges the symbol map, which the log names with the table root marker.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        final AtomicBoolean isFailureArmed = new AtomicBoolean();
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropColumnsWithReader(purgeJob, "c", "s");
+            }
+            final String tableDir = engine.verifyTableName("t_split").getDirName();
+            final String files = filesOfColumns("t_split", "c", "s");
+            final StringSink partitionFiles = new StringSink();
+            for (String file : files.split(" ")) {
+                if (file.contains("/")) {
+                    partitionFiles.put(partitionFiles.length() > 0 ? " " : "").put(file);
+                }
+            }
+            // the symbol map of s in the table directory, and c.d and s.d in each of the six partitions
+            Assert.assertEquals(files, 16, files.split(" ").length);
+            Assert.assertEquals(files, 12, partitionFiles.toString().split(" ").length);
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (isFailureArmed.get() && Utf8s.endsWithAscii(name, tableDir + Files.SEPARATOR + TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                        failureCount.incrementAndGet();
+                        return -1;
+                    }
+                    return super.openRO(name);
+                }
+            };
+            isFailureArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            isFailureArmed.set(false);
+            Assert.assertTrue(failureCount.get() > 0);
+            // the symbol map of s went, and the files of c and s in every partition stayed
+            Assert.assertEquals(partitionFiles.toString(), filesOfColumns("t_split", "c", "s"));
+            execute("VACUUM TABLE t_split");
+            Assert.assertEquals("", filesOfColumns("t_split", "c", "s"));
+            assertRowsOfSplitTable();
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfTableWithChangedTruncateVersion() throws Exception {
+        // DROP PARTITION changed the truncate version after the update, so the purge refuses the entries the replay
+        // located, and every file stays.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        listenToTruncateRefusals();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            execute("INSERT INTO t_same_us VALUES ('2022-02-28T00:00:00.000000000Z'::TIMESTAMP_NS, 900, 900, 'a')");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            final String firstFiles = listFiles(firstDir);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            execute("ALTER TABLE t_same_us DROP PARTITION LIST '2022-02-28'");
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals(
+                    "[" + truncateRefusalKey("c2", partitionTimestampOf("t_same_us", 2), getPartitionNameTxn("t_same_us", 2), TableUtils.COLUMN_NAME_TXN_NONE) + "]",
+                    truncateRefusedEntries.toString()
+            );
+            Assert.assertEquals(firstFiles, listFiles(firstDir));
+            Assert.assertEquals("c2.d c2.d." + getColumnNameTxn("t_same_us", "c2", 2), String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeRemovesFilesOfBothPartitionsInSameMicrosecond() throws Exception {
+        // One update rewrote c2 in both partitions of the microsecond, so the log holds the same row for each. The
+        // replay locates both partitions for each row, where the version is dead, and removes the files of both.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_same_us")) {
+                    update("UPDATE t_same_us SET c2 = 0 WHERE ts >= '2022-02-27T01:00:00.000000000Z' AND ts < '2022-02-27T02:00:00.000000000Z'");
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals("c2.d." + getColumnNameTxn("t_same_us", "c2", 1), String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + getColumnNameTxn("t_same_us", "c2", 2), String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            // c2 is x before 01:00, and 300 in the row at 02:00
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            125\t5350
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeRemovesFilesOfSplitPartition() throws Exception {
+        // As testReplayedPurgeRemovesFilesOfSplitPartition(), with rows that keep the partition timestamp in
+        // microseconds only: the replay locates the split partition in a snapshot of the table.
+        assertReplayedPurgeRemovesFilesOfSplitPartition(true);
+    }
+
+    @Test
+    public void testReplayedPurgeKeepsFilesOfPartitionInSameMicrosecond() throws Exception {
+        // Two split partitions of a TIMESTAMP_NS table can start in the same microsecond and carry the same name
+        // txn. A replay that read the timestamp of the second in microseconds built the directory of the first, and
+        // removed the column version that the first still reads.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            Assert.assertEquals("c2.d", String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d", String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // rewrites c2 in the second partition only
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            final long updateTxn = getColumnNameTxn("t_same_us", "c2", 2);
+            Assert.assertTrue(updateTxn > 0);
+            Assert.assertEquals(TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("t_same_us", "c2", 1));
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals("c2.d", String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + updateTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            // c2 is x in the rows before the second partition: 1..100 in the day partition, 201..220, 400 and 600
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts < '2022-02-27T01:00:00.000000201Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            122\t10260
+                            """);
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts >= '2022-02-27T01:00:00.000000201Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeOfRowsWithoutRawPartitionTimestamp() throws Exception {
+        // Rows that a version before partition_timestamp_raw wrote hold the partition timestamp in microseconds,
+        // see assertReplayOfRowsWithoutRawPartitionTimestamp().
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropColumnsWithReader(purgeJob, "c", "s");
+            }
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_split");
+            assertReplayOfRowsWithoutRawPartitionTimestamp();
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesFilesOfSplitPartition() throws Exception {
+        // An O3 split names the new partition after the last row it leaves behind plus one tick, which in a
+        // TIMESTAMP_NS table is a timestamp with a sub-microsecond part. The purge log keeps the timestamp whole in
+        // partition_timestamp_raw, so the replayed purge finds the split partition. A SYMBOL also has its symbol map
+        // in the table directory, which the log names with the root partition marker.
+        assertReplayedPurgeRemovesFilesOfSplitPartition(false);
+    }
+
+    /**
+     * Drops a column of each kind, LONG, VARCHAR, SYMBOL and SYMBOL with each index type, from t_split on WAL and
+     * non-WAL tables while a reader holds it, and asserts that the replay of the purge log removes every file of the
+     * column. With {@code isLegacy}, the rows of the log lack partition_timestamp_raw, as a version before the column
+     * wrote them.
+     */
+    private void assertReplayedPurgeRemovesFilesOfSplitPartition(boolean isLegacy) throws Exception {
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            final String[] columns = {
+                    "c LONG",
+                    "c VARCHAR",
+                    "c SYMBOL",
+                    "c SYMBOL INDEX TYPE BITMAP",
+                    "c SYMBOL INDEX TYPE POSTING INCLUDE (x)"
+            };
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                for (String column : columns) {
+                    final String context = walMode + ", " + column;
+                    final boolean isSymbol = column.contains("SYMBOL");
+                    final boolean isVarchar = column.contains("VARCHAR");
+                    createSplitTable(
+                            walMode,
+                            column,
+                            x -> isSymbol ? "'s" + (x % 3) + "'" : isVarchar ? "'v" + x + "'" : String.valueOf(x * 10)
+                    );
+                    final String splitDir = new File(partitionDir("t_split", SPLIT_PARTITION_INDEX)).getName();
+                    final String files = " " + filesOfColumns("t_split", "c") + " ";
+                    Assert.assertTrue(context + ", " + files, files.contains(" " + splitDir + "/c.d "));
+                    Assert.assertEquals(context + ", " + files, isSymbol, files.contains(" c.c "));
+                    try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                        dropColumnsWithReader(purgeJob, "c");
+                        assertRawPartitionTimestamps(purgeJob, "c", isSymbol);
+                    }
+                    if (isLegacy) {
+                        eraseRawPartitionTimestamps();
+                    }
+                    replayPurgeLog("t_split");
+                    Assert.assertEquals(context, "", filesOfColumns("t_split", "c"));
+                    assertRowsOfSplitTable();
+                    execute("DROP TABLE t_split");
+                }
+            }
+        });
+    }
+
     /**
      * {@link #assertReplayedPurgeOfChangedIndex(String, String, String[], boolean)}, then drops t_replay.
      */
@@ -4029,6 +4853,331 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     .returns(expectedRows);
         }
         return oldFiles;
+    }
+
+    /**
+     * Appends partition_timestamp_raw to the purge log rows of {@code expected}, which lists the other columns: the
+     * partition_timestamp of each row in the unit of the table timestamp. The partitions of those rows start on
+     * whole microseconds, which partition_timestamp holds exactly.
+     */
+    private String withRawPartitionTimestamps(String expected) throws NumericException {
+        final StringSink sink = new StringSink();
+        final String[] lines = expected.split("\n");
+        sink.put(lines[0]).put("\tpartition_timestamp_raw\n");
+        for (int i = 1; i < lines.length; i++) {
+            final String partitionTimestamp = lines[i].split("\t", -1)[9];
+            sink.put(lines[i]).put('\t').put(timestampType.getDriver().fromMicros(MicrosTimestampDriver.floor(partitionTimestamp))).put('\n');
+        }
+        return sink.toString();
+    }
+
+    private static void addFilesOfColumns(TreeSet<String> files, File dir, String prefix, String[] columns) {
+        final String[] names = dir.list();
+        Assert.assertNotNull(dir.toString(), names);
+        for (String name : names) {
+            for (String column : columns) {
+                if (name.startsWith(column + '.')) {
+                    files.add(prefix + name);
+                }
+            }
+        }
+    }
+
+    private void assertPurgeLogColumns(String expected) throws Exception {
+        assertQuery("SELECT \"column\", type FROM table_columns('" + purgeLogTableName() + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
+    }
+
+    /**
+     * Starts the purge job with {@code facade} on a log that a version before partition_timestamp_raw created, so
+     * that the job fails to add the column, and runs {@code afterJobStart}. Asserts that the job logs the purges of
+     * t_split as that version did, and that the next job adds the column and replays them, see
+     * {@link #assertReplayOfRowsWithoutRawPartitionTimestamp()}.
+     */
+    private void assertPurgeLogWithoutRawPartitionTimestamp(TestFilesFacadeImpl facade, Runnable afterJobStart) throws Exception {
+        createLegacyPurgeLog();
+        // a completed row in the last partition of the log, where the column add creates the file of the column
+        execute("INSERT INTO '" + purgeLogTableName() + "' (ts, table_name, column_name, completed) VALUES (0, 'gone~', 'c', 1)");
+        createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+        // the job opens a new writer of the log, which reaches the files through the facade
+        engine.releaseInactive();
+        ff = facade;
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            afterJobStart.run();
+            assertPurgeLogColumns(PURGE_LOG_COLUMNS.replace("partition_timestamp_raw\tLONG\n", ""));
+            // the reader keeps both purges in the log
+            try (TableReader ignore = getReader("t_split")) {
+                execute("ALTER TABLE t_split DROP COLUMN c");
+                runPurgeJob(purgeJob);
+                // the purge of s goes to the next partition of the log: the column add of the next job creates the
+                // file of the column there, and none in the partition of the purge of c
+                setCurrentMicros(currentMicros + 31 * Micros.DAY_MICROS);
+                execute("ALTER TABLE t_split DROP COLUMN s");
+                runPurgeJob(purgeJob);
+            }
+            Assert.assertEquals(2, purgeJob.getOutstandingPurgeTasks());
+            // six partitions of c, six of s and the symbol map of s, the completed row went with the startup truncate
+            assertPurgeLogRows(purgeJob, 13, 0);
+            assertQuery("SELECT name FROM table_partitions('" + purgeJob.getLogTableName() + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name
+                            1970-01
+                            1970-02
+                            """);
+        }
+        replayPurgeLog("t_split");
+        assertPurgeLogColumns(PURGE_LOG_COLUMNS);
+        assertReplayOfRowsWithoutRawPartitionTimestamp();
+    }
+
+    // partition_timestamp_raw of the logged purge of column of t_split: the timestamp of each partition as _txn has
+    // it, and the root partition marker for the symbol map of a SYMBOL
+    private void assertRawPartitionTimestamps(ColumnPurgeJob purgeJob, String column, boolean isSymbol) throws Exception {
+        final StringSink expected = new StringSink();
+        expected.put("partition_timestamp_raw\n");
+        if (isSymbol) {
+            expected.put(PurgingOperator.TABLE_ROOT_PARTITION).put('\n');
+        }
+        try (TableReader reader = getReader("t_split")) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                expected.put(reader.getTxFile().getPartitionTimestampByIndex(i)).put('\n');
+            }
+        }
+        assertQuery("SELECT partition_timestamp_raw FROM '" + purgeJob.getLogTableName() + "' WHERE column_name = '" + column + "' ORDER BY partition_timestamp_raw")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
+    /**
+     * Asserts that the replay of rows without partition_timestamp_raw removed every file of c and s in t_split. Such
+     * a row holds the partition timestamp in microseconds, in partition_timestamp. The replay restores every timestamp
+     * of a TIMESTAMP table, and the root partition marker, which the conversion to microseconds moved in a
+     * TIMESTAMP_NS table. It locates the partitions of a TIMESTAMP_NS table in a snapshot of the table: the split
+     * partition starts one nanosecond after a whole microsecond.
+     */
+    private void assertReplayOfRowsWithoutRawPartitionTimestamp() throws Exception {
+        Assert.assertEquals("", filesOfColumns("t_split", "c", "s"));
+        assertRowsOfSplitTable();
+    }
+
+    private void assertRowsOfSplitTable() throws Exception {
+        assertQuery("SELECT ts, x FROM t_split")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix(ROWS_OF_SPLIT_TABLE, timestampType.getTypeName()));
+    }
+
+    private static void createLegacyPurgeLog() throws SqlException {
+        execute("CREATE TABLE '" + purgeLogTableName() + "' (" + LEGACY_PURGE_LOG_COLUMNS + ") timestamp(ts) partition by MONTH BYPASS WAL");
+    }
+
+    /**
+     * Creates t_split with ts, x and {@code columns}, which hold {@code values} of x in the row x: one row in each of
+     * 1970-01-01, 1970-01-02, 1970-01-04 and 1970-01-05, and one each hour from 01:00 to 10:00 in 1970-01-03. Then a
+     * row at 09:30 splits 1970-01-03 after its 09:00 row, see {@link #ROWS_OF_SPLIT_TABLE}. The new partition, the
+     * fourth of six, starts one tick after that row: at 1970-01-03T09:00:00.000001 in a TIMESTAMP table and at
+     * 1970-01-03T09:00:00.000000001 in a TIMESTAMP_NS one.
+     */
+    private void createSplitTable(String walMode, String columns, LongFunction<String> values) throws Exception {
+        execute("CREATE TABLE t_split (ts " + timestampType.getTypeName() + ", x LONG, " + columns + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        final String[] hours = {
+                "1970-01-01T02", "1970-01-02T02", "1970-01-03T01", "1970-01-03T02", "1970-01-03T03", "1970-01-03T04", "1970-01-03T05",
+                "1970-01-03T06", "1970-01-03T07", "1970-01-03T08", "1970-01-03T09", "1970-01-03T10", "1970-01-04T02", "1970-01-05T02"
+        };
+        final StringSink sql = new StringSink();
+        sql.put("INSERT INTO t_split VALUES ");
+        for (int i = 0; i < hours.length; i++) {
+            sql.put(i > 0 ? ", " : "").put("('").put(hours[i]).put(":00:00.000000Z', ").put(i + 1).put(", ").put(values.apply(i + 1)).put(')');
+        }
+        execute(sql);
+        drainWalQueue();
+        execute("INSERT INTO t_split VALUES ('1970-01-03T09:30:00.000000Z', 15, " + values.apply(15) + ")");
+        drainWalQueue();
+        try (TableReader reader = getReader("t_split")) {
+            Assert.assertEquals(6, reader.getPartitionCount());
+            Assert.assertEquals(
+                    timestampType.getDriver().parseFloorLiteral("1970-01-03T09:00:00.000000Z") + 1,
+                    reader.getTxFile().getPartitionTimestampByIndex(SPLIT_PARTITION_INDEX)
+            );
+        }
+    }
+
+    /**
+     * Creates t_same_us, a TIMESTAMP_NS table with a POSTING index on s, whose 2022-02-27 has three partitions: the
+     * day, 01:00 exactly and 01:00:00.000000201. The last two start in the same microsecond and carry the same name
+     * txn, as one commit rewrote both. c2 is x and s is 'a' in each row, see
+     * {@link #assertRowsOfSameMicrosecondTable()}.
+     */
+    private void createSameMicrosecondTable(String walMode) throws Exception {
+        execute("CREATE TABLE t_same_us (ts TIMESTAMP_NS, v LONG, c2 LONG, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        final String[] inserts = {
+                // 100 rows before 01:00, the last at 00:59:59.999999999
+                "INSERT INTO t_same_us SELECT ('2022-02-27T00:00:00.000000000Z'::TIMESTAMP_NS + (x - 1) * 1_000_000_000L)::TIMESTAMP_NS, x, x, 'a' FROM long_sequence(99)",
+                "INSERT INTO t_same_us VALUES ('2022-02-27T00:59:59.999999999Z'::TIMESTAMP_NS, 100, 100, 'a')",
+                // 20 rows in the microsecond after 01:00, and one at 02:00
+                "INSERT INTO t_same_us SELECT ('2022-02-27T01:00:00.000000000Z'::TIMESTAMP_NS + x * 10)::TIMESTAMP_NS, 200 + x, 200 + x, 'a' FROM long_sequence(20)",
+                "INSERT INTO t_same_us VALUES ('2022-02-27T02:00:00.000000000Z'::TIMESTAMP_NS, 300, 300, 'a')",
+                // splits the day after 00:59:59.999999999, so the new partition starts at 01:00 exactly
+                "INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000000Z'::TIMESTAMP_NS, 400, 400, 'a')",
+                // splits that partition after 01:00:00.000000200, so the next one starts at 01:00:00.000000201
+                "INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000500Z'::TIMESTAMP_NS, 500, 500, 'a')",
+                // one commit rewrites both, which then share their name txn
+                "INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000005Z'::TIMESTAMP_NS, 600, 600, 'a'), ('2022-02-27T01:00:00.000000300Z'::TIMESTAMP_NS, 601, 601, 'a')"
+        };
+        for (String insert : inserts) {
+            execute(insert);
+            drainWalQueue();
+        }
+        try (TableReader reader = getReader("t_same_us")) {
+            final TimestampDriver driver = timestampType.getDriver();
+            Assert.assertEquals(3, reader.getPartitionCount());
+            Assert.assertEquals(driver.parseFloorLiteral("2022-02-27T01:00:00.000000Z"), reader.getTxFile().getPartitionTimestampByIndex(1));
+            Assert.assertEquals(driver.parseFloorLiteral("2022-02-27T01:00:00.000000Z") + 201, reader.getTxFile().getPartitionTimestampByIndex(2));
+            Assert.assertEquals(reader.getTxFile().getPartitionNameTxn(1), reader.getTxFile().getPartitionNameTxn(2));
+        }
+    }
+
+    /**
+     * Asserts the rows of t_same_us after the update of the partition at 01:00:00.000000201: before it c2 is x and s
+     * is 'a', 1..100 in the day partition, and 201..220, 400 and 600 at 01:00; in it c2 is 0 and s is 'b'. The
+     * filters on s read its POSTING index.
+     */
+    private void assertRowsOfSameMicrosecondTable() throws Exception {
+        assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE s = 'a'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Index")
+                .returns("""
+                        count\tsum
+                        122\t10260
+                        """);
+        assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE s = 'b'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Index")
+                .returns("""
+                        count\tsum
+                        3\t0
+                        """);
+        assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts < '2022-02-27T01:00:00.000000201Z'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tsum
+                        122\t10260
+                        """);
+    }
+
+    // Erases partition_timestamp_raw of every row of the purge log, as a version before the column wrote the rows: the
+    // rows keep the partition timestamp in microseconds only, in partition_timestamp
+    private void eraseRawPartitionTimestamps() throws SqlException {
+        update("UPDATE '" + purgeLogTableName() + "' SET partition_timestamp_raw = NULL");
+    }
+
+    // the timestamp of the partition of tableName at partitionIndex, as _txn has it
+    private static long partitionTimestampOf(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionTimestampByIndex(partitionIndex);
+        }
+    }
+
+    // Updates the partition of t_same_us at 01:00:00.000000201 while a reader holds the table, so the purge job only
+    // logs the purges of the versions the update replaced, one task per column
+    private void updateSecondPartitionWithReader(ColumnPurgeJob purgeJob, String setClause) throws Exception {
+        try (TableReader ignore = getReader("t_same_us")) {
+            update("UPDATE t_same_us SET " + setClause + " WHERE ts >= '2022-02-27T01:00:00.000000201Z'");
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+    }
+
+    // drops columns of t_split while a reader holds the table, so the purge job only logs their purges, one task each
+    private void dropColumnsWithReader(ColumnPurgeJob purgeJob, String... columns) throws Exception {
+        final int outstandingPurgeTasks = purgeJob.getOutstandingPurgeTasks();
+        try (TableReader ignore = getReader("t_split")) {
+            for (String column : columns) {
+                execute("ALTER TABLE t_split DROP COLUMN " + column);
+            }
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertEquals(outstandingPurgeTasks + columns.length, purgeJob.getOutstandingPurgeTasks());
+    }
+
+    /**
+     * The files of {@code columns} in the table directory and in the partition directories of {@code tableName}, as
+     * paths within the table directory, sorted and space-separated.
+     */
+    private String filesOfColumns(String tableName, String... columns) {
+        final TreeSet<String> files = new TreeSet<>();
+        addFilesOfColumns(files, new File(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName()), "", columns);
+        final int partitionCount;
+        try (TableReader reader = getReader(tableName)) {
+            partitionCount = reader.getPartitionCount();
+        }
+        for (int i = 0; i < partitionCount; i++) {
+            final File dir = new File(partitionDir(tableName, i));
+            addFilesOfColumns(files, dir, dir.getName() + "/", columns);
+        }
+        return String.join(" ", files);
+    }
+
+    // the values of c LONG and s SYMBOL in the row x of t_split
+    private static String longAndSymbolValues(long x) {
+        return x * 10 + ", 's" + x % 3 + "'";
+    }
+
+    // the name of the file at path when it is in the directory of the purge log or in one of its partitions, or null
+    private static String purgeLogFileName(LPSZ path) {
+        final File file = new File(Utf8s.stringFromUtf8Bytes(path));
+        final File dir = file.getParentFile();
+        if (dir != null && (isPurgeLogDir(dir) || (dir.getParentFile() != null && isPurgeLogDir(dir.getParentFile())))) {
+            return file.getName();
+        }
+        return null;
+    }
+
+    // whether name is the data file of partition_timestamp_raw in a partition of the purge log, named with the txn
+    // of the column add
+    private static boolean isRawColumnDataFile(LPSZ name) {
+        final String fileName = purgeLogFileName(name);
+        return fileName != null && fileName.startsWith("partition_timestamp_raw.d");
+    }
+
+    private static boolean isPurgeLogDir(File dir) {
+        return dir.getName().startsWith(purgeLogTableName() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
+    }
+
+    private static String purgeLogTableName() {
+        return configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
+    }
+
+    // A new purge job, as after a restart, replays the purge log, truncates it, and keeps no task for a retry
+    private void replayPurgeLog(String tableName) throws Exception {
+        engine.releaseInactive();
+        // under ADAPTIVE the save points still name the versions that the change replaced, and the replay keeps them
+        releaseSavePointHolds(tableName);
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            assertPurgeLogRows(purgeJob, 0, 0);
+        }
+    }
+
+    private static void setSplitProperties() {
+        // an O3 row splits a partition whatever the size of the rows before it, rather than adding a piece to it
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
     }
 
     /**
@@ -4243,5 +5392,1874 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             // if we get here without NPE, the bug is fixed
             createPurgeJob().close();
         });
+    }
+
+    @Test
+    public void testPurgeLogResumesAfterAppendFailure() throws Exception {
+        // The open of completed.d in the first partition of the log fails once, as the job appends gone_1. The job
+        // reopens the log in the same run and writes gone_1 back, then logs the next tasks as before. The run that
+        // purges a task completes its row.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                faultFf.failNextOpen("completed.d");
+                publishFakePurgeTask("gone_1", 1);
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(1, faultFf.getFailureCount());
+                publishFakePurgeTask("gone_2", 1);
+                runPurgeJob(purgeJob);
+                publishFakePurgeTask("gone_3", 1);
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                gone_1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000030Z
+                                gone_2\t1970-01-01T00:00:00.000060Z\t1970-01-01T00:00:00.000100Z
+                                gone_3\t1970-01-01T00:00:00.000150Z\t1970-01-01T00:00:00.000210Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLoggedBeforeRestartAfterOneLogAppendFailure() throws Exception {
+        // questdb#7973 with a failed row append: the row of the purge starts a page of the log columns, and the page
+        // cannot be allocated
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> assertPurgeLoggedBeforeRestartAfterOneLogFailure(purgeJob -> {
+            // fills the first page of each 8-byte column of the log
+            publishFakePurgeTask("gone_1", purgeLogRowsPerPage());
+            runPurgeJobAt(purgeJob, 10);
+            runPurgeJobAt(purgeJob, 20);
+            execute("ALTER TABLE t ALTER COLUMN sym DROP INDEX");
+            faultFf.failNextAllocate();
+            runPurgeJobAt(purgeJob, 30);
+            Assert.assertEquals(1, faultFf.getFailureCount());
+        }));
+    }
+
+    @Test
+    public void testPurgeLoggedBeforeRestartAfterOneLogCommitFailure() throws Exception {
+        // questdb#7973 with a failed commit: the commit of the purge adds a partition to the log, and its _txn cannot
+        // grow. Each month adds a partition to the log until the _txn record outgrows the file.
+        final TxnExtendFailingFacade faultFf = new TxnExtendFailingFacade(purgeLogTableName());
+        assertMemoryLeak(faultFf, () -> {
+            createIssue7973Table();
+            TableReader reader = null;
+            try {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    for (int month = 1; ; month++) {
+                        Assert.assertTrue("the _txn of the log did not grow", month < 300);
+                        execute("ALTER TABLE t ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)");
+                        reader = getReader("t");
+                        execute("ALTER TABLE t ALTER COLUMN sym DROP INDEX");
+                        faultFf.isArmed.set(true);
+                        final long monthStart = Micros.addMonths(0, month);
+                        runPurgeJobAt(purgeJob, monthStart + 10);
+                        if (!faultFf.isArmed.getAndSet(false)) {
+                            break;
+                        }
+                        // the purge of this month completes before the next month starts
+                        reader = Misc.free(reader);
+                        runPurgeJobAt(purgeJob, monthStart + 20);
+                        runPurgeJobAt(purgeJob, monthStart + 30);
+                        Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                }
+                assertPendingRowsOfDroppedIndex();
+            } finally {
+                Misc.free(reader);
+            }
+            assertDroppedIndexPurgedByRestart();
+        });
+    }
+
+    @Test
+    public void testPurgeLoggedBeforeRestartAfterOneLogPartitionOpenFailure() throws Exception {
+        // questdb#7973 as it was reported: the open of a column file of a new partition of the log fails
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> assertPurgeLoggedBeforeRestartAfterOneLogFailure(purgeJob -> {
+            execute("ALTER TABLE t ALTER COLUMN sym DROP INDEX");
+            faultFf.failNextOpen("truncate_version.d");
+            runPurgeJobAt(purgeJob, 10);
+            Assert.assertEquals(1, faultFf.getFailureCount());
+        }));
+    }
+
+    @Test
+    public void testPurgeLogKeepsPendingRowAfterLogFailure() throws Exception {
+        // A purge that a reader holds is in the log when the log fails on the next task, in a new month. The job writes
+        // both tasks back. The completion of each task lands on its written-back row: the first row of the held task
+        // stays pending, and a restart replays it.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignored = getReader("up_part")) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, 10);
+                    runPurgeJobAt(purgeJob, 20);
+                    faultFf.failNextOpen("completed.d");
+                    publishFakePurgeTask("gone_1", 1);
+                    runPurgeJobAt(purgeJob, FEB_15 + 10);
+                    Assert.assertEquals(1, faultFf.getFailureCount());
+                    runPurgeJobAt(purgeJob, FEB_15 + 20);
+                    assertQuery("SELECT table_name, column_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    table_name\tcolumn_name\tts\tcompleted
+                                    up_part~\tx\t1970-01-01T00:00:00.000010Z\t
+                                    up_part~\tx\t1970-02-15T00:00:00.000010Z\t
+                                    gone_1\tcol\t1970-02-15T00:00:00.000011Z\t1970-02-15T00:00:00.000020Z
+                                    """);
+                    Assert.assertTrue(oldX, new File(oldX).exists());
+                }
+                runPurgeJobAt(purgeJob, FEB_15 + 30);
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                assertQuery("SELECT table_name, column_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tcolumn_name\tts\tcompleted
+                                up_part~\tx\t1970-01-01T00:00:00.000010Z\t
+                                up_part~\tx\t1970-02-15T00:00:00.000010Z\t1970-02-15T00:00:00.000030Z
+                                gone_1\tcol\t1970-02-15T00:00:00.000011Z\t1970-02-15T00:00:00.000020Z
+                                """);
+            }
+            // the restart replays the pending first row, whose files are gone, and truncates the log
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            Assert.assertFalse(oldX, new File(oldX).exists());
+        });
+    }
+
+    @Test
+    public void testPurgeTaskDuringLogOutageReplayedAfterRestart() throws Exception {
+        // The test takes the log writer while the job is without it, so the reopens fail as busy on the retry
+        // schedule. A purge a reader holds arrives meanwhile, and a purge of another table that no reader holds still
+        // removes its file. Once the test gives the writer back, the next due reopen logs the held purge, and a
+        // restart replays it.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            createUpdateTable("up_other");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            final String oldOtherX = partitionDir("up_other", 4) + File.separator + "x.d";
+            try (TableReader ignored = getReader("up_part")) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    logPurgeInJanuary(purgeJob);
+                    failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                    // F1 and F2 at FEB_15: the delay is 2 s, and the reopen is due at FEB_15 + 1 s
+                    try (TableWriter ignore = getWriter(purgeJob.getLogTableName())) {
+                        // the reopen at FEB_15 + 1 s fails as busy: the next is due at FEB_15 + 3 s, the one after
+                        // that at FEB_15 + 7 s
+                        runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                        update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                        update("UPDATE up_other SET x = 100 WHERE ts >= '1970-01-05'");
+                        runPurgeJobAt(purgeJob, FEB_15 + 1_500_000);
+                        runPurgeJobAt(purgeJob, FEB_15 + 1_500_010);
+                        Assert.assertFalse(oldOtherX, new File(oldOtherX).exists());
+                        Assert.assertTrue(oldX, new File(oldX).exists());
+                        runPurgeJobAt(purgeJob, FEB_15 + 3 * Micros.SECOND_MICROS);
+                    }
+                    runPurgeJobAt(purgeJob, FEB_15 + 7 * Micros.SECOND_MICROS - 1);
+                    Assert.assertEquals("the reopen is not due yet", 0, engine.getBusyWriterCount());
+                    runPurgeJobAt(purgeJob, FEB_15 + 7 * Micros.SECOND_MICROS);
+                    Assert.assertEquals("the job reopened the log", 1, engine.getBusyWriterCount());
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "' WHERE table_name != 'gone_jan'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
+                                    table_name\tts\tcompleted
+                                    up_part~\t1970-02-15T00:00:07.000000Z\t
+                                    """);
+                }
+            }
+            Assert.assertTrue(oldX, new File(oldX).exists());
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            Assert.assertFalse(oldX, new File(oldX).exists());
+        });
+    }
+
+    @Test
+    public void testPurgeLogResumesAfterCommitFailure() throws Exception {
+        // The commit of a batch of A, which a reader holds, and B fails: the batch adds a partition to the log, and the
+        // _txn of the log cannot grow. The job writes C, which another reader holds, A and B back, in that order, so
+        // the written-back rows are not where the rolled-back rows were. Each completion lands on its own row.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final TxnExtendFailingFacade faultFf = new TxnExtendFailingFacade(purgeLogTableName());
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_a");
+            createUpdateTable("up_c");
+            try (ColumnPurgeJob purgeJob = createPurgeJob(); TableReader ignored = getReader("up_c")) {
+                update("UPDATE up_c SET x = 100 WHERE ts >= '1970-01-05'");
+                runPurgeJobAt(purgeJob, 10);
+                long failedMonthStart = -1;
+                int failedMonth = -1;
+                for (int month = 1; failedMonthStart < 0; month++) {
+                    Assert.assertTrue("the _txn of the log did not grow", month < 300);
+                    final long monthStart = Micros.addMonths(0, month);
+                    try (TableReader ignore = getReader("up_a")) {
+                        update("UPDATE up_a SET x = x + 1 WHERE ts >= '1970-01-05'");
+                        publishFakePurgeTask("gone_" + month, 1);
+                        faultFf.isArmed.set(true);
+                        runPurgeJobAt(purgeJob, monthStart + 10);
+                        if (!faultFf.isArmed.getAndSet(false)) {
+                            failedMonthStart = monthStart;
+                            failedMonth = month;
+                            runPurgeJobAt(purgeJob, monthStart + 20);
+                            final String month0 = Micros.toUSecString(monthStart).substring(0, 19);
+                            assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "' WHERE ts >= '" + Micros.toUSecString(monthStart) + "'")
+                                    .noLeakCheck()
+                                    .timestamp("ts")
+                                    .returns("table_name\tts\tcompleted\n"
+                                            + "up_c~\t" + month0 + ".000010Z\t\n"
+                                            + "up_a~\t" + month0 + ".000011Z\t\n"
+                                            + "gone_" + month + "\t" + month0 + ".000012Z\t" + month0 + ".000020Z\n");
+                            continue;
+                        }
+                    }
+                    runPurgeJobAt(purgeJob, monthStart + 20);
+                    runPurgeJobAt(purgeJob, monthStart + 30);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                }
+                // the first row of C, its written-back row and the row of A
+                assertIncompletePurgeLogRows(purgeJob, 3);
+                runPurgeJobAt(purgeJob, failedMonthStart + 30);
+                final String month0 = Micros.toUSecString(failedMonthStart).substring(0, 19);
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "' WHERE ts >= '" + Micros.toUSecString(failedMonthStart) + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("table_name\tts\tcompleted\n"
+                                + "up_c~\t" + month0 + ".000010Z\t\n"
+                                + "up_a~\t" + month0 + ".000011Z\t" + month0 + ".000030Z\n"
+                                + "gone_" + failedMonth + "\t" + month0 + ".000012Z\t" + month0 + ".000020Z\n");
+                assertIncompletePurgeLogRows(purgeJob, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogResumesAfterStartupTruncateFailure() throws Exception {
+        // The startup TRUNCATE of the log fails as it empties a symbol map, after it published the empty _txn. The job
+        // gives up that writer and opens a new one, which logs and completes the next tasks.
+        final SymbolMapTruncateFailingFacade faultFf = new SymbolMapTruncateFailingFacade();
+        assertMemoryLeak(faultFf, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                publishFakePurgeTask("gone_0", 1);
+                runPurgeJobAt(purgeJob, 10);
+                runPurgeJobAt(purgeJob, 20);
+            }
+            engine.releaseInactive();
+            faultFf.isArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertFalse("the startup truncate did not fail", faultFf.isArmed.get());
+                publishFakePurgeTask("gone_1", 1);
+                runPurgeJobAt(purgeJob, 30);
+                runPurgeJobAt(purgeJob, 40);
+                publishFakePurgeTask("gone_2", 1);
+                runPurgeJobAt(purgeJob, 50);
+                runPurgeJobAt(purgeJob, 60);
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                gone_1\t1970-01-01T00:00:00.000030Z\t1970-01-01T00:00:00.000040Z
+                                gone_2\t1970-01-01T00:00:00.000050Z\t1970-01-01T00:00:00.000060Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeHeldTaskRetriedWhenLogWriteFails() throws Exception {
+        // The startup pass writes a purge that a save point holds back to the truncated log, and that write fails
+        // once. The job keeps the purge, and its reopen writes it back.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertReplayedLegacyPurgeHeldBySavePoint(faultFf, () -> faultFf.failNextOpenWhileRetryingHeldTasks("ts.d"), () -> faultFf.getFailureCount() == 1);
+    }
+
+    @Test
+    public void testPurgeHeldTaskRetriedAfterStartupTruncateFailure() throws Exception {
+        // The startup TRUNCATE of the log fails before the startup pass writes back a purge that a save point holds.
+        // The job keeps the purge, and its reopen writes it back.
+        final SymbolMapTruncateFailingFacade faultFf = new SymbolMapTruncateFailingFacade();
+        assertReplayedLegacyPurgeHeldBySavePoint(faultFf, () -> faultFf.isArmed.set(true), () -> !faultFf.isArmed.get());
+    }
+
+    @Test
+    public void testPurgeLogBackoffFollowsScheduleUnderPersistentFault() throws Exception {
+        assertPurgeLogBackoffUnderPersistentFault(false);
+    }
+
+    @Test
+    public void testPurgeLogBackoffFollowsScheduleUnderPersistentFaultWithHeldTask() throws Exception {
+        assertPurgeLogBackoffUnderPersistentFault(true);
+    }
+
+    @Test
+    public void testPurgeLogBackoffNotResetByWriteBackCommit() throws Exception {
+        // Each run that starts with the job holding its writer fails its append: the test arms a page allocation
+        // failure and queues a task whose rows start a page. The write-back of each reopen commits rows, but the next
+        // run fails less than the delay after the reopen, so the delay never resets: the failures follow the
+        // schedule, also past its 60 s cap. P, which a reader holds, gains a row at each reopen.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String heldTable = engine.verifyTableName("up_part").getDirName();
+            try (ColumnPurgeJob purgeJob = createPurgeJob(); TableReader ignored = getReader("up_part")) {
+                update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                final long t0 = Micros.DAY_MICROS;
+                runPurgeJobAt(purgeJob, t0 - Micros.SECOND_MICROS);
+                final PurgeLogBackoffModel model = new PurgeLogBackoffModel();
+                final LongList failureSeconds = new LongList();
+                int heldTaskRows = 1;
+                for (int i = 0; i <= 200; i++) {
+                    final long now = t0 + i * 2 * Micros.SECOND_MICROS;
+                    final boolean isHolding = model.isHolding();
+                    publishFakePurgeTask("gone_" + i, isHolding ? purgeLogRowsPerPage() + 1 : 1);
+                    if (isHolding) {
+                        faultFf.failNextAllocate();
+                    }
+                    runPurgeJobAt(purgeJob, now);
+                    if (isHolding) {
+                        model.onFailure(now);
+                        failureSeconds.add((now - t0) / Micros.SECOND_MICROS);
+                    }
+                    if (model.isReopenDue(now)) {
+                        model.onReopen(now);
+                        model.onRowSavingCommit(now);
+                        heldTaskRows++;
+                    }
+                    final String run = "run at " + (now - t0) / Micros.SECOND_MICROS + " s";
+                    Assert.assertEquals(run, failureSeconds.size(), faultFf.getFailureCount());
+                    Assert.assertEquals(run, heldTaskRows, countPurgeLogRows("table_name = '" + heldTable + "'"));
+                    Assert.assertEquals(run, model.isHolding() ? 1 : 0, engine.getBusyWriterCount());
+                }
+                Assert.assertEquals("[0,2,6,10,16,26,44,78,140,202,264,326,388]", failureSeconds.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogBackoffResetsOnlyAfterFullDelaySinceReopen() throws Exception {
+        // The delay resets only at a commit that saves rows at least the current delay after the reopen of the
+        // writer, with no failure since the reopen. A run with an armed allocation failure shows whether a reset
+        // happened: its failure is retried in the same run only when the delay was 0.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String heldTable = engine.verifyTableName("up_part").getDirName();
+            try (ColumnPurgeJob purgeJob = createPurgeJob(); TableReader ignored = getReader("up_part")) {
+                update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                final long t0 = Micros.DAY_MICROS;
+                runPurgeJobAt(purgeJob, t0 - Micros.SECOND_MICROS);
+                final ResetProbe probe = new ResetProbe(purgeJob, faultFf, heldTable);
+                // F1 at t0, delay 0: the same run reopens, r1 = t0, and the delay is 1 s
+                probe.failingRun(t0, true);
+                // a commit of rows 1 us short of the delay after r1 does not reset: F2 waits 1 s, delay 2 s
+                probe.savingRun(t0 + Micros.SECOND_MICROS - 1);
+                probe.failingRun(t0 + Micros.SECOND_MICROS - 1, false);
+                final long r2 = t0 + 2 * Micros.SECOND_MICROS - 1;
+                probe.idleRun(r2 - 1, false);
+                probe.idleRun(r2, true);
+                // 1 s after r2 and 2 s after F2: no reset, which a delay counted from the failure would give
+                probe.savingRun(r2 + Micros.SECOND_MICROS);
+                probe.failingRun(r2 + Micros.SECOND_MICROS, false);
+                // F3 waits 2 s: r3 = r2 + 3 s, delay 4 s
+                final long r3 = r2 + 3 * Micros.SECOND_MICROS;
+                probe.idleRun(r3 - 1, false);
+                probe.idleRun(r3, true);
+                probe.savingRun(r3 + 4 * Micros.SECOND_MICROS - 1);
+                probe.failingRun(r3 + 4 * Micros.SECOND_MICROS - 1, false);
+                // F4 waits 4 s: r4, delay 8 s, and a commit of rows exactly 8 s after r4 resets
+                final long r4 = r3 + 8 * Micros.SECOND_MICROS - 1;
+                probe.idleRun(r4 - 1, false);
+                probe.idleRun(r4, true);
+                probe.savingRun(r4 + 8 * Micros.SECOND_MICROS);
+                final long r5 = r4 + 8 * Micros.SECOND_MICROS;
+                probe.failingRun(r5, true);
+                // F6, 500 ms after r5, waits 1 s again
+                probe.failingRun(r5 + 500_000, false);
+                probe.idleRun(r5 + 1_500_000 - 1, false);
+                probe.idleRun(r5 + 1_500_000, true);
+                Assert.assertEquals(6, faultFf.getFailureCount());
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogIdleReopenKeepsDelay() throws Exception {
+        // After two failures the delay is 2 s. Runs with nothing to purge reopen the log when it is due, and its
+        // write-back has no rows: nothing fails, and the delay stays. The next task fails at 2 s, and the reopen
+        // after it comes 2 s later, its failure 4 s after that.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                faultFf.failMonth("1970-02");
+                publishFakePurgeTask("gone_0", 1);
+                runPurgeJobAt(purgeJob, FEB_15);
+                Assert.assertEquals(2, faultFf.getFailureCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                for (long now = FEB_15 + Micros.SECOND_MICROS; now <= FEB_15 + 5 * Micros.SECOND_MICROS; now += 500_000) {
+                    runPurgeJobAt(purgeJob, now);
+                    Assert.assertEquals(2, faultFf.getFailureCount());
+                    Assert.assertEquals("the reopen at FEB_15 + 1 s holds the writer", 1, engine.getBusyWriterCount());
+                }
+                // F3 with the kept delay of 2 s, then the delays double
+                final long f3 = FEB_15 + 5_500_000;
+                publishFakePurgeTask("gone_1", 1);
+                runPurgeJobAt(purgeJob, f3);
+                Assert.assertEquals(3, faultFf.getFailureCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                publishFakePurgeTask("gone_2", 1);
+                runPurgeJobAt(purgeJob, f3 + 2 * Micros.SECOND_MICROS - 1);
+                Assert.assertEquals(3, faultFf.getFailureCount());
+                publishFakePurgeTask("gone_3", 1);
+                runPurgeJobAt(purgeJob, f3 + 2 * Micros.SECOND_MICROS);
+                Assert.assertEquals(4, faultFf.getFailureCount());
+                publishFakePurgeTask("gone_4", 1);
+                runPurgeJobAt(purgeJob, f3 + 6 * Micros.SECOND_MICROS - 1);
+                Assert.assertEquals(4, faultFf.getFailureCount());
+                publishFakePurgeTask("gone_5", 1);
+                runPurgeJobAt(purgeJob, f3 + 6 * Micros.SECOND_MICROS);
+                Assert.assertEquals(5, faultFf.getFailureCount());
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 1, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogReopenAfterLogTruncatedDuringOutage() throws Exception {
+        // TRUNCATE TABLE empties the log while the job is without its writer. The reopen writes the purge that a
+        // reader holds back as the first row of the log, and the completion of the purge lands on it.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignored = getReader("up_part")) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, 10);
+                    failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                    // purges the task of the failures, without the log
+                    runPurgeJobAt(purgeJob, FEB_15 + 10);
+                    execute("TRUNCATE TABLE '" + purgeJob.getLogTableName() + "'");
+                    runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                }
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 10);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                up_part~\t1970-02-15T00:00:01.000000Z\t1970-02-15T00:00:01.000010Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogReopenAfterMarkedMonthTruncatedDuringOutage() throws Exception {
+        // The job completes a purge in the January partition of the log, which keeps the completed.d of that partition
+        // open for the next completion. Then the log fails twice in one run: a page of the log cannot be allocated, and
+        // the reopen cannot open the _meta of the log. TRUNCATE TABLE empties the log meanwhile, and the reopen writes
+        // the purge that a reader holds back as the first row of a new January partition. The completion of the purge
+        // lands on that row, not in the completed.d of the partition that TRUNCATE removed.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                try (TableReader ignored = getReader("up_part")) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, 30);
+                    faultFf.failNextAllocate();
+                    faultFf.failNextMetaOpen();
+                    // from any offset, the rows of the task reach into a page that no writer mapped yet
+                    publishFakePurgeTask("gone_page", purgeLogRowsPerPage() + 1);
+                    runPurgeJobAt(purgeJob, 40);
+                    Assert.assertEquals(2, faultFf.getFailureCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                    // purges gone_page, without the log
+                    runPurgeJobAt(purgeJob, 50);
+                    execute("TRUNCATE TABLE '" + purgeJob.getLogTableName() + "'");
+                    // the reopen is due 1 s after the failure of the reopen at 40 us
+                    runPurgeJobAt(purgeJob, Micros.SECOND_MICROS + 40);
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertTrue(oldX, new File(oldX).exists());
+                }
+                runPurgeJobAt(purgeJob, Micros.SECOND_MICROS + 50);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                up_part~\t1970-01-01T00:00:01.000040Z\t1970-01-01T00:00:01.000050Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogReopenFailsWhenWriterCannotOpen() throws Exception {
+        // The open of the log writer fails once at the reopen in the run of a failure. The next reopen is due 1 s
+        // later, and it logs the task that arrived meanwhile.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final LogCapture capture = new LogCapture();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                capture.start();
+                faultFf.failNextOpen("completed.d");
+                faultFf.failNextMetaOpen();
+                publishFakePurgeTask("gone_1", 1);
+                runPurgeJobAt(purgeJob, FEB_15);
+                Assert.assertEquals(2, faultFf.getFailureCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                publishFakePurgeTask("gone_2", 1);
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS - 1);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                publishFakePurgeTask("gone_3", 1);
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 10);
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 20);
+                capture.waitFor("reason=could not reopen");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                // gone_1 purged without the log, gone_2 went into the log at the reopen
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                gone_jan\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000020Z
+                                gone_2\t1970-02-15T00:00:01.000000Z\t1970-02-15T00:00:01.000000Z
+                                gone_3\t1970-02-15T00:00:01.000010Z\t1970-02-15T00:00:01.000020Z
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogBatchBelowLastTimestampKeepsRowIds() throws Exception {
+        // The clock steps back below the last timestamp of the log between two batches. The job stamps the second
+        // batch after the last row, so no out-of-order commit moves the rows whose ids the job keeps, and the
+        // completion of up_b lands on its own row.
+        assertMemoryLeak(() -> {
+            createUpdateTable("up_b");
+            createUpdateTable("up_c");
+            setCurrentMicros(Micros.SECOND_MICROS);
+            try (ColumnPurgeJob purgeJob = createPurgeJob(); TableReader ignored = getReader("up_c")) {
+                final String logPartitionsBefore;
+                try (TableReader ignore = getReader("up_b")) {
+                    publishFakePurgeTask("gone_1", 1);
+                    publishFakePurgeTask("gone_2", 1);
+                    publishFakePurgeTask("gone_3", 1);
+                    publishFakePurgeTask("gone_4", 1);
+                    update("UPDATE up_b SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, Micros.SECOND_MICROS);
+                    logPartitionsBefore = listPurgeLogPartitions();
+                    update("UPDATE up_c SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, Micros.SECOND_MICROS + 1);
+                    Assert.assertEquals(logPartitionsBefore, listPurgeLogPartitions());
+                }
+                engine.releaseInactive();
+                runPurgeJobAt(purgeJob, 2 * Micros.SECOND_MICROS);
+                runPurgeJobAt(purgeJob, 2 * Micros.SECOND_MICROS + 10);
+                Assert.assertEquals(logPartitionsBefore, listPurgeLogPartitions());
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                gone_1\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000001Z
+                                gone_2\t1970-01-01T00:00:01.000001Z\t1970-01-01T00:00:02.000000Z
+                                gone_3\t1970-01-01T00:00:01.000002Z\t1970-01-01T00:00:02.000000Z
+                                gone_4\t1970-01-01T00:00:01.000003Z\t1970-01-01T00:00:02.000000Z
+                                up_b~\t1970-01-01T00:00:01.000004Z\t1970-01-01T00:00:02.000000Z
+                                up_c~\t1970-01-01T00:00:01.000005Z\t
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogRewritesManyEntriesInOrder() throws Exception {
+        // A purge of 1_000 partitions that a reader holds is in the log when the log fails. The reopen writes its
+        // 1_000 rows back, and a task that arrives in the next run, at the same clock, goes after them: the log
+        // takes no out-of-order commit, and each completion lands on its own row.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            execute("CREATE TABLE up_many AS (SELECT timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1_000_000L)::" + timestampType.getTypeName()
+                    + " ts, x FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignored = getReader("up_many")) {
+                    update("UPDATE up_many SET x = 0");
+                    runPurgeJobAt(purgeJob, 10);
+                    faultFf.failNextOpen("completed.d");
+                    publishFakePurgeTask("gone_1", 1);
+                    runPurgeJobAt(purgeJob, FEB_15);
+                    Assert.assertEquals(1, faultFf.getFailureCount());
+                    final String logPartitions = listPurgeLogPartitions();
+                    publishFakePurgeTask("gone_2", 1);
+                    runPurgeJobAt(purgeJob, FEB_15);
+                    Assert.assertEquals(logPartitions, listPurgeLogPartitions());
+                    runPurgeJobAt(purgeJob, FEB_15 + 10);
+                }
+                runPurgeJobAt(purgeJob, FEB_15 + 20);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertQuery("SELECT table_name, ts, count(), count(completed), min(completed), max(completed) FROM '" + purgeJob.getLogTableName() + "' ORDER BY ts")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcount\tcount1\tmin\tmax
+                                up_many~\t1970-01-01T00:00:00.000010Z\t1000\t0\t\t
+                                up_many~\t1970-02-15T00:00:00.000000Z\t1000\t1000\t1970-02-15T00:00:00.000020Z\t1970-02-15T00:00:00.000020Z
+                                gone_1\t1970-02-15T00:00:00.000001Z\t1\t1\t1970-02-15T00:00:00.000010Z\t1970-02-15T00:00:00.000010Z
+                                gone_2\t1970-02-15T00:00:00.000002Z\t1\t1\t1970-02-15T00:00:00.000010Z\t1970-02-15T00:00:00.000010Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeScheduleIgnoresFutureLogTimestamp() throws Exception {
+        // While the job is without its writer, a row a day ahead of the clock lands in the log. After the reopen the
+        // job stamps its rows after that row, but it purges on the clock: a task completes in the next run.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                // purges the task of the failures, without the log
+                runPurgeJobAt(purgeJob, FEB_15 + 10);
+                execute("INSERT INTO '" + purgeJob.getLogTableName() + "' (ts, table_name, completed) VALUES ('1970-02-16T00:00:00.000000Z', 'future', '1970-02-15T00:00:00.000000Z')");
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                publishFakePurgeTask("gone_1", 1);
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 10);
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 20);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "' WHERE table_name != 'gone_jan'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                table_name\tts\tcompleted
+                                future\t1970-02-16T00:00:00.000000Z\t1970-02-15T00:00:00.000000Z
+                                gone_1\t1970-02-16T00:00:00.000001Z\t1970-02-15T00:00:01.000020Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogDroppedDuringOutage() throws Exception {
+        // DROP TABLE of the log while the job is without its writer: each due reopen fails, on the retry schedule,
+        // and the job purges without the log
+        assertPurgeLogUnusableDuringOutage("DROP TABLE '" + purgeLogTableName() + "'", false);
+    }
+
+    @Test
+    public void testPurgeLogWithoutCompletedColumnDuringOutage() throws Exception {
+        // The completed column of the log goes while the job is without its writer: each due reopen takes the writer,
+        // finds no column to mark the purges in, and gives the writer up, on the retry schedule. The job purges
+        // without the log, and adds no row to it.
+        assertPurgeLogUnusableDuringOutage("ALTER TABLE '" + purgeLogTableName() + "' DROP COLUMN completed", true);
+    }
+
+    @Test
+    public void testPurgeLogWithoutPartitionTimestampRawColumnDuringOutage() throws Exception {
+        // partition_timestamp_raw of the log goes while the job is without its writer. The reopen writes the purge that
+        // a reader holds back without the column, and keeps the writer. The run after the reader closes purges the old
+        // file and completes the written-back row.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                try (TableReader ignored = getReader("up_part")) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                    // purges the task of the failures, without the log
+                    runPurgeJobAt(purgeJob, FEB_15 + 10);
+                    execute("ALTER TABLE '" + purgeJob.getLogTableName() + "' DROP COLUMN partition_timestamp_raw");
+                    runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertTrue(oldX, new File(oldX).exists());
+                }
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 10);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                assertPurgeLogColumns(PURGE_LOG_COLUMNS.replace("partition_timestamp_raw\tLONG\n", ""));
+                assertQuery("SELECT table_name, column_name, ts, partition_timestamp, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tcolumn_name\tts\tpartition_timestamp\tcompleted
+                                gone_jan\tcol\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000020Z
+                                up_part~\tx\t1970-02-15T00:00:01.000000Z\t1970-01-05T00:00:00.000000Z\t1970-02-15T00:00:01.000010Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogRewriteReplaysEveryEntryKind() throws Exception {
+        // Purges of every kind of entry wait for readers when the log fails, and TRUNCATE TABLE empties the log
+        // meanwhile. A restart after the reopen replays the written-back rows alone: they name every superseded
+        // file, and no live one.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        setSplitProperties();
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            execute("CREATE TABLE t_kinds (ts " + timestampType.getTypeName() + ", l LONG, s STRING, v VARCHAR, sym SYMBOL INDEX TYPE BITMAP, dropped SYMBOL)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_kinds VALUES
+                    ('1970-01-01T01:00:00.000000Z', 1, 's1', 'v1', 'a', 'd1'),
+                    ('1970-01-02T01:00:00.000000Z', 2, 's2', 'v2', 'b', 'd2'),
+                    ('1970-01-03T01:00:00.000000Z', 3, 's3', 'v3', 'a', 'd3')""");
+            createSplitTable("BYPASS WAL", "c LONG", x -> Long.toString(x * 10));
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                try (TableReader ignored = getReader("t_kinds"); TableReader ignore = getReader("t_split")) {
+                    update("UPDATE t_kinds SET l = l + 1, s = s || 'x', v = v || 'x', sym = 'c' WHERE ts >= '1970-01-02'");
+                    execute("ALTER TABLE t_kinds DROP COLUMN dropped");
+                    update("UPDATE t_split SET c = 0 WHERE ts > '1970-01-03T09:00:00.000000Z' AND ts < '1970-01-04'");
+                    runPurgeJobAt(purgeJob, 30);
+                    failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                    execute("TRUNCATE TABLE '" + purgeJob.getLogTableName() + "'");
+                    runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    // l, s, v, sym, dropped and c
+                    Assert.assertEquals(6, purgeJob.getOutstandingPurgeTasks());
+                }
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            assertOnlyLiveFilesOfColumns("t_kinds", "l", "s", "v", "sym", "dropped");
+            assertOnlyLiveFilesOfColumns("t_split", "c");
+            assertQuery("SELECT * FROM t_kinds")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tl\ts\tv\tsym
+                            1970-01-01T01:00:00.000000Z\t1\ts1\tv1\ta
+                            1970-01-02T01:00:00.000000Z\t3\ts2x\tv2x\tc
+                            1970-01-03T01:00:00.000000Z\t4\ts3x\tv3x\tc
+                            """, timestampType.getTypeName()));
+            assertQuery("SELECT count() FROM t_kinds WHERE sym = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            assertRowsOfSplitTable();
+            // c is 10 * x, but 0 in the two rows of the split partition, x = 15 and x = 12
+            assertQuery("SELECT sum(c) FROM t_split")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("sum\n930\n");
+        });
+    }
+
+    @Test
+    public void testPurgeLogWriterDiscardedAfterFailedFirstRow() throws Exception {
+        // The first row after a commit fails to start a page of the log. The pool would keep that writer, which still
+        // points into the page it lost: the job marks it distressed, so the pool closes it, and the reopen in the same
+        // run takes a new writer. After the job, the log takes an INSERT.
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final int rowsPerPage = purgeLogRowsPerPage();
+            final LogCapture capture = new LogCapture();
+            final TableToken logToken;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logToken = engine.verifyTableName(purgeJob.getLogTableName());
+                publishFakePurgeTask("gone_1", rowsPerPage);
+                runPurgeJobAt(purgeJob, 10);
+                runPurgeJobAt(purgeJob, 20);
+                final long writerId = engine.getWriterId(logToken);
+                capture.start();
+                try {
+                    faultFf.failNextAllocate();
+                    publishFakePurgeTask("gone_2", rowsPerPage);
+                    runPurgeJobAt(purgeJob, 30);
+                    Assert.assertEquals(1, faultFf.getFailureCount());
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    Assert.assertNotEquals(writerId, engine.getWriterId(logToken));
+                    capture.waitFor("closed [table=" + logToken.getDirName() + ", reason=DISTRESSED");
+                } finally {
+                    capture.stop();
+                }
+                assertQuery("SELECT table_name, ts, count() FROM '" + purgeJob.getLogTableName() + "' ORDER BY ts")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("table_name\tts\tcount\n"
+                                + "gone_1\t1970-01-01T00:00:00.000010Z\t" + rowsPerPage + "\n"
+                                + "gone_2\t1970-01-01T00:00:00.000030Z\t" + rowsPerPage + "\n");
+            }
+            execute("INSERT INTO '" + logToken.getTableName() + "' (ts, table_name) VALUES ('1970-01-01T00:00:01.000000Z', 'next')");
+            assertQuery("SELECT table_name, count() FROM '" + logToken.getTableName() + "' ORDER BY table_name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("table_name\tcount\n"
+                            + "gone_1\t" + rowsPerPage + "\n"
+                            + "gone_2\t" + rowsPerPage + "\n"
+                            + "next\t1\n");
+        });
+    }
+
+    @Test
+    public void testPurgeLogAtMaxTimestampFailsEveryAppend() throws Exception {
+        // While the job is without its writer, a row at the last microsecond of year 9999 lands in the log. No row can
+        // go after it, so every append of the job fails, on the retry schedule, and the job purges without the log.
+        assertPurgeLogNearMaxTimestamp(Micros.YEAR_10000 - 1, 0);
+    }
+
+    @Test
+    public void testPurgeLogOneStepBelowMaxTimestampTakesOneTask() throws Exception {
+        // As above, with the row one microsecond earlier: the write-back of one task takes the last microsecond, and
+        // every append after it fails
+        assertPurgeLogNearMaxTimestamp(Micros.YEAR_10000 - 2, 1);
+    }
+
+    @Test
+    public void testPurgeLogReopenWaitsOutClockSteppedBack() throws Exception {
+        // The clock steps back 10 s while the job is without its writer. The job reopens at the due time it set, not
+        // earlier, and nothing fails meanwhile; tasks purge without the log.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                // F1 and F2 at FEB_15 + 10 s: the reopen is due at FEB_15 + 11 s
+                final long t = FEB_15 + 10 * Micros.SECOND_MICROS;
+                failPurgeLogTwice(purgeJob, faultFf, t);
+                for (long now = t - 10 * Micros.SECOND_MICROS; now < t + Micros.SECOND_MICROS; now += 500_000) {
+                    publishFakePurgeTask("gone_" + now, 1);
+                    runPurgeJobAt(purgeJob, now);
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                    Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                }
+                runPurgeJobAt(purgeJob, t + Micros.SECOND_MICROS - 1);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                runPurgeJobAt(purgeJob, t + Micros.SECOND_MICROS);
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                Assert.assertEquals(2, faultFf.getFailureCount());
+                assertPurgeLogRows(purgeJob, 1, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogCommitBelowReopenTimeKeepsDelay() throws Exception {
+        // The job reopens the log at r, and the clock steps back 10 s before the next commit that saves rows. Its
+        // clock is below r, so it does not reset the delay: the next failure, as the log starts March, waits the kept
+        // 2 s.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                final long t = MAR_1 - 1_500_000;
+                failPurgeLogTwice(purgeJob, faultFf, t);
+                // r = t + 1 s, delay 2 s
+                runPurgeJobAt(purgeJob, t + Micros.SECOND_MICROS);
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                // a commit of a task into February, 10 s below r
+                publishFakePurgeTask("gone_back", 1);
+                runPurgeJobAt(purgeJob, t - 9 * Micros.SECOND_MICROS);
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                Assert.assertEquals(2, faultFf.getFailureCount());
+                assertPurgeLogRows(purgeJob, 2, 2);
+                // the next failure, at t + 2 s in March, waits 2 s
+                faultFf.failMonth("1970-03");
+                publishFakePurgeTask("gone_mar", 1);
+                runPurgeJobAt(purgeJob, t + 2 * Micros.SECOND_MICROS);
+                Assert.assertEquals(3, faultFf.getFailureCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                faultFf.failMonth(null);
+                runPurgeJobAt(purgeJob, t + 4 * Micros.SECOND_MICROS - 1);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                runPurgeJobAt(purgeJob, t + 4 * Micros.SECOND_MICROS);
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                Assert.assertEquals(3, faultFf.getFailureCount());
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogSurvivesRandomLogFailures() throws Exception {
+        // Random steps over purges that readers hold or not, faults of the log, a writer of the log that the test
+        // takes, clock steps, runs and restarts. After each run the job holds the log writer exactly when a model of
+        // the retry schedule says, given the failures the run met, and no row of a held purge reads completed. A
+        // restart replays every purge, so no superseded version is left after it.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final String[] tableNames = {"up_0", "up_1", "up_w"};
+            createUpdateTable("up_0");
+            createUpdateTable("up_1");
+            execute("CREATE TABLE up_w AS (SELECT timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1_000_000L)::" + timestampType.getTypeName()
+                    + " ts, x FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            final TableReader[] readers = new TableReader[tableNames.length];
+            PurgeLogWriterHolder testWriter = null;
+            ColumnPurgeJob purgeJob = createPurgeJob();
+            try {
+                PurgeLogBackoffModel model = new PurgeLogBackoffModel();
+                long now = Micros.DAY_MICROS;
+                int taskId = 0;
+                int failureRunCount = 0;
+                int restartCount = 0;
+                for (int step = 0; step < 500; step++) {
+                    final int action = rnd.nextInt(100);
+                    if (action < 15) {
+                        // most tasks start a page of the log, so an armed allocation failure fires on them
+                        publishFakePurgeTask("gone_" + taskId++, rnd.nextInt(10) < 3 ? 1 : purgeLogRowsPerPage() + 1);
+                    } else if (action < 28) {
+                        // an update of a table without a reader, held when the step opens one first
+                        final int t = rnd.nextInt(tableNames.length);
+                        if (readers[t] == null) {
+                            if (rnd.nextBoolean()) {
+                                readers[t] = getReader(tableNames[t]);
+                            }
+                            update("UPDATE " + tableNames[t] + " SET x = x + 1 WHERE ts >= '1970-01-03'");
+                            drainWalQueue();
+                        }
+                    } else if (action < 34) {
+                        final int t = rnd.nextInt(tableNames.length);
+                        readers[t] = Misc.free(readers[t]);
+                    } else if (action < 46) {
+                        switch (rnd.nextInt(4)) {
+                            case 0 -> faultFf.failNextAllocate();
+                            case 1 -> faultFf.failNextOpen("ts.d");
+                            case 2 -> faultFf.failNextTxnGrowth();
+                            default -> {
+                                if (testWriter == null && !model.isHolding()) {
+                                    // the faults armed so far would fire on the open of the writer the test takes
+                                    faultFf.clearFailures();
+                                    testWriter = new PurgeLogWriterHolder();
+                                }
+                            }
+                        }
+                    } else if (action < 49) {
+                        faultFf.clearFailures();
+                        testWriter = Misc.free(testWriter);
+                    } else if (action < 63) {
+                        now += rnd.nextInt(20) == 0 ? 31 * Micros.DAY_MICROS : 1_000 + rnd.nextLong(90 * Micros.SECOND_MICROS);
+                    } else if (action < 98) {
+                        // a run, and what the model expects of it, given the failures it met
+                        final int failuresBefore = faultFf.getFailureCount();
+                        final long logRowsBefore = countPurgeLogRows("1 = 1");
+                        final boolean isHoldingAtStart = model.isHolding();
+                        final boolean isLogWriterTaken = testWriter != null;
+                        runPurgeJobAt(purgeJob, now);
+                        final int failures = faultFf.getFailureCount() - failuresBefore;
+                        final boolean isHolding = engine.getBusyWriterCount() - (isLogWriterTaken ? 1 : 0) == 1;
+                        final String context = "step " + step + ", now " + now + ", failures " + failures;
+                        if (isHoldingAtStart) {
+                            if (failures == 0) {
+                                // the commit of the drained tasks, if any
+                                if (countPurgeLogRows("1 = 1") > logRowsBefore) {
+                                    model.onRowSavingCommit(now);
+                                }
+                            } else {
+                                model.onFailure(now);
+                                if (model.isReopenDue(now)) {
+                                    model.onReopen(now);
+                                    if (failures == 2) {
+                                        model.onFailure(now);
+                                    } else {
+                                        Assert.assertEquals(context, 1, failures);
+                                    }
+                                } else {
+                                    Assert.assertEquals(context, 1, failures);
+                                }
+                            }
+                        } else if (model.isReopenDue(now)) {
+                            model.onReopen(now);
+                            if (isLogWriterTaken) {
+                                Assert.assertEquals(context, 0, failures);
+                                model.onFailure(now);
+                            } else if (failures == 1) {
+                                model.onFailure(now);
+                            } else {
+                                Assert.assertEquals(context, 0, failures);
+                            }
+                        } else {
+                            Assert.assertEquals(context, 0, failures);
+                        }
+                        Assert.assertEquals(context, model.isHolding(), isHolding);
+                        assertHeldPurgesPending(tableNames, readers);
+                        if (failures > 0 || isLogWriterTaken && !isHoldingAtStart && !isHolding) {
+                            failureRunCount++;
+                        }
+                    } else {
+                        // a restart: the job logs what it holds, the readers go, and the next job replays the log
+                        restartCount++;
+                        faultFf.clearFailures();
+                        testWriter = Misc.free(testWriter);
+                        if (!model.isHolding()) {
+                            now = Math.max(now, model.getDueAt());
+                            runPurgeJobAt(purgeJob, now);
+                            Assert.assertEquals("step " + step, 1, engine.getBusyWriterCount());
+                        }
+                        purgeJob = Misc.free(purgeJob);
+                        Misc.free(readers);
+                        // under ADAPTIVE the save points of up_w name the versions its updates replaced
+                        releaseSavePointHolds("up_w");
+                        engine.releaseInactive();
+                        purgeJob = createPurgeJob();
+                        model = new PurgeLogBackoffModel();
+                        drainPurgeQueue(purgeJob, now);
+                        assertOnlyLiveVersionsOfX(tableNames);
+                    }
+                }
+                LOG.info().$("random log failures [runsWithFailures=").$(failureRunCount)
+                        .$(", failures=").$(faultFf.getFailureCount())
+                        .$(", restarts=").$(restartCount)
+                        .I$();
+                faultFf.clearFailures();
+                testWriter = Misc.free(testWriter);
+                if (!model.isHolding()) {
+                    runPurgeJobAt(purgeJob, now = Math.max(now, model.getDueAt()));
+                }
+                purgeJob = Misc.free(purgeJob);
+                Misc.free(readers);
+                releaseSavePointHolds("up_w");
+                engine.releaseInactive();
+                purgeJob = createPurgeJob();
+                drainPurgeQueue(purgeJob, now);
+                assertOnlyLiveVersionsOfX(tableNames);
+            } finally {
+                Misc.free(testWriter);
+                Misc.free(readers);
+                Misc.free(purgeJob);
+            }
+        });
+    }
+
+    private void assertPurgeLogBackoffUnderPersistentFault(boolean isTaskHeld) throws Exception {
+        // Every write into February fails, as on a disk that fills up when the log starts the month, while a reopen and
+        // a commit without rows succeed: they touch January only. 40 runs 500 ms apart each queue a task. The failures
+        // follow the retry schedule: two in the first run, at the append and at the reopen in the same run, then 1 s,
+        // 2 s, 4 s and 8 s apart. Each task completes in its run, without the log, which keeps its January rows only.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            try (ColumnPurgeJob purgeJob = createPurgeJob(); TableReader ignored = getReader("up_part")) {
+                logPurgeInJanuary(purgeJob);
+                if (isTaskHeld) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, 30);
+                }
+                final int heldTaskCount = isTaskHeld ? 1 : 0;
+                faultFf.failMonth("1970-02");
+                final PurgeLogBackoffModel model = new PurgeLogBackoffModel();
+                final LongList failureTimes = new LongList();
+                for (int i = 0; i < 40; i++) {
+                    final long now = FEB_15 + i * 500_000L;
+                    publishFakePurgeTask("gone_" + i, 1);
+                    runPurgeJobAt(purgeJob, now);
+                    // the append of the task fails when the job holds the writer, and the write-back of each reopen
+                    // fails on the queued tasks
+                    if (model.isHolding()) {
+                        model.onFailure(now);
+                        failureTimes.add(now - FEB_15);
+                    }
+                    if (model.isReopenDue(now)) {
+                        model.onReopen(now);
+                        model.onFailure(now);
+                        failureTimes.add(now - FEB_15);
+                    }
+                    Assert.assertEquals("run " + i, failureTimes.size(), faultFf.getFailureCount());
+                    Assert.assertEquals("run " + i, heldTaskCount, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals("run " + i, 0, engine.getBusyWriterCount());
+                }
+                Assert.assertEquals("[0,0,1000000,3000000,7000000,15000000]", failureTimes.toString());
+                assertQuery("SELECT table_name, count() FROM '" + purgeJob.getLogTableName() + "' ORDER BY table_name")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("table_name\tcount\n"
+                                + "gone_jan\t1\n"
+                                + (isTaskHeld ? "up_part~\t1\n" : ""));
+            }
+        });
+    }
+
+    private void assertPurgeLogNearMaxTimestamp(long userRowTimestamp, int writtenBackTaskCount) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                execute("INSERT INTO '" + purgeJob.getLogTableName() + "' (ts, table_name, completed) VALUES (" + userRowTimestamp + "::TIMESTAMP, 'max', '1970-02-15T00:00:00.000000Z')");
+                final String logPartitions = listPurgeLogPartitions();
+                final PurgeLogBackoffModel model = new PurgeLogBackoffModel();
+                model.onFailure(FEB_15);
+                model.onReopen(FEB_15);
+                model.onFailure(FEB_15);
+                long logMaxTimestamp = userRowTimestamp;
+                for (int i = 1; i <= 20; i++) {
+                    final long now = FEB_15 + i * 500_000L;
+                    publishFakePurgeTask("gone_" + i, 1);
+                    if (i == 10) {
+                        update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    }
+                    runPurgeJobAt(purgeJob, now);
+                    // each task goes after the last row of the log, and no timestamp can follow year 9999
+                    if (model.isHolding()) {
+                        if (logMaxTimestamp + 1 < Micros.YEAR_10000) {
+                            logMaxTimestamp++;
+                        } else {
+                            model.onFailure(now);
+                        }
+                    }
+                    if (model.isReopenDue(now)) {
+                        model.onReopen(now);
+                        if (logMaxTimestamp + 1 < Micros.YEAR_10000) {
+                            logMaxTimestamp++;
+                        } else {
+                            model.onFailure(now);
+                        }
+                    }
+                    Assert.assertEquals("run " + i, model.isHolding() ? 1 : 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("run " + i, 0, purgeJob.getOutstandingPurgeTasks());
+                }
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                Assert.assertEquals(logPartitions, listPurgeLogPartitions());
+                assertQuery("SELECT table_name, ts FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("table_name\tts\n"
+                                + "gone_jan\t1970-01-01T00:00:00.000010Z\n"
+                                + "max\t" + Micros.toUSecString(userRowTimestamp) + "\n"
+                                + (writtenBackTaskCount > 0 ? "gone_2\t9999-12-31T23:59:59.999999Z\n" : ""));
+            }
+        });
+    }
+
+    private void assertPurgeLogUnusableDuringOutage(String sql, boolean isLogKept) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            final LogCapture capture = new LogCapture();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String logTableName = purgeJob.getLogTableName();
+                logPurgeInJanuary(purgeJob);
+                failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                execute(sql);
+                capture.start();
+                // the reopens at FEB_15 + 1 s, 3 s and 7 s fail
+                for (int i = 1; i <= 20; i++) {
+                    publishFakePurgeTask("gone_" + i, 1);
+                    if (i == 10) {
+                        update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    }
+                    runPurgeJobAt(purgeJob, FEB_15 + i * 500_000L);
+                    Assert.assertEquals("run " + i, 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("run " + i, 0, purgeJob.getOutstandingPurgeTasks());
+                    if (isLogKept) {
+                        // the job gave up the writer it took
+                        getWriter(logTableName).close();
+                    }
+                }
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                capture.drain();
+                capture.assertLoggedRE("^(?:(?!reason=could not reopen)[\\s\\S])*(?:reason=could not reopen(?:(?!reason=could not reopen)[\\s\\S])*){3}$");
+                if (isLogKept) {
+                    assertQuery("SELECT table_name, count() FROM '" + logTableName + "'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    table_name\tcount
+                                    gone_jan\t1
+                                    """);
+                } else {
+                    Assert.assertNull(engine.getTableTokenIfExists(logTableName));
+                }
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    // questdb#7973: the purge of a dropped index, whose log write fails once, is in the log when the job closes before
+    // its next run, so a restart replays it
+    private void assertPurgeLoggedBeforeRestartAfterOneLogFailure(PurgeJobAction runOnceWithLogFailure) throws Exception {
+        createIssue7973Table();
+        execute("ALTER TABLE t ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)");
+        try (TableReader ignored = getReader("t")) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                runOnceWithLogFailure.run(purgeJob);
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            assertPendingRowsOfDroppedIndex();
+        }
+        assertDroppedIndexPurgedByRestart();
+    }
+
+    // Under ADAPTIVE a save point holds a purge that a restart replays, and the restart writes it back to the log for
+    // the running job, see testReplayedLegacyPurgeHeldBySavePointWaitsForSnapshotTxn. The restart meets the log failure
+    // that armLogFailure plants.
+    private void assertReplayedLegacyPurgeHeldBySavePoint(
+            FilesFacade faultFf,
+            Runnable armLogFailure,
+            BooleanSupplier isLogFailureFired
+    ) throws Exception {
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(faultFf, () -> {
+            createSameMicrosecondTable("WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            releaseSavePointHolds("t_same_us");
+            update("UPDATE t_same_us SET c2 = 1 WHERE ts >= '2022-02-27T01:00:00.000000000Z' AND ts < '2022-02-27T01:00:00.000000201Z'");
+            drainWalQueue();
+            final long snapshotTxn;
+            final long firstTimestamp;
+            final long secondTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                snapshotTxn = reader.getTxn();
+                firstTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+                secondTimestamp = reader.getTxFile().getPartitionTimestampByIndex(2);
+            }
+            final long firstTxn = getColumnNameTxn("t_same_us", "c2", 1);
+            final long secondTxn = getColumnNameTxn("t_same_us", "c2", 2);
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            armLogFailure.run();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertTrue("the log failure did not fire", isLogFailureFired.getAsBoolean());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("c2.d c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+                Assert.assertEquals("c2.d c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+                assertQuery("SELECT column_version, partition_timestamp_raw, updated_txn, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("column_version\tpartition_timestamp_raw\tupdated_txn\tcompleted\n"
+                                + "-1\t" + firstTimestamp + "\t" + snapshotTxn + "\t\n"
+                                + "-1\t" + secondTimestamp + "\t" + snapshotTxn + "\t\n");
+                releaseSavePointHolds("t_same_us");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                // and the purge of the second update, which the job drains
+                assertPurgeLogRows(purgeJob, 3, 3);
+            }
+            Assert.assertEquals("c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+        });
+    }
+
+    // no row of a purge that a reader holds reads completed in the log: the purges that the readers hold are those of
+    // the updates after the readers opened
+    private void assertHeldPurgesPending(String[] tableNames, TableReader[] readers) throws SqlException {
+        for (int t = 0; t < tableNames.length; t++) {
+            if (readers[t] != null) {
+                final String tableDir = engine.verifyTableName(tableNames[t]).getDirName();
+                Assert.assertEquals(
+                        tableNames[t],
+                        0,
+                        countPurgeLogRows("table_name = '" + tableDir + "' AND updated_txn > " + readers[t].getTxn() + " AND completed != null")
+                );
+            }
+        }
+    }
+
+    // A restart replays the purge of the dropped index: each partition keeps the live data file of sym alone, and the
+    // log is empty. A second restart replays nothing and removes nothing.
+    private void assertDroppedIndexPurgedByRestart() throws Exception {
+        engine.releaseInactive();
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            assertPurgeLogRows(purgeJob, 0, 0);
+        }
+        final String[] listings = new String[3];
+        for (int i = 0; i < 3; i++) {
+            listings[i] = listFiles(partitionDir("t", i));
+            final long columnNameTxn = getColumnNameTxn("t", "sym", i);
+            Assert.assertEquals(
+                    listings[i],
+                    "sym.d" + (columnNameTxn > TableUtils.COLUMN_NAME_TXN_NONE ? "." + columnNameTxn : ""),
+                    String.join(" ", filesWithPrefix(listings[i], "sym."))
+            );
+        }
+        engine.releaseInactive();
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            assertPurgeLogRows(purgeJob, 0, 0);
+        }
+        for (int i = 0; i < 3; i++) {
+            Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
+        }
+    }
+
+    // each partition of each table keeps the live version of x alone
+    private void assertOnlyLiveVersionsOfX(String[] tableNames) {
+        for (String tableName : tableNames) {
+            for (int i = 0; i < 5; i++) {
+                final long columnNameTxn = getColumnNameTxn(tableName, "x", i);
+                final String listing = listFiles(partitionDir(tableName, i));
+                Assert.assertEquals(
+                        tableName + ", " + listing,
+                        "x.d" + (columnNameTxn > TableUtils.COLUMN_NAME_TXN_NONE ? "." + columnNameTxn : ""),
+                        String.join(" ", filesWithPrefix(listing, "x."))
+                );
+            }
+        }
+    }
+
+    // Each partition of tableName keeps the files of the live version of each column alone, and no file of a dropped
+    // column. The table directory keeps the symbol map files of the live symbol columns alone.
+    private void assertOnlyLiveFilesOfColumns(String tableName, String... columns) {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                final String listing = listFiles(partitionDir(tableName, i));
+                for (String column : columns) {
+                    final int columnIndex = metadata.getColumnIndexQuiet(column);
+                    final TreeSet<String> files = filesWithPrefix(listing, column + ".");
+                    if (columnIndex < 0) {
+                        Assert.assertEquals(tableName + ", " + listing, "[]", files.toString());
+                        continue;
+                    }
+                    final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
+                            reader.getTxFile().getPartitionTimestampByIndex(i),
+                            metadata.getWriterIndex(columnIndex)
+                    );
+                    final String suffix = columnNameTxn > TableUtils.COLUMN_NAME_TXN_NONE ? "." + columnNameTxn : "";
+                    final TreeSet<String> expected = new TreeSet<>();
+                    expected.add(column + ".d" + suffix);
+                    if (ColumnType.isVarSize(metadata.getColumnType(columnIndex))) {
+                        expected.add(column + ".i" + suffix);
+                    }
+                    if (metadata.isColumnIndexed(columnIndex)) {
+                        expected.add(column + ".k" + suffix);
+                        expected.add(column + ".v" + suffix);
+                    }
+                    Assert.assertEquals(tableName + ", " + listing, expected, files);
+                }
+            }
+            final String[] rootFiles = new File(configuration.getDbRoot().toString(), tableToken.getDirName()).list();
+            Assert.assertNotNull(rootFiles);
+            for (String column : columns) {
+                final int columnIndex = metadata.getColumnIndexQuiet(column);
+                for (String file : rootFiles) {
+                    if (file.startsWith(column + ".")) {
+                        Assert.assertTrue(file, columnIndex > -1 && ColumnType.isSymbol(metadata.getColumnType(columnIndex)));
+                    }
+                }
+            }
+        }
+    }
+
+    // the log holds the purge of the dropped index of t, pending, one row per partition
+    private void assertPendingRowsOfDroppedIndex() throws Exception {
+        assertQuery("SELECT table_name, column_name, count() FROM '" + purgeLogTableName() + "' WHERE completed = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        table_name\tcolumn_name\tcount
+                        t~\tsym\t3
+                        """);
+    }
+
+    private static long countPurgeLogRows(String where) throws SqlException {
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM '" + purgeLogTableName() + "' WHERE " + where);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
+    // the table of questdb#7973, with one row in each of three daily partitions
+    private void createIssue7973Table() throws SqlException {
+        execute("CREATE TABLE t AS (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1_000_000L)::" + timestampType.getTypeName()
+                + " ts, x, rnd_symbol('A', 'B', 'C', 'D') sym FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+    }
+
+    // a non-WAL table with one row in each of five daily partitions, from 1970-01-01
+    private void createUpdateTable(String tableName) throws SqlException {
+        execute("CREATE TABLE " + tableName + " AS (SELECT timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1_000_000L)::" + timestampType.getTypeName()
+                + " ts, x FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+    }
+
+    // runs the job until its queue is empty, the clock 10 us apart from now
+    private static void drainPurgeQueue(ColumnPurgeJob purgeJob, long now) {
+        for (int i = 1; i == 1 || purgeJob.getOutstandingPurgeTasks() > 0; i++) {
+            Assert.assertTrue(i < 100);
+            runPurgeJobAt(purgeJob, now + 10L * i);
+        }
+    }
+
+    // Makes the log fail twice in one run: the append of a task into February, and the write-back of the reopen in
+    // the same run. The job is without its writer after the run, with a delay of 2 s and the next reopen 1 s ahead. The
+    // log must have a January row, so that the reopen does not touch February.
+    private void failPurgeLogTwice(ColumnPurgeJob purgeJob, PurgeLogFaultFacade faultFf, long now) {
+        final int failureCount = faultFf.getFailureCount();
+        faultFf.failMonth("1970-02");
+        publishFakePurgeTask("gone_outage", 1);
+        runPurgeJobAt(purgeJob, now);
+        faultFf.failMonth(null);
+        Assert.assertEquals(failureCount + 2, faultFf.getFailureCount());
+        Assert.assertEquals(0, engine.getBusyWriterCount());
+    }
+
+    // the partition directories of the purge log, in name order
+    private static String listPurgeLogPartitions() {
+        final File dir = new File(configuration.getDbRoot().toString(), engine.verifyTableName(purgeLogTableName()).getDirName());
+        final String[] names = dir.list((d, name) -> Character.isDigit(name.charAt(0)));
+        Assert.assertNotNull(names);
+        Arrays.sort(names);
+        return String.join(" ", names);
+    }
+
+    // logs gone_jan at 10 us, and completes it at 20 us
+    private void logPurgeInJanuary(ColumnPurgeJob purgeJob) {
+        publishFakePurgeTask("gone_jan", 1);
+        runPurgeJobAt(purgeJob, 10);
+        runPurgeJobAt(purgeJob, 20);
+    }
+
+    // the rows of a task that fill a page of each 8-byte column of the purge log
+    private static int purgeLogRowsPerPage() {
+        return (int) (configuration.getSystemDataAppendPageSize() / Long.BYTES);
+    }
+
+    // queues the purge of a table that does not exist, with entryCount entries: the job completes it at once
+    private void publishFakePurgeTask(String tableName, int entryCount) {
+        final ColumnPurgeTask task = new ColumnPurgeTask();
+        task.of(
+                new TableToken(tableName, tableName, null, 123, false, false, false),
+                "col",
+                1,
+                0,
+                ColumnType.INT,
+                IndexType.NONE,
+                timestampType.getTimestampType(),
+                PartitionBy.NONE,
+                43,
+                new LongList()
+        );
+        for (int i = 0; i < entryCount; i++) {
+            task.appendColumnInfo(11 + i, 0, -1);
+        }
+        appendTaskToQueue(task);
+    }
+
+    private static void runPurgeJobAt(ColumnPurgeJob purgeJob, long now) {
+        setCurrentMicros(now);
+        purgeJob.run();
+    }
+
+    // Whether SymbolMapWriter.truncate(), which TRUNCATE calls to empty a symbol map, asks for the remap
+    private static boolean isSymbolMapTruncateCalling() {
+        return StackWalker.getInstance().walk(
+                frames -> frames.anyMatch(frame -> SymbolMapWriter.class.getName().equals(frame.getClassName()) && "truncate".equals(frame.getMethodName()))
+        );
+    }
+
+    @FunctionalInterface
+    private interface PurgeJobAction {
+        void run(ColumnPurgeJob purgeJob) throws Exception;
+    }
+
+    /**
+     * The retry schedule of the purge log, as the jobs keep it: a failure makes the next reopen wait the current delay,
+     * which grows from 0 to 1 s and then doubles, up to 60 s. A commit that saves rows through a writer the job reopened
+     * at least the current delay before resets the delay to 0.
+     */
+    private static class PurgeLogBackoffModel {
+        private long delay;
+        private long dueAt;
+        private boolean isHolding = true;
+        private long reopenedAt;
+
+        long getDueAt() {
+            return dueAt;
+        }
+
+        boolean isHolding() {
+            return isHolding;
+        }
+
+        boolean isReopenDue(long now) {
+            return !isHolding && now >= dueAt;
+        }
+
+        void onFailure(long now) {
+            dueAt = now + delay;
+            delay = delay == 0 ? Micros.SECOND_MICROS : Math.min(Micros.MINUTE_MICROS, 2 * delay);
+            isHolding = false;
+        }
+
+        void onReopen(long now) {
+            isHolding = true;
+            reopenedAt = now;
+        }
+
+        void onRowSavingCommit(long now) {
+            if (now - reopenedAt >= delay) {
+                delay = 0;
+            }
+        }
+    }
+
+    /**
+     * Fails file operations of the purge log as a test arms them, and counts each failure once, when it fires: the next
+     * allocate() of a file in a partition of the log, which extends a column file by a page, as on a full disk; every
+     * open of a file in the partitions of a month, as on a disk that fills up when the log starts the month; the next
+     * open of a file of the log that ends with a suffix; the next open of the _meta file of the log; the next growth of
+     * the _txn file of the log.
+     */
+    private static class PurgeLogFaultFacade extends TestFilesFacadeImpl {
+        // the _txn writers map their files in steps of this, so that a commit that adds a partition grows the file now
+        // and then on every platform, see TxnExtendFailingFacade
+        private static final long TXN_WRITER_PAGE_SIZE = 4 * 1024;
+        private final AtomicInteger failureCount = new AtomicInteger();
+        private final AtomicReference<String> failingOpenSuffix = new AtomicReference<>();
+        private final AtomicBoolean isAllocateFailureArmed = new AtomicBoolean();
+        private final AtomicBoolean isMetaOpenFailureArmed = new AtomicBoolean();
+        private final AtomicBoolean isTxnGrowthFailureArmed = new AtomicBoolean();
+        private final LongList partitionFds = new LongList();
+        private volatile String failingMonth;
+        private volatile String failingOpenCaller;
+        private volatile long txnFd = -1;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (fd == txnFd && isTxnGrowthFailureArmed.get() && isTxnMappingExtending() && isTxnGrowthFailureArmed.compareAndSet(true, false)) {
+                failureCount.incrementAndGet();
+                return false;
+            }
+            if (isAllocateFailureArmed.get() && isPartitionFd(fd) && isAllocateFailureArmed.compareAndSet(true, false)) {
+                failureCount.incrementAndGet();
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            synchronized (partitionFds) {
+                final int index = partitionFds.indexOf(fd);
+                if (index > -1) {
+                    partitionFds.removeIndex(index);
+                }
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long getPageSize() {
+            final long pageSize = super.getPageSize();
+            return pageSize > TXN_WRITER_PAGE_SIZE && isCalledBy(TxWriter.class.getName(), null) ? TXN_WRITER_PAGE_SIZE : pageSize;
+        }
+
+        @Override
+        public long length(long fd) {
+            return fd == txnFd && isTxnGrowthFailureArmed.get() && isTxnMappingExtending() ? 0 : super.length(fd);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final String fileName = purgeLogFileName(name);
+            if (fileName != null) {
+                final String partitionDir = purgeLogPartitionDir(name);
+                final String month = failingMonth;
+                if (month != null && partitionDir != null && partitionDir.startsWith(month)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                final String suffix = failingOpenSuffix.get();
+                final String caller = failingOpenCaller;
+                if (suffix != null && fileName.endsWith(suffix) && (caller == null || isCalledBy(ColumnPurgeJob.class.getName(), caller))
+                        && failingOpenSuffix.compareAndSet(suffix, null)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                if (isMetaOpenFailureArmed.get() && TableUtils.META_FILE_NAME.equals(fileName) && partitionDir == null
+                        && isMetaOpenFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+            }
+            final long fd = super.openRW(name, opts);
+            if (fd > -1 && fileName != null) {
+                if (purgeLogPartitionDir(name) != null) {
+                    synchronized (partitionFds) {
+                        partitionFds.add(fd);
+                    }
+                } else if (TableUtils.TXN_FILE_NAME.equals(fileName)) {
+                    txnFd = fd;
+                }
+            }
+            return fd;
+        }
+
+        void clearFailures() {
+            failingMonth = null;
+            failingOpenSuffix.set(null);
+            isAllocateFailureArmed.set(false);
+            isMetaOpenFailureArmed.set(false);
+            isTxnGrowthFailureArmed.set(false);
+        }
+
+        // fails the next allocate() of a file in a partition of the log
+        void failNextAllocate() {
+            isAllocateFailureArmed.set(true);
+        }
+
+        // fails the next open of the _meta file of the log, which a writer opens to read its metadata
+        void failNextMetaOpen() {
+            isMetaOpenFailureArmed.set(true);
+        }
+
+        // fails the next open of a file of the log whose name ends with suffix
+        void failNextOpen(String suffix) {
+            failingOpenCaller = null;
+            failingOpenSuffix.set(suffix);
+        }
+
+        // fails the next open of a file of the log whose name ends with suffix, that ColumnPurgeJob.retryHeldTasks()
+        // makes
+        void failNextOpenWhileRetryingHeldTasks(String suffix) {
+            failingOpenCaller = "retryHeldTasks";
+            failingOpenSuffix.set(suffix);
+        }
+
+        // fails the next growth of the _txn file of the log, see TxnExtendFailingFacade
+        void failNextTxnGrowth() {
+            isTxnGrowthFailureArmed.set(true);
+        }
+
+        // fails every open of a file in the partitions of the log whose names start with month, or none when null
+        void failMonth(String month) {
+            failingMonth = month;
+        }
+
+        int getFailureCount() {
+            return failureCount.get();
+        }
+
+        private static boolean isCalledBy(String className, String methodName) {
+            return StackWalker.getInstance().walk(
+                    frames -> frames.anyMatch(frame -> className.equals(frame.getClassName()) && (methodName == null || methodName.equals(frame.getMethodName())))
+            );
+        }
+
+        // Whether a commit extends the mapping of a _txn file: the growth of the file that failNextTxnGrowth() fails.
+        // A writer that opens the file reads its length and allocates through another path, which stays untouched.
+        private static boolean isTxnMappingExtending() {
+            return isCalledBy(MemoryCMARWImpl.class.getName(), "extend0");
+        }
+
+        // the name of the partition directory of the purge log that holds the file at path, or null when it is not in one
+        private static String purgeLogPartitionDir(LPSZ path) {
+            final File dir = new File(Utf8s.stringFromUtf8Bytes(path)).getParentFile();
+            if (dir != null && dir.getParentFile() != null && isPurgeLogDir(dir.getParentFile()) && Character.isDigit(dir.getName().charAt(0))) {
+                return dir.getName();
+            }
+            return null;
+        }
+
+        private boolean isPartitionFd(long fd) {
+            synchronized (partitionFds) {
+                return partitionFds.indexOf(fd) > -1;
+            }
+        }
+    }
+
+    /**
+     * Holds the writer of the purge log on a thread of its own, as a user of the log does, until it closes. The pool
+     * then refuses the writer to the job as busy.
+     */
+    private static class PurgeLogWriterHolder implements Closeable {
+        private final AtomicReference<Throwable> error = new AtomicReference<>();
+        private final CountDownLatch released = new CountDownLatch(1);
+        private final Thread thread;
+
+        PurgeLogWriterHolder() throws InterruptedException {
+            final TableToken logToken = engine.verifyTableName(purgeLogTableName());
+            final CountDownLatch taken = new CountDownLatch(1);
+            thread = new Thread(() -> {
+                try (TableWriter ignored = engine.getWriter(logToken, "test")) {
+                    taken.countDown();
+                    released.await();
+                } catch (Throwable th) {
+                    error.set(th);
+                } finally {
+                    taken.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            thread.start();
+            taken.await();
+            Assert.assertNull(error.get());
+        }
+
+        @Override
+        public void close() {
+            released.countDown();
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+            Assert.assertNull(error.get());
+        }
+    }
+
+    /**
+     * Runs the column purge job for testPurgeLogBackoffResetsOnlyAfterFullDelaySinceReopen, and checks after each run
+     * the failures, the rows of the held purge, which each reopen writes back, and whether the job holds the writer.
+     */
+    private class ResetProbe {
+        private final PurgeLogFaultFacade faultFf;
+        private final String heldTable;
+        private final ColumnPurgeJob purgeJob;
+        private int failureCount;
+        private int heldTaskRows = 1;
+        private int taskId;
+
+        ResetProbe(ColumnPurgeJob purgeJob, PurgeLogFaultFacade faultFf, String heldTable) {
+            this.purgeJob = purgeJob;
+            this.faultFf = faultFf;
+            this.heldTable = heldTable;
+        }
+
+        // A run that starts with the job holding the writer, and whose append of a task that starts a page fails. The
+        // job reopens in the same run, and writes the held purge back, only when the delay was 0.
+        void failingRun(long now, boolean isReopenedInRun) throws SqlException {
+            Assert.assertEquals(1, engine.getBusyWriterCount());
+            publishFakePurgeTask("gone_" + taskId++, purgeLogRowsPerPage() + 1);
+            faultFf.failNextAllocate();
+            runPurgeJobAt(purgeJob, now);
+            failureCount++;
+            if (isReopenedInRun) {
+                heldTaskRows++;
+            }
+            check(now, isReopenedInRun);
+        }
+
+        // a run without a task while the job is without its writer: it reopens, and writes the held purge back, or not
+        void idleRun(long now, boolean isReopening) throws SqlException {
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            runPurgeJobAt(purgeJob, now);
+            if (isReopening) {
+                heldTaskRows++;
+            }
+            check(now, isReopening);
+        }
+
+        // a run that starts with the job holding the writer, and commits the rows of a task
+        void savingRun(long now) throws SqlException {
+            Assert.assertEquals(1, engine.getBusyWriterCount());
+            publishFakePurgeTask("gone_" + taskId++, 1);
+            runPurgeJobAt(purgeJob, now);
+            check(now, true);
+        }
+
+        private void check(long now, boolean isHolding) throws SqlException {
+            final String run = "run at " + now;
+            Assert.assertEquals(run, failureCount, faultFf.getFailureCount());
+            Assert.assertEquals(run, heldTaskRows, countPurgeLogRows("table_name = '" + heldTable + "'"));
+            Assert.assertEquals(run, isHolding ? 1 : 0, engine.getBusyWriterCount());
+        }
+    }
+
+    // Fails, once when armed, the remap of the table_name.c symbol map file of the purge log while TRUNCATE empties the
+    // map, after TRUNCATE published the empty _txn
+    private static class SymbolMapTruncateFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private volatile long fd = -1;
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            if (fd == this.fd && isArmed.get() && isSymbolMapTruncateCalling() && isArmed.compareAndSet(true, false)) {
+                return FilesFacade.MAP_FAILED;
+            }
+            return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if ("table_name.c".equals(purgeLogFileName(name))) {
+                this.fd = fd;
+            }
+            return fd;
+        }
     }
 }

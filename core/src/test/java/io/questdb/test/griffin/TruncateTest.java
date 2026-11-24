@@ -32,9 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,7 +40,6 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 
@@ -648,46 +644,38 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncateAfterRefusedTruncateOnOtherThread() throws Exception {
-        // A TRUNCATE on a thread of its own is refused by a running query, and the thread ends. The refusal must leave
-        // the readers of the table as it found them: once the query is closed, TRUNCATE succeeds.
+    public void testTruncateEmptyTableAfterKeepSymbolMaps() throws Exception {
+        // TRUNCATE ... KEEP SYMBOL MAPS leaves an empty table with its symbols. TRUNCATE ... KEEP SYMBOL MAPS of that
+        // table changes nothing, and TRUNCATE of it empties the symbol maps.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (1), (2), (3)");
-            try (
-                    RecordCursorFactory idleFactory = select("SELECT * FROM t");
-                    RecordCursorFactory factory = select("SELECT x FROM t")
-            ) {
-                RecordCursor idleCursor = idleFactory.getCursor(sqlExecutionContext);
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    // the reader of the first query goes back to the pool idle, in front of the reader of the second
-                    idleCursor = Misc.free(idleCursor);
-                    final AtomicReference<Throwable> truncateError = new AtomicReference<>();
-                    final Thread truncate = new Thread(() -> {
-                        try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
-                            engine.execute("TRUNCATE TABLE t", context);
-                        } catch (Throwable th) {
-                            truncateError.set(th);
-                        } finally {
-                            Path.clearThreadLocals();
-                        }
-                    });
-                    truncate.start();
-                    truncate.join();
-                    Assert.assertTrue("TRUNCATE must wait for the query", truncateError.get() instanceof SqlException);
-                    final SqlException e = (SqlException) truncateError.get();
-                    Assert.assertEquals(0, e.getPosition());
-                    TestUtils.assertEquals("there is an active query against 't'. Try again.", e.getFlyweightMessage());
-                } finally {
-                    Misc.free(idleCursor);
-                }
-            }
-            execute("TRUNCATE TABLE t");
-            assertQuery("SELECT count() FROM t")
-                    .noLeakCheck()
-                    .noRandomAccess()
+            execute("CREATE TABLE x (sym SYMBOL, v LONG)");
+            execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('c', 3)");
+            execute("TRUNCATE TABLE x KEEP SYMBOL MAPS");
+            assertSymbolCount("x", 3);
+
+            execute("TRUNCATE TABLE x KEEP SYMBOL MAPS");
+            assertSymbolCount("x", 3);
+
+            execute("TRUNCATE TABLE x");
+            assertSymbolCount("x", 0);
+            assertQuery("SELECT sym, v FROM x")
                     .expectSize()
-                    .returns("count\n0\n");
+                    .returns("sym\tv\n");
+
+            execute("INSERT INTO x VALUES ('d', 4), ('a', 5)");
+            assertSymbolCount("x", 2);
+            assertQuery("SELECT sym, v FROM x")
+                    .expectSize()
+                    .returns("""
+                            sym\tv
+                            d\t4
+                            a\t5
+                            """);
+            assertQuery("SELECT v FROM x WHERE sym = 'a'")
+                    .returns("""
+                            v
+                            5
+                            """);
         });
     }
 
@@ -1024,6 +1012,13 @@ public class TruncateTest extends AbstractCairoTest {
                             2022-02-24T00:00:00.000000Z\t1
                             """);
         });
+    }
+
+    // the number of symbols in the symbol map of the first column of the table
+    private static void assertSymbolCount(String table, int expected) {
+        try (TableReader reader = getReader(table)) {
+            Assert.assertEquals(expected, reader.getSymbolMapReader(0).getSymbolCount());
+        }
     }
 
     private void createX() throws SqlException {

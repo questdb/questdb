@@ -33,13 +33,11 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -61,7 +59,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -90,6 +87,9 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     private static final String INSERT_SENT_ROW = "INSERT INTO x VALUES ('n', 0, '2024-06-01T06:00:00.000000Z'::TIMESTAMP, 0)";
     private static final String ROWS_QUERY = "SELECT s, count() n, count(c) nc, sum(c) sc, min(ts) lo, max(ts) hi FROM x ORDER BY s";
     private static final String SENT_ROW = "n\t1\t1\t0\t2024-06-01T06:00:00.000000Z\t2024-06-01T06:00:00.000000Z\n";
+    // The tests check the log only for messages that must not appear. info() drops its record when the log ring is
+    // full, as the O3 log lines of the pending commit leave it on a slow machine, so a message can be missing from the
+    // log of code that ran.
     private static final LogCapture capture = new LogCapture();
     private final String commitMode;
 
@@ -105,6 +105,7 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     @Before
     @Override
     public void setUp() {
+        ff = new SmallPageFacade();
         super.setUp();
         capture.start();
     }
@@ -124,14 +125,16 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             final TableToken token = createTableWithPendingCommit();
             failPendingCommit(ff, TXN_FILE_NAME, Fault.ALLOCATE, "No space left");
+            // the writer of the failed commit rolled _cv back as it gave the table up: the suspended table opened no
+            // other writer
             assertColumnVersionMatchesTxn(token);
+            final int cvOpenCount = ff.cvOpenCount.get();
             execute("DROP TABLE x");
             drainWalQueue();
             Assert.assertNull(engine.getTableTokenIfExists("x"));
+            // the purge opened the table's writer, which found nothing to roll back
+            Assert.assertEquals(cvOpenCount + 1, ff.cvOpenCount.get());
             capture.drain();
-            capture.assertLogged("closing table files [table=" + token.getDirName());
-            // the writer of the failed commit rolled _cv back, the one the purge opened found nothing to roll back
-            capture.assertOnlyOnce("rolling back column version of failed commit");
             capture.assertNotLogged("rolling back column version change to match _txn file");
             capture.assertNotLogged("could not roll back column version of failed commit");
         });
@@ -158,11 +161,10 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             final TableToken token = createTableWithPendingCommit();
             ff.isCvLengthFailureAfterFault = true;
+            // the table reports the commit's failure: the rollback's failure stayed inside the writer's close
             failPendingCommit(ff, TXN_FILE_NAME, Fault.ALLOCATE, "No space left");
-            capture.drain();
-            capture.assertLogged("rolling back column version of failed commit");
-            capture.assertLogged("could not roll back column version of failed commit");
-            capture.assertLogged("injected fstat failure");
+            // the rollback read the length of _cv, which nothing else reads as the writer gives the table up
+            Assert.assertEquals(1, ff.cvLengthFailureCount.get());
             assertTableResumes(token, "");
         });
     }
@@ -189,31 +191,37 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
 
     @Test
     public void testWalWriterStopsWaitingForColumnVersionAheadOfTxn() throws Exception {
-        // A process that died between the _cv and _txn commits leaves _cv ahead and no writer to roll it back.
+        // A process that died between the _cv and _txn commits leaves _cv ahead and no writer to roll it back. A WAL
+        // writer waits for _txn to name the _cv version until its deadline, then does without the table's symbol
+        // tables.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             execute("CREATE TABLE x (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), ('b', 2, '2024-01-02T00:00:00.000000Z'::TIMESTAMP)");
+            execute("INSERT INTO x VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'::TIMESTAMP)");
             drainWalQueue();
             final TableToken token = engine.verifyTableName("x");
             engine.releaseAllWalWriters();
+            execute("INSERT INTO x VALUES ('b', 2, '2024-01-02T00:00:00.000000Z'::TIMESTAMP)");
+            // the WAL writer that sent 'b', which opened while the table knew 'a' only
             try (WalWriter openWalWriter = engine.getWalWriter(token)) {
+                Assert.assertEquals(1, openWalWriter.getSymbolCountWatermark(0));
+                drainWalQueue();
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 publishColumnVersionAheadOfTxn(token);
-                skipColumnVersionWaits();
-                // the open WAL writer rolls its segment with the symbol counts it has
+                // every wait for _txn to name the _cv version reaches its deadline at once
+                spinLockTimeout = 0;
+                // the open WAL writer rolls its segment with the symbol counts it has, not with the 'a' and 'b' of
+                // the table
                 assertReturns(token, openWalWriter::rollSegment);
-                Assert.assertEquals(2, openWalWriter.getSymbolCountWatermark(0));
+                Assert.assertEquals(1, openWalWriter.getSymbolCountWatermark(0));
+                // a new WAL writer writes every symbol in full
                 assertReturns(token, () -> {
                     try (WalWriter walWriter = engine.getWalWriter(token)) {
                         Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
                     }
                 });
             }
-            capture.drain();
-            capture.assertLogged("_cv stays ahead of _txn, keeping symbol watermarks");
-            capture.assertLogged("_cv stays ahead of _txn, writing symbols in full");
 
             // the commit wakes WAL apply, and its writer rolls _cv back as it opens the table
             assertReturns(token, () -> execute("INSERT INTO x VALUES ('c', 3, '2024-01-03T00:00:00.000000Z'::TIMESTAMP)"));
@@ -278,32 +286,6 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
         }
     }
 
-    private static AtomicInteger countColumnVersionWaits() {
-        final AtomicInteger count = new AtomicInteger();
-        final MicrosecondClock clock = testMicrosClock;
-        testMicrosClock = () -> {
-            if (isCalledFromColumnVersionWait()) {
-                count.incrementAndGet();
-            }
-            return clock.getTicks();
-        };
-        return count;
-    }
-
-    private static boolean isCalledFrom(Class<?> clazz, String methodName) {
-        return StackWalker.getInstance().walk(frames -> frames
-                .filter(f -> !f.getClassName().startsWith(ColumnVersionAheadOfTxnTest.class.getName())
-                        && !f.getClassName().startsWith(CairoTestConfiguration.class.getName()))
-                .findFirst()
-                .map(f -> clazz.getName().equals(f.getClassName()) && methodName.equals(f.getMethodName()))
-                .orElse(false));
-    }
-
-    // Whether a WAL writer reads the clock to check the deadline of its wait for _txn to name the _cv version
-    private static boolean isCalledFromColumnVersionWait() {
-        return isCalledFrom(WalWriter.class, "isColumnVersionWaitOver");
-    }
-
     // a commit that published _cv and stopped before its _txn commit, as a process that dies there leaves it
     private static void publishColumnVersionAheadOfTxn(TableToken token) {
         final long partitionTimestamp;
@@ -347,14 +329,6 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
         }
     }
 
-    // Moves time past the deadline of every wait for _txn to name the _cv version, as when it is not going to
-    private static void skipColumnVersionWaits() {
-        final MicrosecondClock clock = testMicrosClock;
-        testMicrosClock = () -> isCalledFromColumnVersionWait() || isCalledFrom(TableReader.class, "reloadColumnVersion")
-                ? Long.MAX_VALUE
-                : clock.getTicks();
-    }
-
     private void assertFailedApplyKeepsUnpublishedColumnVersion(Fault fault, String error) throws Exception {
         final ApplyFaultFacade ff = new ApplyFaultFacade();
         assertMemoryLeak(ff, () -> {
@@ -368,14 +342,16 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             capture.assertNotLogged("rolling back column version");
             capture.assertNotLogged("could not roll back column version of failed commit");
 
-            final AtomicInteger waitCount = countColumnVersionWaits();
+            // No reader or WAL writer waits for the failed commit's _txn. Given no time to wait, one that found _cv
+            // ahead of _txn would give up at once, as at its deadline: the reader would fail the query, and the WAL
+            // writer write every symbol in full.
+            spinLockTimeout = 0;
             engine.releaseAllReaders();
             assertRows(COMMITTED_ROWS);
             engine.releaseAllWalWriters();
             try (WalWriter walWriter = engine.getWalWriter(token)) {
                 Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
             }
-            Assert.assertEquals(0, waitCount.get());
             assertTableResumes(token, "");
         });
     }
@@ -386,14 +362,16 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             final TableToken token = createTableWithPendingCommit();
             failPendingCommit(ff, TXN_FILE_NAME, fault, error);
-            // the writer rolled _cv back as it gave the table up, before the table got suspended
+            // the writer rolled _cv back as it gave the table up: the suspended table opened no other writer
             assertColumnVersionMatchesTxn(token);
             capture.drain();
-            capture.assertOnlyOnce("rolling back column version of failed commit");
             capture.assertNotLogged("could not roll back column version of failed commit");
 
-            // no reader or WAL writer waits for the failed commit's _txn
-            final AtomicInteger waitCount = countColumnVersionWaits();
+            // No reader or WAL writer waits for the failed commit's _txn. Given no time to wait, one that found _cv
+            // ahead of _txn would give up at once, as at its deadline: the reader would fail the query, the WAL writer
+            // that opens write every symbol in full, and the one that rolls its segment report that it keeps its
+            // symbol counts.
+            spinLockTimeout = 0;
             engine.releaseAllReaders();
             assertRows(COMMITTED_ROWS);
             engine.releaseAllWalWriters();
@@ -404,7 +382,6 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
                 Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
             }
             execute(INSERT_SENT_ROW);
-            Assert.assertEquals(0, waitCount.get());
             capture.drain();
             capture.assertNotLogged("_cv stays ahead of _txn");
             assertTableResumes(token, SENT_ROW);
@@ -440,6 +417,10 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
                 }
                 final AtomicInteger watermark = new AtomicInteger(-1);
                 final AtomicReference<Throwable> walWriterError = new AtomicReference<>();
+                // The WAL writer finds _cv ahead of _txn each time it reads them while the commit is in flight. The
+                // second time, it has read them again rather than give up or keep what it read: it waits for the
+                // commit. A WAL writer that ends sooner lets the commit go on as well, for the assertions to fail.
+                final CountDownLatch walWriterWaits = new CountDownLatch(2);
                 final Thread walWriterThread = new Thread(() -> {
                     try {
                         if (openWalWriter != null) {
@@ -453,24 +434,14 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
                     } catch (Throwable th) {
                         walWriterError.set(th);
                     } finally {
+                        while (walWriterWaits.getCount() > 0) {
+                            walWriterWaits.countDown();
+                        }
                         Path.clearThreadLocals();
                     }
                 });
-                final CountDownLatch walWriterWaits = new CountDownLatch(1);
-                final CountDownLatch walWriterRelease = new CountDownLatch(1);
-                final AtomicBoolean isStallArmed = new AtomicBoolean(true);
-                final MicrosecondClock clock = testMicrosClock;
-                // Stalls the WAL writer on its first check of the wait deadline, which it reaches only after it found
-                // _cv ahead of _txn. Time does not pass for the check while it stalls.
-                testMicrosClock = () -> {
-                    final long ticks = clock.getTicks();
-                    if (Thread.currentThread() == walWriterThread && isCalledFromColumnVersionWait() && isStallArmed.compareAndSet(true, false)) {
-                        walWriterWaits.countDown();
-                        awaitLatch(walWriterRelease);
-                    }
-                    return ticks;
-                };
-                // The commit has published _cv and is about to grow _txn: the WAL writer reads the table then
+                // The commit has published _cv and is about to grow _txn: the WAL writer reads the table then, and
+                // the commit goes on once the WAL writer waits for it
                 final AtomicReference<String> versionsInFlight = new AtomicReference<>();
                 ff.pause = () -> {
                     versionsInFlight.set("txn=" + readTxnColumnVersion(token) + ", cv=" + readColumnVersionFileVersion(token));
@@ -478,14 +449,23 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
                     awaitLatch(walWriterWaits);
                 };
                 ff.arm(TXN_FILE_NAME, Fault.PAUSE);
+                // the deadline of the wait lies past the time the commit takes to finish on a slow machine
+                spinLockTimeout = TimeUnit.MINUTES.toMillis(1);
+                ColumnVersionReader.setAheadOfTxnListener(() -> {
+                    if (Thread.currentThread() == walWriterThread) {
+                        walWriterWaits.countDown();
+                    }
+                });
                 try {
                     drainWalQueue();
                 } finally {
-                    walWriterRelease.countDown();
-                    if (walWriterThread.getState() != Thread.State.NEW) {
-                        walWriterThread.join();
+                    try {
+                        if (walWriterThread.getState() != Thread.State.NEW) {
+                            walWriterThread.join();
+                        }
+                    } finally {
+                        ColumnVersionReader.setAheadOfTxnListener(null);
                     }
-                    testMicrosClock = clock;
                 }
                 rethrow(walWriterError);
                 Assert.assertEquals(1, ff.faultCount.get());
@@ -506,7 +486,7 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
 
     // One WAL transaction that merges a row into each of 200 day partitions written before column c, which gives
     // them column tops in _cv, and adds 400 partitions to the table. Its commit writes _cv up to byte 6,584 and _txn
-    // up to byte 32,640, past the mappings that ApplyFaultFacade has their writers grow in 4 KB pages.
+    // up to byte 32,640, past the mappings that their writers grow in the 4 KB pages of SmallPageFacade.
     private TableToken createTableWithPendingCommit() throws SqlException {
         execute("CREATE TABLE x (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("INSERT INTO x (s, v, ts) SELECT 'a', x::INT, dateadd('d', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) FROM long_sequence(200)");
@@ -536,17 +516,13 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     }
 
     // Faults the first growth of _txn or _cv of table x while armed: allocate() or mremap() fails, or, for PAUSE,
-    // mremap() runs the test's code first, inside the commit.
-    //
-    // The pending commit of createTableWithPendingCommit() outgrows the mappings of _cv and _txn only when their
-    // writers map 4 KB pages, as on Linux x86-64. The 16 KB page of macOS arm64 holds the commit's _cv, and the 64 KB
-    // allocation granularity that Windows maps in holds its _txn too: there the commit would grow neither file. As
-    // TxnExtendFailingFacade does for _txn, this facade makes every platform behave as Linux. The _txn and _cv writers
-    // map their files in 4 KB pages, and while the allocate() fault is armed, the armed file reads as empty, so that
-    // its growth allocates disk space even when the platform created the file a page long.
-    private static final class ApplyFaultFacade extends TestFilesFacadeImpl {
-        private static final long WRITER_PAGE_SIZE = 4 * 1024;
+    // mremap() runs the test's code first, inside the commit. While the allocate() fault is armed, the armed file
+    // reads as empty, so that its growth allocates disk space even when the platform created the file a page long.
+    private static final class ApplyFaultFacade extends SmallPageFacade {
         private final Set<Long> cvFds = ConcurrentHashMap.newKeySet();
+        private final AtomicInteger cvLengthFailureCount = new AtomicInteger();
+        // read-write opens of _cv: a table writer opens it once, as it opens the table
+        private final AtomicInteger cvOpenCount = new AtomicInteger();
         private final AtomicInteger faultCount = new AtomicInteger();
         private final Set<Long> txnFds = ConcurrentHashMap.newKeySet();
         private volatile Fault fault = Fault.NONE;
@@ -572,15 +548,10 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getPageSize() {
-            final long pageSize = super.getPageSize();
-            return pageSize > WRITER_PAGE_SIZE && isTxnOrCvWriterCalling() ? WRITER_PAGE_SIZE : pageSize;
-        }
-
-        @Override
         public long length(long fd) {
             if (isCvLengthFailureArmed && cvFds.contains(fd)) {
                 isCvLengthFailureArmed = false;
+                cvLengthFailureCount.incrementAndGet();
                 throw CairoException.critical(5).put("injected fstat failure [fd=").put(fd).put(']');
             }
             // a file at least as long as its grown mapping skips allocate()
@@ -606,6 +577,7 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
                     txnFds.add(fd);
                 } else if (Utf8s.endsWithAscii(name, Files.SEPARATOR + COLUMN_VERSION_FILE_NAME)) {
                     cvFds.add(fd);
+                    cvOpenCount.incrementAndGet();
                 }
             }
             return fd;
@@ -614,16 +586,6 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
         void arm(String fileName, Fault fault) {
             this.faultFileName = fileName;
             this.fault = fault;
-        }
-
-        // Whether the _txn or _cv writer asks for the page size, which each does only to open its file. The other
-        // callers keep the page size of the platform: the configuration hands it to memory that maps pages at
-        // offsets of it.
-        private static boolean isTxnOrCvWriterCalling() {
-            return StackWalker.getInstance().walk(frames -> frames.anyMatch(frame -> {
-                final String className = frame.getClassName();
-                return TxWriter.class.getName().equals(className) || ColumnVersionWriter.class.getName().equals(className);
-            }));
         }
 
         private boolean isArmed(long fd, Fault kind) {
@@ -638,6 +600,22 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             faultCount.incrementAndGet();
             isCvLengthFailureArmed = isCvLengthFailureAfterFault;
             return true;
+        }
+    }
+
+    // A platform with 4 KB pages, as Linux x86-64. The pending commit of createTableWithPendingCommit() outgrows the
+    // mappings of _cv and _txn only where their writers map 4 KB pages: the 16 KB page of macOS arm64 holds the
+    // commit's _cv, and the 64 KB allocation granularity that Windows maps in holds its _txn too. The page sizes the
+    // mappings that start at the head of a file, as those of _txn and _cv do, which every platform maps in any size;
+    // memory that maps pages at offsets into a file takes their size from the configuration, which keeps the size of
+    // the platform. Every test runs on 4 KB pages from its setup on, so that a mapping that outlives the test, as that
+    // of the table name registry, keeps its size across it.
+    private static class SmallPageFacade extends TestFilesFacadeImpl {
+        private static final long PAGE_SIZE = 4 * 1024;
+
+        @Override
+        public long getPageSize() {
+            return Math.min(super.getPageSize(), PAGE_SIZE);
         }
     }
 }

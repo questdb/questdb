@@ -25,59 +25,45 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxReader;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.Log;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.crash.LegacyTruncateTodo.SymbolMapState;
 import io.questdb.test.std.TestFilesFacadeImpl;
-import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /**
- * A non-WAL TRUNCATE arms a {@code _todo_} entry before it removes rows, and clears it once it has published the
- * empty {@code _txn}. When the TRUNCATE stops in between, on an I/O error or a process kill, the next writer open
- * completes it: the table must end up empty, with the symbol maps the TRUNCATE asked for, and take new rows. A
- * TRUNCATE that stops before it has armed its entry must leave the table as it was.
+ * A non-WAL TRUNCATE publishes the empty {@code _txn} before it empties anything. When it stops on an I/O error or a
+ * process kill, the table is either as it was or empty, with the symbol maps the TRUNCATE asked for, and takes new rows.
+ * A TRUNCATE of an earlier build armed a {@code _todo_} entry before it removed rows: the writer open that finds one
+ * still completes that TRUNCATE.
  */
-public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
+public class TruncateRepairTest extends AbstractCrashConsistencyTest {
+    // the rows createNonPartitioned() writes
+    private static final String NONE_COMMITTED_ROWS = """
+            s\tsi\tsp\tv\tstr\tx\tarr\ty
+            a\tk1\tp1\tv1\ts1\t101\t[1.0]\tnull
+            b\tk2\tp2\tv2\ts2\t102\t[2.0]\tnull
+            c\tk3\tp3\tv3\ts3\t103\t[3.0]\t30
+            """;
     private static final String NONE_DDL = """
             CREATE TABLE %s (
                 s SYMBOL,
@@ -93,13 +79,7 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
             a\tk1\tp1\tv5\ts5\t5\t[5.0]\t50
             z\tk9\tp9\tv6\ts6\t6\t[6.0]\t60
             """;
-    // the rows of createNonPartitioned(): x was rewritten by UPDATE, y was added after the first two rows
-    private static final String NONE_EXPECTED_BEFORE_TRUNCATE = """
-            s\tsi\tsp\tv\tstr\tx\tarr\ty
-            a\tk1\tp1\tv1\ts1\t101\t[1.0]\tnull
-            b\tk2\tp2\tv2\ts2\t102\t[2.0]\tnull
-            c\tk3\tp3\tv3\ts3\t103\t[3.0]\t30
-            """;
+    private static final String NONE_HEADER = "s\tsi\tsp\tv\tstr\tx\tarr\ty\n";
     private static final String NONE_INSERT_AFTER_REPAIR = """
             INSERT INTO %s VALUES
                 ('a', 'k1', 'p1', 'v5', 's5', 5, ARRAY[5.0], 50),
@@ -110,6 +90,14 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
                 ('b', 'k2', 'p2', 'v2', 's2', 2, ARRAY[2.0])""";
     private static final String NONE_SETUP_INSERT_2 = """
             INSERT INTO %s VALUES ('c', 'k3', 'p3', 'v3', 's3', 3, ARRAY[3.0], 30)""";
+    // the rows createPartitioned() writes
+    private static final String PARTITIONED_COMMITTED_ROWS = """
+            ts\ts\tsi\tsp\tv\tstr\tx\tarr\ty
+            2024-01-01T00:00:00.000000Z\ta\tk1\tp1\tv1\ts1\t101\t[1.0]\tnull
+            2024-01-02T00:00:00.000000Z\tb\tk2\tp2\tv2\ts2\t2\t[2.0]\tnull
+            2024-01-02T01:00:00.000000Z\tc\tk1\tp3\tv3\ts3\t3\t[3.0]\t30
+            2024-01-03T00:00:00.000000Z\ta\tk3\tp1\tv4\ts4\t4\t[4.0]\t40
+            """;
     private static final String PARTITIONED_DDL = """
             CREATE TABLE %s (
                 ts TIMESTAMP,
@@ -126,14 +114,7 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
             2024-01-01T00:00:00.000000Z\ta\tk1\tp1\tv5\ts5\t5\t[5.0]\t50
             2024-01-02T00:00:00.000000Z\tz\tk9\tp9\tv6\ts6\t6\t[6.0]\t60
             """;
-    // the rows of createPartitioned(): UPDATE rewrote x of the 2024-01-01 row only
-    private static final String PARTITIONED_EXPECTED_BEFORE_TRUNCATE = """
-            ts\ts\tsi\tsp\tv\tstr\tx\tarr\ty
-            2024-01-01T00:00:00.000000Z\ta\tk1\tp1\tv1\ts1\t101\t[1.0]\tnull
-            2024-01-02T00:00:00.000000Z\tb\tk2\tp2\tv2\ts2\t2\t[2.0]\tnull
-            2024-01-02T01:00:00.000000Z\tc\tk1\tp3\tv3\ts3\t3\t[3.0]\t30
-            2024-01-03T00:00:00.000000Z\ta\tk3\tp1\tv4\ts4\t4\t[4.0]\t40
-            """;
+    private static final String PARTITIONED_HEADER = "ts\ts\tsi\tsp\tv\tstr\tx\tarr\ty\n";
     // 2024-01-01 was converted to parquet and had x rewritten by UPDATE; y was added while 2024-01-02 held rows
     private static final String PARTITIONED_INSERT_AFTER_REPAIR = """
             INSERT INTO %s VALUES
@@ -147,146 +128,11 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
             INSERT INTO %s VALUES
                 ('2024-01-02T01:00:00.000000Z', 'c', 'k1', 'p3', 'v3', 's3', 3, ARRAY[3.0], 30),
                 ('2024-01-03T00:00:00.000000Z', 'a', 'k3', 'p1', 'v4', 's4', 4, ARRAY[4.0], 40)""";
-    // the writer open refuses to complete an interrupted TRUNCATE of the non-partitioned table t while t is read
-    private static final String REPAIR_REFUSED = "could not complete interrupted TRUNCATE,"
-            + " there is an active query against 't' or a checkpoint is in progress. Try again.";
-    // the rows of createSymbolFreeTable() and the row x = 4 that the tests insert after them
-    private static final String SYMBOL_FREE_EXPECTED_AFTER_INSERT = """
-            ts\tx\ty
-            2024-01-01T00:00:00.000000Z\t1\tnull
-            2024-01-02T00:00:00.000000Z\t2\tnull
-            2024-01-02T01:00:00.000000Z\t3\t30
-            2024-01-03T00:00:00.000000Z\t4\t40
-            """;
-    // the rows of createSymbolFreeTable()
-    private static final String SYMBOL_FREE_EXPECTED_BEFORE_TRUNCATE = """
-            ts\tx\ty
-            2024-01-01T00:00:00.000000Z\t1\tnull
-            2024-01-02T00:00:00.000000Z\t2\tnull
-            2024-01-02T01:00:00.000000Z\t3\t30
-            """;
-    // Layout of a _todo_ entry (TableWriter.truncate0()) and its codes (TableUtils.TODO_*)
-    private static final long TODO_CODE_OFFSET = 40;
-    private static final long TODO_COUNT_OFFSET = 32;
-    private static final long TODO_RESTORE_META = 2;
-    private static final long TODO_TRUNCATE = 1;
-    private static final long TODO_TRUNCATE_KEEP_SYMBOL_MAPS = 3;
-
-    /**
-     * Arms the {@code _todo_} entry of a TRUNCATE of a non-WAL table on its live {@code _txn} txn, as a TRUNCATE that
-     * stopped after it armed the entry leaves it: the next writer open completes the TRUNCATE. Closes the idle writer
-     * of the pool first, which keeps {@code _todo_} mapped.
-     */
-    public static void armInterruptedTruncate(CairoEngine engine, String table, boolean isKeepSymbolMaps) {
-        engine.releaseAllWriters();
-        final TableToken token = engine.verifyTableName(table);
-        final long txn;
-        try (TableReader reader = engine.getReader(token)) {
-            txn = reader.getTxn();
-        }
-        final CairoConfiguration configuration = engine.getConfiguration();
-        try (
-                MemoryCMARW mem = Vm.getCMARWInstance();
-                Path path = new Path().of(configuration.getDbRoot()).concat(token).concat(TableUtils.TODO_FILE_NAME)
-        ) {
-            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
-            mem.putLong(0, txn);
-            mem.putLong(24, txn);
-            mem.putLong(32, 1);
-            mem.putLong(40, isKeepSymbolMaps ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE);
-            mem.jumpTo(48);
-        }
-    }
-
-    /**
-     * The count of the {@code _todo_} entry of a table, as the page cache holds it: 1 while a TRUNCATE is armed in the
-     * entry, 0 once a writer has cleared it.
-     */
-    public static long readTodoCount(CairoEngine engine, String table) {
-        return readTodoLong(engine, table, TODO_COUNT_OFFSET);
-    }
 
     @Test
-    public void testCheckpointStartedDuringRepairCopiesRepairedTable() throws Exception {
-        // A checkpoint that starts while the writer open completes the TRUNCATE of a non-partitioned table waits for
-        // the table, then takes it as the repair left it: empty, at the next txn. The repair leaves default/, which the
-        // checkpoint holds, in place, and the purge job never removes the only partition of a non-partitioned table.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t SELECT x FROM long_sequence(10)");
-            final TableToken token = engine.verifyTableName("t");
-            final long txn = readTxn("t", PartitionBy.NONE);
-            armInterruptedTruncate(engine, "t", false);
-            final java.nio.file.Path marker = java.nio.file.Path.of(tableDir("t"), "default", "marker");
-            java.nio.file.Files.writeString(marker, "m");
-
-            final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(
-                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
-            );
-            final AtomicReference<Throwable> checkpointError = new AtomicReference<>();
-            final Thread checkpoint = new Thread(() -> {
-                try {
-                    engine.checkpointCreate(breaker, false);
-                } catch (Throwable th) {
-                    checkpointError.set(th);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            });
-            TableWriter.setTruncateRepairLockedBarrier(() -> {
-                checkpoint.start();
-                // the checkpoint consults its breaker while it waits for a locked table
-                while (breaker.getCheckCount() == 0 && checkpoint.isAlive()) {
-                    Os.pause();
-                }
-            });
-            try {
-                getWriter("t").close();
-            } finally {
-                TableWriter.setTruncateRepairLockedBarrier(null);
-                // returns at once when the barrier did not start the checkpoint
-                checkpoint.join();
-            }
-            try {
-                if (checkpointError.get() != null) {
-                    throw new AssertionError("CHECKPOINT CREATE failed", checkpointError.get());
-                }
-                try (
-                        TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade());
-                        Path path = new Path().of(configuration.getCheckpointRoot())
-                                .concat(configuration.getDbDirectory())
-                                .concat(token)
-                                .concat(TableUtils.TXN_FILE_NAME)
-                ) {
-                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
-                    TableUtils.safeReadTxn(
-                            txReader,
-                            configuration.getMillisecondClock(),
-                            configuration.getSpinLockTimeout()
-                    );
-                    Assert.assertEquals("txn of the checkpoint", txn + 1, txReader.getTxn());
-                    Assert.assertEquals("rows of the checkpoint", 0, txReader.getRowCount());
-                }
-                Assert.assertTrue("default/ while the checkpoint holds it", java.nio.file.Files.exists(marker));
-            } finally {
-                execute("CHECKPOINT RELEASE");
-            }
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
-                purgeJob.drain(0);
-            }
-            Assert.assertTrue("default/ after the purge job", java.nio.file.Files.exists(marker));
-            execute("INSERT INTO t VALUES (11)");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n11\n");
-        });
-    }
-
-    @Test
-    public void testFailedTruncateIsCompletedByNextWriterOpen() throws Exception {
-        // TRUNCATE stops on an I/O error in truncateColumns(), after it armed _todo_. The next writer open must
-        // complete it, whatever the number of commits before it.
+    public void testFailedTruncateLeavesEmptyTable() throws Exception {
+        // TRUNCATE stops on an I/O error in truncateColumns(), which runs once it has published the empty _txn: the
+        // table is empty before any writer opens it again, whatever the number of commits before it.
         final FailingTruncateFacade ff = new FailingTruncateFacade();
         assertMemoryLeak(ff, () -> {
             for (int keep = 0; keep < 2; keep++) {
@@ -305,12 +151,19 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
                         execute(truncateSql(table, isKeepSymbolMaps));
                         Assert.fail("TRUNCATE must fail [table=" + table + ']');
                     } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Data has been persisted, but we could not perform housekeeping");
                         TestUtils.assertContains(e.getFlyweightMessage(), "Cannot truncate fd=");
                     } finally {
                         ff.isArmed = false;
                     }
                     Assert.assertTrue("the failure was not injected", ff.isFired);
                     ff.isFired = false;
+                    assertQuery("SELECT * FROM " + table)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("s\tsi\tsp\tv\tstr\tx\tarr\ty\n");
+                    // KEEP SYMBOL MAPS keeps the three values of each symbol column
+                    assertSymbolCounts(table, isKeepSymbolMaps ? 3 : 0);
                     // the writer closes, as on a restart
                     engine.releaseAllWriters();
 
@@ -343,274 +196,23 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testFailedNonPartitionedTruncateWaitsForQuery() throws Exception {
-        // TRUNCATE of a non-partitioned table stops on an I/O error after it armed _todo_ and before it removed a row.
-        // A query reads the rows, 20 pages of them, while the next write arrives: the write waits for the query, and
-        // the query reads every row as it was.
-        final FailingTruncateFacade ff = new FailingTruncateFacade();
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t SELECT x FROM long_sequence(10_000)");
-            failTruncate(ff, "t");
-            try (
-                    RecordCursorFactory factory = select("SELECT x FROM t");
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                final Record record = cursor.getRecord();
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(1, record.getLong(0));
-                assertRepairRefused("INSERT INTO t VALUES (-1), (-2), (-3)");
-                Assert.assertEquals("count of the _todo_ entry", 1, readTodoLong("t", TODO_COUNT_OFFSET));
-                long rows = 1;
-                while (cursor.hasNext()) {
-                    Assert.assertEquals(++rows, record.getLong(0));
-                }
-                Assert.assertEquals(10_000, rows);
-            }
-            execute("INSERT INTO t VALUES (-1), (-2), (-3)");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n-1\n-2\n-3\n");
-        });
-    }
-
-    @Test
-    public void testKeepSymbolMapsKilledBeforeTodoCodeAfterTruncate() throws Exception {
-        // A completed TRUNCATE leaves its code, TODO_TRUNCATE, in _todo_ for as long as its writer stays open. A
-        // TRUNCATE ... KEEP SYMBOL MAPS through that writer, killed before it stores its own code, must leave the
-        // table as it was: a repair with the code of the plain TRUNCATE would empty the symbol maps too.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            final String table = "t";
-            createNonPartitioned(table);
-            execute(truncateSql(table, false));
-            execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
-            engine.releaseAllReaders();
-            final long txnBefore = readTxn(table, PartitionBy.NONE);
-            Assert.assertEquals("code in _todo_", TODO_TRUNCATE, readTodoLong(table, TODO_CODE_OFFSET));
-
-            killTruncateBeforeTodoCode(table, truncateSql(table, true));
-
-            Assert.assertEquals(txnBefore, readTxn(table, PartitionBy.NONE));
-            try (TableWriter writer = getWriter(table)) {
-                Assert.assertEquals(2, writer.size());
-            }
-            assertSymbolCounts(table, 2);
-            assertNoneTable(table, NONE_EXPECTED_AFTER_INSERT);
-
-            // the table truncates and keeps its symbol maps
-            execute(truncateSql(table, true));
-            assertSymbolCounts(table, 2);
-            execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
-            assertSymbolCounts(table, 2);
-            assertNoneTable(table, NONE_EXPECTED_AFTER_INSERT);
-        });
-    }
-
-    @Test
-    public void testNonPartitionedKeepSymbolMapsKilledBeforeTodoCodeKeepsTable() throws Exception {
-        assertKeepSymbolMapsKilledBeforeTodoCodeKeepsTable(false);
-    }
-
-    @Test
-    public void testNonPartitionedKeepSymbolMapsRepairWaitsForQueryOfOldRows() throws Exception {
-        assertNonPartitionedRepairWaitsForQueryOfOldRows(true);
-    }
-
-    @Test
     public void testNonPartitionedKeepSymbolMapsSurvivesEveryKillPoint() throws Exception {
         assertTruncateSurvivesEveryKillPoint(false, true);
     }
 
     @Test
-    public void testNonPartitionedRepairByStatementReadingSameTable() throws Exception {
-        // INSERT AS SELECT and UPDATE read the table they write, and take its writer before their own reader. As the
-        // first write after an interrupted TRUNCATE of a non-partitioned table, with no other query open, each gets the
-        // reader lock, completes the TRUNCATE and reads the empty table.
-        assertMemoryLeak(() -> {
-            for (String statement : new String[]{"INSERT INTO t SELECT * FROM t", "UPDATE t SET x = 0 WHERE s = 'a'"}) {
-                createNonPartitioned("t");
-                armInterruptedTruncate(engine, "t", true);
-                execute(statement);
-                Assert.assertEquals(
-                        "count of the _todo_ entry after " + statement,
-                        0,
-                        readTodoLong("t", TODO_COUNT_OFFSET)
-                );
-                assertQuery("SELECT * FROM t")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("s\tsi\tsp\tv\tstr\tx\tarr\ty\n");
-                execute("DROP TABLE t");
-            }
-        });
+    public void testNonPartitionedRepairKeepSymbolMapsSurvivesEveryKillPoint() throws Exception {
+        assertRepairSurvivesEveryKillPoint(false, true);
     }
 
     @Test
-    public void testNonPartitionedRepairReleasesReaderLockOnFailure() throws Exception {
-        // The writer open that completes an interrupted TRUNCATE of a non-partitioned table fails while it holds the
-        // reader lock: at every durability op of the open, with sync commits, and at a failure right after it took the
-        // lock. The lock must be free afterwards, and the next write completes the TRUNCATE.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        runWithCrashFacade(() -> {
-            interruptNonPartitionedTruncate("count_ops", true);
-            final int opsBefore = crashFf.durabilityOpCount();
-            final TableWriter countWriter = getWriter("count_ops");
-            final int ops = crashFf.durabilityOpCount() - opsBefore;
-            countWriter.close();
-            execute("DROP TABLE count_ops");
-
-            int lockedOps = 0;
-            for (int k = 1; k <= ops; k++) {
-                final String table = "t_" + k;
-                interruptNonPartitionedTruncate(table, true);
-                crashFf.armCrashAt(crashFf.durabilityOpCount() + k);
-                try {
-                    getWriter(table).close();
-                } catch (CrashSimulationError | CairoException ignored) {
-                    // the crash, or the cleanup step that reports it
-                }
-                final CrashSimulationError crash = crashFf.getFiredCrash();
-                Assert.assertNotNull("durability op " + k + " was not reached", crash);
-                if (isThrownBy(crash, "repairTruncate")) {
-                    lockedOps++;
-                }
-                Assert.assertTrue("durability op " + k + " left the reader lock taken", isReaderLockFree(table));
-                execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
-                assertNoneTable(table, NONE_EXPECTED_AFTER_INSERT);
-                execute("DROP TABLE " + table);
-            }
-            Assert.assertTrue("no durability op of the repair runs under the reader lock", lockedOps > 0);
-
-            interruptNonPartitionedTruncate("t", true);
-            TableWriter.setTruncateRepairLockedBarrier(() -> {
-                throw CairoException.critical(0).put("simulated repair failure");
-            });
-            try {
-                getWriter("t").close();
-                Assert.fail("the barrier must fail the writer open");
-            } catch (CairoException e) {
-                TestUtils.assertEquals("simulated repair failure", e.getFlyweightMessage());
-            } finally {
-                TableWriter.setTruncateRepairLockedBarrier(null);
-            }
-            Assert.assertTrue("the failure left the reader lock taken", isReaderLockFree("t"));
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns(NONE_EXPECTED_BEFORE_TRUNCATE);
-            execute(String.format(NONE_INSERT_AFTER_REPAIR, "t"));
-            assertNoneTable("t", NONE_EXPECTED_AFTER_INSERT);
-            assertSymbolCounts("t", 4);
-        });
-    }
-
-    @Test
-    public void testNonPartitionedRepairWaitsForCheckpoint() throws Exception {
-        // CHECKPOINT CREATE pins the files of every table until CHECKPOINT RELEASE. The writer open that completes an
-        // interrupted TRUNCATE of a non-partitioned table would rewrite default/ in place, so it waits for the release.
-        // A partitioned table writes its new rows to new partition directories, so its repair goes ahead. Not covered:
-        // a CHECKPOINT CREATE that starts between the check for a checkpoint and the reader lock, which SQL TRUNCATE
-        // does not cover either.
-        final FailingTruncateFacade ff = new FailingTruncateFacade();
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t SELECT x FROM long_sequence(10_000)");
-            failTruncate(ff, "t");
-            createSymbolFreeTable("d", " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", false);
-            armInterruptedTruncate(engine, "d", true);
-
-            execute("CHECKPOINT CREATE");
-            try {
-                assertRepairRefused("INSERT INTO t VALUES (-1), (-2), (-3)");
-                Assert.assertEquals("count of the _todo_ entry", 1, readTodoLong("t", TODO_COUNT_OFFSET));
-                assertQuery("SELECT count() FROM t")
-                        .noLeakCheck()
-                        .expectSize()
-                        .noRandomAccess()
-                        .returns("count\n10000\n");
-                execute("INSERT INTO d VALUES ('2024-01-04T00:00:00.000000Z', 4, 40)");
-                assertSymbolFreeTable("d", true, "ts\tx\ty\n2024-01-04T00:00:00.000000Z\t4\t40\n");
-            } finally {
-                execute("CHECKPOINT RELEASE");
-            }
-            execute("INSERT INTO t VALUES (-1), (-2), (-3)");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n-1\n-2\n-3\n");
-        });
-    }
-
-    @Test
-    public void testNonPartitionedRepairWaitsForQueryOfOldRows() throws Exception {
-        assertNonPartitionedRepairWaitsForQueryOfOldRows(false);
-    }
-
-    @Test
-    public void testNonPartitionedRepairWaitsForQueryOnOtherThread() throws Exception {
-        // A query on another thread reads the rows of an interrupted TRUNCATE of a non-partitioned table: a write waits
-        // for it, and completes the TRUNCATE once the query is closed.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            interruptNonPartitionedTruncate("t", true);
-            final SOCountDownLatch isQueryOpen = new SOCountDownLatch(1);
-            final SOCountDownLatch isWriteDone = new SOCountDownLatch(1);
-            final AtomicReference<Throwable> queryError = new AtomicReference<>();
-            final Thread query = new Thread(() -> {
-                try (
-                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                        RecordCursorFactory factory = engine.select("SELECT * FROM t", context);
-                        RecordCursor cursor = factory.getCursor(context)
-                ) {
-                    isQueryOpen.countDown();
-                    isWriteDone.await();
-                    TestUtils.assertCursor(
-                            NONE_EXPECTED_BEFORE_TRUNCATE,
-                            cursor,
-                            factory.getMetadata(),
-                            true,
-                            new StringSink()
-                    );
-                } catch (Throwable th) {
-                    queryError.set(th);
-                } finally {
-                    isQueryOpen.countDown();
-                    Path.clearThreadLocals();
-                }
-            });
-            query.start();
-            try {
-                isQueryOpen.await();
-                assertRepairRefused(String.format(NONE_INSERT_AFTER_REPAIR, "t"));
-            } finally {
-                isWriteDone.countDown();
-                query.join();
-            }
-            if (queryError.get() != null) {
-                throw new AssertionError("the query failed", queryError.get());
-            }
-            execute(String.format(NONE_INSERT_AFTER_REPAIR, "t"));
-            assertNoneTable("t", NONE_EXPECTED_AFTER_INSERT);
-            assertSymbolCounts("t", 4);
-        });
+    public void testNonPartitionedRepairSurvivesEveryKillPoint() throws Exception {
+        assertRepairSurvivesEveryKillPoint(false, false);
     }
 
     @Test
     public void testNonPartitionedSurvivesEveryKillPoint() throws Exception {
         assertTruncateSurvivesEveryKillPoint(false, false);
-    }
-
-    @Test
-    public void testNonPartitionedTruncateKilledBeforeTodoCodeKeepsTable() throws Exception {
-        assertTruncateKilledBeforeTodoCodeKeepsTable(false);
-    }
-
-    @Test
-    public void testPartitionedKeepSymbolMapsKilledBeforeTodoCodeKeepsTable() throws Exception {
-        assertKeepSymbolMapsKilledBeforeTodoCodeKeepsTable(true);
     }
 
     @Test
@@ -624,189 +226,417 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testPartitionedTruncateKilledBeforeTodoCodeKeepsTable() throws Exception {
-        assertTruncateKilledBeforeTodoCodeKeepsTable(true);
-    }
-
-    @Test
-    public void testRefusedRepairSurvivesRestart() throws Exception {
-        // The reader lock and the writer pool live in the memory of one process: after a write refused by a query and
-        // a restart, the first write completes the TRUNCATE.
+    public void testRepairAtOffsetFilePageBoundary() throws Exception {
+        // A writer close cuts the offset file of a symbol map to whole pages. With as many symbols as fill its first
+        // page, the end offset of their chars is the last long of the file: the map holds them. An emptied map that
+        // _txn counts one symbol more for has its offset file end where that end offset would start: it holds none, and
+        // the repair does not read past the end of the file.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (1), (2), (3)");
-            armInterruptedTruncate(engine, "t", false);
-            try (
-                    RecordCursorFactory factory = select("SELECT x FROM t");
-                    RecordCursor ignored = factory.getCursor(sqlExecutionContext)
-            ) {
-                assertRepairRefused("INSERT INTO t VALUES (4)");
-            }
-            Assert.assertEquals("count of the _todo_ entry", 1, readTodoLong("t", TODO_COUNT_OFFSET));
+            // the end offset of the chars of this many symbols is the last long of the first page of the offset file
+            final int pageSymbolCount = (int) ((Files.PAGE_SIZE - SymbolMapWriter.HEADER_SIZE) / Long.BYTES) - 1;
 
+            createSymbolTable("t_intact", pageSymbolCount);
+            final long intactNameTxn = getSymbolTableNameTxn("t_intact", "s");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            engine.releaseInactive();
-            try (
-                    CairoEngine restarted = new CairoEngine(configuration);
-                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(restarted)
-            ) {
-                restarted.execute("INSERT INTO t VALUES (4)", context);
-                assertQuery("SELECT * FROM t")
-                        .withEngine(restarted)
-                        .withContext(context)
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("x\n4\n");
+            Assert.assertEquals(
+                    SymbolMapWriter.keyToOffset(pageSymbolCount) + Long.BYTES,
+                    offsetFileLength("t_intact", "s", intactNameTxn)
+            );
+            LegacyTruncateTodo.arm(engine, "t_intact", PartitionBy.NONE, SymbolMapState.INTACT);
+            execute("INSERT INTO t_intact VALUES ('s1', 1), ('new', 2)");
+            assertSymbolCount("t_intact", "s", pageSymbolCount + 1);
+            try (TableReader reader = getReader("t_intact")) {
+                final SymbolMapReader symbols = reader.getSymbolMapReader(0);
+                Assert.assertEquals(0, symbols.keyOf("s1"));
+                TestUtils.assertEquals("s" + pageSymbolCount, symbols.valueOf(pageSymbolCount - 1));
+                Assert.assertEquals(pageSymbolCount, symbols.keyOf("new"));
             }
-            engine.getTxnScoreboardPool().remove(engine.verifyTableName("t"));
-            assertQuery("SELECT * FROM t")
+
+            createSymbolTable("t_emptied", pageSymbolCount + 1);
+            final long emptiedNameTxn = getSymbolTableNameTxn("t_emptied", "s");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t_emptied", PartitionBy.NONE, SymbolMapState.EMPTIED_CLOSED);
+            Assert.assertEquals(
+                    SymbolMapWriter.keyToOffset(pageSymbolCount + 1),
+                    offsetFileLength("t_emptied", "s", emptiedNameTxn)
+            );
+            execute("INSERT INTO t_emptied VALUES ('s1', 1), ('new', 2)");
+            assertSymbolCount("t_emptied", "s", 2);
+            assertQuery("SELECT * FROM t_emptied")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("x\n4\n");
+                    .returns("""
+                            s\tx
+                            s1\t1
+                            new\t2
+                            """);
         });
     }
 
     @Test
-    public void testRepairAfterRefusedWriteOnOtherThread() throws Exception {
-        // A write on a thread of its own is refused while a query reads the table, and the thread ends. The refusal
-        // must leave the reader pool as it found it: once the query is closed, a write completes the TRUNCATE.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            interruptNonPartitionedTruncate("t", true);
-            try (
-                    RecordCursorFactory idleFactory = select("SELECT * FROM t");
-                    RecordCursorFactory factory = select("SELECT x FROM t")
-            ) {
-                RecordCursor idleCursor = idleFactory.getCursor(sqlExecutionContext);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    // the reader of the first query goes back to the pool idle, in front of the reader of the second
-                    idleCursor = Misc.free(idleCursor);
-                    final AtomicReference<Throwable> writeError = new AtomicReference<>();
-                    final Thread write = new Thread(() -> {
-                        try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
-                            engine.execute(String.format(NONE_INSERT_AFTER_REPAIR, "t"), context);
-                        } catch (Throwable th) {
-                            writeError.set(th);
-                        } finally {
-                            Path.clearThreadLocals();
+    public void testRepairFailsBeforeChangeWhenSymbolMapUnreadable() throws Exception {
+        // The repair reads every symbol map before it changes anything. A map it cannot read fails the writer open and
+        // leaves the table as the interrupted TRUNCATE ... KEEP SYMBOL MAPS did, rather than drop the symbols of a map
+        // it takes for emptied: the next open completes the repair, and keeps them.
+        final UnreadableSymbolMapFacade ff = new UnreadableSymbolMapFacade();
+        assertMemoryLeak(ff, () -> {
+            final String table = "t";
+            createPartitioned(table);
+            ff.offsetFile = offsetFilePath(table, "s", getSymbolTableNameTxn(table, "s"));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final long txnBefore = LegacyTruncateTodo.arm(engine, table, PartitionBy.DAY, SymbolMapState.INTACT);
+
+            for (SymbolMapFault fault : SymbolMapFault.values()) {
+                ff.fault = fault;
+                try {
+                    execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
+                    Assert.fail("the repair must fail [fault=" + fault + ']');
+                } catch (CairoException e) {
+                    switch (fault) {
+                        case OPEN -> {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                            TestUtils.assertContains(e.getFlyweightMessage(), ff.offsetFile);
                         }
-                    });
-                    write.start();
-                    write.join();
-                    Assert.assertTrue("the write must wait for the query", writeError.get() instanceof CairoException);
-                    TestUtils.assertEquals(REPAIR_REFUSED, ((CairoException) writeError.get()).getFlyweightMessage());
-                    sink.clear();
-                    TestUtils.assertCursor("x\n101\n102\n103\n", cursor, factory.getMetadata(), true, sink);
-                } finally {
-                    Misc.free(idleCursor);
+                        case LENGTH -> TestUtils.assertContains(e.getFlyweightMessage(), "Checking file size failed");
+                        case READ -> TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "could not read long [path=" + ff.offsetFile + ", fd="
+                        );
+                    }
                 }
+                Assert.assertNull("the fault was not injected [fault=" + fault + ']', ff.fault);
+                try (TableReader reader = getReader(table)) {
+                    Assert.assertEquals("the failed repair published _txn, fault " + fault, txnBefore, reader.getTxn());
+                }
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(PARTITIONED_COMMITTED_ROWS);
+                engine.releaseAllReaders();
             }
-            execute(String.format(NONE_INSERT_AFTER_REPAIR, "t"));
-            assertNoneTable("t", NONE_EXPECTED_AFTER_INSERT);
-            assertSymbolCounts("t", 4);
+
+            execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
+            assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
+            // KEEP SYMBOL MAPS kept the three values of each symbol column
+            assertSymbolCounts(table, 4);
         });
     }
 
     @Test
     public void testRepairKeepSymbolMapsSurvivesEveryKillPoint() throws Exception {
-        assertRepairSurvivesEveryKillPoint(true);
+        assertRepairSurvivesEveryKillPoint(true, true);
     }
 
     @Test
-    public void testRepairLocksQueriesOutAfterPublishing() throws Exception {
-        // The writer open that completes the TRUNCATE of a non-partitioned table holds the reader lock after it has
-        // published the empty table, up to its last step, the removal of default/: a query that starts then fails as
-        // a query of a locked table does, and a query after the open reads the empty table.
-        final DefaultRemovalHookFacade ff = new DefaultRemovalHookFacade();
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (1), (2), (3)");
-            armInterruptedTruncate(engine, "t", false);
-            final long txn = readTxn("t", PartitionBy.NONE);
-            final AtomicReference<Throwable> hookStack = new AtomicReference<>();
-            final AtomicLong txnAtHook = new AtomicLong();
-            final AtomicReference<Throwable> queryError = new AtomicReference<>();
-            ff.defaultDirSuffix = Files.SEPARATOR + engine.verifyTableName("t").getDirName()
-                    + Files.SEPARATOR + TableUtils.DEFAULT_PARTITION_NAME;
-            ff.hook = () -> {
-                hookStack.set(new Throwable());
-                txnAtHook.set(readTxn("t", PartitionBy.NONE));
-                queryError.set(queryOnOtherThread("SELECT * FROM t", "x\n"));
-            };
-            try {
-                getWriter("t").close();
-            } finally {
-                ff.hook = null;
+    public void testRepairKeepsEmptyStringSymbol() throws Exception {
+        // The empty string is a symbol, and the shortest one: a map of '' alone, or of '' and symbols of one char,
+        // holds the least chars a writer opening with its count accepts. The repair keeps their counts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, s2 SYMBOL, x LONG)");
+            execute("INSERT INTO t VALUES ('', '', 1), ('', 'a', 2), ('', 'b', 3)");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.NONE, SymbolMapState.INTACT);
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(0, writer.size());
             }
-            Assert.assertNotNull("the writer open did not remove default/", hookStack.get());
-            Assert.assertTrue("default/ is removed outside the repair", isThrownBy(hookStack.get(), "repairTruncate"));
-            Assert.assertEquals("txn of the table when the repair removes default/", txn + 1, txnAtHook.get());
-            Assert.assertTrue("the query must fail on the locked table", queryError.get() instanceof SqlException);
-            final SqlException e = (SqlException) queryError.get();
-            Assert.assertEquals(14, e.getPosition());
-            TestUtils.assertEquals("table is locked: t", e.getFlyweightMessage());
-            assertQuery("SELECT * FROM t")
+            assertSymbolCount("t", "s", 1);
+            assertSymbolCount("t", "s2", 3);
+
+            execute("INSERT INTO t VALUES ('', 'b', 4)");
+            assertSymbolCount("t", "s", 1);
+            assertSymbolCount("t", "s2", 3);
+            assertQuery("SELECT count() FROM t WHERE s = ''")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("x\n");
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT x FROM t WHERE s2 = 'b'")
+                    .noLeakCheck()
+                    .returns("x\n4\n");
         });
     }
 
     @Test
-    public void testRepairLocksQueriesOutUntilPublished() throws Exception {
-        // A query that starts while the writer open completes the TRUNCATE of a non-partitioned table must neither read
-        // the rows the repair removes nor map the files it rewrites: it fails as a query of a locked table does during
-        // SQL TRUNCATE, and a query after the open reads the empty table.
+    public void testRepairKeepsSymbolCountOfEachIntactMap() throws Exception {
+        // Each symbol map tells on its own whether it holds what _txn counts. Only s was emptied, a state that only a
+        // power loss during the TRUNCATE leaves: s starts over, si keeps its symbols and their keys.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (1), (2), (3)");
-            armInterruptedTruncate(engine, "t", false);
-            final AtomicInteger barrierCalls = new AtomicInteger();
-            final AtomicReference<Throwable> queryError = new AtomicReference<>();
-            TableWriter.setTruncateRepairLockedBarrier(() -> {
-                barrierCalls.incrementAndGet();
-                queryError.set(queryOnOtherThread("SELECT * FROM t", "x\n"));
-            });
-            try {
-                getWriter("t").close();
-            } finally {
-                TableWriter.setTruncateRepairLockedBarrier(null);
+            execute("CREATE TABLE t (s SYMBOL, si SYMBOL INDEX, x LONG)");
+            execute("INSERT INTO t VALUES ('a', 'k1', 1), ('b', 'k2', 2), ('c', 'k3', 3)");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.NONE, SymbolMapState.EMPTIED_KILLED, "s");
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(0, writer.size());
             }
-            Assert.assertEquals("barrier calls", 1, barrierCalls.get());
-            Assert.assertTrue("the query must fail on the locked table", queryError.get() instanceof SqlException);
-            final SqlException e = (SqlException) queryError.get();
-            Assert.assertEquals(14, e.getPosition());
-            TestUtils.assertEquals("table is locked: t", e.getFlyweightMessage());
+            assertSymbolCount("t", "s", 0);
+            assertSymbolCount("t", "si", 3);
+
+            execute("INSERT INTO t VALUES ('z', 'k9', 9), ('a', 'k1', 1)");
+            assertSymbolCount("t", "s", 2);
+            assertSymbolCount("t", "si", 4);
             assertQuery("SELECT * FROM t")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("x\n");
+                    .returns("""
+                            s\tsi\tx
+                            z\tk9\t9
+                            a\tk1\t1
+                            """);
+            assertQuery("SELECT s, x FROM t WHERE si = 'k1'")
+                    .noLeakCheck()
+                    .returns("s\tx\na\t1\n");
+            assertQuery("SELECT s, x FROM t WHERE si = 'k9'")
+                    .noLeakCheck()
+                    .returns("s\tx\nz\t9\n");
+            assertQuery("SELECT count() FROM t WHERE si = 'k2'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testRepairKeepsZeroCountOfNullOnlySymbolColumn() throws Exception {
+        // A SYMBOL column that holds only NULL has no symbols in its map, and neither has one added after the rows: the
+        // repair keeps their zero counts, and the count of the column beside them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sn SYMBOL, s SYMBOL, x LONG)");
+            execute("INSERT INTO t VALUES (NULL, 'a', 1), (NULL, 'b', 2), (NULL, 'c', 3)");
+            execute("ALTER TABLE t ADD COLUMN sa SYMBOL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.NONE, SymbolMapState.INTACT);
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(0, writer.size());
+            }
+            assertSymbolCount("t", "sn", 0);
+            assertSymbolCount("t", "s", 3);
+            assertSymbolCount("t", "sa", 0);
+
+            execute("INSERT INTO t VALUES ('q', 'd', 4, 'q')");
+            assertSymbolCount("t", "sn", 1);
+            assertSymbolCount("t", "s", 4);
+            assertSymbolCount("t", "sa", 1);
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sn\ts\tx\tsa\nq\td\t4\tq\n");
+        });
+    }
+
+    @Test
+    public void testRepairOfKeepSymbolMapsTruncateAttachesDetachedPartition() throws Exception {
+        // The workflow KEEP SYMBOL MAPS is for: a partition detached before the TRUNCATE attaches after it with its
+        // symbols, which the maps keep. An earlier build armed the same _todo_ entry for it as for a TRUNCATE without
+        // KEEP SYMBOL MAPS, and the writer open that completes the TRUNCATE keeps the maps it finds intact, whether
+        // new symbols arrive before the ATTACH or not. The same workflow with a TRUNCATE that ran to the end is the
+        // reference.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 2; i++) {
+                final boolean isInsertBeforeAttach = i == 1;
+                final String table = "t_" + i;
+                final String ref = "ref_" + i;
+                createTableWithDetachedPartition(table);
+                createTableWithDetachedPartition(ref);
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                LegacyTruncateTodo.arm(engine, table, PartitionBy.DAY, SymbolMapState.INTACT);
+                execute("TRUNCATE TABLE " + ref + " KEEP SYMBOL MAPS");
+                for (String name : new String[]{table, ref}) {
+                    makeDetachedPartitionAttachable(name, "2024-01-01");
+                    if (isInsertBeforeAttach) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-01-03T00:00:00.000000Z', 'x', 'k9', 'n9')");
+                    }
+                    execute("ALTER TABLE " + name + " ATTACH PARTITION LIST '2024-01-01'");
+                }
+
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(
+                                """
+                                        ts\ts\tsi\tsn
+                                        2024-01-01T00:00:00.000000Z\ta\tk1\t\u00e9
+                                        2024-01-01T01:00:00.000000Z\tb\tk2\t\u20ac
+                                        """
+                                        + (isInsertBeforeAttach ? "2024-01-03T00:00:00.000000Z\tx\tk9\tn9\n" : "")
+                        );
+                assertSqlCursors("SELECT * FROM " + ref, "SELECT * FROM " + table);
+                assertQuery("SELECT ts FROM " + table + " WHERE si = 'k1'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n");
+                assertQuery("SELECT ts FROM " + table + " WHERE si = 'k9'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n" + (isInsertBeforeAttach ? "2024-01-03T00:00:00.000000Z\n" : ""));
+                assertQuery("SELECT ts FROM " + table + " WHERE s = 'a'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n");
+                assertQuery("SELECT ts FROM " + table + " WHERE sn = '\u20ac'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n2024-01-01T01:00:00.000000Z\n");
+                for (String column : new String[]{"s", "si", "sn"}) {
+                    // a, b and c, and x with the INSERT; likewise in si and sn
+                    assertSymbolCount(table, column, isInsertBeforeAttach ? 4 : 3);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRepairOfKeepSymbolMapsTruncateOfTableConvertedToWal() throws Exception {
+        // A table converts to WAL with the entry of an interrupted TRUNCATE ... KEEP SYMBOL MAPS armed: the conversion
+        // needs only a reader, and keeps the _txn txn the entry is stamped with. The WAL writer resolves the symbols of
+        // its rows in the maps the TRUNCATE kept, before the writer open of the apply job completes the TRUNCATE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1),
+                        ('2024-01-01T01:00:00.000000Z', 'b', 2),
+                        ('2024-01-02T00:00:00.000000Z', 'c', 3)""");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.DAY, SymbolMapState.INTACT);
+            execute("ALTER TABLE t SET TYPE WAL");
+            // the restart converts the table
+            engine.releaseInactive();
+            engine.load();
+            Assert.assertTrue(engine.verifyTableName("t").isWal());
+
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-03T00:00:00.000000Z', 'a', 4),
+                        ('2024-01-03T01:00:00.000000Z', 'x', 5)""");
+            drainWalQueue();
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tx
+                            2024-01-03T00:00:00.000000Z\ta\t4
+                            2024-01-03T01:00:00.000000Z\tx\t5
+                            """);
+            assertQuery("SELECT x FROM t WHERE s = 'a'")
+                    .noLeakCheck()
+                    .returns("x\n4\n");
+            // a, b, c and x
+            assertSymbolCount("t", "s", 4);
+        });
+    }
+
+    @Test
+    public void testRepairOfLargeSymbolMaps() throws Exception {
+        // 10_000 symbols span pages of the offset file. The map emptied with its writer open keeps the size the empty
+        // map was given, and the closed one a single page: in both the offset file ends before the end offset of
+        // 10_000 symbols.
+        assertMemoryLeak(() -> {
+            for (SymbolMapState state : SymbolMapState.values()) {
+                final boolean isIntact = state == SymbolMapState.INTACT;
+                final String table = "t_" + state.ordinal();
+                createSymbolTable(table, 10_000);
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, state);
+                try (TableWriter writer = getWriter(table)) {
+                    Assert.assertEquals(state.name(), 0, writer.size());
+                }
+                assertSymbolCount(table, "s", isIntact ? 10_000 : 0);
+
+                execute("INSERT INTO " + table + " VALUES ('s5', 5), ('new', 10_001)");
+                assertSymbolCount(table, "s", isIntact ? 10_001 : 2);
+                try (TableReader reader = getReader(table)) {
+                    final SymbolMapReader symbols = reader.getSymbolMapReader(0);
+                    Assert.assertEquals(state.name(), isIntact ? 4 : 0, symbols.keyOf("s5"));
+                    Assert.assertEquals(state.name(), isIntact ? 10_000 : 1, symbols.keyOf("new"));
+                    if (isIntact) {
+                        TestUtils.assertEquals("s10000", symbols.valueOf(9_999));
+                    }
+                }
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s\tx
+                                s5\t5
+                                new\t10001
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testRepairReadsSymbolMapsUnderTheirNameTxn() throws Exception {
+        // The maps of a renamed column and of one whose capacity changed live under a name txn, and a dropped SYMBOL
+        // column leaves no _txn count: the repair reads each map that the writer then opens, with its count. The
+        // columns hold 1, 2 and 3 symbols, so that a count read for the wrong column shows.
+        assertMemoryLeak(() -> {
+            for (SymbolMapState state : new SymbolMapState[]{SymbolMapState.INTACT, SymbolMapState.EMPTIED_KILLED}) {
+                final boolean isIntact = state == SymbolMapState.INTACT;
+                final String table = "t_" + state.ordinal();
+                execute("CREATE TABLE " + table + " (s0 SYMBOL, s1 SYMBOL, s2 SYMBOL INDEX, x LONG)");
+                execute("""
+                        INSERT INTO %s VALUES
+                            ('a', 'b1', 'c1', 1),
+                            ('a', 'b2', 'c2', 2),
+                            ('a', 'b1', 'c3', 3)""".formatted(table));
+                execute("ALTER TABLE " + table + " DROP COLUMN s0");
+                execute("ALTER TABLE " + table + " RENAME COLUMN s1 TO s1r");
+                execute("ALTER TABLE " + table + " ALTER COLUMN s2 SYMBOL CAPACITY 512");
+                Assert.assertNotEquals(TableUtils.COLUMN_NAME_TXN_NONE, getSymbolTableNameTxn(table, "s1r"));
+                Assert.assertNotEquals(TableUtils.COLUMN_NAME_TXN_NONE, getSymbolTableNameTxn(table, "s2"));
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, state);
+                try (TableWriter writer = getWriter(table)) {
+                    Assert.assertEquals(state.name(), 0, writer.size());
+                }
+                assertSymbolCount(table, "s1r", isIntact ? 2 : 0);
+                assertSymbolCount(table, "s2", isIntact ? 3 : 0);
+
+                execute("INSERT INTO " + table + " VALUES ('b2', 'c9', 9)");
+                assertSymbolCount(table, "s1r", isIntact ? 2 : 1);
+                assertSymbolCount(table, "s2", isIntact ? 4 : 1);
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("s1r\ts2\tx\nb2\tc9\t9\n");
+                assertQuery("SELECT s1r, x FROM " + table + " WHERE s2 = 'c9'")
+                        .noLeakCheck()
+                        .returns("s1r\tx\nb2\t9\n");
+            }
         });
     }
 
     @Test
     public void testRepairSurvivesEveryKillPoint() throws Exception {
-        assertRepairSurvivesEveryKillPoint(false);
+        assertRepairSurvivesEveryKillPoint(true, false);
     }
 
     @Test
     public void testRepairWaitsForReaderOfOldRows() throws Exception {
-        // A query reads the rows of an interrupted TRUNCATE ... KEEP SYMBOL MAPS while the writer open repairs the
-        // table and new rows arrive: the repair leaves the partition versions the query holds to the purge job, and
-        // the new symbols leave the symbol keys of the old rows alone. A TRUNCATE without KEEP SYMBOL MAPS empties
-        // the symbol maps before it arms _todo_, so a query of its interrupted state cannot resolve the old keys
-        // even before the repair.
+        // A query reads the rows of a TRUNCATE ... KEEP SYMBOL MAPS that an earlier build interrupted while the writer
+        // open repairs the table and new rows arrive: the repair leaves the partition versions the query holds to the
+        // purge job, and the new symbols leave the symbol keys of the old rows alone. That build emptied the symbol
+        // maps of a TRUNCATE without KEEP SYMBOL MAPS before it armed _todo_, so a query of its interrupted state
+        // could not resolve the old keys even before the repair. A non-partitioned table is covered by
+        // TruncateRepairOpenQueryTest.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
         runWithCrashFacade(() -> {
             final String table = "t";
-            createPartitioned(table);
-            engine.releaseAllReaders();
-            // KEEP SYMBOL MAPS leaves the symbol maps alone, so every kill point of the TRUNCATE comes after _todo_
-            crashFf.armKillAt(crashFf.killPointCount() + 1, tableDir(table));
-            execute(truncateSql(table, true));
-            Assert.assertTrue(crashFf.isKillImageTaken());
-            restoreKillImage(table);
+            armInterruptedTruncate(table, true, true);
             final long partitionDirs = countPartitionDirs(table);
             Assert.assertTrue(partitionDirs >= 3);
 
@@ -820,13 +650,7 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
                     execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
                     sink.clear();
                     TestUtils.assertCursor(
-                            """
-                                    ts\ts\tsi\tsp\tv\tstr\tx\tarr\ty
-                                    2024-01-01T00:00:00.000000Z\ta\tk1\tp1\tv1\ts1\t101\t[1.0]\tnull
-                                    2024-01-02T00:00:00.000000Z\tb\tk2\tp2\tv2\ts2\t2\t[2.0]\tnull
-                                    2024-01-02T01:00:00.000000Z\tc\tk1\tp3\tv3\ts3\t3\t[3.0]\t30
-                                    2024-01-03T00:00:00.000000Z\ta\tk3\tp1\tv4\ts4\t4\t[4.0]\t40
-                                    """,
+                            PARTITIONED_COMMITTED_ROWS,
                             cursor,
                             factory.getMetadata(),
                             true,
@@ -844,40 +668,6 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testRetriedWriteAfterRefusalKeepsWriterPooled() throws Exception {
-        // A write refused while a query reads the table, then a write that completes the TRUNCATE in the same writer
-        // pool entry: the pool keeps that writer as it keeps any other, also when all writers are released while it is
-        // held, and the next write gets the table.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (1), (2), (3)");
-            armInterruptedTruncate(engine, "t", false);
-            try (
-                    RecordCursorFactory factory = select("SELECT x FROM t");
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                assertRepairRefused("INSERT INTO t VALUES (4)");
-                sink.clear();
-                TestUtils.assertCursor("x\n1\n2\n3\n", cursor, factory.getMetadata(), true, sink);
-            }
-            try (TableWriter writer = getWriter("t")) {
-                Assert.assertEquals(0, writer.size());
-                engine.releaseAllWriters();
-                final TableWriter.Row row = writer.newRow();
-                row.putLong(0, 5);
-                row.append();
-                writer.commit();
-            }
-            execute("INSERT INTO t VALUES (6)");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n5\n6\n");
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-        });
-    }
-
-    @Test
     public void testTableLeftByOlderVersionOpens() throws Exception {
         // An older version stamped a TRUNCATE _todo_ entry with a counter of its own, and failed every writer open
         // once that counter matched the _txn txn. Such a table opens: the writer completes the TRUNCATE.
@@ -889,20 +679,7 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
             execute(String.format(NONE_SETUP_INSERT_2, table));
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-
-            final long txn = readTxn(table, PartitionBy.NONE);
-            final TableToken token = engine.verifyTableName(table);
-            try (
-                    MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root).concat(token).concat(TableUtils.TODO_FILE_NAME)
-            ) {
-                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
-                mem.putLong(0, txn);
-                mem.putLong(24, txn);
-                mem.putLong(32, 1);
-                mem.putLong(40, 1); // TableUtils.TODO_TRUNCATE
-                mem.jumpTo(48);
-            }
+            LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, SymbolMapState.EMPTIED_KILLED);
 
             execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
             assertSymbolCounts(table, 2);
@@ -910,115 +687,27 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    @Test
-    public void testTruncateFailsCleanlyWhenOlderTodoFileCannotGrow() throws Exception {
-        // The code store of a TRUNCATE grows the 40-byte _todo_ of an older version, and the disk is full: the failed
-        // TRUNCATE must leave no armed entry behind.
-        final TodoAllocateFailingFacade ff = new TodoAllocateFailingFacade();
-        assertMemoryLeak(ff, () -> {
-            final String table = "t";
-            execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (1), (2), (3)");
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-            cutTodoToClearedEntry(table);
-
-            ff.isArmed = true;
-            try {
-                execute(truncateSql(table, false));
-                Assert.fail("TRUNCATE must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-            } finally {
-                ff.isArmed = false;
-            }
-            Assert.assertTrue("the failure was not injected", ff.isFired);
-            Assert.assertEquals("count of the _todo_ entry", 0, readTodoLong(table, TODO_COUNT_OFFSET));
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n1\n2\n3\n");
-
-            // the writer open finds nothing to repair
-            engine.releaseAllWriters();
-            execute("INSERT INTO t VALUES (4)");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n1\n2\n3\n4\n");
-
-            // the table truncates and takes rows
-            execute(truncateSql(table, false));
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n");
-            execute("INSERT INTO t VALUES (5)");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\n5\n");
-        });
+    /**
+     * Creates a table and arms the _todo_ entry of a TRUNCATE that an earlier build interrupted before it published
+     * _txn. Without KEEP SYMBOL MAPS, the process died with the symbol maps emptied. Returns the _txn txn the entry is
+     * stamped with.
+     */
+    private static long armInterruptedTruncate(String table, boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
+        createTable(table, isPartitioned);
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        return LegacyTruncateTodo.arm(
+                engine,
+                table,
+                isPartitioned ? PartitionBy.DAY : PartitionBy.NONE,
+                isKeepSymbolMaps ? SymbolMapState.INTACT : SymbolMapState.EMPTIED_KILLED
+        );
     }
 
-    @Test
-    public void testTruncateOfOlderTodoFileKilledAtCodeStore() throws Exception {
-        // The code store of a TRUNCATE grows the 40-byte _todo_ of an older version: a process killed in that growth
-        // must leave no armed entry behind.
-        assumeCrashHarnessSupported();
-        final TodoRemapKillFacade ff = new TodoRemapKillFacade();
-        crashFf = ff;
-        ff.setDbRoot(root);
-        try {
-            assertMemoryLeak(ff, () -> {
-                final String table = "t";
-                execute("CREATE TABLE t (x LONG)");
-                execute("INSERT INTO t VALUES (1), (2), (3)");
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-                cutTodoToClearedEntry(table);
-                final long txnBefore = readTxn(table, PartitionBy.NONE);
-
-                ff.killTableDir = tableDir(table);
-                execute(truncateSql(table, false));
-                Assert.assertTrue("TRUNCATE did not grow _todo_", ff.isKillImageTaken());
-                restoreKillImage(table);
-
-                Assert.assertEquals("count of the _todo_ entry", 0, readTodoLong(table, TODO_COUNT_OFFSET));
-                Assert.assertEquals(txnBefore, readTxn(table, PartitionBy.NONE));
-                try (TableWriter writer = getWriter(table)) {
-                    Assert.assertEquals(3, writer.size());
-                }
-                execute("INSERT INTO t VALUES (4)");
-                assertQuery("SELECT * FROM t")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("x\n1\n2\n3\n4\n");
-            });
-        } finally {
-            ff.reset();
-            engine.releaseCrashOrphanedWalWriters();
-            engine.releaseCrashOrphanedWriters();
-        }
-    }
-
-    @Test
-    public void testWalTableTruncateKilledBeforeTodoCodeKeepsTable() throws Exception {
-        assertWalTableTruncateKilledBeforeTodoCodeKeepsTable(false);
-    }
-
-    @Test
-    public void testWalTableTruncateKilledBeforeTodoCodeKeepsTableAfterAdaptiveRecovery() throws Exception {
-        assertWalTableTruncateKilledBeforeTodoCodeKeepsTable(true);
-    }
-
-    // a write whose writer open would complete the interrupted TRUNCATE of t while a query reads t
-    private static void assertRepairRefused(String sql) throws Exception {
-        try {
-            execute(sql);
-            Assert.fail("the write must wait for the query [sql=" + sql + ']');
-        } catch (CairoException e) {
-            TestUtils.assertEquals(REPAIR_REFUSED, e.getFlyweightMessage());
+    private static void assertSymbolCount(String table, String column, int expected) {
+        try (TableReader reader = getReader(table)) {
+            final int columnIndex = reader.getMetadata().getColumnIndex(column);
+            Assert.assertEquals(column, expected, reader.getSymbolMapReader(columnIndex).getSymbolCount());
         }
     }
 
@@ -1057,21 +746,10 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 
-    // ts and x, then y, added after the first two rows; a WAL table applies each step before the next one
-    private static void createSymbolFreeTable(String table, String tableOptions, boolean isWal) throws Exception {
-        execute("CREATE TABLE " + table + " (ts TIMESTAMP, x LONG)" + tableOptions);
-        execute("""
-                INSERT INTO %s VALUES
-                    ('2024-01-01T00:00:00.000000Z', 1),
-                    ('2024-01-02T00:00:00.000000Z', 2)""".formatted(table));
-        if (isWal) {
-            drainWalQueue();
-        }
-        execute("ALTER TABLE " + table + " ADD COLUMN y INT");
-        execute("INSERT INTO " + table + " VALUES ('2024-01-02T01:00:00.000000Z', 3, 30)");
-        if (isWal) {
-            drainWalQueue();
-        }
+    // the SYMBOL column s holds the symbols s1 to s<symbolCount>, in this order
+    private static void createSymbolTable(String table, int symbolCount) throws Exception {
+        execute("CREATE TABLE " + table + " (s SYMBOL, x LONG)");
+        execute("INSERT INTO " + table + " SELECT 's' || x, x FROM long_sequence(" + symbolCount + ")");
     }
 
     private static void createTable(String table, boolean isPartitioned) throws Exception {
@@ -1082,147 +760,46 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         }
     }
 
-    /**
-     * Cuts _todo_ to the 40 bytes of a cleared entry, the length a clean writer close left before writers kept the
-     * file one page long. The next writer maps 40 bytes, and the code store of a TRUNCATE, its first store past them,
-     * grows the file.
-     */
-    private static void cutTodoToClearedEntry(String table) {
-        final TestFilesFacadeImpl ff = TestFilesFacadeImpl.INSTANCE;
-        try (Path path = new Path().of(root).concat(engine.verifyTableName(table)).concat(TableUtils.TODO_FILE_NAME)) {
-            final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-            Assert.assertTrue("open _todo_", fd > -1);
-            try {
-                Assert.assertTrue("cut _todo_", ff.truncate(fd, TODO_CODE_OFFSET));
-            } finally {
-                ff.close(fd);
-            }
+    // a cached, an indexed and an uncached SYMBOL column, and the partition 2024-01-01 detached
+    private static void createTableWithDetachedPartition(String table) throws Exception {
+        execute("""
+                CREATE TABLE %s (ts TIMESTAMP, s SYMBOL, si SYMBOL INDEX, sn SYMBOL NOCACHE)
+                TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""".formatted(table));
+        execute("""
+                INSERT INTO %s VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 'k1', '\u00e9'),
+                    ('2024-01-01T01:00:00.000000Z', 'b', 'k2', '\u20ac'),
+                    ('2024-01-02T00:00:00.000000Z', 'c', 'k3', '\ud83d\ude00')""".formatted(table));
+        execute("ALTER TABLE " + table + " DETACH PARTITION LIST '2024-01-01'");
+    }
+
+    private static long getSymbolTableNameTxn(String table, String column) {
+        try (TableReader reader = getReader(table)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(column));
+            return reader.getColumnVersionReader().getSymbolTableNameTxn(writerIndex);
         }
     }
 
-    // TRUNCATE of t, a table with column x, fails on the I/O error the facade injects, after it armed _todo_
-    private static void failTruncate(FailingTruncateFacade ff, String table) throws Exception {
-        ff.isArmed = true;
-        try {
-            execute(truncateSql(table, false));
-            Assert.fail("TRUNCATE must fail");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Cannot truncate fd=");
-        } finally {
-            ff.isArmed = false;
-        }
-        Assert.assertTrue("the failure was not injected", ff.isFired);
-        ff.isFired = false;
-        engine.releaseAllWriters();
-        Assert.assertEquals("count of the _todo_ entry", 1, readTodoLong(table, TODO_COUNT_OFFSET));
-    }
-
-    private static boolean hasMetaPrev(String table) {
+    private static void makeDetachedPartitionAttachable(String table, String partition) {
         final TableToken token = engine.verifyTableName(table);
-        try (Path path = new Path().of(root).concat(token).concat(TableUtils.META_PREV_FILE_NAME)) {
-            return TestFilesFacadeImpl.INSTANCE.exists(path.$());
+        try (Path detached = new Path(); Path attachable = new Path()) {
+            detached.of(root).concat(token).concat(partition).put(TableUtils.DETACHED_DIR_MARKER);
+            attachable.of(root).concat(token).concat(partition).put(configuration.getAttachPartitionSuffix());
+            final int result = TestFilesFacadeImpl.INSTANCE.rename(detached.$(), attachable.$());
+            Assert.assertEquals(Files.FILES_RENAME_OK, result);
         }
     }
 
-    private static boolean hasSavePoint(TableToken token) {
-        final TestFilesFacadeImpl ff = TestFilesFacadeImpl.INSTANCE;
-        try (Path path = new Path().of(root).concat(token)) {
-            return DurableEpochManifest.loadCandidates(ff, path, path.size(), token.getTableId()).length > 0;
+    private static long offsetFileLength(String table, String column, long symbolTableNameTxn) {
+        try (Path path = new Path().of(root).concat(engine.verifyTableName(table))) {
+            return TestFilesFacadeImpl.INSTANCE.length(TableUtils.offsetFileName(path, column, symbolTableNameTxn));
         }
     }
 
-    // engine.lockReaders() of a thread that holds no reader: true when no reader of the table is busy and no thread
-    // holds the lock; the thread unlocks at once
-    private static boolean isReaderLockFree(String table) throws InterruptedException {
-        final TableToken token = engine.verifyTableName(table);
-        final AtomicBoolean isLocked = new AtomicBoolean();
-        final AtomicReference<Throwable> error = new AtomicReference<>();
-        final Thread thread = new Thread(() -> {
-            try {
-                if (engine.lockReaders(token)) {
-                    isLocked.set(true);
-                    engine.unlockReaders(token);
-                }
-            } catch (Throwable th) {
-                error.set(th);
-            } finally {
-                Path.clearThreadLocals();
-            }
-        });
-        thread.start();
-        thread.join(TimeUnit.MINUTES.toMillis(1));
-        Assert.assertFalse("lockReaders() did not return", thread.isAlive());
-        if (error.get() != null) {
-            throw new AssertionError("lockReaders() failed", error.get());
-        }
-        return isLocked.get();
-    }
-
-    private static boolean isThrownBy(Throwable th, String methodName) {
-        for (StackTraceElement frame : th.getStackTrace()) {
-            if (methodName.equals(frame.getMethodName())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // runs a query to its end on a thread of its own and checks its rows against expected; returns its error, or null
-    private static Throwable queryOnOtherThread(String sql, String expected) {
-        final AtomicReference<Throwable> queryError = new AtomicReference<>();
-        final Thread query = new Thread(() -> {
-            try (
-                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                    RecordCursorFactory factory = engine.select(sql, context);
-                    RecordCursor cursor = factory.getCursor(context)
-            ) {
-                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
-            } catch (Throwable th) {
-                queryError.set(th);
-            } finally {
-                Path.clearThreadLocals();
-            }
-        });
-        query.start();
-        try {
-            query.join();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-        return queryError.get();
-    }
-
-    // a long of the _todo_ file as the page cache holds it, with the stores of a writer that maps the file
-    private static long readTodoLong(String table, long offset) {
-        return readTodoLong(engine, table, offset);
-    }
-
-    private static long readTodoLong(CairoEngine engine, String table, long offset) {
-        final TestFilesFacadeImpl ff = TestFilesFacadeImpl.INSTANCE;
-        try (
-                Path path = new Path().of(engine.getConfiguration().getDbRoot())
-                        .concat(engine.verifyTableName(table))
-                        .concat(TableUtils.TODO_FILE_NAME)
-        ) {
-            final long fd = ff.openRO(path.$());
-            Assert.assertTrue("open _todo_", fd > -1);
-            try {
-                return ff.readNonNegativeLong(fd, offset);
-            } finally {
-                ff.close(fd);
-            }
-        }
-    }
-
-    private static long readTxn(String table, int partitionBy) {
-        final TableToken token = engine.verifyTableName(table);
-        try (
-                TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade());
-                Path path = new Path().of(root).concat(token).concat(TableUtils.TXN_FILE_NAME)
-        ) {
-            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, partitionBy);
-            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-            return txReader.getTxn();
+    private static String offsetFilePath(String table, String column, long symbolTableNameTxn) {
+        try (Path path = new Path().of(root).concat(engine.verifyTableName(table))) {
+            TableUtils.offsetFileName(path, column, symbolTableNameTxn);
+            return path.toString();
         }
     }
 
@@ -1234,103 +811,26 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         return "TRUNCATE TABLE " + table + (isKeepSymbolMaps ? " KEEP SYMBOL MAPS" : "");
     }
 
-    private void assertKeepSymbolMapsKilledBeforeTodoCodeKeepsTable(boolean isPartitioned) throws Exception {
-        // ADD COLUMN leaves its code, TODO_RESTORE_META, in _todo_ for as long as its writer stays open. A TRUNCATE
-        // through that writer, killed before it stores its own code, must leave the table as it was: a repair with
-        // the code of ADD COLUMN would bring back the _meta from before the column.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            final String table = "t";
-            createTable(table, isPartitioned);
-            engine.releaseAllReaders();
-            final int partitionBy = isPartitioned ? PartitionBy.DAY : PartitionBy.NONE;
-            final long txnBefore = readTxn(table, partitionBy);
-            Assert.assertEquals("code in _todo_", TODO_RESTORE_META, readTodoLong(table, TODO_CODE_OFFSET));
-
-            killTruncateBeforeTodoCode(table, truncateSql(table, true));
-
-            Assert.assertEquals(txnBefore, readTxn(table, partitionBy));
-            try (TableWriter writer = getWriter(table)) {
-                Assert.assertEquals(isPartitioned ? 4 : 3, writer.size());
-                Assert.assertEquals("columns with y", isPartitioned ? 9 : 8, writer.getMetadata().getColumnCount());
-            }
-            assertSymbolCounts(table, 3);
-            assertQuery("SELECT * FROM " + table)
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp(isPartitioned ? "ts" : null)
-                    .returns(isPartitioned ? PARTITIONED_EXPECTED_BEFORE_TRUNCATE : NONE_EXPECTED_BEFORE_TRUNCATE);
-
-            // the table truncates, keeps its symbol maps and takes rows
-            execute(truncateSql(table, true));
-            assertSymbolCounts(table, 3);
+    // Asserts that a query reads the table either as createTable() wrote it or empty, and tells whether it is as it was
+    private boolean assertAsItWasOrEmpty(String table, boolean isPartitioned, int k) throws Exception {
+        final boolean isEmpty = "count\n0\n".equals(TestUtils.printSqlToString(engine, sqlExecutionContext, "SELECT count() FROM " + table, sink));
+        try {
             if (isPartitioned) {
-                execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
-                assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
-            } else {
-                execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
-                assertNoneTable(table, NONE_EXPECTED_AFTER_INSERT);
-            }
-            assertSymbolCounts(table, 4);
-            // the next open finds nothing to repair
-            engine.releaseAllWriters();
-            try (TableWriter writer = getWriter(table)) {
-                Assert.assertEquals(2, writer.size());
-            }
-        });
-    }
-
-    private void assertNonPartitionedRepairWaitsForQueryOfOldRows(boolean isKeepSymbolMaps) throws Exception {
-        // A query reads the rows of an interrupted TRUNCATE of a non-partitioned table. Every write would complete the
-        // TRUNCATE in the writer open and rewrite default/, which the query reads, so each waits for the query, and
-        // _todo_ stays armed; new queries run meanwhile. Once the query is closed, the next write completes the
-        // TRUNCATE.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            final String oldRows = interruptNonPartitionedTruncate("t", isKeepSymbolMaps);
-            final String insert = isKeepSymbolMaps
-                    ? String.format(NONE_INSERT_AFTER_REPAIR, "t")
-                    : "INSERT INTO t VALUES ('2024-01-03T00:00:00.000000Z', 4, 40)";
-            try (
-                    RecordCursorFactory factory = select("SELECT * FROM t");
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                assertRepairRefused(insert);
-                assertRepairRefused("INSERT INTO t SELECT * FROM t");
-                assertRepairRefused("UPDATE t SET x = 0");
-                assertRepairRefused("ALTER TABLE t ADD COLUMN z INT");
-                try {
-                    execute(truncateSql("t", isKeepSymbolMaps));
-                    Assert.fail("TRUNCATE must wait for the query");
-                } catch (SqlException e) {
-                    Assert.assertEquals(15, e.getPosition());
-                    TestUtils.assertEquals(
-                            "table 't' could not be truncated: [-1]: " + REPAIR_REFUSED,
-                            e.getFlyweightMessage()
-                    );
-                }
-                Assert.assertEquals("count of the _todo_ entry", 1, readTodoLong("t", TODO_COUNT_OFFSET));
-                Assert.assertEquals(
-                        "code in _todo_",
-                        isKeepSymbolMaps ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE,
-                        readTodoLong("t", TODO_CODE_OFFSET)
-                );
-                assertQuery("SELECT * FROM t")
+                assertQuery("SELECT * FROM " + table)
                         .noLeakCheck()
                         .expectSize()
-                        .returns(oldRows);
-                sink.clear();
-                TestUtils.assertCursor(oldRows, cursor, factory.getMetadata(), true, sink);
-            }
-            execute(insert);
-            Assert.assertEquals("count of the _todo_ entry", 0, readTodoLong("t", TODO_COUNT_OFFSET));
-            if (isKeepSymbolMaps) {
-                assertNoneTable("t", NONE_EXPECTED_AFTER_INSERT);
-                assertSymbolCounts("t", 4);
+                        .timestamp("ts")
+                        .returns(isEmpty ? PARTITIONED_HEADER : PARTITIONED_COMMITTED_ROWS);
             } else {
-                assertSymbolFreeTable("t", false, "ts\tx\ty\n2024-01-03T00:00:00.000000Z\t4\t40\n");
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(isEmpty ? NONE_HEADER : NONE_COMMITTED_ROWS);
             }
-        });
+        } catch (AssertionError e) {
+            throw new AssertionError("kill point " + k, e);
+        }
+        return !isEmpty;
     }
 
     private void assertNoneTable(String table, String expected) throws Exception {
@@ -1373,16 +873,13 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         Assert.assertEquals(2, countPartitionDirs(table));
     }
 
-    private void assertRepairSurvivesEveryKillPoint(boolean isKeepSymbolMaps) throws Exception {
-        // A kill during the writer open that repairs the table: the open after it must finish the repair.
+    private void assertRepairSurvivesEveryKillPoint(boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
+        // A kill during the writer open that completes a TRUNCATE an earlier build interrupted: the open after it must
+        // finish the repair.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
         runWithCrashFacade(() -> {
-            final int keepPoints = countTruncateKillPoints(true, true);
-            // the first kill point after TRUNCATE armed _todo_
-            final int point = isKeepSymbolMaps ? 1 : countTruncateKillPoints(true, false) - keepPoints + 1;
-
             final String countTable = "count_repair";
-            interruptTruncate(countTable, point, isKeepSymbolMaps);
+            armInterruptedTruncate(countTable, isPartitioned, isKeepSymbolMaps);
             final int before = crashFf.killPointCount();
             getWriter(countTable).close();
             final int repairPoints = crashFf.killPointCount() - before;
@@ -1391,12 +888,7 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
 
             for (int k = 1; k <= repairPoints + 1; k++) {
                 final String table = "t_" + k;
-                final long txnBefore = interruptTruncate(table, point, isKeepSymbolMaps);
-                Assert.assertEquals(
-                        "the kill must stop TRUNCATE before it publishes _txn",
-                        txnBefore,
-                        readTxn(table, PartitionBy.DAY)
-                );
+                final long txnBefore = armInterruptedTruncate(table, isPartitioned, isKeepSymbolMaps);
                 if (k <= repairPoints) {
                     crashFf.armKillAt(crashFf.killPointCount() + k, tableDir(table));
                     getWriter(table).close();
@@ -1408,10 +900,16 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
                 restoreKillImage(table);
                 try (TableWriter writer = getWriter(table)) {
                     Assert.assertEquals("kill point " + k, 0, writer.size());
+                    Assert.assertEquals("kill point " + k, txnBefore + 1, writer.getTxn());
                 }
                 assertSymbolCounts(table, isKeepSymbolMaps ? 3 : 0);
-                execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
-                assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
+                if (isPartitioned) {
+                    execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
+                    assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
+                } else {
+                    execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
+                    assertNoneTable(table, NONE_EXPECTED_AFTER_INSERT);
+                }
                 assertSymbolCounts(table, isKeepSymbolMaps ? 4 : 2);
                 execute("DROP TABLE " + table);
             }
@@ -1420,43 +918,47 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
 
     private void assertTruncateSurvivesEveryKillPoint(boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            final int keepPoints = countTruncateKillPoints(isPartitioned, true);
-            final int points = isKeepSymbolMaps ? keepPoints : countTruncateKillPoints(isPartitioned, false);
-            // TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_. No writer open repairs
-            // a kill there, so the sweep starts at the first kill point after it, the first of a KEEP SYMBOL MAPS run.
-            final int firstPoint = points - keepPoints + 1;
-            Assert.assertTrue("TRUNCATE has no kill points", keepPoints > 0);
-            Assert.assertTrue("emptying the symbol maps has no kill points", isKeepSymbolMaps || firstPoint > 1);
-            final int partitionBy = isPartitioned ? PartitionBy.DAY : PartitionBy.NONE;
+        final SymbolMapTruncateCrashFacade ff = new SymbolMapTruncateCrashFacade();
+        runWithCrashFacade(ff, () -> {
+            // the kill points of one TRUNCATE, and the ones SymbolMapWriter.truncate() takes among them
+            final String countTable = "count_truncate";
+            createTable(countTable, isPartitioned);
+            engine.releaseAllReaders();
+            final int base = ff.killPointCount();
+            ff.startRecording();
+            execute(truncateSql(countTable, isKeepSymbolMaps));
+            ff.stopRecording();
+            final int points = ff.killPointCount() - base;
+            execute("DROP TABLE " + countTable);
+            Assert.assertTrue("TRUNCATE has no kill points", points > 0);
+            // the sweep reaches the emptying of the symbol maps, which TRUNCATE without KEEP SYMBOL MAPS does
+            Assert.assertEquals("emptying the symbol maps", !isKeepSymbolMaps, ff.symbolMapTruncatePointCount() > 0);
 
-            for (int k = firstPoint; k <= points + 1; k++) {
+            for (int k = 1; k <= points + 1; k++) {
                 final String table = "t_" + k;
                 createTable(table, isPartitioned);
                 engine.releaseAllReaders();
-                final long txnBefore = readTxn(table, partitionBy);
                 if (k <= points) {
-                    crashFf.armKillAt(crashFf.killPointCount() + k, tableDir(table));
+                    ff.armKillAt(ff.killPointCount() + k, tableDir(table));
                 }
                 execute(truncateSql(table, isKeepSymbolMaps));
                 if (k > points) {
-                    crashFf.takeKillImage(tableDir(table));
+                    ff.takeKillImage(tableDir(table));
                 }
-                Assert.assertTrue("kill point " + k + " was not reached", crashFf.isKillImageTaken());
+                Assert.assertTrue("kill point " + k + " was not reached", ff.isKillImageTaken());
                 restoreKillImage(table);
 
-                final long txnAfterKill = readTxn(table, partitionBy);
-                final boolean isTruncatePublished = txnAfterKill != txnBefore;
-                if (isTruncatePublished) {
-                    Assert.assertEquals("kill point " + k, txnBefore + 1, txnAfterKill);
+                // Before any writer opens the table again, a query reads it as it was or empty, and the writer open
+                // completes nothing. KEEP SYMBOL MAPS keeps the three values of each symbol column either way.
+                final boolean isAsItWas = assertAsItWasOrEmpty(table, isPartitioned, k);
+                getWriter(table).close();
+                Assert.assertEquals("kill point " + k, isAsItWas, assertAsItWasOrEmpty(table, isPartitioned, k));
+                assertSymbolCounts(table, isAsItWas || isKeepSymbolMaps ? 3 : 0);
+                if (isAsItWas) {
+                    // TRUNCATE runs again, to the end
+                    execute(truncateSql(table, isKeepSymbolMaps));
+                    assertSymbolCounts(table, isKeepSymbolMaps ? 3 : 0);
                 }
-                try (TableWriter writer = getWriter(table)) {
-                    Assert.assertEquals("kill point " + k, 0, writer.size());
-                    Assert.assertEquals("kill point " + k, txnBefore + 1, writer.getTxn());
-                }
-                // KEEP SYMBOL MAPS keeps the three values of each symbol column, whether the writer open repaired the
-                // table or the TRUNCATE published _txn before the kill
-                assertSymbolCounts(table, isKeepSymbolMaps ? 3 : 0);
 
                 if (isPartitioned) {
                     execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
@@ -1492,150 +994,6 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    private void assertSymbolFreeTable(String table, boolean isPartitioned, String expected) throws Exception {
-        assertQuery("SELECT * FROM " + table)
-                .noLeakCheck()
-                .expectSize()
-                .timestamp(isPartitioned ? "ts" : null)
-                .returns(expected);
-    }
-
-    private void assertTruncateKilledBeforeTodoCodeKeepsTable(boolean isPartitioned) throws Exception {
-        // As assertKeepSymbolMapsKilledBeforeTodoCodeKeepsTable(), for a TRUNCATE without KEEP SYMBOL MAPS. The table
-        // has no SYMBOL column: such a TRUNCATE empties the symbol maps before it arms _todo_.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        runWithCrashFacade(() -> {
-            final String table = "t";
-            createSymbolFreeTable(table, isPartitioned ? " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL" : "", false);
-            engine.releaseAllReaders();
-            final int partitionBy = isPartitioned ? PartitionBy.DAY : PartitionBy.NONE;
-            final long txnBefore = readTxn(table, partitionBy);
-            Assert.assertEquals("code in _todo_", TODO_RESTORE_META, readTodoLong(table, TODO_CODE_OFFSET));
-
-            killTruncateBeforeTodoCode(table, truncateSql(table, false));
-
-            Assert.assertEquals(txnBefore, readTxn(table, partitionBy));
-            try (TableWriter writer = getWriter(table)) {
-                Assert.assertEquals(3, writer.size());
-                Assert.assertEquals("columns with y", 3, writer.getMetadata().getColumnCount());
-            }
-            assertSymbolFreeTable(table, isPartitioned, SYMBOL_FREE_EXPECTED_BEFORE_TRUNCATE);
-            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00.000000Z', 4, 40)");
-            assertSymbolFreeTable(table, isPartitioned, SYMBOL_FREE_EXPECTED_AFTER_INSERT);
-
-            // the table truncates and takes rows
-            execute(truncateSql(table, false));
-            assertSymbolFreeTable(table, isPartitioned, "ts\tx\ty\n");
-            // the next open finds nothing to repair
-            engine.releaseAllWriters();
-            execute("INSERT INTO t VALUES ('2024-01-04T00:00:00.000000Z', 5, 50)");
-            assertSymbolFreeTable(table, isPartitioned, "ts\tx\ty\n2024-01-04T00:00:00.000000Z\t5\t50\n");
-        });
-    }
-
-    private void assertWalTableTruncateKilledBeforeTodoCodeKeepsTable(boolean isAdaptive) throws Exception {
-        // A failed COPY into an existing WAL table truncates it through TableWriter.truncate(), with the pooled
-        // writer that applied the WAL: an ADD COLUMN from the WAL left its code in _todo_. The writer open acts on an
-        // armed entry, and so does recovery at start on a table with a save point, which adaptive commit gives it.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, isAdaptive ? "adaptive" : "nosync");
-        runWithCrashFacade(() -> {
-            final String table = "t";
-            createSymbolFreeTable(table, " TIMESTAMP(ts) PARTITION BY DAY WAL", true);
-            final TableToken token = engine.verifyTableName(table);
-            Assert.assertEquals("a save point", isAdaptive, hasSavePoint(token));
-            Assert.assertEquals("code in _todo_", TODO_RESTORE_META, readTodoLong(table, TODO_CODE_OFFSET));
-
-            TableWriter.setTruncateTodoCodeBarrier(() -> crashFf.takeKillImage(tableDir(table)));
-            try (TableWriter writer = getWriter(token)) {
-                writer.truncate();
-            } finally {
-                TableWriter.setTruncateTodoCodeBarrier(null);
-            }
-            Assert.assertTrue("TRUNCATE did not reach the store of its _todo_ code", crashFf.isKillImageTaken());
-            simulateRestart(new TableToken[]{token});
-            new RecoveryCoordinator(engine).recover();
-            // recovery renames _meta.prev over _meta when it acts on an entry of ADD COLUMN
-            Assert.assertTrue("_meta.prev of ADD COLUMN", hasMetaPrev(table));
-            engine.notifyWalTxnRepublisher(token);
-            drainWalQueue();
-
-            try (TableWriter writer = getWriter(token)) {
-                Assert.assertEquals(3, writer.size());
-                Assert.assertEquals("columns with y", 3, writer.getMetadata().getColumnCount());
-            }
-            assertSymbolFreeTable(table, true, SYMBOL_FREE_EXPECTED_BEFORE_TRUNCATE);
-            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00.000000Z', 4, 40)");
-            drainWalQueue();
-            assertSymbolFreeTable(table, true, SYMBOL_FREE_EXPECTED_AFTER_INSERT);
-        });
-    }
-
-    private int countTruncateKillPoints(boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
-        final String table = "count_" + (isKeepSymbolMaps ? "keep" : "plain");
-        createTable(table, isPartitioned);
-        engine.releaseAllReaders();
-        final int before = crashFf.killPointCount();
-        execute(truncateSql(table, isKeepSymbolMaps));
-        final int points = crashFf.killPointCount() - before;
-        execute("DROP TABLE " + table);
-        return points;
-    }
-
-    /**
-     * Creates a non-partitioned table and kills a TRUNCATE of it at its first kill point, after it armed _todo_ and
-     * before it removed a row: {@link #createNonPartitioned} for TRUNCATE ... KEEP SYMBOL MAPS, and a table without
-     * SYMBOL columns for a plain TRUNCATE, which empties the symbol maps before it arms _todo_. Returns the rows of the
-     * table.
-     */
-    private String interruptNonPartitionedTruncate(String table, boolean isKeepSymbolMaps) throws Exception {
-        final String rows;
-        if (isKeepSymbolMaps) {
-            createNonPartitioned(table);
-            rows = NONE_EXPECTED_BEFORE_TRUNCATE;
-        } else {
-            createSymbolFreeTable(table, "", false);
-            rows = SYMBOL_FREE_EXPECTED_BEFORE_TRUNCATE;
-        }
-        engine.releaseAllReaders();
-        crashFf.armKillAt(crashFf.killPointCount() + 1, tableDir(table));
-        execute(truncateSql(table, isKeepSymbolMaps));
-        Assert.assertTrue(crashFf.isKillImageTaken());
-        restoreKillImage(table);
-        Assert.assertEquals("count of the _todo_ entry", 1, readTodoLong(table, TODO_COUNT_OFFSET));
-        return rows;
-    }
-
-    /**
-     * Creates a partitioned table and kills TRUNCATE of it at {@code point}, after it armed _todo_ and before it
-     * published _txn. Returns the _txn txn before TRUNCATE.
-     */
-    private long interruptTruncate(String table, int point, boolean isKeepSymbolMaps) throws Exception {
-        createPartitioned(table);
-        engine.releaseAllReaders();
-        final long txnBefore = readTxn(table, PartitionBy.DAY);
-        crashFf.armKillAt(crashFf.killPointCount() + point, tableDir(table));
-        execute(truncateSql(table, isKeepSymbolMaps));
-        Assert.assertTrue(crashFf.isKillImageTaken());
-        restoreKillImage(table);
-        return txnBefore;
-    }
-
-    /**
-     * Runs {@code truncateSql} with the process killed right before TRUNCATE stores the code of its _todo_ entry,
-     * then restores the kill image, as a restart does.
-     */
-    private void killTruncateBeforeTodoCode(String table, String truncateSql) throws Exception {
-        TableWriter.setTruncateTodoCodeBarrier(() -> crashFf.takeKillImage(tableDir(table)));
-        try {
-            execute(truncateSql);
-        } finally {
-            TableWriter.setTruncateTodoCodeBarrier(null);
-        }
-        Assert.assertTrue("TRUNCATE did not reach the store of its _todo_ code", crashFf.isKillImageTaken());
-        restoreKillImage(table);
-    }
-
     /**
      * Process restart after a kill: the engine lets go of the table, and its files go back to the kill image.
      */
@@ -1647,28 +1005,14 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         engine.getTxnScoreboardPool().remove(engine.verifyTableName(table));
     }
 
-    /**
-     * Runs a hook once, when the writer removes the default/ directory whose path ends with the suffix: the last step
-     * of the repair of an interrupted TRUNCATE of a non-partitioned table, which no query holds.
-     */
-    private static class DefaultRemovalHookFacade extends TestFilesFacadeImpl {
-        volatile String defaultDirSuffix;
-        volatile Runnable hook;
-
-        @Override
-        public boolean unlinkOrRemove(Path path, Log LOG) {
-            final Runnable hook = this.hook;
-            if (hook != null && Utf8s.endsWithAscii(path, defaultDirSuffix)) {
-                this.hook = null;
-                hook.run();
-            }
-            return super.unlinkOrRemove(path, LOG);
-        }
+    // a failure of the truncate repair to read the offset file of a symbol map
+    private enum SymbolMapFault {
+        OPEN, LENGTH, READ
     }
 
     /**
      * Fails truncate() of the data file of column x while armed: TRUNCATE of a non-partitioned table fails after it
-     * armed _todo_.
+     * published the empty _txn.
      */
     private static class FailingTruncateFacade extends TestFilesFacadeImpl {
         volatile boolean isArmed;
@@ -1695,51 +1039,45 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Fails, once while armed, the disk space allocation that grows a _todo_ file.
+     * Fails, once armed, the next read-only open of the offset file of one symbol map, or the length or the read of the
+     * fd that open returns, and disarms. While armed, only the truncate repair of a writer open opens the file
+     * read-only.
      */
-    private static class TodoAllocateFailingFacade extends TestFilesFacadeImpl {
-        volatile boolean isArmed;
-        volatile boolean isFired;
-        private volatile long todoFd = -1;
+    private static class UnreadableSymbolMapFacade extends TestFilesFacadeImpl {
+        volatile SymbolMapFault fault;
+        volatile String offsetFile;
+        private long offsetFd = -1;
 
         @Override
-        public boolean allocate(long fd, long size) {
-            if (isArmed && fd == todoFd) {
-                isArmed = false;
-                isFired = true;
-                return false;
+        public long length(long fd) {
+            if (fault == SymbolMapFault.LENGTH && fd == offsetFd) {
+                fault = null;
+                // what FilesFacadeImpl.length() throws when fstat fails
+                throw CairoException.critical(5).put("Checking file size failed");
             }
-            return super.allocate(fd, size);
+            return super.length(fd);
         }
 
         @Override
-        public long openRW(LPSZ name, int opts) {
-            final long fd = super.openRW(name, opts);
-            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TODO_FILE_NAME)) {
-                todoFd = fd;
-            }
-            return fd;
-        }
-    }
-
-    /**
-     * Takes the kill image of a table directory when a remap of its _todo_ file starts, before the store that grows
-     * the file lands.
-     */
-    private static class TodoRemapKillFacade extends CrashFaultFilesFacade {
-        volatile String killTableDir;
-
-        @Override
-        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            final String tableDir = killTableDir;
-            if (tableDir != null) {
-                final String path = pathOf(fd);
-                if (path != null && path.endsWith(Files.SEPARATOR + TableUtils.TODO_FILE_NAME)) {
-                    killTableDir = null;
-                    takeKillImage(tableDir);
+        public long openRO(LPSZ name) {
+            if (fault != null && Utf8s.equalsAscii(offsetFile, name)) {
+                if (fault == SymbolMapFault.OPEN) {
+                    fault = null;
+                    return -1;
                 }
+                offsetFd = super.openRO(name);
+                return offsetFd;
             }
-            return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            return super.openRO(name);
+        }
+
+        @Override
+        public long read(long fd, long buf, long len, long offset) {
+            if (fault == SymbolMapFault.READ && fd == offsetFd) {
+                fault = null;
+                return -1;
+            }
+            return super.read(fd, buf, len, offset);
         }
     }
 }

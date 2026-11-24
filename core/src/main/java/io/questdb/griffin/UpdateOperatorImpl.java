@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCM;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -159,6 +160,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 op.forceTestTimeout();
                 // Row by row updates for now
                 // This should happen parallel per file (partition and column)
+                PageFrameSequence.enterUntrackedScope();
                 try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                     Record masterRecord = recordCursor.getRecord();
 
@@ -230,6 +232,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                     }
                 } finally {
+                    PageFrameSequence.leaveUntrackedScope();
                     Misc.freeObjList(srcColumns);
                     Misc.freeObjList(dstColumns);
                     // todo: we are opening columns incrementally, e.g. if we don't have enough objects
@@ -315,6 +318,18 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             // must remain unapplied: skipping one would lose DML already acknowledged at sequencing.
             throw CairoException.partitionManipulationRecoverable()
                     .put("cannot update read-only partition [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(
+                            tableWriter.getTimestampType(),
+                            tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                    .put(']');
+        }
+        if (tableWriter.isPartitionDeltaActive(rowPartitionIndex)) {
+            // Like the read-only case, the UPDATE stays unapplied: the apply fails and suspends the
+            // WAL. The delta-write bit is set only by the replicated delta-switch event, so every
+            // instance fails identically. The insert-only commit-run model cannot express an
+            // in-place update of the frozen base.
+            throw CairoException.partitionManipulationRecoverable()
+                    .put("cannot update delta-active partition [table=").put(tableToken.getTableName())
                     .put(", partitionTimestamp=").ts(
                             tableWriter.getTimestampType(),
                             tableWriter.getPartitionTimestamp(rowPartitionIndex))

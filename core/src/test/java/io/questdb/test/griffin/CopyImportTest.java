@@ -40,7 +40,6 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.crash.TruncateRepairTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -167,45 +166,6 @@ public class CopyImportTest extends AbstractCairoTest {
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "unexpected option");
             }
-        });
-    }
-
-    @Test
-    public void testCopyWaitsForQueryAfterInterruptedTruncate() throws Exception {
-        // A TRUNCATE of a non-partitioned table stopped after it armed _todo_. A COPY into the table while a query
-        // reads it would complete the TRUNCATE under the query, so the import fails, and the same COPY succeeds once
-        // the query is closed.
-        assertMemoryLeak(() -> {
-            final String importLog = configuration.getSystemTableNamePrefix() + "text_import_log";
-            execute("drop table if exists \"" + importLog + "\"");
-            execute("CREATE TABLE t (X LONG, Y LONG)");
-            execute("INSERT INTO t VALUES (7, 70), (8, 80), (9, 90)");
-            TruncateRepairTest.armInterruptedTruncate(engine, "t", false);
-            final String importStatuses = "SELECT status, message FROM \"" + importLog + "\" WHERE status <> 'started'";
-            final String refusal = "[-1] could not complete interrupted TRUNCATE, there is an active query against 't'"
-                    + " or a checkpoint is in progress. Try again.";
-            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
-                try (
-                        RecordCursorFactory factory = select("SELECT * FROM t");
-                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                ) {
-                    runCopy(copyRequestJob, "COPY t FROM 'small.csv' WITH HEADER true");
-                    assertQuery(importStatuses)
-                            .noLeakCheck()
-                            .returns("status\tmessage\nfailed\t" + refusal + "\n");
-                    Assert.assertEquals("count of the _todo_ entry", 1, TruncateRepairTest.readTodoCount(engine, "t"));
-                    sink.clear();
-                    TestUtils.assertCursor("X\tY\n7\t70\n8\t80\n9\t90\n", cursor, factory.getMetadata(), true, sink);
-                }
-                runCopy(copyRequestJob, "COPY t FROM 'small.csv' WITH HEADER true");
-            }
-            assertQuery(importStatuses)
-                    .noLeakCheck()
-                    .returns("status\tmessage\nfailed\t" + refusal + "\nfinished\t\n");
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("X\tY\n1\t10\n2\t20\n");
         });
     }
 
@@ -1326,16 +1286,6 @@ public class CopyImportTest extends AbstractCairoTest {
                 Path.clearThreadLocals();
             }
         });
-    }
-
-    // queues a COPY and lets the job run it to the end on a thread of its own
-    private static void runCopy(CopyImportRequestJob copyRequestJob, String copySql) throws Exception {
-        runAndFetchCopyID(copySql, sqlExecutionContext);
-        final CountDownLatch processed = new CountDownLatch(1);
-        final Thread processingThread = createJobThread(copyRequestJob, processed);
-        processingThread.start();
-        processed.await();
-        processingThread.join();
     }
 
     private void assertQuotesTableContent() throws Exception {

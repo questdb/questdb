@@ -1085,7 +1085,7 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         try (Path walPath = new Path()) {
             walPath.of(configuration.getDbRoot()).concat(token).slash()
                     .putAscii(WalUtils.WAL_NAME_BASE).put(details.getWalId(seqTxn)).slash().put(details.getSegmentId(seqTxn));
-            ownerWriter.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+            ownerWriter.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY, 0);
         }
         Assert.assertEquals("the late rows must be applied before the swap runs", seqTxn, ownerWriter.getAppliedSeqTxn());
     }

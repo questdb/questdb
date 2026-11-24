@@ -25,16 +25,24 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class FailureFileFacade implements FilesFacade {
     // Three arming modes, selected by armedThread / queryWorkerNamePrefix:
@@ -54,6 +62,8 @@ public class FailureFileFacade implements FilesFacade {
     private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
+    // The tables whose partition files the facade follows, for armTableFailure(), by table name
+    private final ConcurrentHashMap<String, WatchedTable> watchedTables = new ConcurrentHashMap<>();
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
 
@@ -63,7 +73,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (checkForFailure()) {
+        if (checkForFailure() || isTableAllocateFailing(fd)) {
             return false;
         }
         return ff.allocate(fd, size);
@@ -71,10 +81,27 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long allocatedSize, long size) {
-        if (checkForFailure()) {
+        if (checkForFailure() || isTableAllocateFailing(fd)) {
             return false;
         }
         return ff.allocate(fd, allocatedSize, size);
+    }
+
+    /**
+     * Arms a one-shot failure of the next operation of {@code kind} on a file of a table that {@link #watchTable}
+     * follows, apart from the call-count arming of {@link #setToFailAfter}. When {@code scopeClassName} is not null, the
+     * failure fires only on a call stack that runs that class, and not {@code excludedMethodName} of it. A new arming
+     * replaces the one the table has, and {@link #clearFailures} leaves it.
+     */
+    public void armTableFailure(
+            String tableName,
+            TableFailureKind kind,
+            @Nullable String scopeClassName,
+            @Nullable String excludedMethodName
+    ) {
+        final WatchedTable table = watchedTables.get(tableName);
+        assert table != null : "the facade does not follow " + tableName;
+        table.armed.set(new TableFailure(kind, scopeClassName, excludedMethodName));
     }
 
     @Override
@@ -90,6 +117,7 @@ public class FailureFileFacade implements FilesFacade {
         return ff.append(fd, buf, len);
     }
 
+    // clears the call-count arming of setToFailAfter(); armTableFailure() keeps its arming, see disarmTableFailure()
     public void clearFailures() {
         osCallsCount.set(0);
         failureGenerated.set(0);
@@ -101,7 +129,18 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean close(long fd) {
+        if (!watchedTables.isEmpty()) {
+            watchedTables.forEach((name, table) -> table.forget(fd));
+        }
         return ff.close(fd);
+    }
+
+    // disarms the failure that armTableFailure() armed on the table, when it did not fire
+    public void disarmTableFailure(String tableName) {
+        final WatchedTable table = watchedTables.get(tableName);
+        if (table != null) {
+            table.armed.set(null);
+        }
     }
 
     @Override
@@ -173,6 +212,12 @@ public class FailureFileFacade implements FilesFacade {
 
     public int failureGenerated() {
         return failureGenerated.get();
+    }
+
+    // the failures of a kind that armTableFailure() armed on the table and that fired
+    public int getTableFailuresFired(String tableName, TableFailureKind kind) {
+        final WatchedTable table = watchedTables.get(tableName);
+        return table != null ? table.firedCounts.get(kind.ordinal()) : 0;
     }
 
     @Override
@@ -309,6 +354,13 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
         return ff.hardLinkDirRecursive(src, dst, dirMode);
+    }
+
+    /**
+     * Whether a failure planted by {@link #setToFailAfter} has not fired yet.
+     */
+    public boolean isArmed() {
+        return osCallsCount.get() > 0;
     }
 
     @Override
@@ -472,7 +524,23 @@ public class FailureFileFacade implements FilesFacade {
         if (checkForFailure()) {
             return -1;
         }
-        return ff.openRW(name, opts);
+        if (watchedTables.isEmpty()) {
+            return ff.openRW(name, opts);
+        }
+        final WatchedTable table = watchedTableOf(name);
+        if (table == null) {
+            return ff.openRW(name, opts);
+        }
+        final boolean isPartitionFile = isPartitionFile(name);
+        final TableFailure failure = table.armed.get();
+        if (failure != null && failure.kind == TableFailureKind.PARTITION_OPEN && isPartitionFile && failure.isInScope() && table.fire(failure)) {
+            return -1;
+        }
+        final long fd = ff.openRW(name, opts);
+        if (fd > -1 && isPartitionFile) {
+            table.followPartitionFd(fd);
+        }
+        return fd;
     }
 
     @Override
@@ -574,6 +642,14 @@ public class FailureFileFacade implements FilesFacade {
             return false;
         }
         return ff.rmdir(name, haltOnError);
+    }
+
+    /**
+     * Makes the facade follow the partition files of a table, so that {@link #armTableFailure} can fail an operation on
+     * one that opened before the arming. Call before the table's files open.
+     */
+    public void watchTable(String tableName) {
+        watchedTables.putIfAbsent(tableName, new WatchedTable(tableName));
     }
 
     public void setToFailAfter(int ioFailureCallCount) {
@@ -707,6 +783,42 @@ public class FailureFileFacade implements FilesFacade {
         return fail;
     }
 
+    // whether a file is in a partition directory, whose name starts with the partition timestamp
+    private static boolean isPartitionFile(LPSZ name) {
+        final int fileStart = Utf8s.lastIndexOfAscii(name, Files.SEPARATOR);
+        if (fileStart < 1) {
+            return false;
+        }
+        int dirStart = fileStart - 1;
+        while (dirStart > -1 && name.byteAt(dirStart) != Files.SEPARATOR) {
+            dirStart--;
+        }
+        return dirStart > -1 && dirStart + 1 < fileStart && Character.isDigit((char) name.byteAt(dirStart + 1));
+    }
+
+    private boolean isTableAllocateFailing(long fd) {
+        if (watchedTables.isEmpty()) {
+            return false;
+        }
+        for (WatchedTable table : watchedTables.values()) {
+            final TableFailure failure = table.armed.get();
+            if (failure != null && failure.kind == TableFailureKind.PAGE_ALLOCATE && table.isPartitionFd(fd) && failure.isInScope() && table.fire(failure)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // the table that the facade follows whose directory holds the file, or null
+    private WatchedTable watchedTableOf(LPSZ name) {
+        for (WatchedTable table : watchedTables.values()) {
+            if (Utf8s.containsAscii(name, table.dirPrefix)) {
+                return table;
+            }
+        }
+        return null;
+    }
+
     /**
      * The wrapped facade records a failed flush against itself, so it would not reach the engine configured with
      * this wrapper. Raise it again through the factory against this facade.
@@ -716,5 +828,83 @@ public class FailureFileFacade implements FilesFacade {
             return e;
         }
         return CairoException.dataSyncFailure(this, e.getErrno(), e.getDataSyncOperation(), e.getFlyweightMessage());
+    }
+
+    // the operation that armTableFailure() fails
+    public enum TableFailureKind {
+        // the next allocate() of a file in a partition directory of the table, as when a column file grows by a page on
+        // a full disk
+        PAGE_ALLOCATE,
+        // the next open of a file in a partition directory of the table, as when the table starts a partition on a full
+        // disk
+        PARTITION_OPEN
+    }
+
+    private static final class TableFailure {
+        private final String excludedMethodName;
+        private final TableFailureKind kind;
+        private final String scopeClassName;
+
+        private TableFailure(TableFailureKind kind, @Nullable String scopeClassName, @Nullable String excludedMethodName) {
+            this.kind = kind;
+            this.scopeClassName = scopeClassName;
+            this.excludedMethodName = excludedMethodName;
+        }
+
+        private boolean isInScope() {
+            if (scopeClassName == null) {
+                return true;
+            }
+            return StackWalker.getInstance().walk(frames -> {
+                final boolean[] isInClass = {false};
+                final boolean[] isExcluded = {false};
+                frames.forEach(frame -> {
+                    if (scopeClassName.equals(frame.getClassName())) {
+                        isInClass[0] = true;
+                        if (frame.getMethodName().equals(excludedMethodName)) {
+                            isExcluded[0] = true;
+                        }
+                    }
+                });
+                return isInClass[0] && !isExcluded[0];
+            });
+        }
+    }
+
+    // A table the facade follows: the fds of its partition files, and the failure armed on it
+    private static final class WatchedTable {
+        private final AtomicReference<TableFailure> armed = new AtomicReference<>();
+        // the separator and the directory name prefix of the table
+        private final String dirPrefix;
+        // the failures that fired, by kind
+        private final AtomicIntegerArray firedCounts = new AtomicIntegerArray(TableFailureKind.values().length);
+        private final LongList partitionFds = new LongList();
+
+        private WatchedTable(String tableName) {
+            this.dirPrefix = Files.SEPARATOR + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        }
+
+        private boolean fire(TableFailure failure) {
+            if (armed.compareAndSet(failure, null)) {
+                firedCounts.incrementAndGet(failure.kind.ordinal());
+                return true;
+            }
+            return false;
+        }
+
+        private synchronized void followPartitionFd(long fd) {
+            partitionFds.add(fd);
+        }
+
+        private synchronized void forget(long fd) {
+            final int index = partitionFds.indexOf(fd);
+            if (index > -1) {
+                partitionFds.removeIndex(index);
+            }
+        }
+
+        private synchronized boolean isPartitionFd(long fd) {
+            return partitionFds.indexOf(fd) > -1;
+        }
     }
 }

@@ -35,8 +35,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
-import io.questdb.cairo.pool.AbstractMultiTenantPool;
-import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -77,7 +75,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.fail;
@@ -1140,6 +1137,51 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyOfSize() throws Exception {
+        // A copy reports the source row count, both as a new reader and as a pooled
+        // reader that the copy moves to the source txn.
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            TableReader copyReaderRef;
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TableReader copyReader = pool.getCopyOf(ogReader, null)
+            ) {
+                copyReaderRef = copyReader;
+                Assert.assertEquals(1, copyReader.size());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(Micros.DAY_MICROS + 1);
+                r.putSym(0, "bar");
+                r.append();
+                writer.commit();
+            }
+
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TableReader copyReader = pool.getCopyOf(ogReader, null)
+            ) {
+                Assert.assertSame(copyReaderRef, copyReader);
+                Assert.assertEquals(2, copyReader.size());
+            }
+        });
+    }
+
+    @Test
     public void testDetachedRefCount() throws Exception {
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
@@ -1191,225 +1233,66 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailedLockInLaterSegmentUnlocksPool() throws Exception {
-        // Segments of two readers: another thread's lock meets this thread's busy reader at the first slot of the
-        // second segment, after it locked the first one.
-        assertWithPool(
-                pool -> assertFailedLockInLaterSegmentUnlocksPool(pool, false),
-                new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public int getPoolSegmentSize() {
-                        return 2;
-                    }
-                }
-        );
-        // The segment size of production, 32: this thread's own lock meets its busy 33rd reader.
-        assertWithPool(
-                pool -> {
-                    Assert.assertEquals(32, pool.getSegmentSize());
-                    assertFailedLockInLaterSegmentUnlocksPool(pool, true);
-                },
-                new DefaultTestCairoConfiguration(root)
-        );
-    }
-
-    @Test
-    public void testFailedLockOfOwnBusyReaderReleasesTakenSlots() throws Exception {
-        // A lock meets the busy reader of its own thread in slot 1, after it took slot 0 and closed the idle reader
-        // there. The failed lock gives slot 0 back: once the reader is closed, another thread locks the table.
+    public void testFailedLockFreesSlotsForGetAndLock() throws Exception {
+        // A lock that meets a busy reader hands back the slot it took before it: get() can use every slot again, and
+        // another thread can lock once the reader is closed.
         assertWithPool(pool -> {
-            final TableReader idleReader = pool.get(uTableToken);
-            try (TableReader ignored = pool.get(uTableToken)) {
-                idleReader.close();
-                Assert.assertFalse(pool.lock(uTableToken));
-                assertSlotsUnallocated(pool, uTableToken, 1);
+            final TableReader idle = pool.get(uTableToken);
+            final TableReader busy = pool.get(uTableToken);
+            idle.close();
+            Assert.assertFalse(lockAndUnlockInThread(pool, uTableToken));
+            Assert.assertFalse(idle.isOpen());
+            Assert.assertTrue(busy.isOpen());
+            busy.close();
+
+            // the pool holds two readers
+            try (TableReader r1 = pool.get(uTableToken); TableReader r2 = pool.get(uTableToken)) {
+                Assert.assertNotSame(r1, r2);
+                Assert.assertEquals(2, pool.getBusyCount());
             }
-            Assert.assertTrue(lockAndUnlockOnNewThread(pool, uTableToken));
-            try (TableReader reader = pool.get(uTableToken)) {
-                Assert.assertTrue(reader.isOpen());
-            }
-        });
+            Assert.assertTrue(lockAndUnlockInThread(pool, uTableToken));
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, poolConfiguration(2, 1));
     }
 
     @Test
-    public void testFailedLockReleasesTakenSlots() throws Exception {
-        // A lock meets the busy reader of another thread in slot 1, after it took slot 0 and closed the idle reader
-        // there. The failed lock gives slot 0 back: once the reader is closed, a third thread locks the table.
+    public void testFailedLockInSecondSegmentLeavesEntryUnlocked() throws Exception {
+        // The busy reader sits past the first segment: the failed lock must still unlock the entry, whose lock sits in
+        // the first segment, or no thread could take a reader of the table again.
         assertWithPool(pool -> {
-            final TableReader idleReader = pool.get(uTableToken);
-            final SOCountDownLatch isReaderOpen = new SOCountDownLatch(1);
-            final SOCountDownLatch isLockDone = new SOCountDownLatch(1);
-            final AtomicReference<Throwable> readerError = new AtomicReference<>();
-            final Thread reader = new Thread(() -> {
-                try (TableReader ignored = pool.get(uTableToken)) {
-                    isReaderOpen.countDown();
-                    isLockDone.await();
-                } catch (Throwable th) {
-                    readerError.set(th);
-                } finally {
-                    isReaderOpen.countDown();
-                    Path.clearThreadLocals();
-                }
-            });
-            reader.start();
-            try {
-                isReaderOpen.await();
-                idleReader.close();
-                Assert.assertFalse(lockOnNewThread(pool, uTableToken));
-                assertSlotsUnallocated(pool, uTableToken, 1);
-            } finally {
-                isLockDone.countDown();
-                reader.join();
+            final TableReader r0 = pool.get(uTableToken);
+            final TableReader r1 = pool.get(uTableToken);
+            final TableReader busy = pool.get(uTableToken);
+            r0.close();
+            r1.close();
+            Assert.assertFalse(lockAndUnlockInThread(pool, uTableToken));
+
+            try (TableReader r = pool.get(uTableToken)) {
+                Assert.assertTrue(r.isOpen());
+                Assert.assertEquals(2, pool.getBusyCount());
             }
-            if (readerError.get() != null) {
-                throw new AssertionError("the reader thread failed", readerError.get());
-            }
-            Assert.assertTrue(lockAndUnlockOnNewThread(pool, uTableToken));
-        });
+            busy.close();
+            Assert.assertTrue(lockAndUnlockInThread(pool, uTableToken));
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, poolConfiguration(2, 2));
     }
 
     @Test
-    public void testFailedLockUnderConcurrentGets() throws Exception {
-        // Segments of two readers. Four threads take and return readers while a fifth locks and unlocks the table, so
-        // that locks fail in the first segment and in later ones while gets walk the slots and add segments. A lock
-        // fails only while a reader is busy, and a get fails only while a lock runs or holds the table: each thread
-        // counts its calls in or out, odd inside, and every failure must have seen the other side inside. A failed lock
-        // leaves no slot to its thread, which then gets a reader. Afterwards no slot is taken, and a new thread locks
-        // the table and gets a reader.
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final long seed0 = rnd.getSeed0();
-        final long seed1 = rnd.getSeed1();
-        assertWithPool(
-                pool -> {
-                    // idle readers in the first two segments
-                    final ObjList<TableReader> idleReaders = new ObjList<>();
-                    for (int i = 0; i < 4; i++) {
-                        idleReaders.add(pool.get(uTableToken));
-                    }
-                    Misc.freeObjListAndClear(idleReaders);
+    public void testFailedLockOnOwnBusyReaderFreesSlots() throws Exception {
+        // The thread that locks holds a busy reader itself, past an idle one
+        assertWithPool(pool -> {
+            final TableReader idle = pool.get(uTableToken);
+            final TableReader busy = pool.get(uTableToken);
+            idle.close();
+            Assert.assertFalse(pool.lock(uTableToken));
+            Assert.assertTrue(busy.isOpen());
+            busy.close();
 
-                    final int readerThreadCount = 4;
-                    final int iterations = 1_000;
-                    final AtomicLongArray readerCalls = new AtomicLongArray(readerThreadCount);
-                    final AtomicLong lockerCalls = new AtomicLong();
-                    final AtomicInteger runningReaderThreads = new AtomicInteger(readerThreadCount);
-                    final AtomicInteger failedLocks = new AtomicInteger();
-                    final AtomicInteger refusedGets = new AtomicInteger();
-                    final AtomicReference<Throwable> error = new AtomicReference<>();
-                    final CyclicBarrier start = new CyclicBarrier(readerThreadCount + 1);
-                    final ObjList<Thread> threads = new ObjList<>();
-                    for (int t = 0; t < readerThreadCount; t++) {
-                        final int threadIndex = t;
-                        final Rnd threadRnd = new Rnd(seed0 + t, seed1);
-                        threads.add(new Thread(() -> {
-                            try {
-                                start.await();
-                                for (int i = 0; i < iterations; i++) {
-                                    readerCalls.incrementAndGet(threadIndex);
-                                    final long lockerCallsBefore = lockerCalls.get();
-                                    try (TableReader ignored = pool.get(uTableToken)) {
-                                        spin(threadRnd);
-                                    } catch (EntryLockedException e) {
-                                        final long lockerCallsAfter = lockerCalls.get();
-                                        if ((lockerCallsBefore & 1) == 0 && lockerCallsAfter == lockerCallsBefore) {
-                                            throw new AssertionError(
-                                                    "get refused while no lock ran: " + e.getFlyweightMessage()
-                                            );
-                                        }
-                                        refusedGets.incrementAndGet();
-                                    } finally {
-                                        readerCalls.incrementAndGet(threadIndex);
-                                    }
-                                    spin(threadRnd);
-                                }
-                            } catch (Throwable th) {
-                                error.compareAndSet(null, th);
-                            } finally {
-                                runningReaderThreads.decrementAndGet();
-                                Path.clearThreadLocals();
-                            }
-                        }));
-                    }
-                    threads.add(new Thread(() -> {
-                        final Rnd lockerRnd = new Rnd(seed0 + readerThreadCount, seed1);
-                        final long thread = Thread.currentThread().threadId();
-                        final long[] before = new long[readerThreadCount];
-                        try {
-                            start.await();
-                            while (runningReaderThreads.get() > 0) {
-                                final boolean isLocked;
-                                lockerCalls.incrementAndGet();
-                                try {
-                                    for (int t = 0; t < readerThreadCount; t++) {
-                                        before[t] = readerCalls.get(t);
-                                    }
-                                    isLocked = pool.lock(uTableToken);
-                                    if (isLocked) {
-                                        spin(lockerRnd);
-                                        pool.unlock(uTableToken);
-                                    } else {
-                                        boolean isReaderInside = false;
-                                        for (int t = 0; t < readerThreadCount; t++) {
-                                            isReaderInside |= (before[t] & 1) == 1 || readerCalls.get(t) != before[t];
-                                        }
-                                        if (!isReaderInside) {
-                                            throw new AssertionError("lock failed while no reader was busy");
-                                        }
-                                    }
-                                } finally {
-                                    lockerCalls.incrementAndGet();
-                                }
-                                if (!isLocked) {
-                                    failedLocks.incrementAndGet();
-                                    assertNoSlotOf(pool, uTableToken, thread);
-                                    pool.get(uTableToken).close();
-                                }
-                                spin(lockerRnd);
-                            }
-                        } catch (Throwable th) {
-                            error.compareAndSet(null, th);
-                        } finally {
-                            Path.clearThreadLocals();
-                        }
-                    }));
-                    for (int i = 0, n = threads.size(); i < n; i++) {
-                        threads.getQuick(i).start();
-                    }
-                    for (int i = 0, n = threads.size(); i < n; i++) {
-                        threads.getQuick(i).join();
-                    }
-                    if (error.get() != null) {
-                        throw new AssertionError("a pool thread failed", error.get());
-                    }
-                    LOG.info().$("concurrent lock [failedLocks=").$(failedLocks.get())
-                            .$(", refusedGets=").$(refusedGets.get())
-                            .I$();
-                    Assert.assertTrue("no lock failed", failedLocks.get() > 0);
-                    Assert.assertEquals(0, pool.getBusyCount());
-                    final AbstractMultiTenantPool.Entry<?> entry = pool.entries().get(uTableToken.getDirName());
-                    if (entry != null) {
-                        for (AbstractMultiTenantPool.Entry<?> e = entry; e != null; e = e.getNext()) {
-                            for (int i = 0, n = pool.getSegmentSize(); i < n; i++) {
-                                Assert.assertEquals(
-                                        "slot " + e.getIndex() + ':' + i,
-                                        AbstractPool.UNALLOCATED,
-                                        e.getOwnerVolatile(i)
-                                );
-                            }
-                        }
-                    }
-                    Assert.assertTrue(lockAndUnlockOnNewThread(pool, uTableToken));
-                    try (TableReader reader = pool.get(uTableToken)) {
-                        Assert.assertTrue(reader.isOpen());
-                    }
-                },
-                new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public int getPoolSegmentSize() {
-                        return 2;
-                    }
-                }
-        );
+            Assert.assertTrue(lockAndUnlockInThread(pool, uTableToken));
+            try (TableReader r1 = pool.get(uTableToken); TableReader r2 = pool.get(uTableToken)) {
+                Assert.assertNotSame(r1, r2);
+            }
+        }, poolConfiguration(2, 1));
     }
 
     @Test
@@ -1921,55 +1804,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
         });
     }
 
-    // no slot of the table's pool entry belongs to the thread
-    private static void assertNoSlotOf(ReaderPool pool, TableToken tableToken, long thread) {
-        AbstractMultiTenantPool.Entry<?> e = pool.entries().get(tableToken.getDirName());
-        for (; e != null; e = e.getNext()) {
-            for (int i = 0, n = pool.getSegmentSize(); i < n; i++) {
-                if (e.getOwnerVolatile(i) == thread) {
-                    throw new AssertionError(
-                            "slot " + e.getIndex() + ':' + i + " is left to the thread of a failed lock"
-                    );
-                }
-            }
-        }
-    }
-
-    // the first slots of the table's first pool segment
-    private static void assertSlotsUnallocated(ReaderPool pool, TableToken tableToken, int slotCount) {
-        final AbstractMultiTenantPool.Entry<?> entry = pool.entries().get(tableToken.getDirName());
-        Assert.assertNotNull(entry);
-        for (int i = 0; i < slotCount; i++) {
-            Assert.assertEquals("slot " + i, AbstractPool.UNALLOCATED, entry.getOwnerVolatile(i));
-        }
-    }
-
-    private static boolean lockAndUnlockOnNewThread(
-            ReaderPool pool,
-            TableToken tableToken
-    ) throws InterruptedException {
-        return lockOnNewThread(pool, tableToken, true);
-    }
-
-    // a lock of a thread that holds nothing and ends after the call
-    private static boolean lockOnNewThread(ReaderPool pool, TableToken tableToken) throws InterruptedException {
-        return lockOnNewThread(pool, tableToken, false);
-    }
-
-    private static boolean lockOnNewThread(
-            ReaderPool pool,
-            TableToken tableToken,
-            boolean isUnlockOnSuccess
-    ) throws InterruptedException {
+    // Locks the entry of the table on another thread, and unlocks it there when locked: the thread that locks must
+    // be the one that unlocks. Returns whether it locked.
+    private static boolean lockAndUnlockInThread(ReaderPool pool, TableToken tableToken) throws InterruptedException {
         final AtomicBoolean isLocked = new AtomicBoolean();
         final AtomicReference<Throwable> error = new AtomicReference<>();
         final Thread thread = new Thread(() -> {
             try {
                 if (pool.lock(tableToken)) {
                     isLocked.set(true);
-                    if (isUnlockOnSuccess) {
-                        pool.unlock(tableToken);
-                    }
+                    pool.unlock(tableToken);
                 }
             } catch (Throwable th) {
                 error.set(th);
@@ -1980,37 +1824,23 @@ public class ReaderPoolTest extends AbstractCairoTest {
         thread.start();
         thread.join();
         if (error.get() != null) {
-            throw new AssertionError("lock() failed", error.get());
+            throw new AssertionError(error.get());
         }
         return isLocked.get();
     }
 
-    private static void spin(Rnd rnd) {
-        for (int i = 0, n = rnd.nextInt(64); i < n; i++) {
-            Os.pause();
-        }
-    }
+    private static CairoConfiguration poolConfiguration(int segmentSize, int maxSegments) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getPoolSegmentSize() {
+                return segmentSize;
+            }
 
-    // the readers of the first segment idle, and this thread's reader busy at the first slot of the second segment
-    private void assertFailedLockInLaterSegmentUnlocksPool(ReaderPool pool, boolean isOwnReaderBusy) throws Exception {
-        final int segmentSize = pool.getSegmentSize();
-        final ObjList<TableReader> idleReaders = new ObjList<>();
-        try {
-            for (int i = 0; i < segmentSize; i++) {
-                idleReaders.add(pool.get(uTableToken));
+            @Override
+            public int getReaderPoolMaxSegments() {
+                return maxSegments;
             }
-            try (TableReader ignored = pool.get(uTableToken)) {
-                Misc.freeObjListAndClear(idleReaders);
-                Assert.assertFalse(isOwnReaderBusy ? pool.lock(uTableToken) : lockOnNewThread(pool, uTableToken));
-                assertSlotsUnallocated(pool, uTableToken, segmentSize);
-            }
-        } finally {
-            Misc.freeObjListAndClear(idleReaders);
-        }
-        try (TableReader reader = pool.get(uTableToken)) {
-            Assert.assertTrue(reader.isOpen());
-        }
-        Assert.assertTrue(lockAndUnlockOnNewThread(pool, uTableToken));
+        };
     }
 
     private void assertWithPool(PoolAwareCode code) throws Exception {
