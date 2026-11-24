@@ -58,6 +58,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -7008,7 +7009,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testRebuildSidecarsByCopyFailureAtEveryFileCallKeepsIndexIntact() throws Exception {
-        sweepPostingIndexOperation(
+        final SweepResult result = sweepPostingIndexOperation(
                 "rebuild_sidecars_sweep",
                 (writer, coverAddr) -> {
                     for (int v = 0; v < 32; v++) {
@@ -7024,6 +7025,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 Long.MAX_VALUE,
                 false
         );
+        Assert.assertTrue("no failure queued the purge of the staged generation", result.orphanPurgeCount() > 0);
     }
 
     /**
@@ -10422,7 +10424,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testSealFailureAtEveryFileCallKeepsIndexIntact() throws Exception {
-        sweepPostingIndexOperation(
+        final SweepResult result = sweepPostingIndexOperation(
                 "seal_sweep",
                 (writer, coverAddr) -> {
                     // two sparse generations, so that seal() runs sealFull and switches the value file
@@ -10435,6 +10437,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 Long.MAX_VALUE,
                 false
         );
+        Assert.assertTrue("no failure queued the purge of the staged generation", result.orphanPurgeCount() > 0);
     }
 
     /**
@@ -10447,7 +10450,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testSealWithTxnStampFailureAtEveryFileCallKeepsIndexIntact() throws Exception {
-        sweepPostingIndexOperation(
+        final SweepResult result = sweepPostingIndexOperation(
                 "stamped_seal_sweep",
                 (writer, coverAddr) -> {
                     commitPostingRows(writer, 0, 15);
@@ -10460,6 +10463,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 Long.MAX_VALUE,
                 false
         );
+        Assert.assertTrue("no failure queued the purge of the staged generation", result.orphanPurgeCount() > 0);
     }
 
     /**
@@ -12650,6 +12654,33 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         writer.commit();
     }
 
+    // Collects the sealTxn of every entry of the chain in the key file of index name; none when it holds no chain
+    private static void collectChainSealTxns(Path path, int plen, String name, LongList sealTxns) {
+        sealTxns.clear();
+        final FilesFacade ff = configuration.getFilesFacade();
+        try {
+            final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+            final long size = ff.length(keyFile);
+            if (size < PostingIndexUtils.KEY_FILE_RESERVED) {
+                return;
+            }
+            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, keyFile, size, MemoryTag.MMAP_DEFAULT)) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                final PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+                long offset = chain.getHeadEntryOffset();
+                for (long visited = 0, n = chain.getEntryCount(); offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
+                    Assert.assertTrue("chain walk exceeded entryCount=" + n, visited < n);
+                    PostingIndexChainEntry.read(keyMem, offset, entry);
+                    sealTxns.add(entry.sealTxn);
+                    offset = entry.prevEntryOffset;
+                }
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     // Collects the sealTxns of the purges the writer queued
     private static void collectQueuedSealTxns(PostingIndexWriter writer, LongList queuedSealTxns) {
         queuedSealTxns.clear();
@@ -13253,11 +13284,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Creates posting_o3_recovery, whose POSTING index on new_col_11, renamed from sym2, covers marker, with the
-     * rows of minutes -85 to -1 in 2022-02-24 and of minutes 0 to 34 in 2022-02-25, minute 34 the only one of
-     * XPHI. Drops the purges the setup queues, so that the purge log holds nothing of the index.
-     */
-    /**
      * Asserts that no purge the writer queued names the live generation of the chain, nor {@code keptSealTxn}, a
      * generation the chain on disk may still name, and that the index holds no value or cover file of another
      * generation, except those of a queued purge; with {@code isPurging}, it first runs the queued purges, as the
@@ -13308,6 +13334,32 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         path.trimTo(plen);
     }
 
+    /**
+     * Asserts that the purge of every generation the writer queued and no chain entry names, before the operation or
+     * after its failure, spans every txn, from 0 to {@code Long.MAX_VALUE}: the operation staged the generation and
+     * never published it, so no txn window bounds the readers that its purge must wait for. Returns how many such
+     * purges it checked.
+     */
+    private int assertOrphanPurgesSpanEveryTxn(Path path, int plen, String name, PostingIndexWriter writer, LongList chainSealTxnsBefore, String where) {
+        final LongList chainSealTxnsAfter = new LongList();
+        collectChainSealTxns(path, plen, name, chainSealTxnsAfter);
+        int count = 0;
+        for (int i = 0, n = writer.getPendingPurgesSizeForTesting(); i < n; i++) {
+            final long sealTxn = writer.getPendingPurgeSealTxnForTesting(i);
+            if (chainSealTxnsBefore.indexOf(sealTxn) < 0 && chainSealTxnsAfter.indexOf(sealTxn) < 0) {
+                Assert.assertEquals("orphan purge must start at txn 0" + where, 0, writer.getPendingPurgeFromTxnForTesting(i));
+                Assert.assertEquals("orphan purge must span the full txn window" + where, Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(i));
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Creates posting_o3_recovery, whose POSTING index on new_col_11, renamed from sym2, covers marker, with the
+     * rows of minutes -85 to -1 in 2022-02-24 and of minutes 0 to 34 in 2022-02-25, minute 34 the only one of
+     * XPHI. Drops the purges the setup queues, so that the purge log holds nothing of the index.
+     */
     private void createPostingRecoveryTable() throws SqlException {
         createPostingRecoveryTable(0);
     }
@@ -14101,6 +14153,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      *     file of another generation but those of a queued purge, and once the purges ran, none at all. A failed flush of the .pk after {@code op} moved the chain head leaves
      *     the head on disk unknown: the generation live before {@code op} keeps its files then, no purge may name
      *     it;</li>
+     *     <li>the purge of a generation {@code op} staged and never published spans every txn, see
+     *     {@link #assertOrphanPurgesSpanEveryTxn};</li>
      *     <li>a reader serves the rows the index held before {@code op}, or those {@code op} leaves.</li>
      * </ul>
      * {@code setup} builds the index from rows 0 to {@code maxRowBefore}, row r under key r & 3, and {@code op}
@@ -14132,7 +14186,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     ) throws Exception {
         final IndexFileCallFailingFacade sweepFf = new IndexFileCallFailingFacade(Files.SEPARATOR + name + '_');
         sweepFf.setFlushOnly(isRebuildPublish);
-        final int[] outcomeCounts = new int[2];
+        final int[] outcomeCounts = new int[3];
         ff = sweepFf;
         assertMemoryLeak(ff, () -> {
             final String[] modeNames = {"nosync", "async", "sync", "sync, flush per file"};
@@ -14149,6 +14203,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     for (int failAt = 1; ; failAt++) {
                         final String indexName = name + '_' + mode + '_' + failAt;
                         final LongList queuedSealTxns = new LongList();
+                        final LongList chainSealTxnsBefore = new LongList();
                         final ObjList<LongList> expected = new ObjList<>();
                         String failedCall = null;
                         long keptSealTxn = -1;
@@ -14158,6 +14213,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             writer.setCommitMode(commitModes[mode]);
                             setup.run(writer, coverAddr);
                             final long liveSealTxnBefore = readPostingSealTxn(path, plen, indexName);
+                            collectChainSealTxns(path, plen, indexName, chainSealTxnsBefore);
                             sweepFf.arm(failAt);
                             try {
                                 op.run(writer);
@@ -14184,6 +14240,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 // right after the failure, as the retry below takes the staged sealTxn again
                                 collectQueuedSealTxns(writer, queuedSealTxns);
                                 assertIndexFilesOfLiveGeneration(path, plen, indexName, queuedSealTxns, keptSealTxn, false, where);
+                                outcomeCounts[2] += assertOrphanPurgesSpanEveryTxn(path, plen, indexName, writer, chainSealTxnsBefore, where);
                                 if (isPoisoned(writer)) {
                                     outcomeCounts[0]++;
                                     assertPoisonedWriterRejectsAll(writer);
@@ -14236,7 +14293,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 .$(", poisoned=").$(outcomeCounts[0])
                 .$(", working=").$(outcomeCounts[1])
                 .I$();
-        return new SweepResult(outcomeCounts[0], outcomeCounts[1]);
+        return new SweepResult(outcomeCounts[0], outcomeCounts[1], outcomeCounts[2]);
     }
 
     // Sweeps the publish of a rebuild of the index from its rows, as TableWriter makes for a rewritten partition: the
@@ -15112,8 +15169,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     private record PostingSealFileNames(long sealTxn, String valueFile, String coverFile) {
     }
 
-    // How many failures of a sweep poisoned the writer, and how many left it working
-    private record SweepResult(int poisonedCount, int workingCount) {
+    // How many failures of a sweep poisoned the writer, how many left it working, and how many orphan purges they queued
+    private record SweepResult(int poisonedCount, int workingCount, int orphanPurgeCount) {
     }
 
     /**
