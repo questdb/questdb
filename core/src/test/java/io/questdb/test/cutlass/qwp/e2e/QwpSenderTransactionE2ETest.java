@@ -42,8 +42,8 @@ import java.util.function.Consumer;
  * server's advertised frame cap, strict transactions against the advertised
  * {@code qwp.max.uncommitted.rows}, and the rollback control frame.
  * <p>
- * The server under test accepts frames of at most 64 KiB, so every transaction
- * here spans many frames.
+ * Unless a test says otherwise, the server under test accepts frames of at most
+ * 64 KiB, so every transaction here spans many frames.
  */
 public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     // ~100 encoded bytes per row.
@@ -124,6 +124,28 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
+    }
+
+    @Test
+    public void testStrictResetAfterRefusedFirstAutoFlushStartsNewTransaction() throws Exception {
+        // The server's default 2 MiB receive buffer sets the default frame cap. An 8 MiB
+        // client buffer is then too small for a strict transaction's first deferred frame
+        // next to the room it keeps for its commit: the first auto-flush is refused, and
+        // nothing is sent. reset() used to keep that refusal, so the sender refused every
+        // later row until rollback() or close().
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig(conf(port) + "transaction=strict;sf_max_total_bytes=8m;")) {
+                Assert.assertTrue("the first auto-flush must be refused", writeUntilRefused(sender) > 0);
+                Assert.assertNull("nothing was sent", engine.getTableTokenIfExists("t"));
+                sender.reset();
+                writeRows(sender, 10_000, 10);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n10\t10000\t10009\n");
+        }, 2 * 1024 * 1024);
     }
 
     @Test
@@ -300,6 +322,22 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         for (int i = from, n = from + count; i < n; i++) {
             sender.table("t").longColumn("v", i).stringColumn("s", PAD).atNow();
         }
+    }
+
+    // Writes rows 0, 1, ... until the client buffer refuses one, and returns the
+    // refused row.
+    private static int writeUntilRefused(Sender sender) {
+        for (int i = 0; i < 100_000; i++) {
+            try {
+                sender.table("t").longColumn("v", i).stringColumn("s", PAD).atNow();
+            } catch (TransactionTooLargeException e) {
+                TestUtils.assertContains(e.getMessage(), "transaction too large for the client buffer");
+                TestUtils.assertContains(e.getMessage(), "so the row was not added");
+                return i;
+            }
+        }
+        Assert.fail("the client buffer must refuse a row");
+        return -1;
     }
 
     private TableToken awaitTable() throws Exception {
