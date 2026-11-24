@@ -306,6 +306,82 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeRangeElementDayFilterInRefreshAcrossRestart() throws Exception {
+        // A refresh resolves $now against the "now" of its context, see
+        // testRowValueDateVariableResolvesLikeLiteral: the clock, Sunday 2025-01-19 at 12:00, or the
+        // start of the epoch, Thursday 1970-01-01 at 00:00, and base has a row in the two hours
+        // after each. A range between two points in time keeps its interval only when it starts on
+        // a day of the day filter of its element, so of the materialized views over those two hours
+        // with the day filters #Thu and #Sun, the one with the day of the "now" of the refresh holds
+        // the row after that "now", and the other none: one row between them, on the day of the day
+        // filter of its view, before a restart and after it, when the database parses the stored
+        // text of the views again. A refresh that ignored the day filters would put the row in both.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('1970-01-01T01:00:00.000000Z', 1),
+                    ('2025-01-19T13:00:00.000000Z', 1)
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv_thu AS (SELECT ts, count() c FROM base WHERE ts IN '[$now..$now + 2h#Thu]' SAMPLE BY 1h)");
+            execute("CREATE MATERIALIZED VIEW mv_sun AS (SELECT ts, count() c FROM base WHERE ts IN '[$now..$now + 2h#Sun]' SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            // the rows of both views by whether each is on the day of the day filter of its view;
+            // day_of_week() numbers Monday 1 and Sunday 7
+            final String rowsByFilterDay = """
+                    SELECT day_of_week(ts) = filter_day is_on_filter_day, count(), sum(c)
+                    FROM (
+                        SELECT ts, c, 4 filter_day FROM mv_thu
+                        UNION ALL
+                        SELECT ts, c, 7 filter_day FROM mv_sun
+                    )
+                    """;
+            final String oneRowOnFilterDay = """
+                    is_on_filter_day\tcount\tsum
+                    true\t1\t1
+                    """;
+            assertQuery(rowsByFilterDay)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(oneRowOnFilterDay);
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                drainWalAndMatViewQueues(restarted);
+                restarted.execute("REFRESH MATERIALIZED VIEW mv_thu FULL", restartedContext);
+                restarted.execute("REFRESH MATERIALIZED VIEW mv_sun FULL", restartedContext);
+                drainWalAndMatViewQueues(restarted);
+                assertQuery("SELECT view_name, view_status FROM materialized_views() ORDER BY view_name")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("""
+                                view_name\tview_status
+                                mv_sun\tvalid
+                                mv_thu\tvalid
+                                """);
+                assertQuery(rowsByFilterDay)
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(oneRowOnFilterDay);
+                restarted.releaseInactive();
+            }
+        });
+    }
+
+    @Test
     public void testPointInTimeRangeLiteralWithUnknownElementDayFilterFailsCreateAndActsAsNullInRefresh() throws Exception {
         // A day filter of the element of a range between two points in time that does not parse,
         // also after a timezone of the element, fails CREATE VIEW and CREATE MATERIALIZED VIEW at
