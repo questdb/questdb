@@ -287,10 +287,10 @@ public class PartitionEncoder {
     /**
      * Decodes a row group of a locally mapped Parquet file and queues it for the streaming writer.
      *
-     * @param parquetColumnsPtr   address of one int per writer column: the index of the file column
-     *                            that holds the writer column's data, or -1 for a column the file
-     *                            lacks, which the writer writes as NULL
-     * @param parquetColumnCount  the number of ints at {@code parquetColumnsPtr}, the writer's column count
+     * @param parquetColumnsPtr  address of one int per writer column: the index of the file column
+     *                           that holds the writer column's data, or -1 for a column the file
+     *                           lacks, which the writer writes as NULL
+     * @param parquetColumnCount the number of ints at {@code parquetColumnsPtr}, the writer's column count
      */
     public static native long writeStreamingParquetChunkFromRowGroup(
             long writerPtr,
