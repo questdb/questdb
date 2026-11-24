@@ -349,7 +349,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
     private final ObjList<ColumnIndexer> indexers;
     private final boolean isDebugInvariantCheckEnabled;
     private final boolean isMergeAppendEnabledAtOpen;
-    private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter();
+    private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter(PostingIndexChainWriter.SYNC_KEY_FILE);
     private final LongList linkPostingIndexOrphanSealTxns = new LongList();
     // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus, it must not free it up.
@@ -10666,6 +10666,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
                 chain.openExisting(keyMem);
                 int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, linkPostingIndexOrphanSealTxns);
                 if (dropped > 0 || chain.isHeadTrimmedOnLastRecovery()) {
+                    // The cut chain is on disk before the purge may delete the files of the dropped entries.
+                    keyMem.sync(false);
                     LOG.info().$("posting index link recovery [table=").$(tableToken)
                             .$(", column=").$safe(columnName)
                             .$(", columnNameTxn=").$(columnNameTxn)

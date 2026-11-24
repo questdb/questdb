@@ -85,6 +85,8 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
+    // Every key file of a POSTING index, by its path.
+    private static final Pattern KEY_FILE = Pattern.compile(".*\\.pk(\\.\\d+)?");
     // The key files of the POSTING columns s and k.
     private static final Pattern KEY_FILE_S_K = Pattern.compile("[sk]\\.pk(\\..*)?");
     private static final Pattern PARTITION_DIR = Pattern.compile("\\d{4}-\\d{2}-\\d{2}(\\.\\d+)?");
@@ -138,15 +140,19 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // A power loss at every durability operation of the apply of a pass that reseals two older partitions and the
     // active one in place and ends with a save point, after two such passes since the last save point. Recovery reads
     // every generation the restored txn needs, and after the next save point every partition holds one generation of
-    // each POSTING column.
+    // each POSTING column. The power loss comes with the header pages of every key file written back early or not,
+    // every other operation in PR runs, both at every operation with -Dquestdb.fuzz.nightly=true.
     @Test
     public void testPowerLossAtEveryOpOfOlderPartitionResealLeavesOneGeneration() throws Exception {
         setUpAdaptive();
         runWithCrashFacade(() -> {
             int swept = 0;
             int savePointKept = 0;
-            for (int op = 1; ; op++) {
-                final String table = "w" + op;
+            for (int run = 1; ; run++) {
+                final int op = Boolean.getBoolean("questdb.fuzz.nightly") ? (run + 1) / 2 : run;
+                final boolean isKeyFileHeaderWrittenBack = run % 2 == 0;
+                crashFf.writeBackEarlyAtPowerLoss(isKeyFileHeaderWrittenBack ? KEY_FILE : null, PostingIndexUtils.KEY_FILE_RESERVED);
+                final String table = "w" + run;
                 final TableToken token = createThreeDayTable(table);
                 final String tableDir = Paths.get(root, token.getDirName()).toString();
                 markDurableBaseline();
@@ -179,7 +185,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     break;
                 }
                 swept++;
-                final String where = "power loss at op " + op;
+                final String where = "power loss at op " + op + (isKeyFileHeaderWrittenBack ? ", key file header pages written back" : "");
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseCrashOrphanedWriters();
@@ -1017,9 +1023,10 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     // A pass past the save point reseals the covering index of every day. The group window is 0, so the pass's
     // sequencer record is durable at its commit. The kernel writes the new value and cover files back, and _txn too
-    // when isTxnDurable, but not the key files: after the power loss no chain names the new files, and none needs a
-    // cut. Recovery must remove the new files before the WAL replay reseals over them, whether the start restores the
-    // save point or not.
+    // when isTxnDurable, but not the key files past the flush each reseal makes before its header names the new entry:
+    // after the power loss no chain names the new files, and recovery cuts the generation the pass appended in place.
+    // Recovery must remove the new files before the WAL replay reseals over them, whether the start restores the save
+    // point or not.
     private void crashAfterUnrecordedSeal(boolean isTxnDurable) throws Exception {
         setUpAdaptive();
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
@@ -1048,7 +1055,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             engine.releaseCrashOrphanedWriters();
             discardPurgeQueue();
             simulateRestart(new TableToken[]{token});
-            Assert.assertEquals("a chain names state above the save point after the power loss", "[]", indexStateAbove(tableDir, savePointTxn).toString());
+            final List<String> stateAbove = indexStateAbove(tableDir, savePointTxn);
+            for (int i = 0, n = stateAbove.size(); i < n; i++) {
+                Assert.assertTrue("a chain names an entry above the save point after the power loss: " + stateAbove,
+                        stateAbove.get(i).contains("[entry=" + savePointTxn + ","));
+            }
             partitionListingRoot = tableDir;
             partitionListingCount = 0;
             try {
@@ -1057,6 +1068,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 partitionListingRoot = null;
             }
             Assert.assertEquals("partition directories listed", 6, partitionListingCount);
+            Assert.assertEquals("index state above the save point after recovery", "[]", indexStateAbove(tableDir, savePointTxn).toString());
             for (int i = 0, n = newFiles.size(); i < n; i++) {
                 Assert.assertFalse("a file no chain names is left: " + newFiles.get(i), Files.exists(Paths.get(newFiles.get(i))));
             }

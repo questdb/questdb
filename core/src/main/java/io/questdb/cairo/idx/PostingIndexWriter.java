@@ -174,7 +174,7 @@ public class PostingIndexWriter implements IndexWriter {
     // v2 chain helper: owns the in-memory mirror of the chain header,
     // exposes append/extend/recovery primitives. Single instance per writer
     // reused across reopens via resetState().
-    private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+    private final PostingIndexChainWriter chain = new PostingIndexChainWriter(ignored -> flushNewHead());
     private final CairoConfiguration configuration;
     // Last-known valid byte extent of each cover column's .pcN, indexed by cover
     // slot. Updated from the live sidecar handle's append offset whenever it is
@@ -286,6 +286,8 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isLastSealStreaming;
     private boolean isLastSidecarInfoHeaderWritten;
     private boolean isPoisoned;
+    // Step 1 of a seal's ordered flush left its syncfs to the publish of the entry, see flushSealFilesBarrier().
+    private boolean isSealBarrierDeferred;
     private int keyCapacity;
     private int keyCount;
     // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
@@ -2390,14 +2392,14 @@ public class PostingIndexWriter implements IndexWriter {
             sealTxn = newTxn;
             initKeyMemory(keyMem, sealTxn);
             // Make the header rewrite durable before recording the purge of
-            // the superseded .pv, where the commit mode asks for it (see
-            // sealFlushGrade()). PostingSealPurgeOperator unlinks with no
+            // the superseded .pv, in every commit mode: the rewrite is in
+            // place, of both header pages. PostingSealPurgeOperator unlinks with no
             // ordering against .pk writeback, so without this barrier a
             // power loss after the unlink journals but before the .pk page
             // writes back recovers the old chain head pointing at a deleted
             // .pv -- readers fail hard until REINDEX. Pairs with seal()'s
             // .pk flush.
-            flushSealKeyFile();
+            keyMem.sync(false);
             recordPostingSealPurge(oldSealTxn);
         }
         // initKeyMemory just rewrote the .pk header pages; resync the chain
@@ -4089,6 +4091,23 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    // Makes a new chain head entry durable before the header flip that names it (see sealFlushGrade()): the
+    // deferred syncfs of a seal's step 1, issued on the seal's own value file so it lands on the right filesystem for
+    // a partition linked elsewhere; otherwise an msync of the .pk, while its header pages still name the old head. A
+    // flush of the entry's pages alone could take part of a head grown in place, the page it shares with the entry.
+    private void flushNewHead() {
+        final boolean isBarrierDeferred = isSealBarrierDeferred;
+        isSealBarrierDeferred = false;
+        if (partitionPath.size() == 0 || !keyMem.isOpen()) {
+            return;
+        }
+        if (isBarrierDeferred && valueMem.isOpen()) {
+            ff.syncfs(valueMem.getFd());
+        } else {
+            keyMem.sync(false);
+        }
+    }
+
     // Runs once the first generation of a rebuild into the value file discardForRebuild() rotated to is published
     // and the writer state is consistent with it. Only under SYNC it flushes, file by file: the new value file,
     // every open cover file and the .pci, then the .pk; other modes flush nothing here, and ASYNC leaves its
@@ -4165,13 +4184,11 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     // Completes step 1 of a seal's flush: where syncfs is filesystem-wide (Linux), one device flush makes every
-    // file the seal wrote back durable, with the new sizes and extents journaled. Issued on the seal's own file,
-    // so it lands on the right filesystem for a partition linked elsewhere. Elsewhere the per-file barriers of
-    // flushSealFileStart() have done it.
+    // file the seal wrote back durable, with the new sizes and extents journaled. flushNewHead() issues it once the
+    // .pk entry naming those files is written, so it makes that entry durable too, before the header names it.
+    // Elsewhere the per-file barriers of flushSealFileStart() have done it.
     private void flushSealFilesBarrier(MemoryMARW valueFile, int grade) {
-        if (grade == SEAL_FLUSH_ORDERED && ff.isSyncfsFileSystemWide() && valueFile.isOpen()) {
-            ff.syncfs(valueFile.getFd());
-        }
+        isSealBarrierDeferred = grade == SEAL_FLUSH_ORDERED && ff.isSyncfsFileSystemWide() && valueFile.isOpen();
     }
 
     // Step 2 of a seal's flush (see sealFlushGrade()): the .pk, after the entry naming the new files is published
@@ -5218,18 +5235,33 @@ public class PostingIndexWriter implements IndexWriter {
             // a current-state caller legitimately arms 0 while the table's
             // committed _txn is still 0.
             long txnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
-            chain.appendNewEntry(
-                    keyMem,
-                    /* sealTxn */ this.sealTxn,
-                    /* txnAtSeal */ txnAtSeal,
-                    /* valueMemSize */ valueMemSize,
-                    /* maxValue */ maxValue,
-                    /* keyCount */ keyCount,
-                    /* genCount */ newGenCount,
-                    /* blockCapacity */ blockCapacity,
-                    /* coveringFormat */ newEntryCoveringFormat(),
-                    coverEndOffsetsScratch
-            );
+            try {
+                chain.appendNewEntry(
+                        keyMem,
+                        /* sealTxn */ this.sealTxn,
+                        /* txnAtSeal */ txnAtSeal,
+                        /* valueMemSize */ valueMemSize,
+                        /* maxValue */ maxValue,
+                        /* keyCount */ keyCount,
+                        /* genCount */ newGenCount,
+                        /* blockCapacity */ blockCapacity,
+                        /* coveringFormat */ newEntryCoveringFormat(),
+                        coverEndOffsetsScratch
+                );
+            } catch (Throwable th) {
+                if (pendingDiscardOldSealTxn >= 0) {
+                    // A rebuild failed before its publish, as a seal after its switch: valueMem is at the staged
+                    // sealTxn, the chain at the old one. Poison first, then orphan-purge the staged files, as seal()
+                    // does.
+                    isPoisoned = true;
+                    LOG.error().$("posting index rebuild pre-publish failure, poisoning writer and scheduling orphan purge [")
+                            .$("indexName=").$safe(indexName)
+                            .$(", newSealTxn=").$(sealTxn)
+                            .$(']').$();
+                    scheduleOrphanPurge(sealTxn);
+                }
+                throw th;
+            }
         } else {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
@@ -6308,6 +6340,9 @@ public class PostingIndexWriter implements IndexWriter {
         if (dropped <= 0 && !isHeadTrimmed) {
             return;
         }
+        // The header names the cut chain on disk before the files of the dropped entries go, and before a later
+        // append reuses their space: a header page naming a dropped entry must not come back after a power loss.
+        keyMem.sync(false);
         // An entry above the committed txn is named by no reader: a reader
         // pins a committed txn and picks the newest entry at or below it. No
         // save point names it either, a save point is never above the
@@ -6388,18 +6423,21 @@ public class PostingIndexWriter implements IndexWriter {
      * How a seal, a rollback re-encode or {@link #truncate()} makes the files it wrote durable, by the owner's
      * commit mode (see {@link #setCommitMode(int)}):
      * <ul>
-     *   <li>ADAPTIVE, an entry stamped above the committed txn: no flush. Recovery drops such an entry and deletes
-     *       its files when a power loss comes before the next save point, the save point makes them durable
-     *       otherwise, and its pin keeps the superseded files until then.</li>
+     *   <li>ADAPTIVE, an entry stamped above the committed txn: only the {@code .pk} entry, before the header names
+     *       it. Recovery drops such an entry and deletes its files when a power loss comes before the next save
+     *       point, the save point makes them durable otherwise, and its pin keeps the superseded files until then.
+     *       Recovery must find the entry to drop it, so a header page that reaches the disk early must not name an
+     *       entry that did not.</li>
      *   <li>Every other seal, in every mode: the ordered flush. NOSYNC and ASYNC promise no commit across a power
      *       loss, but the purge deletes the superseded files soon after the seal, and without the flush the
      *       {@code .pk} on disk could then name deleted files, or new files whose pages never reached the disk:
      *       the index would fail until REINDEX. An ADAPTIVE seal whose owner supplies no committed txn
      *       ({@link #setCommittedTxnSource(CommittedTxnSource)}) counts as one recovery keeps.</li>
      * </ul>
-     * The ordered flush has two steps: every new value and cover file reaches the disk before the {@code .pk}
-     * entry that names them is published, then the {@code .pk} does, before the superseded files are queued for
-     * deletion. A rebuild after {@link #discardForRebuild()} does not take this grade, see
+     * The ordered flush has two steps: every new value and cover file, and the new {@code .pk} entry that names
+     * them, reach the disk before the header publishes that entry, then the {@code .pk} does, before the superseded
+     * files are queued for deletion. Every other new head entry is flushed before the header names it too, see
+     * {@link #flushNewHead()}. A rebuild after {@link #discardForRebuild()} does not take this grade, see
      * {@link #flushRebuildAndRecordPurge()}.
      */
     private int sealFlushGrade() {

@@ -52,7 +52,8 @@ import java.util.regex.Pattern;
  * partition switch, the seal a fast WAL commit makes at the generation cap of the last partition, and REINDEX.
  * <p>
  * The expected counts come from what each mode promises, not from the code. ADAPTIVE recovers a WAL table to its last
- * save point and drops every chain entry stamped above it, so a seal of a commit in progress needs no flush; a seal
+ * save point and drops every chain entry stamped above it, so a seal of a commit in progress needs only its
+ * {@code .pk} entry flushed before the header names it, or recovery could not find the entry to drop; a seal
  * stamped with the committed txn (the generation cap, REINDEX), every seal of an index build, whose files no recovery
  * drops, and every seal of a table that takes no save point (a non-WAL table, a replica), takes the ordered flush.
  * Every other mode takes the ordered flush for every seal: NOSYNC and ASYNC may lose commits on a power loss, but must
@@ -61,9 +62,8 @@ import java.util.regex.Pattern;
  * {@code .pk} flush.
  * <p>
  * A rebuild of the index from the column data into a new value file, as a WAL commit into older partitions makes, is
- * not a seal: it flushes as before the seals took the ordered flush. Under SYNC the new value file reaches the disk
- * before the {@code .pk} entry that names it, then the {@code .pk} does, one file at a time; the other modes make no
- * synchronous flush for it.
+ * not a seal. In every mode its {@code .pk} entry reaches the disk before the header names it; under SYNC the new
+ * value file then reaches the disk, then the {@code .pk} again, one file at a time.
  * <p>
  * The facade reports a filesystem-wide {@code syncfs} on every platform, so the counts are the same everywhere.
  */
@@ -144,7 +144,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             resetCounts();
             execute("ALTER TABLE t ALTER COLUMN k ADD INDEX TYPE POSTING" + includeClause());
             drainWalQueue();
-            assertSealFlushes(false, "ADD INDEX");
+            assertBuildSealFlushes("ADD INDEX");
             assertIndexMatchesScan();
         });
     }
@@ -162,7 +162,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             resetCounts();
             execute("ALTER TABLE t ALTER COLUMN k TYPE SYMBOL INDEX TYPE POSTING");
             drainWalQueue();
-            assertSealFlushes(false, "ALTER COLUMN TYPE");
+            assertBuildSealFlushes("ALTER COLUMN TYPE");
             assertIndexMatchesScan();
         });
     }
@@ -287,7 +287,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             resetCounts();
             execute("REINDEX TABLE t COLUMN k LOCK EXCLUSIVE");
-            assertSealFlushes(false, "REINDEX");
+            assertBuildSealFlushes("REINDEX");
             assertIndexMatchesScan();
         });
     }
@@ -373,9 +373,17 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         return sql.toString();
     }
 
+    private void assertBuildSealFlushes(String operation) {
+        synchronized (SEAL_FLUSHES) {
+            Assert.assertTrue(operation + " made no seal", seals > 0);
+        }
+        assertFlushes(false, true, operation);
+    }
+
     // isSavePointCovered: the seal is of a commit in progress on a table that takes save points, so under ADAPTIVE the
-    // next save point makes it durable and it takes no flush
-    private void assertFlushes(boolean isSavePointCovered, String operation) {
+    // next save point makes it durable and it flushes only its .pk entry
+    // isBuild: the seal publishes the first entry of the chain, the generation an index build wrote, then supersedes it
+    private void assertFlushes(boolean isSavePointCovered, boolean isBuild, String operation) {
         Assert.assertEquals(CommitMode.fromString(commitMode), engine.getConfiguration().getCommitMode());
         final int rebuildCount;
         final String rebuildFlushes;
@@ -387,21 +395,22 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             sealCount = seals;
             flushes = new TreeMap<>(SEAL_FLUSHES);
         }
-        // Under SYNC a rebuild flushes its value file, then the .pk; no other mode flushes a rebuild synchronously.
+        // A rebuild flushes its .pk entry before the header names it; under SYNC then its value file, then the .pk.
         Assert.assertEquals(
                 "flushes of " + rebuildCount + " rebuilds under " + commitMode + ", " + operation,
-                "sync".equals(commitMode) ? "pv pk ".repeat(rebuildCount) : "",
+                ("sync".equals(commitMode) ? "pk pv pk " : "pk ").repeat(rebuildCount),
                 rebuildFlushes
         );
         final boolean isFlushed = !"adaptive".equals(commitMode) || !isSavePointCovered;
-        // The ordered flush is two disk waits: the new files, then the .pk.
+        // The ordered flush is two disk waits: the new files and the .pk entry, then the .pk. A seal that takes no
+        // ordered flush waits for its .pk entry only. The first entry of a chain is flushed before the header names it.
         int total = 0;
         for (int n : flushes.values()) {
             total += n;
         }
         Assert.assertEquals(
                 "flushes of " + sealCount + " seals under " + commitMode + ", " + operation + ": " + flushes,
-                isFlushed ? 2 * sealCount : 0,
+                (isFlushed ? 2 * sealCount : sealCount) + (isBuild ? sealCount : 0),
                 total
         );
     }
@@ -426,14 +435,14 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         }
         Assert.assertTrue(operation + " made no rebuild", rebuildCount > 0);
         Assert.assertEquals(operation + " seals after the rebuild", isCovering, sealCount > 0);
-        assertFlushes(isSavePointCovered, operation);
+        assertFlushes(isSavePointCovered, false, operation);
     }
 
     private void assertSealFlushes(boolean isSavePointCovered, String operation) {
         synchronized (SEAL_FLUSHES) {
             Assert.assertTrue(operation + " made no seal", seals > 0);
         }
-        assertFlushes(isSavePointCovered, operation);
+        assertFlushes(isSavePointCovered, false, operation);
     }
 
     private void createTable(boolean isIndexed, boolean isDedup) throws Exception {

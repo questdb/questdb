@@ -441,7 +441,7 @@ public class RecoveryCoordinator {
                 return;
             }
             final long epochTxn = txReader.getTxn();
-            final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            final PostingIndexChainWriter chain = new PostingIndexChainWriter(PostingIndexChainWriter.SYNC_KEY_FILE);
             final PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
             final LongList namedSealTxns = new LongList();
             final LongList orphanSealTxns = new LongList();

@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.std.LongList;
@@ -64,8 +65,11 @@ import io.questdb.std.Unsafe;
  */
 public final class PostingIndexChainWriter {
 
+    // For a key file mapped from disk: an msync of the whole mapping.
+    public static final NewHeadFlush SYNC_KEY_FILE = keyMem -> ((MemoryMA) keyMem).sync(false);
     private final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
     private final PostingIndexChainHeader.Snapshot headerScratch = new PostingIndexChainHeader.Snapshot();
+    private final NewHeadFlush newHeadFlush;
     private long activePageOffset;
     private long currentTxnAtSeal;
     private long entryCount;
@@ -93,7 +97,14 @@ public final class PostingIndexChainWriter {
     private long regionBase;
     private long regionLimit;
 
+    // For key memory that is not a file mapping: a new head needs no flush.
     public PostingIndexChainWriter() {
+        this(keyMem -> {
+        });
+    }
+
+    public PostingIndexChainWriter(NewHeadFlush newHeadFlush) {
+        this.newHeadFlush = newHeadFlush;
         resetState();
     }
 
@@ -185,6 +196,7 @@ public final class PostingIndexChainWriter {
                 coverEndOffsets
         );
         Unsafe.storeFence();
+        newHeadFlush.flush(keyMem);
         // Update mirrors before publishing so accessors see the new state
         // by the time the publish becomes visible to readers.
         long newRegionLimit = entryOffset + PostingIndexChainEntry.entrySize(genCount, coverCount);
@@ -536,6 +548,7 @@ public final class PostingIndexChainWriter {
         // sealTxn -> genCounter/headSealTxn/currentTxnAtSeal unchanged; replace
         // (not stack) -> entryCount unchanged.
         Unsafe.storeFence();
+        newHeadFlush.flush(keyMem);
         headEntryOffset = destOffset;
         regionLimit = destOffset + newLen;
         activePageOffset = PostingIndexChainHeader.publish(
@@ -823,6 +836,9 @@ public final class PostingIndexChainWriter {
                     .put(", regionLimit=").put(newRegionLimit)
                     .put(']');
         }
+        if (isHeadTrimmed) {
+            newHeadFlush.flush(keyMem);
+        }
         isHeadTrimmedOnLastRecovery = isHeadTrimmed;
         headEntryOffset = newHead;
         entryCount = newEntryCount;
@@ -1026,5 +1042,16 @@ public final class PostingIndexChainWriter {
             keep--;
         }
         return keep;
+    }
+
+    /**
+     * Makes the bytes of a new head entry durable before the header flip that names it, so that every header page
+     * that reaches the disk names an entry already on it. It runs after the entry is written and before the head and
+     * region mirrors move: when it throws, the header pages and the mirrors still name the old head, and the new entry
+     * lies past the region limit, where the next append overwrites it.
+     */
+    @FunctionalInterface
+    public interface NewHeadFlush {
+        void flush(MemoryARW keyMem);
     }
 }

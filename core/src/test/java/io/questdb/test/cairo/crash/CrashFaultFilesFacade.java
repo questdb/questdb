@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -229,6 +230,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     // rollback, a close) cannot happen on a real machine, so it must not shorten the image.
     private final Map<String, Long> powerLossLiveSize = new HashMap<>();
     private boolean powerLossMarked;
+    // The files whose first earlyWriteBackLength bytes reach the disk at the power loss as the page cache holds them.
+    private Pattern earlyWriteBackFile;
+    private long earlyWriteBackLength;
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
     private CrashSimulationError firedCrash; // the crash the last arm fired, null until it fires
@@ -1101,10 +1105,34 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 }
             }
         }
+        if (earlyWriteBackFile != null) {
+            for (String key : trackedFiles) {
+                final byte[] now = earlyWriteBackFile.matcher(key).matches() ? readCurrent(key) : null;
+                if (now != null && now.length > 0) {
+                    final byte[] durable = powerLossContent.getOrDefault(key, new byte[0]);
+                    final int length = (int) Math.min(earlyWriteBackLength, now.length);
+                    final byte[] image = Arrays.copyOf(durable, Math.max(length, durable.length));
+                    System.arraycopy(now, 0, image, 0, length);
+                    powerLossContent.put(key, image);
+                    powerLossSize.merge(key, (long) image.length, Math::max);
+                }
+            }
+        }
         powerLossDirectories.addAll(durableDirectories);
         powerLossFileEntries.addAll(durableFileEntries);
         powerLossNamespaceImages.putAll(namespaceFileImages);
         powerLossRenameTargetImages.putAll(pendingRenameTargetImages);
+    }
+
+    /**
+     * At each later {@link #powerLoss} mark, the first {@code length} bytes of every tracked file whose absolute path
+     * matches {@code file} reach the disk as the page cache holds them, and the rest of the file keeps its durable
+     * bytes: the kernel may write any dirty page back at any time, before the pages around it. {@code null} turns it
+     * off.
+     */
+    public void writeBackEarlyAtPowerLoss(Pattern file, long length) {
+        earlyWriteBackFile = file;
+        earlyWriteBackLength = length;
     }
 
     /**
