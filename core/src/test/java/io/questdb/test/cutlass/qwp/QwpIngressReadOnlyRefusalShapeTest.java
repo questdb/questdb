@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -42,6 +43,8 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Pins the read-only REFUSAL-SHAPE contract on the QWP ingress path. A
@@ -96,6 +99,16 @@ public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             final TableToken heldName = engine.lockTableName("tab");
             Assert.assertNotNull(heldName);
+            // This thread holds the name and drives the batch, so a lookup that waited for the name would wait
+            // forever. The watchdog gives the name up after a while: such a lookup then creates the table, and the
+            // assertions below fail the test instead of it hanging.
+            final SOCountDownLatch done = new SOCountDownLatch(1);
+            final Thread watchdog = new Thread(() -> {
+                if (!done.await(TimeUnit.SECONDS.toNanos(30))) {
+                    engine.unlockTableName(heldName);
+                }
+            });
+            watchdog.start();
             try {
                 final QwpIngressProcessorState state =
                         new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
@@ -106,17 +119,19 @@ public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
                             throw CairoException.readOnlyAccess();
                         }
                     });
-                    final boolean roleChangeClose = driveBatch(state, oneRowMessage("tab"));
+                    final boolean isRoleChangeClose = driveBatch(state, oneRowMessage("tab"));
 
                     Assert.assertFalse("the batch must be refused", state.isOk());
                     Assert.assertEquals(QwpIngressProcessorState.Status.NOT_ACCEPTING_WRITES, state.getStatus());
-                    Assert.assertTrue("a read-only refusal must take the role-change close", roleChangeClose);
+                    Assert.assertTrue("a read-only refusal must take the role-change close", isRoleChangeClose);
                     TestUtils.assertContains(state.getErrorText(), CairoException.READ_ONLY_ACCESS_MESSAGE);
                 } finally {
                     state.onDisconnected();
                     state.close();
                 }
             } finally {
+                done.countDown();
+                watchdog.join();
                 engine.unlockTableName(heldName);
             }
             Assert.assertNull(engine.getTableTokenIfExists("tab"));
