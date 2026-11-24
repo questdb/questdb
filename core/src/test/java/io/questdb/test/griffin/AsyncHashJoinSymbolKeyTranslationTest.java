@@ -89,6 +89,11 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         sqlExecutionContext.setParallelHashJoinEnabled(true);
+        // The default dispatch limit follows the host's query workers, two on a two-core host,
+        // while the reduce queue holds at least eight frames on any host, so the tests pin a
+        // window of eight frames: enough for the five probe frames that a LIMIT of 299,999 rows
+        // spans, and the four that a client's first 200 rows span in frames of 64 rows.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
     }
 
     @After
