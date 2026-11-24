@@ -49,6 +49,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
@@ -1148,6 +1149,59 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadParquetSymbolColumn() throws Exception {
+        // read_parquet() reads a SYMBOL column of a file that QuestDB wrote as VARCHAR, the only file
+        // column whose type differs from its query type. The hybrid path decodes the column as the
+        // query's VARCHAR: as the file's SYMBOL it would decode keys and no VARCHAR aux vector, and
+        // export NULL on every row. The file holds row groups of 2 rows, each a frame: a short value
+        // and NULL, an empty and a long multi-byte value, NULLs only, and a long value and the short
+        // one of the first row group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sym_src (i INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO sym_src VALUES
+                        (1, 'y1', '2024-01-01T00:00:00.000000Z'),
+                        (2, NULL, '2024-01-01T01:00:00.000000Z'),
+                        (3, '', '2024-01-01T02:00:00.000000Z'),
+                        (4, 'symbol-ганьба-😀-4', '2024-01-01T03:00:00.000000Z'),
+                        (5, NULL, '2024-01-01T04:00:00.000000Z'),
+                        (6, NULL, '2024-01-01T05:00:00.000000Z'),
+                        (7, 'symbol-ганьба-😀-7', '2024-01-01T06:00:00.000000Z'),
+                        (8, 'y1', '2024-01-01T07:00:00.000000Z')""");
+            copyToParquet(engine, sqlExecutionContext, "SELECT * FROM sym_src", DIRECT_PAGE_FRAME, "sym_src", " ROW_GROUP_SIZE 2");
+            final String source = readParquet("sym_src");
+            final String query = "SELECT i, sym, i + 1 i1, sym IS NULL is_null, concat('[', sym, ']') bracketed FROM " + source;
+            assertColumnType(query, "sym", "VARCHAR");
+            Assert.assertEquals("[INT,SYMBOL,TIMESTAMP]", parquetFileColumnTypes(engine, sqlExecutionContext, query));
+            Assert.assertEquals("[0 0 0 2][0 1 0 2][0 2 0 2][0 3 0 2]", parquetFrames(engine, sqlExecutionContext, query));
+
+            copyToParquet(query, PAGE_FRAME_BACKED, "sym_computed");
+            // sym_is_null tells an exported NULL from the exported empty value.
+            assertQuery("SELECT i, sym, sym IS NULL sym_is_null, i1, is_null, bracketed FROM " + readParquet("sym_computed"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tsym\tsym_is_null\ti1\tis_null\tbracketed
+                            1\ty1\tfalse\t2\tfalse\t[y1]
+                            2\t\ttrue\t3\ttrue\t[]
+                            3\t\tfalse\t4\tfalse\t[]
+                            4\tsymbol-ганьба-😀-4\tfalse\t5\tfalse\t[symbol-ганьба-😀-4]
+                            5\t\ttrue\t6\ttrue\t[]
+                            6\t\ttrue\t7\ttrue\t[]
+                            7\tsymbol-ганьба-😀-7\tfalse\t8\tfalse\t[symbol-ганьба-😀-7]
+                            8\ty1\tfalse\t9\tfalse\t[y1]
+                            """);
+            // In row groups of 2 rows, each frame's write writes all of its rows and the next frame decodes
+            // into its buffers; in row groups of 3 rows, the writer still holds rows of a frame while the next
+            // one decodes.
+            for (String rowGroupSize : new String[]{"2", "3"}) {
+                assertExportMatchesQuery(engine, sqlExecutionContext, query, PAGE_FRAME_BACKED, "sym_computed_" + rowGroupSize, " ROW_GROUP_SIZE " + rowGroupSize);
+            }
+            assertExportMatchesQuery("SELECT sym, i FROM " + source, DIRECT_PAGE_FRAME, "sym_direct");
+        });
+    }
+
+    @Test
     public void testRenameColumnAfterConversion() throws Exception {
         // RENAME keeps the column, and the Parquet file still holds it under its old name.
         assertMemoryLeak(() -> {
@@ -1349,6 +1403,31 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                     sink.put(']');
                 }
             }
+        }
+        return sink.toString();
+    }
+
+    // The types that the Parquet file of the first frame of the query's page frame cursor stores, in file
+    // column order, such as [INT,SYMBOL].
+    private static String parquetFileColumnTypes(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query) throws Exception {
+        final StringSink sink = new StringSink();
+        try (
+                RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                PageFrameCursor cursor = ((VirtualRecordCursorFactory) ParquetExportMode.unwrapFactory(factory)).getBaseFactory()
+                        .getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)
+        ) {
+            final PageFrame frame = cursor.next();
+            Assert.assertNotNull(frame);
+            Assert.assertEquals(PartitionFormat.PARQUET, frame.getFormat());
+            final ParquetDecoder decoder = frame.getParquetDecoder();
+            sink.put('[');
+            for (int i = 0, n = decoder.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                sink.put(ColumnType.nameOf(decoder.getColumnType(i)));
+            }
+            sink.put(']');
         }
         return sink.toString();
     }

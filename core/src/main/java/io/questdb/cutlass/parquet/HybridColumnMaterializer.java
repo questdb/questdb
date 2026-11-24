@@ -619,8 +619,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         for (int i = 0, n = (int) decodeParquetColumns.size(); i < n; i++) {
             final int parquetColumn = decodeParquetColumns.get(i);
             if (parquetColumn != ParquetExportColumnResolver.ABSENT) {
-                // Materialized column types only (never VARCHAR_SLICE): the buffers hold the
-                // native layout and outlive the decode resource, released below.
+                // The query's column type, not the file's: read_parquet() reads a SYMBOL
+                // column of a QuestDB file as VARCHAR. Materialized column types only (never
+                // VARCHAR_SLICE): the buffers hold the native layout and outlive the decode
+                // resource, released below.
                 decodeColumns.add(parquetColumn);
                 decodeColumns.add(baseMetadata.getColumnType(i));
             }
