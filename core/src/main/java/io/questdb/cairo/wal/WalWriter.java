@@ -1008,6 +1008,33 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         this.preCommitValidator = validator;
     }
 
+    /**
+     * {@link #validateUserRows(long, long)} on the designated timestamp bounds of the uncommitted rows.
+     */
+    public void validateUncommittedUserRows() {
+        validateUserRows(txnMinTimestamp, txnMaxTimestamp);
+    }
+
+    /**
+     * Runs the pre-commit validator on user rows with the given designated timestamp bounds, as a commit of
+     * them would, without committing. An ingestion protocol calls it to refuse rows before any table of their
+     * request commits. The rows stay where they are: a refusal, a {@link CairoException}, changes nothing on
+     * the writer, and any other Throwable is a validator fault, which distresses the writer as it does at
+     * commit. Does nothing on a writer without a validator, which is every writer but a materialized view's.
+     */
+    public void validateUserRows(long minTimestamp, long maxTimestamp) {
+        if (preCommitValidator != null) {
+            try {
+                preCommitValidator.validate(WalTxnType.DATA, WAL_DEDUP_MODE_DEFAULT, minTimestamp, maxTimestamp);
+            } catch (Throwable th) {
+                if (!(th instanceof CairoException)) {
+                    distressed = true;
+                }
+                throw th;
+            }
+        }
+    }
+
     protected final void cleanupBeforeClose() {
         // On every path: a healthy writer must not reach the pool with a due group flush left over by a batch that
         // threw before it ran it. The healthy branch's flushPendingDurable() runs that flush.

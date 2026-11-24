@@ -376,9 +376,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
      * A non-critical error raised BECAUSE the frame's own content is
      * fundamentally incompatible with what it names: the wire value's type,
      * shape or precision does not fit the target column (an unsupported type
-     * coercion, a geohash precision mismatch), or the named target is not a
+     * coercion, a geohash precision mismatch), the named target is not a
      * writable table at all (a view, materialized view or live view, or a
-     * non-WAL table on a WAL-only ingestion path). The
+     * non-WAL table on a WAL-only ingestion path), or the target refuses the
+     * value (a designated timestamp out of bounds, a materialized view
+     * backfill row outside the view's frozen zone). The
      * refusal is DETERMINISTIC under byte-identical replay -- the same bytes
      * produce the same rejection every time -- so protocol layers that must
      * tell a permanent data error apart from a transient write refusal (the

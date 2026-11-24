@@ -25,6 +25,12 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
@@ -48,8 +54,10 @@ import java.lang.reflect.Array;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
@@ -65,6 +73,10 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
  * sends data via {@link QwpWebSocketSender}, and asserts the results with SQL queries.
  */
 public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
+    // base max 12:00 and REFRESH LIMIT 1 HOUR put the view's boundary bucket floor at 11:00
+    private static final String MANAGED_ZONE_MESSAGE = "backfill row falls in or past the managed zone of materialized view [view=v, "
+            + "maxRowTs=2024-09-10T12:45:00.000000Z, rowBucket=[2024-09-10T12:00:00.000000Z, 2024-09-10T13:00:00.000000Z), "
+            + "boundaryBucketFloor=2024-09-10T11:00:00.000000Z]; backfill bucket end must be at-or-before the boundary bucket floor";
 
     public static <T> T createDoubleArray(int... shape) {
         int[] indices = new int[shape.length];
@@ -3660,6 +3672,77 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testMatViewBackfillAtNowRefused() throws Exception {
+        runInContext((port) -> {
+            // A view row without a timestamp takes the server's time, which is past the frozen zone: the frame is
+            // refused at the first strike, and the view keeps its rows.
+            createBackfillableView("TIMESTAMP");
+            assertCoercionError(port, "v",
+                    (s, t) -> s.table(t).symbol("sym", "a").doubleColumn("price", 4.0).atNow(),
+                    "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=",
+                    "boundaryBucketFloor=2024-09-10T11:00:00.000000Z]; backfill bucket end must be at-or-before the boundary bucket floor");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillBoundaryRows() throws Exception {
+        runInContext((port) -> {
+            // The bucket-whole rule on the 1h grid: base max 12:00 and REFRESH LIMIT 1 HOUR put the boundary bucket
+            // floor at 11:00. A row at 10:59:59.999999 sits in the bucket that ends at 11:00 and lands; a row at 11:00
+            // sits in the bucket that ends at 12:00 and is refused at the first strike.
+            createBackfillableView("TIMESTAMP");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("v").symbol("sym", "a").doubleColumn("price", 3.0)
+                        .at(parseFloorPartialTimestamp("2024-09-10T10:59:59.999999"), ChronoUnit.MICROS);
+                Assert.assertTrue(sender.awaitAckedFsn(sender.flushAndGetSequence(), 10_000));
+            }
+            assertCoercionError(port, "v",
+                    (s, t) -> s.table(t).symbol("sym", "a").doubleColumn("price", 4.0)
+                            .at(parseFloorPartialTimestamp("2024-09-10T11:00"), ChronoUnit.MICROS),
+                    "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=2024-09-10T11:00:00.000000Z, "
+                            + "rowBucket=[2024-09-10T11:00:00.000000Z, 2024-09-10T12:00:00.000000Z), boundaryBucketFloor=2024-09-10T11:00:00.000000Z]",
+                    "backfill bucket end must be at-or-before the boundary bucket floor");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t3.0\t2024-09-10T10:59:59.999999Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillBoundaryRowsNanos() throws Exception {
+        runInContext((port) -> {
+            // As testMatViewBackfillBoundaryRows on a nanosecond base and view, from a sender at micros: the server
+            // checks the block's timestamps after converting them to the column's nanos.
+            createBackfillableView("TIMESTAMP_NS");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("v").symbol("sym", "a").doubleColumn("price", 3.0)
+                        .at(parseFloorPartialTimestamp("2024-09-10T10:59:59.999999"), ChronoUnit.MICROS);
+                Assert.assertTrue(sender.awaitAckedFsn(sender.flushAndGetSequence(), 10_000));
+            }
+            assertCoercionError(port, "v",
+                    (s, t) -> s.table(t).symbol("sym", "a").doubleColumn("price", 4.0)
+                            .at(parseFloorPartialTimestamp("2024-09-10T11:00"), ChronoUnit.MICROS),
+                    "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=2024-09-10T11:00:00.000000000Z, "
+                            + "rowBucket=[2024-09-10T11:00:00.000000000Z, 2024-09-10T12:00:00.000000000Z), boundaryBucketFloor=2024-09-10T11:00:00.000000000Z]",
+                    "backfill bucket end must be at-or-before the boundary bucket floor");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000000Z
+                    a\t3.0\t2024-09-10T10:59:59.999999000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testMatViewBackfillCannotAddColumn() throws Exception {
         runInContext((port) -> {
             // A view with REFRESH LIMIT takes backfill into its frozen zone, but not a column it lacks: its columns
@@ -3705,11 +3788,163 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testMatViewBackfillManagedFrameAfterPlainFrame() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        runInContext((port) -> {
+            // A plain table's frame, then a frame with a managed-zone view row, sent back to back so they can share a
+            // commit batch. The view's frame is refused at the first strike, and the error names it; the plain
+            // table's frame commits once.
+            createBackfillableView("TIMESTAMP");
+            final long tSeqTxn = seqTxn("t");
+            final long viewSeqTxn = seqTxn("v");
+            final CopyOnWriteArrayList<SenderError> errors = new CopyOnWriteArrayList<>();
+            final CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            final QwpWebSocketSender sender = connectWs(port, err -> {
+                errors.add(err);
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
+                sender.table("t").longColumn("x", 1).at(parseFloorPartialTimestamp("2024-09-10T00:00"), ChronoUnit.MICROS);
+                Assert.assertEquals(0, sender.flushAndGetSequence());
+                writeManagedViewRow(sender);
+                try {
+                    Assert.assertEquals(1, sender.flushAndGetSequence());
+                } catch (LineSenderServerException e) {
+                    // the I/O thread latched the terminal before the flush's own error poll ran
+                }
+                final SenderError terminal = terminalFut.get(30, TimeUnit.SECONDS);
+                Assert.assertEquals("the first error is the terminal one", 1, errors.size());
+                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, terminal.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, terminal.getAppliedPolicy());
+                Assert.assertEquals(MANAGED_ZONE_MESSAGE, terminal.getServerMessage());
+                Assert.assertEquals("the error names the view's frame", 1, terminal.getFromFsn());
+                Assert.assertEquals(1, terminal.getToFsn());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, "backfill row falls in or past the managed zone");
+            }
+            Assert.assertEquals(tSeqTxn + 1, seqTxn("t"));
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n1\n");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillManagedZoneRowRefusedInDeferredGroup() throws Exception {
+        runInContext((port) -> {
+            // A deferred group commits whole or not at all. A managed-zone view row in a later frame of the group is
+            // refused as that frame appends, at the first strike, and the group's earlier rows roll back with it.
+            createBackfillableView("TIMESTAMP");
+            final long tSeqTxn = seqTxn("t");
+            final long viewSeqTxn = seqTxn("v");
+            final CopyOnWriteArrayList<SenderError> errors = new CopyOnWriteArrayList<>();
+            final CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            final QwpWebSocketSender sender = connectWs(port, err -> {
+                errors.add(err);
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
+                sender.setDeferCommit(true);
+                sender.table("t").longColumn("x", 1).at(parseFloorPartialTimestamp("2024-09-10T00:00"), ChronoUnit.MICROS);
+                Assert.assertEquals(0, sender.flushAndGetSequence());
+                writeManagedViewRow(sender);
+                try {
+                    Assert.assertEquals(1, sender.flushAndGetSequence());
+                } catch (LineSenderServerException e) {
+                    // the I/O thread latched the terminal before the flush's own error poll ran
+                }
+                final SenderError terminal;
+                try {
+                    terminal = terminalFut.get(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new AssertionError("the deferred frame with the managed-zone row must be refused as it appends", e);
+                }
+                Assert.assertEquals("the first error is the terminal one", 1, errors.size());
+                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, terminal.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, terminal.getAppliedPolicy());
+                Assert.assertEquals(MANAGED_ZONE_MESSAGE, terminal.getServerMessage());
+                Assert.assertTrue("error fsn span [" + terminal.getFromFsn() + ',' + terminal.getToFsn() + "] should cover the view's frame",
+                        terminal.getFromFsn() <= 1 && terminal.getToFsn() >= 1);
+                Assert.assertEquals("nothing of the group is acknowledged", -1, sender.getAckedFsn());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, "backfill row falls in or past the managed zone");
+            }
+            Assert.assertEquals(tSeqTxn, seqTxn("t"));
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillManagedZoneRowRefusedWithOtherTablesAdaptive() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertManagedZoneRowRefusedWithOtherTables(false);
+    }
+
+    @Test
+    public void testMatViewBackfillManagedZoneRowRefusedWithOtherTablesNosync() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertManagedZoneRowRefusedWithOtherTables(false);
+    }
+
+    @Test
+    public void testMatViewBackfillManagedZoneRowRefusedWithOtherTablesSync() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        assertManagedZoneRowRefusedWithOtherTables(false);
+    }
+
+    @Test
+    public void testMatViewBackfillManagedZoneRowRefusedWithOtherTablesViewFirst() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertManagedZoneRowRefusedWithOtherTables(true);
+    }
+
+    @Test
+    public void testMatViewBackfillOutOfRangeTimestampKeepsItsRefusal() throws Exception {
+        runInContext((port) -> {
+            // A view row whose designated timestamp the column cannot hold gets the per-value refusal it gets on any
+            // table, not the frozen-zone refusal: the frozen zone is checked only once every value of the block is.
+            createBackfillableView("TIMESTAMP");
+            assertCoercionError(port, "v",
+                    (s, t) -> s.table(t).symbol("sym", "a").doubleColumn("price", 4.0).at(Micros.YEAR_10000, ChronoUnit.MICROS),
+                    "designated timestamp beyond 9999-12-31 is not allowed", "column=ts, value=253402300800000000");
+            assertCoercionError(port, "v",
+                    (s, t) -> s.table(t).symbol("sym", "a").doubleColumn("price", 4.0).at(-1L, ChronoUnit.MICROS),
+                    "designated timestamp before 1970-01-01 is not allowed", "column=ts, value=-1");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testMatViewBackfillRejectedAfterRefreshLimitRemoved() throws Exception {
         runInContext((port) -> {
             // A connection keeps the table it resolved, past the backfill gate, for as long as it stays open. Rows it
-            // sends after ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT 0 meet the commit-time check, which refuses them
-            // with the gate's message, and none lands. How the client classifies the refusal is not pinned here.
+            // sends after ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT 0 are refused with the gate's message, and none
+            // lands. The refusal repeats under byte-identical replay, so it reaches the client as a terminal
+            // SCHEMA_MISMATCH at the first strike.
             execute("CREATE TABLE mv_base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO mv_base VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
             execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT sym, last(price) price, ts FROM mv_base SAMPLE BY 1h)");
@@ -3752,6 +3987,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         "expected the gate's message, got: " + message,
                         message != null && message.contains("cannot modify materialized view [view=mv_target]")
                 );
+                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, error.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, error.getAppliedPolicy());
             } finally {
                 // the refusal may latch a terminal error, which close() reports
                 assertRejectionTerminalOnClose(sender, new CompletableFuture<>(), null);
@@ -3768,6 +4005,104 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             a\t1.0\t2024-09-10T09:00:00.000000Z
                             a\t2.0\t2024-09-10T12:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillStraddlingBlockRefusedWhole() throws Exception {
+        runInContext((port) -> {
+            // One block of three view rows, two in the frozen zone and the last in the managed zone: the block is
+            // refused whole, and none of its rows lands.
+            createBackfillableView("TIMESTAMP");
+            assertCoercionError(port, "v",
+                    (s, t) -> {
+                        s.table(t).symbol("sym", "a").doubleColumn("price", 5.0).at(parseFloorPartialTimestamp("2024-09-10T09:00"), ChronoUnit.MICROS);
+                        s.table(t).symbol("sym", "a").doubleColumn("price", 6.0).at(parseFloorPartialTimestamp("2024-09-10T10:00"), ChronoUnit.MICROS);
+                        s.table(t).symbol("sym", "a").doubleColumn("price", 7.0).at(parseFloorPartialTimestamp("2024-09-10T12:00"), ChronoUnit.MICROS);
+                    },
+                    "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=2024-09-10T12:00:00.000000Z, "
+                            + "rowBucket=[2024-09-10T12:00:00.000000Z, 2024-09-10T13:00:00.000000Z), boundaryBucketFloor=2024-09-10T11:00:00.000000Z]",
+                    "backfill bucket end must be at-or-before the boundary bucket floor");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillViewRefusedAtCommitAfterEarlyCheckIsTerminal() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        runInContext((port) -> {
+            // The frozen zone can shrink between a view block's check, as it appends, and the view's commit, as when
+            // ALTER ... SET REFRESH LIMIT lands in between. The commit then refuses the view's frame after the frames
+            // before it committed, once: the refusal is a terminal SCHEMA_MISMATCH that names the view's frame, so
+            // the sender replays nothing. A validator on the view's writer that accepts the check at append and
+            // refuses at the commit forces that order.
+            createBackfillableView("TIMESTAMP");
+            final TableToken viewToken = engine.verifyTableName("v");
+            final AtomicInteger userCommitChecks = new AtomicInteger();
+            final MatViewBackfillValidator validator = new MatViewBackfillValidator(engine, viewToken);
+            // the pool hands this tenant to the connection's writer of the view
+            try (WalWriter viewWriter = engine.getWalWriter(viewToken)) {
+                viewWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                    if (txnType == WalTxnType.DATA && dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT
+                            && userCommitChecks.incrementAndGet() > 1) {
+                        throw CairoException.schemaMismatch().put("frozen zone moved [view=v]");
+                    }
+                    validator.validate(txnType, dedupMode, txnMinTs, txnMaxTs);
+                });
+            }
+            final long tSeqTxn = seqTxn("t");
+            final long viewSeqTxn = seqTxn("v");
+            final CopyOnWriteArrayList<SenderError> errors = new CopyOnWriteArrayList<>();
+            final CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            final QwpWebSocketSender sender = connectWs(port, err -> {
+                errors.add(err);
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
+                sender.table("t").longColumn("x", 1).at(parseFloorPartialTimestamp("2024-09-10T00:00"), ChronoUnit.MICROS);
+                Assert.assertEquals(0, sender.flushAndGetSequence());
+                sender.table("v").symbol("sym", "a").doubleColumn("price", 7.0).at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                try {
+                    Assert.assertEquals(1, sender.flushAndGetSequence());
+                } catch (LineSenderServerException e) {
+                    // the I/O thread latched the terminal before the flush's own error poll ran
+                }
+                final SenderError terminal;
+                try {
+                    terminal = terminalFut.get(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new AssertionError("the view's commit must be refused", e);
+                }
+                Assert.assertEquals("the first error is the terminal one", 1, errors.size());
+                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, terminal.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, terminal.getAppliedPolicy());
+                Assert.assertEquals("frozen zone moved [view=v]", terminal.getServerMessage());
+                Assert.assertEquals("the error names the view's frame", 1, terminal.getFromFsn());
+                Assert.assertEquals(1, terminal.getToFsn());
+                Assert.assertEquals(2, userCommitChecks.get());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, "frozen zone moved [view=v]");
+            }
+            Assert.assertEquals(tSeqTxn + 1, seqTxn("t"));
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+            try (WalWriter viewWriter = engine.getWalWriter(viewToken)) {
+                viewWriter.setPreCommitValidator(new MatViewBackfillValidator(engine, viewToken));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n1\n");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
         });
     }
 
@@ -5230,6 +5565,80 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    private void assertManagedZoneRowRefusedWithOtherTables(boolean isViewFirst) throws Exception {
+        runInContext((port) -> {
+            // One flush writes rows of two plain tables and a managed-zone view row. The frame is refused at the
+            // first strike, before any of its tables commits, so a replay cannot commit them twice: the plain tables
+            // get no row. The view and the plain tables take a new sender's rows.
+            createBackfillableView("TIMESTAMP");
+            final long tSeqTxn = seqTxn("t");
+            final long t2SeqTxn = seqTxn("t2");
+            final long viewSeqTxn = seqTxn("v");
+            final long rowTs = parseFloorPartialTimestamp("2024-09-10T00:00");
+            final CopyOnWriteArrayList<SenderError> errors = new CopyOnWriteArrayList<>();
+            final CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            final QwpWebSocketSender sender = connectWs(port, err -> {
+                errors.add(err);
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
+                if (isViewFirst) {
+                    writeManagedViewRow(sender);
+                }
+                sender.table("t").longColumn("x", 1).at(rowTs, ChronoUnit.MICROS);
+                sender.table("t2").longColumn("x", 1).at(rowTs, ChronoUnit.MICROS);
+                if (!isViewFirst) {
+                    writeManagedViewRow(sender);
+                }
+                long publishedFsn;
+                try {
+                    publishedFsn = sender.flushAndGetSequence();
+                } catch (LineSenderServerException e) {
+                    // the I/O thread latched the terminal before the flush's own error poll ran
+                    publishedFsn = -1;
+                }
+                final SenderError terminal;
+                try {
+                    terminal = terminalFut.get(60, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new AssertionError("the managed-zone row must be refused", e);
+                }
+                Assert.assertEquals("the first error is the terminal one: " + errors, 1, errors.size());
+                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, terminal.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, terminal.getAppliedPolicy());
+                Assert.assertEquals(MANAGED_ZONE_MESSAGE, terminal.getServerMessage());
+                if (publishedFsn >= 0) {
+                    Assert.assertTrue("error fsn span [" + terminal.getFromFsn() + ',' + terminal.getToFsn() + "] should cover " + publishedFsn,
+                            terminal.getFromFsn() <= publishedFsn && terminal.getToFsn() >= publishedFsn);
+                }
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, "backfill row falls in or past the managed zone");
+            }
+            Assert.assertEquals(tSeqTxn, seqTxn("t"));
+            Assert.assertEquals(t2SeqTxn, seqTxn("t2"));
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+
+            try (QwpWebSocketSender next = connectWs(port)) {
+                next.table("v").symbol("sym", "a").doubleColumn("price", 7.0).at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                next.table("t").longColumn("x", 2).at(rowTs, ChronoUnit.MICROS);
+                Assert.assertTrue(next.awaitAckedFsn(next.flushAndGetSequence(), 10_000));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+            assertQuery("SELECT count() FROM t2").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t7.0\t2024-09-10T08:00:00.000000Z
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
     private static void assertThrowsContains(Runnable action, String expectedMsgPart) {
         try {
             action.run();
@@ -5239,6 +5648,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             Assert.assertTrue("Expected LineSenderException containing '" + expectedMsgPart
                     + "' but got: " + msg, msg != null && msg.contains(expectedMsgPart));
         }
+    }
+
+    private void assertViewRows(String expected) throws Exception {
+        drainWalAndMatViewQueues();
+        assertQuery("v").noLeakCheck().timestamp("ts").expectSize().returns(expected);
     }
 
     @SuppressWarnings("unchecked")
@@ -5260,6 +5674,28 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             return (T) arr;
         }
+    }
+
+    // A WAL base table with rows at 09:10 and 12:00 on 2024-09-10 and a view v of its 1h buckets with REFRESH LIMIT
+    // 1 HOUR: base max 12:00 puts the boundary bucket floor at 11:00. Plain WAL tables t and t2 take other rows.
+    private static void createBackfillableView(String timestampType) throws Exception {
+        execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base_price VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
+        execute("CREATE MATERIALIZED VIEW v AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h)");
+        drainWalAndMatViewQueues();
+        execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 1 HOUR");
+        execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        drainWalAndMatViewQueues();
+        Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("v")));
+    }
+
+    private static long seqTxn(String tableName) {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tableName));
+    }
+
+    private static void writeManagedViewRow(QwpWebSocketSender sender) {
+        sender.table("v").symbol("sym", "a").doubleColumn("price", 95.0).at(parseFloorPartialTimestamp("2024-09-10T12:45"), ChronoUnit.MICROS);
     }
 
     private enum ArrayDataType {

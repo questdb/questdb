@@ -103,6 +103,41 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusalsCarrySchemaMismatchMarker() throws Exception {
+        // Both refusals repeat under byte-identical replay: the row's bucket does not leave the managed zone, and a
+        // view without REFRESH LIMIT gains no frozen zone, in the seconds a client retries. The protocols tell such a
+        // refusal from a transient one by the schema-mismatch marker, so both carry it, and neither is critical.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            final MatViewBackfillValidator validator = newValidator();
+            final long managedTs = parseFloorPartialTimestamp("2024-09-10T11:30");
+            try {
+                validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, managedTs, managedTs);
+                Assert.fail("expected the bucket-whole rejection");
+            } catch (CairoException e) {
+                TestUtils.assertEquals(
+                        managedZoneMessage("2024-09-10T11:30:00", "2024-09-10T11:00:00", "2024-09-10T12:00:00", "2024-09-10T11:00:00"),
+                        e.getFlyweightMessage()
+                );
+                Assert.assertTrue(e.isSchemaMismatch());
+                Assert.assertFalse(e.isCritical());
+            }
+
+            setRefreshLimit("0 HOUR");
+            final long frozenTs = parseFloorPartialTimestamp("2024-09-10T09:00");
+            try {
+                validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, frozenTs, frozenTs);
+                Assert.fail("expected the commit to be refused without a frozen zone");
+            } catch (CairoException e) {
+                TestUtils.assertEquals(GATE_MESSAGE, e.getFlyweightMessage());
+                Assert.assertTrue(e.isSchemaMismatch());
+                Assert.assertFalse(e.isCritical());
+            }
+        });
+    }
+
+    @Test
     public void testRejectionFollowsAppliedRefreshLimit() throws Exception {
         // A commit is checked under the view definition that the view's WAL has applied. While SET REFRESH LIMIT 0
         // waits for its apply, the old limit holds for a compiled INSERT as it does for the backfill gate; once it
@@ -440,6 +475,105 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
                         walWriter.isDistressed()
                 );
             }
+        });
+    }
+
+    @Test
+    public void testWalWriterValidateUserRowsDistressesOnValidatorFault() throws Exception {
+        // validateUserRows() runs the pre-commit validator without committing, under the validator's contract: a
+        // throw other than CairoException is a validator fault, which distresses the writer so the pool expels it.
+        // The check leaves the rows where they are; the caller owns them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base_price"))) {
+                walWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                    throw new RuntimeException("simulated validator fault");
+                });
+                appendViewRow(walWriter, 1.0, "2024-09-10T12:00");
+                final long ts = parseFloorPartialTimestamp("2024-09-10T12:00");
+                try {
+                    walWriter.validateUserRows(ts, ts);
+                    Assert.fail("expected the validator's runtime exception to propagate");
+                } catch (RuntimeException expected) {
+                    Assert.assertEquals("simulated validator fault", expected.getMessage());
+                }
+                Assert.assertTrue(walWriter.isDistressed());
+                Assert.assertEquals(1, walWriter.getUncommittedRowCount());
+            }
+        });
+    }
+
+    @Test
+    public void testWalWriterValidateUserRowsIsNoOpWithoutValidator() throws Exception {
+        // A writer of anything but a materialized view has no pre-commit validator: the check passes every row and
+        // changes nothing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base_price");
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                appendViewRow(walWriter, 1.0, "2024-09-10T12:00");
+                walWriter.validateUserRows(0, parseFloorPartialTimestamp("9999-12-31T23:59:59.999999"));
+                walWriter.validateUncommittedUserRows();
+                Assert.assertFalse(walWriter.isDistressed());
+                Assert.assertEquals(1, walWriter.getUncommittedRowCount());
+                walWriter.commit();
+            }
+            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
+        });
+    }
+
+    @Test
+    public void testWalWriterValidateUserRowsRefusesWithoutRollingBack() throws Exception {
+        // The view's writer checks rows against the frozen zone before any table of a request commits. The check
+        // runs the validator the commit runs, on the given bounds or on the transaction's own, and refuses as the
+        // commit would; unlike the commit, it rolls nothing back and leaves the writer healthy.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            final long viewSeqTxn = viewSeqTxn();
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("price_1h"))) {
+                // no rows: the transaction's bounds are the empty sentinels
+                walWriter.validateUncommittedUserRows();
+                appendViewRow(walWriter, 2.0, "2024-09-10T09:00");
+                walWriter.validateUncommittedUserRows();
+                appendViewRow(walWriter, 3.0, "2024-09-10T11:30");
+                final String managedZoneMessage = managedZoneMessage("2024-09-10T11:30:00", "2024-09-10T11:00:00", "2024-09-10T12:00:00", "2024-09-10T11:00:00");
+                try {
+                    walWriter.validateUncommittedUserRows();
+                    Assert.fail("expected the managed-zone row to be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(managedZoneMessage, e.getFlyweightMessage());
+                    Assert.assertTrue(e.isSchemaMismatch());
+                }
+                // the bounds of one block, not of the transaction
+                final long frozenTs = parseFloorPartialTimestamp("2024-09-10T09:00");
+                walWriter.validateUserRows(frozenTs, frozenTs);
+                final long managedTs = parseFloorPartialTimestamp("2024-09-10T11:30");
+                try {
+                    walWriter.validateUserRows(frozenTs, managedTs);
+                    Assert.fail("expected the managed-zone bounds to be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(managedZoneMessage, e.getFlyweightMessage());
+                }
+                Assert.assertFalse(walWriter.isDistressed());
+                Assert.assertEquals(2, walWriter.getUncommittedRowCount());
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                walWriter.rollback();
+                appendViewRow(walWriter, 4.0, "2024-09-10T09:00");
+                walWriter.validateUncommittedUserRows();
+                walWriter.commit();
+                Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t4.0\t2024-09-10T09:00:00.000000Z
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    """);
         });
     }
 

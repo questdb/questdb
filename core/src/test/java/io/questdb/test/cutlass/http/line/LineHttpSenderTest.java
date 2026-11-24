@@ -29,13 +29,20 @@ import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
@@ -64,6 +71,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -78,6 +86,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
@@ -219,6 +228,218 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 } catch (LineSenderException e) {
                     TestUtils.assertContains(e.getMessage(), "materialized view");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testIlpHttpBackfillBoundaryRows() throws Exception {
+        // The bucket-whole rule on the 1h grid: base max 12:00 and REFRESH LIMIT 1 HOUR put the boundary bucket floor
+        // at 11:00. A row at 10:59:59.999999 sits in the bucket that ends at 11:00 and lands; a row at 11:00 sits in
+        // the bucket that ends at 12:00, and the request is refused as a client error, which the sender does not
+        // send again.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                createBackfillableView(serverMain, "TIMESTAMP");
+                final int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).build()) {
+                    sender.table("v").symbol("sym", "a").doubleColumn("price", 3.0)
+                            .at(parseFloorPartialTimestamp("2024-09-10T10:59:59.999999"), ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                assertIlpHttpManagedZoneRefusal(
+                        serverMain,
+                        "v",
+                        "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=2024-09-10T11:00:00.000000Z, "
+                                + "rowBucket=[2024-09-10T11:00:00.000000Z, 2024-09-10T12:00:00.000000Z), boundaryBucketFloor=2024-09-10T11:00:00.000000Z]",
+                        sender -> sender.table("v").symbol("sym", "a").doubleColumn("price", 4.0)
+                                .at(parseFloorPartialTimestamp("2024-09-10T11:00"), ChronoUnit.MICROS)
+                );
+                awaitViewRows(serverMain, """
+                        sym\tprice\tts
+                        a\t1.0\t2024-09-10T09:00:00.000000Z
+                        a\t3.0\t2024-09-10T10:59:59.999999Z
+                        a\t2.0\t2024-09-10T12:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testIlpHttpBackfillBoundaryRowsNanos() throws Exception {
+        // As testIlpHttpBackfillBoundaryRows, on a nanosecond base and view: the last nanosecond of the 10:00 bucket
+        // lands, the first of the 11:00 bucket is refused.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                createBackfillableView(serverMain, "TIMESTAMP_NS");
+                final int port = serverMain.getHttpServerPort();
+                final long elevenNanos = NanosTimestampDriver.floor("2024-09-10T11:00");
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).build()) {
+                    sender.table("v").symbol("sym", "a").doubleColumn("price", 3.0).at(elevenNanos - 1, ChronoUnit.NANOS);
+                    sender.flush();
+                }
+                assertIlpHttpManagedZoneRefusal(
+                        serverMain,
+                        "v",
+                        "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=2024-09-10T11:00:00.000000000Z, "
+                                + "rowBucket=[2024-09-10T11:00:00.000000000Z, 2024-09-10T12:00:00.000000000Z), boundaryBucketFloor=2024-09-10T11:00:00.000000000Z]",
+                        sender -> sender.table("v").symbol("sym", "a").doubleColumn("price", 4.0).at(elevenNanos, ChronoUnit.NANOS)
+                );
+                awaitViewRows(serverMain, """
+                        sym\tprice\tts
+                        a\t1.0\t2024-09-10T09:00:00.000000000Z
+                        a\t3.0\t2024-09-10T10:59:59.999999999Z
+                        a\t2.0\t2024-09-10T12:00:00.000000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testIlpHttpBackfillServerTimestampRefused() throws Exception {
+        // A view row without a timestamp takes the server's time, which is past the frozen zone: the request is
+        // refused as a client error, and the view keeps its rows.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                createBackfillableView(serverMain, "TIMESTAMP");
+                assertIlpHttpManagedZoneRefusal(
+                        serverMain,
+                        "v",
+                        "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=",
+                        sender -> sender.table("v").symbol("sym", "a").doubleColumn("price", 4.0).atNow()
+                );
+                awaitViewRows(serverMain, """
+                        sym\tprice\tts
+                        a\t1.0\t2024-09-10T09:00:00.000000Z
+                        a\t2.0\t2024-09-10T12:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testIlpHttpCommitFailureWithoutMarkerIsServerError() throws Exception {
+        // Only a refusal that repeats at every retry, which carries the schema-mismatch marker, answers 400. Any other
+        // commit failure, such as a storage fault, stays a server error the sender may retry: 500, logged as critical.
+        TestUtils.assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                final CairoEngine engine = serverMain.getEngine();
+                serverMain.execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("t");
+                final TableToken token = engine.verifyTableName("t");
+                // the pool hands this tenant to the request's writer of t, and gives a plain table's writer no validator
+                try (WalWriter writer = engine.getWalWriter(token)) {
+                    writer.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                        throw CairoException.nonCritical().put("simulated storage fault [table=t]");
+                    });
+                }
+                capture.start();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + serverMain.getHttpServerPort())
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table("t").longColumn("x", 1).at(parseFloorPartialTimestamp("2024-09-10T00:00"), ChronoUnit.MICROS);
+                    try {
+                        sender.flush();
+                        Assert.fail("the commit must fail");
+                    } catch (LineSenderException e) {
+                        Assert.assertTrue(e.isRetryable());
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: commit error for table: t, errno: -1, "
+                                + "error: simulated storage fault [table=t] [http-status=500, id: ");
+                        TestUtils.assertContains(e.getMessage(), ", code: internal error]");
+                    }
+                    sender.reset();
+                }
+                capture.drain();
+                Assert.assertEquals(1, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState \\[\\d+] could not commit \\[table=t, "));
+                try (WalWriter writer = engine.getWalWriter(token)) {
+                    writer.setPreCommitValidator(null);
+                }
+                Assert.assertEquals(0, seqTxn(engine, "t"));
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testIlpHttpManagedZoneBackfillCommitsNoOtherTable() throws Exception {
+        assertIlpHttpManagedZoneBackfillCommitsNoOtherTable(false);
+    }
+
+    @Test
+    public void testIlpHttpManagedZoneBackfillCommitsNoOtherTableViewRowFirst() throws Exception {
+        assertIlpHttpManagedZoneBackfillCommitsNoOtherTable(true);
+    }
+
+    @Test
+    public void testIlpHttpViewRefusedAtCommitAfterEarlyCheckIsNotRetried() throws Exception {
+        // The frozen zone can shrink between the check that runs before a request's first commit and the view's own
+        // commit, as when ALTER ... SET REFRESH LIMIT lands in between. The tables ahead of the view then commit
+        // once, and the commit's refusal reaches the sender as a client error, which it does not send again. A
+        // validator on the view's writer that accepts the early check and refuses at the commit forces that order.
+        TestUtils.assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                final CairoEngine engine = serverMain.getEngine();
+                createBackfillableView(serverMain, "TIMESTAMP");
+                final TableToken viewToken = engine.verifyTableName("v");
+                final AtomicInteger userCommitChecks = new AtomicInteger();
+                final MatViewBackfillValidator validator = new MatViewBackfillValidator(engine, viewToken);
+                // the pool hands this tenant to the next writer of the view, the request's
+                try (WalWriter viewWriter = engine.getWalWriter(viewToken)) {
+                    viewWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                        if (txnType == WalTxnType.DATA && dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT
+                                && userCommitChecks.incrementAndGet() > 1) {
+                            throw CairoException.schemaMismatch().put("frozen zone moved [view=v]");
+                        }
+                        validator.validate(txnType, dedupMode, txnMinTs, txnMaxTs);
+                    });
+                }
+                final long tSeqTxn = seqTxn(engine, "t");
+                final long viewSeqTxn = seqTxn(engine, "v");
+                capture.start();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + serverMain.getHttpServerPort()).build()) {
+                    sender.table("t").longColumn("x", 1).at(parseFloorPartialTimestamp("2024-09-10T00:00"), ChronoUnit.MICROS);
+                    sender.table("v").symbol("sym", "a").doubleColumn("price", 7.0).at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                    try {
+                        sender.flush();
+                        Assert.fail("the view's commit must be refused");
+                    } catch (LineSenderException e) {
+                        Assert.assertFalse(e.isRetryable());
+                        TestUtils.assertContains(e.getMessage(), "Could not flush buffer: commit error for table: v, errno: -1, error: frozen zone moved [view=v] [http-status=400, id: ");
+                        TestUtils.assertContains(e.getMessage(), ", code: invalid]");
+                    }
+                    sender.reset();
+                }
+                capture.drain();
+                Assert.assertEquals(1, capture.countLoggedRE("LineHttpProcessorState \\[\\d+] could not commit \\[table=v, "));
+                Assert.assertEquals(0, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState "));
+                Assert.assertEquals(2, userCommitChecks.get());
+                Assert.assertEquals(tSeqTxn + 1, seqTxn(engine, "t"));
+                Assert.assertEquals(viewSeqTxn, seqTxn(engine, "v"));
+                serverMain.awaitTxn("t", tSeqTxn + 1);
+                serverMain.assertSql("select x, ts from t", """
+                        x\tts
+                        1\t2024-09-10T00:00:00.000000Z
+                        """);
+                awaitViewRows(serverMain, """
+                        sym\tprice\tts
+                        a\t1.0\t2024-09-10T09:00:00.000000Z
+                        a\t2.0\t2024-09-10T12:00:00.000000Z
+                        """);
+            } finally {
+                capture.stop();
             }
         });
     }
@@ -3547,6 +3768,55 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    // Flushes the rows the sender writes: the request is refused as a client error after one attempt, logged at error
+    // level, not critical, and nothing of it commits.
+    private static void assertIlpHttpManagedZoneRefusal(
+            TestServerMain serverMain,
+            String lastTableName,
+            String expectedMessagePart,
+            java.util.function.Consumer<Sender> writeRows
+    ) {
+        final CairoEngine engine = serverMain.getEngine();
+        final long viewSeqTxn = seqTxn(engine, "v");
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + serverMain.getHttpServerPort()).build()) {
+                writeRows.accept(sender);
+                try {
+                    sender.flush();
+                    Assert.fail("the managed-zone row must be refused");
+                } catch (LineSenderException e) {
+                    Assert.assertFalse(e.isRetryable());
+                    TestUtils.assertContains(e.getMessage(), "Could not flush buffer: commit error for table: " + lastTableName + ", errno: -1, error: ");
+                    TestUtils.assertContains(e.getMessage(), expectedMessagePart);
+                    TestUtils.assertContains(e.getMessage(), "; backfill bucket end must be at-or-before the boundary bucket floor [http-status=400, id: ");
+                    TestUtils.assertContains(e.getMessage(), ", code: invalid]");
+                }
+                sender.reset();
+            }
+            capture.drain();
+            Assert.assertEquals(1, capture.countLoggedRE("LineHttpProcessorState \\[\\d+] could not commit \\[table=" + lastTableName + ", "));
+            Assert.assertEquals(0, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState "));
+        } finally {
+            capture.stop();
+        }
+        Assert.assertEquals(viewSeqTxn, seqTxn(engine, "v"));
+    }
+
+    // Waits for the view's WAL to apply, then asserts its rows.
+    private static void awaitViewRows(TestServerMain serverMain, String expected) {
+        final CairoEngine engine = serverMain.getEngine();
+        final TableToken viewToken = engine.verifyTableName("v");
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+        final long deadline = System.currentTimeMillis() + 60_000;
+        while (tracker.getWriterTxn() < tracker.getSeqTxn() && System.currentTimeMillis() < deadline) {
+            Os.sleep(10);
+        }
+        Assert.assertEquals("the view's WAL did not apply in time", tracker.getSeqTxn(), tracker.getWriterTxn());
+        serverMain.assertSql("select sym, price, ts from v", expected);
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
         if (currentDim == shape.length - 1) {
@@ -3566,6 +3836,39 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             }
             return (T) arr;
         }
+    }
+
+    // A WAL base table with rows at 09:10 and 12:00 on 2024-09-10 and a view v of its 1h buckets with REFRESH LIMIT
+    // 1 HOUR: base max 12:00 puts the boundary bucket floor at 11:00. Plain WAL tables t and t2 take other rows.
+    private static void createBackfillableView(TestServerMain serverMain, String timestampType) {
+        final CairoEngine engine = serverMain.getEngine();
+        serverMain.execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.execute("INSERT INTO base_price VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
+        serverMain.awaitTxn("base_price", 1);
+        serverMain.execute("CREATE MATERIALIZED VIEW v AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h)");
+        final TableToken viewToken = engine.verifyTableName("v");
+        final long deadline = System.currentTimeMillis() + 60_000;
+        boolean isLimitSet = false;
+        while (System.currentTimeMillis() < deadline) {
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final SeqTxnTracker viewTxnTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            if (viewState != null && viewState.getLastRefreshBaseTxn() >= 1 && viewTxnTracker.getWriterTxn() >= viewTxnTracker.getSeqTxn()) {
+                if (isLimitSet) {
+                    if (engine.isBackfillableMatView(viewToken)) {
+                        break;
+                    }
+                } else {
+                    serverMain.execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 1 HOUR");
+                    isLimitSet = true;
+                }
+            }
+            Os.sleep(10);
+        }
+        Assert.assertTrue("the view did not refresh and take its REFRESH LIMIT in time", isLimitSet && engine.isBackfillableMatView(viewToken));
+        serverMain.execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.awaitTable("t");
+        serverMain.awaitTable("t2");
     }
 
     private static void flushAndAssertError(Sender sender, String... errors) {
@@ -3630,6 +3933,88 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             }
             sender.flush();
         }
+    }
+
+    private static long seqTxn(CairoEngine engine, String tableName) {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tableName));
+    }
+
+    private void assertIlpHttpManagedZoneBackfillCommitsNoOtherTable(boolean isViewRowFirst) throws Exception {
+        // One flush writes rows of two plain tables and a view row in the view's managed zone. The request is refused
+        // before any of its tables commits, as a client error the sender does not send again, so the plain tables get
+        // no row. Flushing the rows the sender keeps after the error gets the same refusal, and the sender's next
+        // rows land once.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                final CairoEngine engine = serverMain.getEngine();
+                createBackfillableView(serverMain, "TIMESTAMP");
+                final long tSeqTxn = seqTxn(engine, "t");
+                final long t2SeqTxn = seqTxn(engine, "t2");
+                final long viewSeqTxn = seqTxn(engine, "v");
+                final long rowTs = parseFloorPartialTimestamp("2024-09-10T00:00");
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + serverMain.getHttpServerPort()).build()) {
+                    if (isViewRowFirst) {
+                        sender.table("v").symbol("sym", "a").doubleColumn("price", 95.0).at(parseFloorPartialTimestamp("2024-09-10T12:45"), ChronoUnit.MICROS);
+                    }
+                    sender.table("t").longColumn("x", 1).at(rowTs, ChronoUnit.MICROS);
+                    sender.table("t2").longColumn("x", 1).at(rowTs, ChronoUnit.MICROS);
+                    if (!isViewRowFirst) {
+                        sender.table("v").symbol("sym", "a").doubleColumn("price", 95.0).at(parseFloorPartialTimestamp("2024-09-10T12:45"), ChronoUnit.MICROS);
+                    }
+                    // the error names the request's last table
+                    final String lastTableName = isViewRowFirst ? "t2" : "v";
+                    for (int flush = 0; flush < 2; flush++) {
+                        try {
+                            sender.flush();
+                            Assert.fail("the managed-zone row must be refused [flush=" + flush + ']');
+                        } catch (LineSenderException e) {
+                            Assert.assertFalse(e.isRetryable());
+                            TestUtils.assertContains(
+                                    e.getMessage(),
+                                    "Could not flush buffer: commit error for table: " + lastTableName + ", errno: -1, error: "
+                                            + "backfill row falls in or past the managed zone of materialized view [view=v, maxRowTs=2024-09-10T12:45:00.000000Z, "
+                                            + "rowBucket=[2024-09-10T12:00:00.000000Z, 2024-09-10T13:00:00.000000Z), boundaryBucketFloor=2024-09-10T11:00:00.000000Z]; "
+                                            + "backfill bucket end must be at-or-before the boundary bucket floor [http-status=400, id: "
+                            );
+                            TestUtils.assertContains(e.getMessage(), ", code: invalid]");
+                        }
+                        Assert.assertEquals(tSeqTxn, seqTxn(engine, "t"));
+                        Assert.assertEquals(t2SeqTxn, seqTxn(engine, "t2"));
+                        Assert.assertEquals(viewSeqTxn, seqTxn(engine, "v"));
+                    }
+                    capture.drain();
+                    // one attempt per flush, logged at error level, not critical
+                    Assert.assertEquals(2, capture.countLoggedRE("LineHttpProcessorState \\[\\d+] could not commit \\[table=" + lastTableName + ", "));
+                    Assert.assertEquals(0, capture.countLoggedRE(" C i\\.q\\.c\\.h\\.p\\.LineHttpProcessorState "));
+
+                    sender.reset();
+                    sender.table("v").symbol("sym", "a").doubleColumn("price", 7.0).at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                    sender.table("t").longColumn("x", 2).at(rowTs, ChronoUnit.MICROS);
+                    sender.flush();
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertEquals(tSeqTxn + 1, seqTxn(engine, "t"));
+                Assert.assertEquals(t2SeqTxn, seqTxn(engine, "t2"));
+                Assert.assertEquals(viewSeqTxn + 1, seqTxn(engine, "v"));
+                serverMain.awaitTxn("t", tSeqTxn + 1);
+                serverMain.assertSql("select x, ts from t", """
+                        x\tts
+                        2\t2024-09-10T00:00:00.000000Z
+                        """);
+                serverMain.assertSql("select count() from t2", "count\n0\n");
+                awaitViewRows(serverMain, """
+                        sym\tprice\tts
+                        a\t7.0\t2024-09-10T08:00:00.000000Z
+                        a\t1.0\t2024-09-10T09:00:00.000000Z
+                        a\t2.0\t2024-09-10T12:00:00.000000Z
+                        """);
+            }
+        });
     }
 
     private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {

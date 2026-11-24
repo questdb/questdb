@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.SymbolCache;
@@ -114,6 +115,7 @@ public class LineHttpTudCache implements QuietCloseable {
     }
 
     public void commitAll() throws Throwable {
+        validateViewRows();
         boolean droppedTableFound;
         do {
             droppedTableFound = false;
@@ -254,6 +256,23 @@ public class LineHttpTudCache implements QuietCloseable {
             throw parseException.of("cannot modify " + tableToken.getType().keyword(), tableToken.getTableName());
         }
         return tableToken;
+    }
+
+    // commitAll() commits one table at a time and undoes none, so a view whose commit refuses the request's rows
+    // would refuse them after the tables ahead of it committed, and the client's retry would commit those again.
+    // Refuses the request before its first commit instead, with what the view's commit runs: the insert
+    // authorization, then the view's frozen-zone check on the request's rows. Skips the entries the commits skip:
+    // dropped ones and ones without rows, whose identity may be an earlier request's.
+    private void validateViewRows() {
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.getQuick(i));
+            if (!tud.isDropped() && tud.getTableToken().isMatView() && !tud.isFirstRow()) {
+                tud.authorizeCommit();
+                // the cache takes only WAL tables, and a materialized view is always one
+                ((WalWriter) tud.getWriter()).validateUncommittedUserRows();
+            }
+        }
     }
 
     public static class TableCreateException extends Exception {

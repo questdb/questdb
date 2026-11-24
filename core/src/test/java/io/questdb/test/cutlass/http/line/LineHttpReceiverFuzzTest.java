@@ -75,6 +75,17 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     }
 
     @Test
+    public void testBackfillViewMixedWithTables() throws Exception {
+        // Rows of a REFRESH LIMIT view in the threads' batches next to the tables' lines: a batch with a managed-zone
+        // view row commits nothing, any other commits whole.
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        initLoadParameters(30 + rnd.nextInt(50), 3 + rnd.nextInt(3), 2 + rnd.nextInt(4), 1 + rnd.nextInt(5), rnd.nextInt(30));
+        initFuzzParameters(-1, 4, -1, 10, -1, false, true, false, 0.05);
+        initBackfillViewParameters(4 + rnd.nextInt(8));
+        runTest();
+    }
+
+    @Test
     public void testDuplicatesReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, true, false, 0.05);

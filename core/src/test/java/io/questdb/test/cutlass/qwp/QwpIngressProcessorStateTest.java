@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -94,6 +95,10 @@ import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
+    // base max 12:00 and REFRESH LIMIT 1 HOUR put the view's boundary bucket floor at 11:00
+    private static final String MANAGED_ZONE_MESSAGE = "backfill row falls in or past the managed zone of materialized view [view=v, "
+            + "maxRowTs=2024-09-10T12:45:00.000000Z, rowBucket=[2024-09-10T12:00:00.000000Z, 2024-09-10T13:00:00.000000Z), "
+            + "boundaryBucketFloor=2024-09-10T11:00:00.000000Z]; backfill bucket end must be at-or-before the boundary bucket floor";
 
     @Test
     public void testArrayColumnFramesJoinCommitBatch() throws Exception {
@@ -190,6 +195,145 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM capped").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testCommitBatchRefusesManagedZoneBlockAtJoin() throws Exception {
+        // A view block in the managed zone is refused as it joins the batch, with what the view's commit would
+        // refuse it with at every replay. The frame's other blocks leave with it, the frames before it commit, and
+        // the refusal is a terminal SCHEMA_MISMATCH, so no replay commits them twice.
+        assertMemoryLeak(() -> {
+            createBackfillableView();
+            final long viewSeqTxn = seqTxn("v");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareLongBlocks(state, 1, "t");
+                Assert.assertTrue(state.joinCommitBatch(0));
+                state.clearMessageState();
+                prepareViewFrame(state, "t", parseFloorPartialTimestamp("2024-09-10T12:45"));
+                Assert.assertFalse(state.joinCommitBatch(1));
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                TestUtils.assertEquals(MANAGED_ZONE_MESSAGE, state.getErrorText());
+                Assert.assertTrue(state.isCommitBatchIntact());
+                Assert.assertEquals("the view did not join", 1, state.getCommitBatchTableCount());
+                Assert.assertEquals("the frame's row left t's writer", 1, state.getCommitBatchWriter(0).getUncommittedRowCount());
+                state.clearFrameErrorForBatchCommit();
+                Assert.assertTrue(state.commitBatch());
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+                state.clear();
+            }
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertViewRowsUnchanged();
+        });
+    }
+
+    @Test
+    public void testCommitBatchRefusesViewWhoseLimitWasRemovedAfterJoin() throws Exception {
+        // under the suite's ADAPTIVE mode the batch prepares each table's commit first, and the prepare refuses
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertCommitBatchRefusesViewWhoseLimitWasRemovedAfterJoin("commit batch prepare failed [table=v]: cannot modify materialized view [view=v]");
+    }
+
+    @Test
+    public void testCommitBatchRefusesViewWhoseLimitWasRemovedAfterJoinNosync() throws Exception {
+        // under NOSYNC the batch commits table by table, and the view's commit refuses
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertCommitBatchRefusesViewWhoseLimitWasRemovedAfterJoin("cannot modify materialized view [view=v]");
+    }
+
+    @Test
+    public void testViewBlockAuthorizedBeforeFrozenZoneCheck() throws Exception {
+        // A view block is checked against the frozen zone as it appends, after the insert is authorized, as the
+        // commit does: an identity without INSERT on the view gets its authorization refusal, not the managed-zone
+        // message, which carries the base table's latest bucket.
+        assertMemoryLeak(() -> {
+            createBackfillableView();
+            final SecurityContext refusingContext = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    if (tableToken.getTableName().equals("v")) {
+                        throw CairoException.authorization().put("insert refused [table=v]");
+                    }
+                }
+            };
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, refusingContext);
+                prepareViewFrame(state, "t", parseFloorPartialTimestamp("2024-09-10T12:45"));
+                state.processPreparedMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.SECURITY_ERROR, state.getStatus());
+                TestUtils.assertEquals("insert refused [table=v]", state.getErrorText());
+                state.clear();
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertViewRowsUnchanged();
+        });
+    }
+
+    @Test
+    public void testViewBlockValidatedOnceAsItAppends() throws Exception {
+        // Each view block runs the view's validator once as it appends, and the batch's commit runs it once more.
+        // A plain table's block meets only its commit's validator.
+        assertMemoryLeak(() -> {
+            createBackfillableView();
+            final TableToken viewToken = engine.verifyTableName("v");
+            final TableToken plainToken = engine.verifyTableName("t");
+            final AtomicInteger validationCount = new AtomicInteger();
+            final AtomicInteger plainValidationCount = new AtomicInteger();
+            final MatViewBackfillValidator validator = new MatViewBackfillValidator(engine, viewToken);
+            // the pool hands these tenants to the connection's writers
+            try (WalWriter viewWriter = engine.getWalWriter(viewToken)) {
+                viewWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                    validationCount.incrementAndGet();
+                    validator.validate(txnType, dedupMode, txnMinTs, txnMaxTs);
+                });
+            }
+            // the pool gives a plain table's writer no validator; this one counts the checks of its rows
+            try (WalWriter plainWriter = engine.getWalWriter(plainToken)) {
+                plainWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> plainValidationCount.incrementAndGet());
+            }
+            try {
+                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                    state.of(1, AllowAllSecurityContext.INSTANCE);
+                    for (int frame = 0; frame < 3; frame++) {
+                        prepareViewFrame(state, null, parseFloorPartialTimestamp("2024-09-10T0" + (5 + frame) + ":00"));
+                        Assert.assertTrue(state.joinCommitBatch(frame));
+                        state.clearMessageState();
+                    }
+                    prepareLongBlocks(state, 1, "t");
+                    Assert.assertTrue(state.joinCommitBatch(3));
+                    state.clearMessageState();
+                    Assert.assertEquals(3, validationCount.get());
+                    Assert.assertEquals(0, plainValidationCount.get());
+                    Assert.assertTrue(state.commitBatch());
+                    Assert.assertEquals(4, validationCount.get());
+                    Assert.assertEquals(1, plainValidationCount.get());
+                    state.clear();
+                }
+            } finally {
+                try (WalWriter viewWriter = engine.getWalWriter(viewToken)) {
+                    viewWriter.setPreCommitValidator(new MatViewBackfillValidator(engine, viewToken));
+                }
+                try (WalWriter plainWriter = engine.getWalWriter(plainToken)) {
+                    plainWriter.setPreCommitValidator(null);
+                }
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("v").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    price\tts
+                    5.0\t2024-09-10T05:00:00.000000Z
+                    5.0\t2024-09-10T06:00:00.000000Z
+                    5.0\t2024-09-10T07:00:00.000000Z
+                    1.0\t2024-09-10T09:00:00.000000Z
+                    2.0\t2024-09-10T12:00:00.000000Z
+                    """);
         });
     }
 
@@ -7604,6 +7748,92 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             return block.getSchema();
         }
+    }
+
+    // A frozen-zone view block joins the batch; ALTER ... SET REFRESH LIMIT 0 then applies before the batch commits.
+    // The view's commit refuses it with the backfill gate's message, as a terminal SCHEMA_MISMATCH rather than a
+    // retriable write error, so no replay commits the frames before it again.
+    private void assertCommitBatchRefusesViewWhoseLimitWasRemovedAfterJoin(String expectedError) throws Exception {
+        assertMemoryLeak(() -> {
+            createBackfillableView();
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            final long viewSeqTxn;
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareViewFrame(state, null, parseFloorPartialTimestamp("2024-09-10T08:00"));
+                Assert.assertTrue(state.joinCommitBatch(0));
+                state.clearMessageState();
+                execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 0 HOUR");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(engine.isBackfillableMatView(engine.verifyTableName("v")));
+                viewSeqTxn = seqTxn("v");
+                Assert.assertFalse(state.commitBatch());
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                TestUtils.assertEquals(expectedError, state.getErrorText());
+                Assert.assertEquals(0, state.getCommitBatchFailureSequence());
+                state.abandonCommitBatch();
+                state.clear();
+            }
+            Assert.assertEquals(viewSeqTxn, seqTxn("v"));
+            drainWalAndMatViewQueues();
+            assertViewRowsUnchanged();
+        });
+    }
+
+    private void assertViewRowsUnchanged() throws Exception {
+        assertQuery("v").noLeakCheck().timestamp("ts").expectSize().returns("""
+                price\tts
+                1.0\t2024-09-10T09:00:00.000000Z
+                2.0\t2024-09-10T12:00:00.000000Z
+                """);
+    }
+
+    // A WAL base table with rows at 09:10 and 12:00 on 2024-09-10 and a view v of its 1h buckets with REFRESH LIMIT
+    // 1 HOUR: base max 12:00 puts the boundary bucket floor at 11:00. A plain WAL table t takes other rows.
+    private static void createBackfillableView() throws Exception {
+        execute("CREATE TABLE base_price (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base_price VALUES (1.0, '2024-09-10T09:10'), (2.0, '2024-09-10T12:00')");
+        execute("CREATE MATERIALIZED VIEW v AS (SELECT last(price) price, ts FROM base_price SAMPLE BY 1h)");
+        drainWalAndMatViewQueues();
+        execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 1 HOUR");
+        execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        drainWalAndMatViewQueues();
+        Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("v")));
+    }
+
+    // Prepares a frame with a block of the plain table, when named, of one row, then a block of view v with one row
+    // per timestamp.
+    private static void prepareViewFrame(QwpIngressProcessorState state, String plainTableName, long... viewTimestamps) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            encoder.beginMessage(plainTableName != null ? 2 : 1, new GlobalSymbolDictionary(), -1, -1);
+            if (plainTableName != null) {
+                try (QwpTableBuffer table = new QwpTableBuffer(plainTableName)) {
+                    table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(1);
+                    table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                    table.nextRow();
+                    encoder.addTable(table);
+                }
+            }
+            try (QwpTableBuffer view = new QwpTableBuffer("v")) {
+                final QwpTableBuffer.ColumnBuffer price = view.getOrCreateColumn("price", QwpConstants.TYPE_DOUBLE, false);
+                final QwpTableBuffer.ColumnBuffer timestamp = view.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                for (long viewTimestamp : viewTimestamps) {
+                    price.addDouble(5.0);
+                    timestamp.addLong(viewTimestamp);
+                    view.nextRow();
+                }
+                encoder.addTable(view);
+            }
+            final int length = encoder.finishMessage();
+            final long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
+    private static long seqTxn(String tableName) {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tableName));
     }
 
     private static void prepareEvolvedBlock(QwpIngressProcessorState state, String name) {

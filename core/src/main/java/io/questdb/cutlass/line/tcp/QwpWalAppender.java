@@ -928,6 +928,14 @@ public class QwpWalAppender implements QuietCloseable {
                 }
             }
 
+            if (walWriter.getTableToken().isMatView()) {
+                // The view's commit refuses rows outside its frozen zone, at every replay. Refusing the block as it
+                // appends keeps that refusal from coming after other tables of the frame or batch committed. Runs
+                // what the commit runs, the insert authorization, then the check, and only once every value of the
+                // block passed its own checks.
+                tud.authorizeCommit();
+                walWriter.validateUserRows(minTimestamp, maxTimestamp);
+            }
             appender.endColumnarWrite(minTimestamp, maxTimestamp, outOfOrder);
             tud.commitIfMaxUncommittedRowsCountReached();
         } catch (Throwable t) {

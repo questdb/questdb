@@ -73,6 +73,10 @@ import org.jetbrains.annotations.Nullable;
  * {@code TableUpdateDetails} or a running import outlives
  * {@code ALTER ... SET REFRESH LIMIT 0}, and only this check sees the view
  * definition its commit lands under.
+ * <p>
+ * Both refusals repeat when the client sends the same rows again, so they carry
+ * the {@link CairoException#schemaMismatch()} marker, which tells the ingestion
+ * protocols to answer them as client errors that the client must not retry.
  */
 public final class MatViewBackfillValidator implements WalPreCommitValidator {
     private static final Log LOG = LogFactory.getLog(MatViewBackfillValidator.class);
@@ -391,7 +395,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         // created and can outlive ALTER ... SET REFRESH LIMIT 0, so this check, which reads the
         // definition the commit lands under, refuses its rows with the gate's message.
         if (def.getRefreshLimitHoursOrMonths() == 0 || engine.getConfiguration().isMatViewRefreshLimitWallClockEnabled()) {
-            throw CairoException.nonCritical()
+            throw CairoException.schemaMismatch()
                     .put("cannot modify ").put(matViewToken.getType().keyword())
                     .put(" [view=").put(matViewToken.getTableName()).put(']');
         }
@@ -420,7 +424,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         final long maxRowBucketEnd = cachedSampler.nextTimestamp(maxRowBucketFloor);
 
         if (maxRowBucketEnd > boundaryBucketFloor) {
-            throw CairoException.nonCritical()
+            throw CairoException.schemaMismatch()
                     .put("backfill row falls in or past the managed zone of materialized view [view=")
                     .put(matViewToken.getTableName())
                     .put(", maxRowTs=").ts(driver, txnMaxTs)
