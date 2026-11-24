@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.idx;
 
+import io.questdb.cairo.idx.CommittedTxnSource;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexChainPicker;
@@ -159,7 +160,7 @@ public class PostingIndexChainTest {
                     entryCount++;
                     activePage = PostingIndexChainHeader.publish(
                             mem, activePage, PostingIndexUtils.V2_FORMAT_VERSION, thisOffset, entryCount,
-                            PostingIndexUtils.V2_ENTRY_REGION_BASE, nextOffset, sealTxn
+                            PostingIndexUtils.V2_ENTRY_REGION_BASE, nextOffset, sealTxn, PostingIndexUtils.V2_NO_HEAD, -1L, CommittedTxnSource.NO_SAVE_POINTS
                     );
                     prevOffset = thisOffset;
                 }
@@ -767,7 +768,7 @@ public class PostingIndexChainTest {
             entryCount++;
             activePage = PostingIndexChainHeader.publish(
                     mem, activePage, PostingIndexUtils.V2_FORMAT_VERSION, offset, entryCount,
-                    PostingIndexUtils.V2_ENTRY_REGION_BASE, offset + entryLen, i
+                    PostingIndexUtils.V2_ENTRY_REGION_BASE, offset + entryLen, i, PostingIndexUtils.V2_NO_HEAD, -1L, CommittedTxnSource.NO_SAVE_POINTS
             );
 
             int rc = PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, header, entry);
@@ -847,7 +848,10 @@ public class PostingIndexChainTest {
                 entryCount,
                 PostingIndexUtils.V2_ENTRY_REGION_BASE,
                 regionLimit,
-                genCounter
+                genCounter,
+                PostingIndexUtils.V2_NO_HEAD,
+                -1L,
+                CommittedTxnSource.NO_SAVE_POINTS
         );
     }
 

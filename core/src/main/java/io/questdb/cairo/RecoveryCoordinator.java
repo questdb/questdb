@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -311,7 +312,7 @@ public class RecoveryCoordinator {
      * In one partition, cuts the chain of one POSTING column version back to the save point's txn, then removes the
      * value and cover files whose generation the chain does not name at or below that txn: always with
      * {@code isFullScan}, otherwise only when it cut the chain. Leaves everything when the chain is absent, empty or
-     * does not walk cleanly. Returns the number of files removed.
+     * does not walk cleanly, from its head or from its anchor. Returns the number of files removed.
      */
     private int removeUnnamedPostingGenerations(
             Path path,
@@ -330,37 +331,19 @@ public class RecoveryCoordinator {
         if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
             return 0;
         }
-        namedSealTxns.clear();
-        boolean trimNeeded = false;
+        boolean trimNeeded;
         try (MemoryCMR keyMem = Vm.getCMRInstance(ff, keyFile, keyFileSize, MemoryTag.MMAP_INDEX_READER)) {
             chain.resetState();
             chain.openExisting(keyMem);
             if (!chain.hasHead() || chain.getRegionLimit() > keyFileSize) {
                 return 0;
             }
-            long offset = chain.getHeadEntryOffset();
-            for (long visited = 0; offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
-                if (visited >= chain.getEntryCount() || offset < chain.getRegionBase()
-                        || offset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > chain.getRegionLimit()) {
-                    return 0;
-                }
-                PostingIndexChainEntry.read(keyMem, offset, 0, entry);
-                if (entry.txnAtSeal > epochTxn) {
-                    trimNeeded = true;
-                } else {
-                    if (namedSealTxns.size() == 0 && entry.genCount > 1) {
-                        // The restored head: gens appended to it after the save point are in flight too.
-                        final long lastGenTxnAtSeal = PostingIndexChainEntry.resolveGenDirOffset(offset, entry.genCount - 1, entry.coveringFormat, entry.coverCount)
-                                + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL;
-                        if (lastGenTxnAtSeal + Long.BYTES > chain.getRegionLimit()) {
-                            return 0;
-                        }
-                        trimNeeded |= keyMem.getLong(lastGenTxnAtSeal) > epochTxn;
-                    }
-                    namedSealTxns.add(entry.sealTxn);
-                }
-                offset = entry.prevEntryOffset;
+            final int walk = walkPostingChain(keyMem, epochTxn, chain, entry, namedSealTxns);
+            // A chain that does not walk lost an entry to the power loss, and the cut restarts from the anchor.
+            if (walk < 0 && !chain.isAnchorReadable(keyMem, chain.getRegionLimit())) {
+                return 0;
             }
+            trimNeeded = walk != 0;
             if (trimNeeded) {
                 // The chain stops naming the entries above the save point before their files go. Otherwise its head
                 // names a removed file: the O3 rollback reads it, and the purge replay's live-head check lets the
@@ -369,9 +352,12 @@ public class RecoveryCoordinator {
                     chain.resetState();
                     chain.openExisting(keyRwMem);
                     orphanSealTxns.clear();
-                    chain.recoveryDropAbandoned(keyRwMem, epochTxn, orphanSealTxns);
+                    chain.recoveryDropAbandoned(keyRwMem, epochTxn, orphanSealTxns, true);
                     keyRwMem.setSize(Math.max(Math.max(chain.getRegionLimit(), PostingIndexUtils.KEY_FILE_RESERVED), keyFileSize));
                     keyRwMem.sync(false);
+                    if (walkPostingChain(keyRwMem, epochTxn, chain, entry, namedSealTxns) != 0) {
+                        return 0;
+                    }
                 }
             }
         } catch (CairoException e) {
@@ -1192,5 +1178,44 @@ public class RecoveryCoordinator {
             engine.handleDataSyncFailure(e);
             throw e;
         }
+    }
+
+    // Walks the chain from its head and collects the sealTxn of every entry at or below epochTxn into namedSealTxns.
+    // Returns -1 when the chain does not walk, 1 when it holds state above epochTxn: an entry, a gen of the restored
+    // head, or a tail gen slot all zero, never written or lost to the power loss. Returns 0 otherwise.
+    private static int walkPostingChain(
+            MemoryR keyMem,
+            long epochTxn,
+            PostingIndexChainWriter chain,
+            PostingIndexChainEntry.Snapshot entry,
+            LongList namedSealTxns
+    ) {
+        namedSealTxns.clear();
+        int walk = 0;
+        long offset = chain.getHeadEntryOffset();
+        for (long visited = 0; offset != PostingIndexUtils.V2_NO_HEAD; visited++) {
+            if (visited >= chain.getEntryCount() || !chain.isEntryReadable(keyMem, offset, chain.getRegionLimit())) {
+                return -1;
+            }
+            PostingIndexChainEntry.read(keyMem, offset, 0, entry);
+            if (entry.txnAtSeal > epochTxn) {
+                walk = 1;
+            } else {
+                if (namedSealTxns.size() == 0 && entry.genCount > 0) {
+                    // The restored head: gens appended to it after the save point are in flight too.
+                    final long lastGen = PostingIndexChainEntry.resolveGenDirOffset(offset, entry.genCount - 1, entry.coveringFormat, entry.coverCount);
+                    if (lastGen + PostingIndexUtils.GEN_DIR_ENTRY_SIZE > chain.getRegionLimit()) {
+                        return -1;
+                    }
+                    if (keyMem.getLong(lastGen + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL) > epochTxn
+                            || PostingIndexChainWriter.isGenSlotZero(keyMem, lastGen)) {
+                        walk = 1;
+                    }
+                }
+                namedSealTxns.add(entry.sealTxn);
+            }
+            offset = entry.prevEntryOffset;
+        }
+        return walk;
     }
 }

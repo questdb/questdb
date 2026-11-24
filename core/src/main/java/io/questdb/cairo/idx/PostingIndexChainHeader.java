@@ -114,6 +114,9 @@ public final class PostingIndexChainHeader {
      * @param newRegionBase      byte offset of the oldest live entry's start
      * @param newRegionLimit     high-water byte offset past the last entry
      * @param newGenCounter      monotonic generation counter (last-assigned sealTxn)
+     * @param anchorEntryOffset  see {@link PostingIndexUtils#V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET}
+     * @param anchorSealTxn      the sealTxn of the anchor entry
+     * @param savePointTxn       see {@link PostingIndexUtils#V2_HEADER_OFFSET_SAVE_POINT_TXN}
      * @return the new active page offset (the previously-inactive one)
      */
     public static long publish(
@@ -124,7 +127,10 @@ public final class PostingIndexChainHeader {
             long newEntryCount,
             long newRegionBase,
             long newRegionLimit,
-            long newGenCounter
+            long newGenCounter,
+            long anchorEntryOffset,
+            long anchorSealTxn,
+            long savePointTxn
     ) {
         long inactiveOffset = activePageOffset == PostingIndexUtils.PAGE_A_OFFSET
                 ? PostingIndexUtils.PAGE_B_OFFSET
@@ -150,6 +156,9 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, newRegionBase);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, newRegionLimit);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER, newGenCounter);
+        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET, anchorEntryOffset);
+        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_SEAL_TXN, anchorSealTxn);
+        keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SAVE_POINT_TXN, savePointTxn);
 
         // Phase 3: finalise with even sequence == newSeq, releasing the page.
         Unsafe.storeFence();
@@ -202,6 +211,9 @@ public final class PostingIndexChainHeader {
             long regionBase = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE);
             long regionLimit = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT);
             long genCounter = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER);
+            long anchorEntryOffset = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET);
+            long anchorSealTxn = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_SEAL_TXN);
+            long savePointTxn = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SAVE_POINT_TXN);
             Unsafe.loadFence();
 
             // Re-read the seqlock pair on the picked page; if either changed,
@@ -219,6 +231,9 @@ public final class PostingIndexChainHeader {
             into.regionBase = regionBase;
             into.regionLimit = regionLimit;
             into.generationCounter = genCounter;
+            into.anchorEntryOffset = anchorEntryOffset;
+            into.anchorSealTxn = anchorSealTxn;
+            into.savePointTxn = savePointTxn;
             into.pageOffset = pageOffset;
             into.sequence = expectedSeq;
             return true;
@@ -266,6 +281,9 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, regionBase);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, regionLimit);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER, genCounter);
+        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET, PostingIndexUtils.V2_NO_HEAD);
+        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_SEAL_TXN, -1L);
+        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SAVE_POINT_TXN, CommittedTxnSource.NO_SAVE_POINTS);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END, sequence);
     }
 
@@ -276,6 +294,8 @@ public final class PostingIndexChainHeader {
      * the hot path.
      */
     public static final class Snapshot {
+        public long anchorEntryOffset;
+        public long anchorSealTxn;
         public long entryCount;
         public long formatVersion;
         public long generationCounter;
@@ -283,6 +303,7 @@ public final class PostingIndexChainHeader {
         public long pageOffset;
         public long regionBase;
         public long regionLimit;
+        public long savePointTxn;
         // Even, monotonically-advancing seqlock value of the picked page.
         // Two consumers: stillStable re-checks it as a best-effort staleness
         // test on that page, and AbstractPostingIndexReader latches it into
@@ -300,6 +321,9 @@ public final class PostingIndexChainHeader {
             this.regionBase = 0;
             this.regionLimit = 0;
             this.generationCounter = 0;
+            this.anchorEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            this.anchorSealTxn = -1;
+            this.savePointTxn = CommittedTxnSource.NO_SAVE_POINTS;
             this.pageOffset = -1;
             this.sequence = 0;
         }

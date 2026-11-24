@@ -67,6 +67,11 @@ public final class PostingIndexChainWriter {
     private final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
     private final PostingIndexChainHeader.Snapshot headerScratch = new PostingIndexChainHeader.Snapshot();
     private long activePageOffset;
+    // The anchor and save point txn of the active header page, see PostingIndexUtils.V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET.
+    private long anchorEntryOffset;
+    private long anchorSavePointTxn;
+    private long anchorSealTxn;
+    private CommittedTxnSource committedTxnSource;
     private long currentTxnAtSeal;
     private long entryCount;
     // FORMAT_VERSION written on every publish. Starts at V2_FORMAT_VERSION and
@@ -90,11 +95,25 @@ public final class PostingIndexChainWriter {
     // The last recovery walk dropped an entry at or below the committed txn, the last of its orphans: an entry
     // whose every generation was in flight.
     private boolean isVisibleEntryDroppedOnLastRecovery;
+    // The head the active header page names, and its sealTxn.
+    private long publishedHeadOffset;
+    private long publishedHeadSealTxn;
     private long regionBase;
     private long regionLimit;
 
     public PostingIndexChainWriter() {
         resetState();
+    }
+
+    // A gen-dir slot every byte of which is zero: a declared gen always has encoded bytes, so its slot never was
+    // written, or its page never reached the disk.
+    public static boolean isGenSlotZero(MemoryR keyMem, long slotOffset) {
+        for (int b = 0; b < PostingIndexUtils.GEN_DIR_ENTRY_SIZE; b += Integer.BYTES) {
+            if (keyMem.getInt(slotOffset + b) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -194,16 +213,7 @@ public final class PostingIndexChainWriter {
         genCounter = sealTxn;
         headSealTxn = sealTxn;
         currentTxnAtSeal = txnAtSeal;
-        activePageOffset = PostingIndexChainHeader.publish(
-                keyMem,
-                activePageOffset,
-                formatVersion,
-                headEntryOffset,
-                entryCount,
-                regionBase,
-                regionLimit,
-                genCounter
-        );
+        publishHeader(keyMem);
         return entryOffset;
     }
 
@@ -296,20 +306,15 @@ public final class PostingIndexChainWriter {
         keyMem.putInt(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, newGenCount);
         Unsafe.storeFence();
         regionLimit = headEntryOffset + newLen;
-        activePageOffset = PostingIndexChainHeader.publish(
-                keyMem,
-                activePageOffset,
-                formatVersion,
-                headEntryOffset,
-                entryCount,
-                regionBase,
-                regionLimit,
-                genCounter
-        );
+        publishHeader(keyMem);
     }
 
     public long getActivePageOffset() {
         return activePageOffset;
+    }
+
+    public long getAnchorEntryOffset() {
+        return anchorEntryOffset;
     }
 
     public long getCurrentTxnAtSeal() {
@@ -399,6 +404,24 @@ public final class PostingIndexChainWriter {
         PostingIndexChainHeader.initialiseEmpty(keyMem, startSealTxn);
         resetState();
         genCounter = startSealTxn - 1L;
+    }
+
+    // Whether the anchor of the active header page lies below limit, whole, and reads back with its sealTxn.
+    public boolean isAnchorReadable(MemoryR keyMem, long limit) {
+        return isEntryReadable(keyMem, anchorEntryOffset, limit)
+                && keyMem.getLong(anchorEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN) <= limit - anchorEntryOffset
+                && keyMem.getLong(anchorEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN) == anchorSealTxn;
+    }
+
+    // Whether the entry header at offset lies in the region below limit and holds a length and a sealTxn the chain
+    // can have written: a page that never reached the disk reads back as zeros.
+    public boolean isEntryReadable(MemoryR keyMem, long offset, long limit) {
+        if (offset < regionBase || offset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > limit) {
+            return false;
+        }
+        final long sealTxn = keyMem.getLong(offset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
+        return keyMem.getLong(offset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN) >= PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                && sealTxn >= 0 && sealTxn <= genCounter;
     }
 
     public boolean isHeadTrimmedOnLastRecovery() {
@@ -538,16 +561,7 @@ public final class PostingIndexChainWriter {
         Unsafe.storeFence();
         headEntryOffset = destOffset;
         regionLimit = destOffset + newLen;
-        activePageOffset = PostingIndexChainHeader.publish(
-                keyMem,
-                activePageOffset,
-                formatVersion,
-                headEntryOffset,
-                entryCount,
-                regionBase,
-                regionLimit,
-                genCounter
-        );
+        publishHeader(keyMem);
     }
 
     /**
@@ -576,6 +590,10 @@ public final class PostingIndexChainWriter {
         regionLimit = headerScratch.regionLimit;
         entryCount = headerScratch.entryCount;
         genCounter = headerScratch.generationCounter;
+        anchorEntryOffset = headerScratch.anchorEntryOffset;
+        anchorSealTxn = headerScratch.anchorSealTxn;
+        // A page with anchor offset 0 predates the anchor, and its save point txn is unknown.
+        anchorSavePointTxn = headerScratch.anchorEntryOffset != 0 ? headerScratch.savePointTxn : CommittedTxnSource.NO_SAVE_POINTS;
         if (headEntryOffset != PostingIndexUtils.V2_NO_HEAD) {
             PostingIndexChainEntry.read(keyMem, headEntryOffset, 0, entryScratch);
             currentTxnAtSeal = entryScratch.txnAtSeal;
@@ -584,6 +602,8 @@ public final class PostingIndexChainWriter {
             currentTxnAtSeal = -1L;
             headSealTxn = -1L;
         }
+        publishedHeadOffset = headEntryOffset;
+        publishedHeadSealTxn = headSealTxn;
     }
 
     /**
@@ -719,6 +739,17 @@ public final class PostingIndexChainWriter {
      * @return the number of entries that were dropped.
      */
     public int recoveryDropAbandoned(MemoryARW keyMem, long currentTableTxn, LongList orphanSealTxns) {
+        return recoveryDropAbandoned(keyMem, currentTableTxn, orphanSealTxns, false);
+    }
+
+    /**
+     * As above. With {@code isAdaptive}, the table's state above {@code currentTableTxn} can have been lost to a power
+     * loss, as adaptive recovery cuts the table back to a save point, which made every entry and gen at or below it
+     * durable. The walk then treats an all-zero tail gen slot as never written and trims it, and once restarts from
+     * the anchor, cutting every entry after it, when it meets an entry that does not read back. Their sealTxns are
+     * unknown, so their files are not in {@code orphanSealTxns}.
+     */
+    public int recoveryDropAbandoned(MemoryARW keyMem, long currentTableTxn, LongList orphanSealTxns, boolean isAdaptive) {
         isHeadTrimmedOnLastRecovery = false;
         isVisibleEntryDroppedOnLastRecovery = false;
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
@@ -730,12 +761,27 @@ public final class PostingIndexChainWriter {
         long newEntryCount = entryCount;
         long newRegionLimit = regionLimit;
         boolean isHeadTrimmed = false;
+        boolean isCutToAnchor = false;
         // Walk strictly bounded by entryCount: a corrupted prev pointer that
         // loops back on itself would otherwise drop more entries than the
         // chain contains and, for an unbounded cycle, never terminate. The
         // picker uses the same defense for the same reason.
         long visited = 0;
         while (offset != PostingIndexUtils.V2_NO_HEAD) {
+            if (isAdaptive && !isCutToAnchor && !isEntryReadable(keyMem, offset, newRegionLimit) && isAnchorReadable(keyMem, newRegionLimit)) {
+                // A header page that reached the disk names an entry whose bytes did not: the walk starts over from
+                // the anchor, and every entry after it goes.
+                isCutToAnchor = true;
+                offset = anchorEntryOffset;
+                newHead = offset;
+                newRegionLimit = offset + keyMem.getLong(offset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
+                newEntryCount = 0;
+                for (long o = offset; o >= regionBase && o < newRegionLimit && newEntryCount < entryCount; newEntryCount++) {
+                    o = keyMem.getLong(o + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);
+                }
+                dropped = (int) (entryCount - newEntryCount);
+                visited = 0;
+            }
             if (visited++ >= entryCount) {
                 throw CairoException.critical(0)
                         .put("posting index chain recovery exceeded entryCount; corrupted prev pointer? [entryCount=")
@@ -771,7 +817,7 @@ public final class PostingIndexChainWriter {
                 // entry-level visible, but fast-path may have stuffed
                 // in-flight gens in this entry's tail via extendHead. Trim
                 // them off via per-slot TXN_AT_SEAL.
-                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn, entryScratch.coveringFormat, entryScratch.coverCount);
+                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn, entryScratch.coveringFormat, entryScratch.coverCount, isAdaptive);
                 if (trimmedTo == 0) {
                     isVisibleEntryDroppedOnLastRecovery = true;
                     orphanSealTxns.add(entryScratch.sealTxn);
@@ -779,6 +825,11 @@ public final class PostingIndexChainWriter {
                     newEntryCount--;
                     newRegionLimit = offset;
                     dropped++;
+                    if (isAdaptive) {
+                        // Its first gen slot reads back zero: a power loss lost the entry, and maybe the one before.
+                        offset = entryScratch.prevEntryOffset;
+                        continue;
+                    }
                 } else if (trimmedTo < entryScratch.genCount) {
                     isHeadTrimmed = true;
                     // Copy to virgin space past the ORIGINAL regionLimit, not
@@ -808,7 +859,7 @@ public final class PostingIndexChainWriter {
             offset = entryScratch.prevEntryOffset;
             dropped++;
         }
-        if (dropped == 0 && !isHeadTrimmed) {
+        if (dropped == 0 && !isHeadTrimmed && !isCutToAnchor) {
             return 0;
         }
         // A dropped entry hands its prev pointer on as the new head, and every entry lies after its predecessor. An
@@ -836,16 +887,7 @@ public final class PostingIndexChainWriter {
             headSealTxn = -1L;
         }
         Unsafe.storeFence();
-        activePageOffset = PostingIndexChainHeader.publish(
-                keyMem,
-                activePageOffset,
-                formatVersion,
-                headEntryOffset,
-                entryCount,
-                regionBase,
-                regionLimit,
-                genCounter
-        );
+        publishHeader(keyMem);
         return dropped;
     }
 
@@ -871,6 +913,19 @@ public final class PostingIndexChainWriter {
         genCounter = -1L;
         headSealTxn = -1L;
         currentTxnAtSeal = -1L;
+        anchorEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+        anchorSealTxn = -1L;
+        anchorSavePointTxn = CommittedTxnSource.NO_SAVE_POINTS;
+        publishedHeadOffset = PostingIndexUtils.V2_NO_HEAD;
+        publishedHeadSealTxn = -1L;
+    }
+
+    /**
+     * The source of the save point txn each publish records, see {@link #publishHeader}. Null, the default, records
+     * none: the header pages then carry no anchor.
+     */
+    public void setCommittedTxnSource(CommittedTxnSource committedTxnSource) {
+        this.committedTxnSource = committedTxnSource;
     }
 
     /**
@@ -889,16 +944,7 @@ public final class PostingIndexChainWriter {
         }
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, maxValue);
         Unsafe.storeFence();
-        activePageOffset = PostingIndexChainHeader.publish(
-                keyMem,
-                activePageOffset,
-                formatVersion,
-                headEntryOffset,
-                entryCount,
-                regionBase,
-                regionLimit,
-                genCounter
-        );
+        publishHeader(keyMem);
     }
 
     /**
@@ -997,6 +1043,43 @@ public final class PostingIndexChainWriter {
     }
 
     /**
+     * Publishes the mirrors to the inactive header page with an anchor: an entry that was on disk when the page is
+     * written. A save point txn above the one the active page records means a save point completed since the active
+     * page was written: it flushed every file of the table before it set the pin, and it runs holding the writer, so
+     * the head that page names was on disk. A save point txn unknown on either side starts over with no anchor.
+     */
+    private void publishHeader(MemoryARW keyMem) {
+        final long savePointTxn = committedTxnSource != null ? committedTxnSource.getSavePointTxn() : CommittedTxnSource.NO_SAVE_POINTS;
+        if (savePointTxn == CommittedTxnSource.NO_SAVE_POINTS || anchorSavePointTxn == CommittedTxnSource.NO_SAVE_POINTS) {
+            anchorEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            anchorSavePointTxn = savePointTxn;
+        } else if (savePointTxn > anchorSavePointTxn) {
+            anchorEntryOffset = publishedHeadOffset;
+            anchorSealTxn = publishedHeadSealTxn;
+            anchorSavePointTxn = savePointTxn;
+        }
+        if (anchorEntryOffset >= regionLimit) {
+            // A recovery cut returned the anchor's bytes to the region.
+            anchorEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+        }
+        activePageOffset = PostingIndexChainHeader.publish(
+                keyMem,
+                activePageOffset,
+                formatVersion,
+                headEntryOffset,
+                entryCount,
+                regionBase,
+                regionLimit,
+                genCounter,
+                anchorEntryOffset,
+                anchorEntryOffset == PostingIndexUtils.V2_NO_HEAD ? -1L : anchorSealTxn,
+                anchorSavePointTxn
+        );
+        publishedHeadOffset = headEntryOffset;
+        publishedHeadSealTxn = headSealTxn;
+    }
+
+    /**
      * Raise formatVersion when the entry about to be written is
      * one a pre-de-alias build cannot read. Only a de-aliased entry that
      * actually carries covers moves bytes: with {@code coverCount == 0} the
@@ -1014,13 +1097,13 @@ public final class PostingIndexChainWriter {
      * Returns the number of head-entry gen-dir slots to keep, trimming the
      * tail of slots whose TXN_AT_SEAL exceeds {@code currentTableTxn}.
      */
-    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn, int coveringFormat, int coverCount) {
+    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn, int coveringFormat, int coverCount, boolean isAdaptive) {
         Unsafe.loadFence();
         int keep = genCount;
         while (keep > 0) {
             long slotOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, keep - 1, coveringFormat, coverCount);
             long slotTxnAtSeal = keyMem.getLong(slotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-            if (slotTxnAtSeal <= currentTableTxn) {
+            if (slotTxnAtSeal <= currentTableTxn && !(isAdaptive && isGenSlotZero(keyMem, slotOffset))) {
                 break;
             }
             keep--;

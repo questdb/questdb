@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.idx.CommittedTxnSource;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexChainPicker;
@@ -148,7 +149,7 @@ public class PostingIndexChainWriterTest {
         long limit = off2 + PostingIndexChainEntry.entrySize(1);
         PostingIndexChainHeader.publish(
                 mem, PostingIndexUtils.PAGE_A_OFFSET, PostingIndexUtils.V2_FORMAT_VERSION, off2, /* entryCount */ 2,
-                PostingIndexUtils.V2_ENTRY_REGION_BASE, limit, 2L
+                PostingIndexUtils.V2_ENTRY_REGION_BASE, limit, 2L, PostingIndexUtils.V2_NO_HEAD, -1L, CommittedTxnSource.NO_SAVE_POINTS
         );
         w.openExisting(mem);
         Assert.assertEquals(off2, w.getHeadEntryOffset());

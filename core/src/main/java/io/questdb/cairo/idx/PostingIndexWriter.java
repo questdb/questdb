@@ -800,6 +800,7 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void setCommittedTxnSource(@Nullable CommittedTxnSource committedTxnSource) {
         this.committedTxnSource = committedTxnSource;
+        chain.setCommittedTxnSource(committedTxnSource);
     }
 
     // Sync order is .pv and covering sidecars before .pk: a torn write must
@@ -6298,7 +6299,7 @@ public class PostingIndexWriter implements IndexWriter {
         int dropped;
         boolean isHeadTrimmed;
         try {
-            dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, recoveryOrphanScratch);
+            dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, recoveryOrphanScratch, indexCommitMode == CommitMode.ADAPTIVE);
             isHeadTrimmed = chain.isHeadTrimmedOnLastRecovery();
         } finally {
             // Single-shot consumption — next reopen must call the setter

@@ -30,10 +30,21 @@ package io.questdb.cairo.idx;
  */
 @FunctionalInterface
 public interface CommittedTxnSource {
+    // getSavePointTxn() of an owner that takes no save points.
+    long NO_SAVE_POINTS = Long.MIN_VALUE;
 
     /**
      * Returns the owner's committed txn while a save point will make a seal stamped above it durable, and -1 when
      * none will: every seal then flushes. Read when a seal decides how to flush.
      */
     long getCommittedTxnForSeal();
+
+    /**
+     * Returns the txn of the owner's last save point, set only once that save point flushed every file of the table,
+     * -1 before its first, and {@link #NO_SAVE_POINTS} while the owner takes none. Read at each publish of a POSTING
+     * chain, see {@link PostingIndexChainWriter#setCommittedTxnSource(CommittedTxnSource)}.
+     */
+    default long getSavePointTxn() {
+        return NO_SAVE_POINTS;
+    }
 }

@@ -258,7 +258,15 @@ public final class PostingIndexUtils {
     //   [48..55]    V2_HEADER_OFFSET_GEN_COUNTER
     //                 monotonic per-.pk counter. Each new entry advances it
     //                 by 1 and uses the new value as its sealTxn.
-    //   [56..4087]  reserved
+    //   [56..63]    V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET
+    //   [64..71]    V2_HEADER_OFFSET_ANCHOR_SEAL_TXN
+    //                 an entry that was on disk when the page was written, the
+    //                 entry adaptive recovery restarts from when the chain from
+    //                 the head does not read back; offset 0 or V2_NO_HEAD: none.
+    //   [72..79]    V2_HEADER_OFFSET_SAVE_POINT_TXN
+    //                 the save point txn the writer of the page saw, -1 before
+    //                 the first, CommittedTxnSource.NO_SAVE_POINTS: unknown.
+    //   [80..4087]  reserved
     //   [4088..4095] V2_HEADER_OFFSET_SEQUENCE_END
     //
     // Entry header (V2_ENTRY_HEADER_SIZE = 56 bytes; gen dir follows):
@@ -314,12 +322,15 @@ public final class PostingIndexUtils {
     public static final int V2_ENTRY_OFFSET_VALUE_MEM_SIZE = 16;
     public static final long V2_ENTRY_REGION_BASE = 8192L;
     public static final int V2_FORMAT_VERSION = 2;
+    public static final int V2_HEADER_OFFSET_ANCHOR_ENTRY_OFFSET = 56;
+    public static final int V2_HEADER_OFFSET_ANCHOR_SEAL_TXN = 64;
     public static final int V2_HEADER_OFFSET_ENTRY_COUNT = 24;
     public static final int V2_HEADER_OFFSET_FORMAT_VERSION = 8;
     public static final int V2_HEADER_OFFSET_GEN_COUNTER = 48;
     public static final int V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET = 16;
     public static final int V2_HEADER_OFFSET_REGION_BASE = 32;
     public static final int V2_HEADER_OFFSET_REGION_LIMIT = 40;
+    public static final int V2_HEADER_OFFSET_SAVE_POINT_TXN = 72;
     public static final int V2_HEADER_OFFSET_SEQUENCE_END = 4088;
     public static final int V2_HEADER_OFFSET_SEQUENCE_START = 0;
     public static final long V2_NO_HEAD = -1L;

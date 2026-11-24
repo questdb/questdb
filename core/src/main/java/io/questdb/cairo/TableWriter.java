@@ -4088,6 +4088,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
         return txWriter.getRowCount();
     }
 
+    @Override
+    public long getSavePointTxn() {
+        if (!enrolledAdaptive || getFlushCommitMode() != CommitMode.ADAPTIVE) {
+            return NO_SAVE_POINTS;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        return tracker != null ? tracker.getPinnedEpochTxn() : NO_SAVE_POINTS;
+    }
+
     public long getSeqTxn() {
         return txWriter.getSeqTxn();
     }

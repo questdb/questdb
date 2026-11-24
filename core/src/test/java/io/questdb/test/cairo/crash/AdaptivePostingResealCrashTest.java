@@ -60,8 +60,11 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -231,7 +234,8 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     // See crashBeforeSequencerFlush(). The lost commit appends a generation to the plain indexes of each day, with no
-    // seal, and in 2024-01-01 the append grows the value files past their allocated length of one OS page.
+    // seal, and in 2024-01-01 the append grows the value files past their allocated length of one OS page. In one key
+    // file the power loss loses the page of the appended gen slot, and keeps the page of the entry's GEN_COUNT.
     @Test
     public void testPowerLossBeforeSequencerFlushCutsAppendThatGrewValueFile() throws Exception {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
@@ -593,6 +597,34 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         execute("INSERT INTO " + table + " VALUES " + values);
         drainWalQueue();
         runPurgeJob(job);
+    }
+
+    // A power loss kept the page of one key file that holds its head entry's GEN_COUNT, and lost the page that holds
+    // the newest gen slot, appended in place above txn: the slot reads back all zero.
+    private static void loseNewestGenSlotOfOneHead(String tableDir, long txn) throws IOException {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final List<String> keyFiles = sealedFiles(tableDir, KEY_FILE_S_K);
+        for (int i = 0, n = keyFiles.size(); i < n; i++) {
+            final String keyFile = keyFiles.get(i);
+            long slot = -1;
+            try (MemoryCMR keyMem = Vm.getCMRInstance(ff, Path.getThreadLocal(keyFile).$(), ff.length(Path.getThreadLocal(keyFile).$()), MemoryTag.MMAP_DEFAULT)) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                chain.loadHeadEntry(keyMem, head);
+                final long newest = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), head.genCount - 1, head.coveringFormat, head.coverCount);
+                if (head.genCount > 1 && keyMem.getLong(newest + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL) > txn) {
+                    slot = newest;
+                }
+            }
+            if (slot > -1) {
+                try (FileChannel channel = FileChannel.open(Paths.get(keyFile), StandardOpenOption.WRITE)) {
+                    channel.write(ByteBuffer.allocate(PostingIndexUtils.GEN_DIR_ENTRY_SIZE), slot);
+                }
+                return;
+            }
+        }
+        Assert.fail("no head grew in place above the save point");
     }
 
     // One WAL commit of ROWS_PER_PASS rows in day 1, from 10:00 + 10 minutes per pass, after every earlier row.
@@ -1136,6 +1168,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             engine.releaseCrashOrphanedWriters();
             discardPurgeQueue();
             simulateRestart(new TableToken[]{token});
+            if (extraDay1Rows > 0) {
+                loseNewestGenSlotOfOneHead(tableDir, savePointTxn);
+            }
             partitionListingRoot = tableDir;
             partitionListingCount = 0;
             try {
