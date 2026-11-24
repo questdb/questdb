@@ -59,8 +59,12 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.Month;
 import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
@@ -82,11 +86,42 @@ public class TickExprTest {
             "2024-03-31T00:30:00.000000Z", // London springs forward at 01:00Z
             "2024-11-03T05:30:00.000000Z" // New York falls back at 06:00Z
     };
+    // a day filter of an element that does not parse, which the parser and the compiled form reject
+    // alike, see DateVariableDetectionChecker
+    static final String FUZZ_UNKNOWN_DAY_FILTER = "#Xyz";
     // durations with a unit that the timestamp drivers do not add, which the parser and the compiled
     // form reject where the parser applies the duration
     static final String[] FUZZ_UNKNOWN_UNIT_DURATIONS = {";1x", ";1H", ";2D", ";1h1x", ";1-"};
+    // day filters in every form, with the days that each holds
+    private static final DayFilter[] DAY_FILTERS = {
+            new DayFilter("Mon", EnumSet.of(DayOfWeek.MONDAY)),
+            new DayFilter("Tue", EnumSet.of(DayOfWeek.TUESDAY)),
+            new DayFilter("Wed", EnumSet.of(DayOfWeek.WEDNESDAY)),
+            new DayFilter("Thu", EnumSet.of(DayOfWeek.THURSDAY)),
+            new DayFilter("Fri", EnumSet.of(DayOfWeek.FRIDAY)),
+            new DayFilter("Sat", EnumSet.of(DayOfWeek.SATURDAY)),
+            new DayFilter("Sun", EnumSet.of(DayOfWeek.SUNDAY)),
+            new DayFilter("Monday", EnumSet.of(DayOfWeek.MONDAY)),
+            new DayFilter("Tuesday", EnumSet.of(DayOfWeek.TUESDAY)),
+            new DayFilter("Wednesday", EnumSet.of(DayOfWeek.WEDNESDAY)),
+            new DayFilter("Thursday", EnumSet.of(DayOfWeek.THURSDAY)),
+            new DayFilter("Friday", EnumSet.of(DayOfWeek.FRIDAY)),
+            new DayFilter("Saturday", EnumSet.of(DayOfWeek.SATURDAY)),
+            new DayFilter("Sunday", EnumSet.of(DayOfWeek.SUNDAY)),
+            new DayFilter("MON", EnumSet.of(DayOfWeek.MONDAY)),
+            new DayFilter("mon", EnumSet.of(DayOfWeek.MONDAY)),
+            new DayFilter("wd", EnumSet.range(DayOfWeek.MONDAY, DayOfWeek.FRIDAY)),
+            new DayFilter("workday", EnumSet.range(DayOfWeek.MONDAY, DayOfWeek.FRIDAY)),
+            new DayFilter("weekend", EnumSet.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)),
+            new DayFilter("WEEKEND", EnumSet.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY))
+    };
     private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
     private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
+    // day filters of an element after a timezone of the element
+    private static final String[] FUZZ_ELEMENT_DAY_FILTERS = {"#Tue", "#workday", "#weekend", FUZZ_UNKNOWN_DAY_FILTER};
+    // timezones of an element before a day filter of the element: those of the list, and offsets
+    // that a timezone running on into the day filter took for UTC, or failed on
+    private static final String[] FUZZ_ELEMENT_ZONES_BEFORE_DAY_FILTER = {"", "@+02:00", "@Europe/London", "@America/New_York", "@UTC+05", "@Z", "@+05"};
     // the suffixes of the long date ranges of testCompiledDateRangeMergeFuzz(): durations of none,
     // zero, which makes each interval end before it starts, less than a day back, and more than a
     // day, time slots in any order, and a timezone with days when the clocks change
@@ -5027,27 +5062,26 @@ public class TickExprTest {
                 {"@\u00dcnknown", "invalid timezone: \u00dcnknown", "invalid timezone: \u00dcnknown"},
                 {"@\uD83D\uDE00", "invalid timezone: \uD83D\uDE00", "invalid timezone: \uD83D\uDE00"},
                 {"@Bogus/" + manyX, "invalid timezone: Bogus/" + manyX, "invalid timezone: Bogus/" + manyX},
-                // the timezone takes the rest of the element, and a range of days parses its day
-                // filter first
-                {"@Invalid/Zone#Mon", "invalid timezone: Invalid/Zone#Mon", "invalid timezone: Invalid/Zone#Mon"},
-                {"@Invalid/Zone#Xyz", "Invalid day name: Xyz", "invalid timezone: Invalid/Zone#Xyz"},
-                {"#Mon@Invalid/Zone", "Invalid day name: Mon@Invalid/Zone", "invalid timezone: Invalid/Zone"},
+                // a timezone ends at the day filter of its element, which a range parses first
+                {"@Invalid/Zone#Mon", "invalid timezone: Invalid/Zone", "invalid timezone: Invalid/Zone"},
+                {"@Invalid/Zone#Xyz", "Invalid day name: Xyz", "Invalid day name: Xyz"},
+                {"#Mon@Invalid/Zone", "Invalid day name: Mon@Invalid/Zone", "Invalid day name: Mon@Invalid/Zone"},
                 // a range of days takes the text before the last '@' for a part of its date
                 {"@UTC@Invalid/Zone", "Invalid date: ?@UTC", "invalid timezone: Invalid/Zone"},
                 {"@+02:00@UTC", "Invalid date: ?@+02:00", null},
                 {"@Invalid/Zone@UTC", "Invalid date: ?@Invalid/Zone", null},
                 // a day filter that does not parse
-                {"#Xyz", "Invalid day name: Xyz", null},
-                {"#", "Empty day filter after '#'", null},
-                {"# Mon", "Invalid day name:  Mon", null},
-                {"#[Mon]", "Invalid day name: [Mon]", null},
-                {"#Mon#Tue", "Invalid day name: Mon#Tue", null},
-                {"#L\u00fcn", "Invalid day name: L\u00fcn", null},
+                {"#Xyz", "Invalid day name: Xyz", "Invalid day name: Xyz"},
+                {"#", "Empty day filter after '#'", "Empty day filter after '#'"},
+                {"# Mon", "Invalid day name:  Mon", "Invalid day name:  Mon"},
+                {"#[Mon]", "Invalid day name: [Mon]", "Invalid day name: [Mon]"},
+                {"#Mon#Tue", "Invalid day name: Mon#Tue", "Invalid day name: Mon#Tue"},
+                {"#L\u00fcn", "Invalid day name: L\u00fcn", "Invalid day name: L\u00fcn"},
                 // no tick calendar service knows it
-                {"#XNYS", "Invalid day name: XNYS", null},
-                {"#" + manyX, "Invalid day name: " + manyX, null},
-                {"@+02:00#Xyz", "Invalid day name: Xyz", null},
-                {"@UTC@UTC#Xyz", "Invalid day name: Xyz", null}
+                {"#XNYS", "Invalid day name: XNYS", "Invalid day name: XNYS"},
+                {"#" + manyX, "Invalid day name: " + manyX, "Invalid day name: " + manyX},
+                {"@+02:00#Xyz", "Invalid day name: Xyz", "Invalid day name: Xyz"},
+                {"@UTC@UTC#Xyz", "Invalid day name: Xyz", "Invalid day name: Xyz"}
         };
         final String[] listSuffixes = {"", "T09:00", "T[09..10]:30", "T[09:00,10:00]", "@+00:00", "#Tue"};
         for (NoIntervalRange range : NO_INTERVAL_RANGES) {
@@ -5132,7 +5166,10 @@ public class TickExprTest {
                 "", "@+02:00", "@-05:30", "@+14:00", "@-12:00", "@UTC", "@utc", "@Z", "@GMT+2", "@UTCx", "@Europe/London",
                 "@europe/london", "@America/New_York", " @UTC"
         };
-        final String[] dayFilters = {"#Mon", "#MON", "#mon", "#Monday", "#Tue", "#workday", "#WORKDAY", "#wd", "#weekend", "#Mon ", "@UTC#Mon", "@+02:00#Sat"};
+        final String[] dayFilters = {
+                "#Mon", "#MON", "#mon", "#Monday", "#Tue", "#workday", "#WORKDAY", "#wd", "#weekend", "#Mon ", "@UTC#Mon", "@+02:00#Sat",
+                "@Z#Mon", "@+05#Mon", "@UTC+05#Mon"
+        };
         // the time part, timezone and day filter of the list, and the intervals that $today
         // selects with them at 2024-01-02T10:00Z, a Tuesday
         final String wholeDay = "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]";
@@ -5148,9 +5185,6 @@ public class TickExprTest {
         final long tuesday = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
         for (NoIntervalRange range : NO_INTERVAL_RANGES) {
             for (String[] suffixes : new String[][]{zones, dayFilters}) {
-                if (suffixes == dayFilters && range.isPointInTime()) {
-                    continue;
-                }
                 for (String suffix : suffixes) {
                     for (String[] listSuffix : listSuffixes) {
                         assertNoIntervalRangeAddsNoInterval(range, "[" + range.range() + suffix + "]" + listSuffix[0]);
@@ -5163,9 +5197,6 @@ public class TickExprTest {
             for (String suffix : suffixes) {
                 for (String[] listSuffix : listSuffixes) {
                     for (String range : new String[]{"$tomorrow..$today", "$now..$now - 1h"}) {
-                        if (suffixes == dayFilters && range.startsWith("$now")) {
-                            continue;
-                        }
                         final String expression = "[" + range + suffix + ", $today]" + listSuffix[0];
                         assertParseFails(expression, tuesday, IntervalUtils.TICK_CHECK_ALL, 7 + expression.indexOf("..") - 1, RANGE_ORDER_ERROR);
                         for (int checks : new int[]{IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
@@ -5361,6 +5392,206 @@ public class TickExprTest {
                 "$today..$now",
                 "2024-01-02T10:00:00.123400Z"
         );
+    }
+
+    @Test
+    public void testDateVariableRangeDroppedByElementFilterActsAsAbsent() throws SqlException {
+        // A range between two points in time that the day filter of its element drops adds nothing
+        // to the list, which parses as it does without that range, at every check level: the
+        // intervals of the other elements no longer merge into the range, so they reach the
+        // interval limit where they exceed it. 2025-01-19 and 2025-03-02 are Sundays.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String slots = "]T[00..23]:[00..59]:00";
+        assertParsedAsWithoutElement(
+                configuration,
+                "[$now - 1d..$now#Mon, $today, $now - 1d..$now" + slots,
+                "[$today, $now - 1d..$now" + slots,
+                timestampDriver.parseFloorLiteral("2025-01-19T12:00:00.000000Z"),
+                "Bracket expansion produces too many intervals (max 1024)"
+        );
+        assertParsedAsWithoutElement(
+                intervalLimitConfiguration(8, 16),
+                "[$now - 140d..$now#Mon, $today - 140d..$today#Tue, $today - 140d..$today]",
+                "[$today - 140d..$today#Tue, $today - 140d..$today]",
+                timestampDriver.parseFloorLiteral("2025-03-02T12:00:00.000000Z"),
+                "Date range expansion produces too many intervals (max 16)"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeElementSuffixMatchesListSuffixFuzz() throws SqlException {
+        // A date variable range of either kind with a timezone and a day filter of its element
+        // selects, among other elements, what the range selects alone with the same suffix on the
+        // list, see ElementSuffixChecker. questdb.fuzz.tickExpressions sets the number of
+        // expressions.
+        final int expressionCount = Integer.getInteger("questdb.fuzz.tickExpressions", 1_000);
+        final String[] dayFilters = new String[DAY_FILTERS.length + 1];
+        dayFilters[0] = "";
+        for (int i = 0; i < DAY_FILTERS.length; i++) {
+            dayFilters[i + 1] = "#" + DAY_FILTERS[i].text();
+        }
+        final String[] durations = {"", ";1h", ";30m", ";0s", ";-30m", ";1d"};
+        // FUZZ_NOWS, and "now" just after midnight, before 1970 too, and an hour before it
+        final String[] nows = Arrays.copyOf(FUZZ_NOWS, FUZZ_NOWS.length + 3);
+        nows[FUZZ_NOWS.length] = "2025-01-20T01:00:00.000000Z";
+        nows[FUZZ_NOWS.length + 1] = "1969-12-29T01:00:00.000000Z";
+        nows[FUZZ_NOWS.length + 2] = "2025-01-19T23:30:00.000000Z";
+        final ElementSuffixChecker checker = new ElementSuffixChecker(timestampType.getDriver(), configuration, dayFilters, durations, durations, nows);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        for (int i = 0; i < expressionCount; i++) {
+            checker.check(rnd);
+        }
+        checker.log("day filter");
+        if (expressionCount >= 1_000) {
+            checker.assertEveryShape();
+            // a day filter after a timezone that reads as another zone, or fails, where it runs
+            // on into the day filter, such as UTC+05 or Z
+            Assert.assertTrue(checker.zoneBeforeSuffixCount > 0);
+            Assert.assertTrue(checker.startDayIsNotEndDayCount > 0);
+        }
+    }
+
+    @Test
+    public void testDateVariableRangeElementZoneEndsAtDayFilter() throws SqlException {
+        // The timezone of a date variable range element ends at the day filter of the element, as
+        // the timezone of a single element and the one of the list do: [R@Z#F] selects what
+        // [R@Z]#F and [R]@Z#F select, for both kinds of range, with and without a time part of the
+        // list, at every check level, and the compiled forms agree. Dates.parseOffset() and
+        // DateLocale.matchZone() take a prefix of their text, so a timezone that ran on into the
+        // day filter took UTC+05 and GMT+05 for UTC and GMT, and failed on Z and +05. 2025-01-19 is
+        // a Sunday, and London springs forward at 01:00Z on 2024-03-31.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] ranges = {"$now - 2h..$now", "$today..$tomorrow", "$today..$now", "$now - 2h..$tomorrow", "$today + 570m..$today + 16h"};
+        final String[] zones = {
+                "UTC+05", "utc+05", "GMT+05", "gmt-05", "UTC-05", "+05", "-05", "05", "+0500", "+05:00", "UTC+05:00", "Z", "z",
+                "UTC", "UTCx", "Europe/London", "America/New_York"
+        };
+        final String[] dayFilters = {"#Sun", "#Mon", "#weekend"};
+        // the last two time lists have a slot with a timezone of its own
+        final String[] times = {"", "T09:00", "T[09:00,10:00]", "T[09..10]:00", "T[09:00@+03:00,10:00]", "T[11:00@UTC,10:00]"};
+        for (String nowText : new String[]{"2025-01-19T12:00:00.000000Z", "2024-03-31T00:30:00.000000Z"}) {
+            final long now = timestampDriver.parseFloorLiteral(nowText);
+            for (String range : ranges) {
+                for (String zone : zones) {
+                    for (String dayFilter : dayFilters) {
+                        for (String time : times) {
+                            final String list = "[" + range + "]" + time + "@" + zone + dayFilter;
+                            final String expected = parseWithChecks(timestampDriver, list, now, IntervalUtils.TICK_CHECK_ALL);
+                            Assert.assertFalse(list + " at " + nowText + ": " + expected, expected.startsWith("error: "));
+                            final String element = "[" + range + "@" + zone + dayFilter + "]" + time;
+                            assertParsedAtEveryCheckLevel(expected, element, now);
+                            assertParsed(expected, "[" + range + "@" + zone + "]" + time + dayFilter, now, IntervalUtils.TICK_CHECK_ALL);
+                            assertCompiledEvaluatesTo(expected, element, now, false);
+                            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, list, 0, list.length(), 7)) {
+                                out.clear();
+                                compiled.evaluate(out, now);
+                                TestUtils.assertEquals(list + " at " + nowText, expected, intervalToString(timestampDriver, out));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // by hand, where an offset subtracts from the local time
+        final long sunday = timestampDriver.parseFloorLiteral("2025-01-19T12:00:00.000000Z");
+        final String fiveToSeven = forTimestampType("[{lo=2025-01-19T05:00:00.000000Z, hi=2025-01-19T07:00:00.000000Z}]");
+        assertParsedAtEveryCheckLevel(fiveToSeven, "[$now - 2h..$now@UTC+05#Sun]", sunday);
+        assertParsedAtEveryCheckLevel("[]", "[$now - 2h..$now@UTC+05#Mon]", sunday);
+        assertParsedAtEveryCheckLevel(fiveToSeven, "[$now - 2h..$now@GMT+05#Sun]", sunday);
+        assertParsedAtEveryCheckLevel(fiveToSeven, "[$now - 2h..$now@+05#Sun]", sunday);
+        assertParsedAtEveryCheckLevel(fiveToSeven, "[$now - 2h..$now@05#Sun]", sunday);
+        assertParsedAtEveryCheckLevel(forTimestampType("[{lo=2025-01-19T15:00:00.000000Z, hi=2025-01-19T17:00:00.000000Z}]"), "[$now - 2h..$now@UTC-05#Sun]", sunday);
+        assertParsedAtEveryCheckLevel(forTimestampType("[{lo=2025-01-19T10:00:00.000000Z, hi=2025-01-19T12:00:00.000000Z}]"), "[$now - 2h..$now@Z#Sun]", sunday);
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-18T19:00:00.000000Z, hi=2025-01-19T18:59:59.999999Z}]"),
+                "[$today..$tomorrow@UTC+05#Sun]",
+                sunday
+        );
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-19T00:00:00.000000Z, hi=2025-01-19T23:59:59.999999Z}]"),
+                "[$today..$tomorrow@Z#Sun]",
+                sunday
+        );
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-18T19:00:00.000000Z, hi=2025-01-19T07:00:00.000000Z}]"),
+                "[$today..$now@UTC+05#Sun]",
+                sunday
+        );
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-19T05:00:00.000000Z, hi=2025-01-19T18:59:59.999999Z}]"),
+                "[$now - 2h..$tomorrow@UTC+05#Sun]",
+                sunday
+        );
+        final String nineAndTen = forTimestampType("[{lo=2025-01-19T04:00:00.000000Z, hi=2025-01-19T04:00:59.999999Z},"
+                + "{lo=2025-01-19T05:00:00.000000Z, hi=2025-01-19T05:00:59.999999Z}]");
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-19T04:00:00.000000Z, hi=2025-01-19T04:00:59.999999Z}]"),
+                "[$today..$tomorrow@UTC+05#Sun]T09:00",
+                sunday
+        );
+        assertParsedAtEveryCheckLevel(nineAndTen, "[$today..$tomorrow@UTC+05#Sun]T[09:00,10:00]", sunday);
+        assertParsedAtEveryCheckLevel(nineAndTen, "[$today..$tomorrow@UTC+05#Sun]T[09..10]:00", sunday);
+        // a slot with a timezone of its own keeps it
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-19T05:00:00.000000Z, hi=2025-01-19T05:00:59.999999Z},"
+                        + "{lo=2025-01-19T06:00:00.000000Z, hi=2025-01-19T06:00:59.999999Z}]"),
+                "[$today..$tomorrow@UTC+05#Sun]T[09:00@+03:00,10:00]",
+                sunday
+        );
+        // the range ends at 12:00 at +05:00, 07:00Z, before the slot at 11:00Z, and the slot at 10:00
+        // takes +05:00
+        final String tenAtPlusFive = forTimestampType("[{lo=2025-01-19T05:00:00.000000Z, hi=2025-01-19T05:00:59.999999Z}]");
+        assertParsedAtEveryCheckLevel(tenAtPlusFive, "[$today..$now@UTC+05#Sun]T[11:00@UTC,10:00]", sunday);
+        assertParsedAtEveryCheckLevel(tenAtPlusFive, "[$today..$now]T[11:00@UTC,10:00]@UTC+05#Sun", sunday);
+        // London keeps GMT until 01:00Z
+        final long londonSpring = timestampDriver.parseFloorLiteral("2024-03-31T00:30:00.000000Z");
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2024-03-30T22:30:00.000000Z, hi=2024-03-31T00:30:00.000000Z}]"),
+                "[$now - 2h..$now@Europe/London#Sat]",
+                londonSpring
+        );
+        assertParsedAtEveryCheckLevel("[]", "[$now - 2h..$now@Europe/London#Sun]", londonSpring);
+    }
+
+    @Test
+    public void testDateVariableRangeElementZoneErrorEndsAtDayFilter() throws SqlException {
+        // A timezone of a date variable range element that does not parse fails the range with its
+        // text up to the day filter of the element, as the timezone of a single element and the one
+        // of the list do, whether the range adds intervals or not, at every check level that lets
+        // the range through. A timezone that parses there lets a range that adds no interval add
+        // none. 2025-01-19 is a Sunday, and 2025-01-25 a Saturday.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long sunday = timestampDriver.parseFloorLiteral("2025-01-19T12:00:00.000000Z");
+        final String[][] zones = {
+                {"@Bogus/Zone#Sun", "invalid timezone: Bogus/Zone"},
+                {"@#Sun", "invalid timezone: "},
+                {"@ #Sun", "invalid timezone:  "},
+                {"@[UTC]#Sun", "invalid timezone: [UTC]"},
+                {"@+05x#Sun", "invalid timezone: +05x"}
+        };
+        final NoIntervalRange[] noIntervalRanges = {
+                new NoIntervalRange("$now..$now - 1h", "2025-01-19T12:00:00.000000Z", null, true, "$now - 1h..$now"),
+                new NoIntervalRange("$tomorrow..$today", "2025-01-19T12:00:00.000000Z", "2025-01-20", true, "$today..$tomorrow"),
+                new NoIntervalRange("$today..$today + 0bd", "2025-01-25T12:00:00.000000Z", "2025-01-25", false, "$today..$today + 0bd")
+        };
+        for (String[] zone : zones) {
+            // the single element and the list
+            assertParseFailsAtEveryCheckLevel("[$today" + zone[0] + "]", sunday, zone[1]);
+            assertParseFailsAtEveryCheckLevel("[$today]" + zone[0], sunday, zone[1]);
+            for (String range : new String[]{"$now - 2h..$now", "$today..$tomorrow"}) {
+                final String expression = "[" + range + zone[0] + "]";
+                assertParseFailsAtEveryCheckLevel(expression, sunday, zone[1]);
+                assertFailsLikeBindVariable(expression, sunday, zone[1]);
+            }
+            for (NoIntervalRange range : noIntervalRanges) {
+                assertNoIntervalRangeFails(range, "[" + range.range() + zone[0] + "]", zone[1]);
+            }
+        }
+        for (String zone : new String[]{"@+05#Sun", "@Z#Sun", "@UTC+05#Sun"}) {
+            for (NoIntervalRange range : noIntervalRanges) {
+                assertNoIntervalRangeAddsNoInterval(range, "[" + range.range() + zone + "]");
+            }
+        }
     }
 
     @Test
@@ -8107,6 +8338,153 @@ public class TickExprTest {
     }
 
     @Test
+    public void testPointInTimeRangeElementDayFilter() throws SqlException {
+        // A range between two points in time keeps its interval where the day filter of its element
+        // holds the day that the interval starts on, by java.time, and drops it otherwise, at every
+        // check level, as the day filter of the list does. The range without a day filter gives
+        // the interval. The compiled form parses an element with a day filter of its own on every
+        // evaluation, and keeps the IR of the list form.
+        // https://github.com/questdb/questdb/issues/8225
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] ranges = {
+                "$now - 2h..$now", "$today + 570m..$today + 16h", "$today + 9h..$today + 24h", "$now - 3d..$now",
+                "$NOW - 1h..$Now + 1h", "$yesterday + 30m..$now", "$now..$now"
+        };
+        final String[] nows = {
+                "2025-01-19T12:00:00.000000Z", // a Sunday
+                "2025-01-20T12:00:00.000000Z", // a Monday
+                "2025-01-20T01:00:00.000000Z", // a Monday, two hours after a Sunday
+                "1969-12-29T01:00:00.000000Z", // a Monday before 1970, two hours after a Sunday
+                "2099-12-31T23:30:00.000000Z", // a Thursday, an hour before 2100
+                "2024-02-29T23:59:00.000000Z" // the last minute of a leap day
+        };
+        for (String nowText : nows) {
+            final long now = timestampDriver.parseFloorLiteral(nowText);
+            for (String range : ranges) {
+                final String unfiltered = "[" + range + "]";
+                out.clear();
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, unfiltered, 0, unfiltered.length(), 7, out, IntervalOperation.INTERSECT, sink, true, now);
+                Assert.assertEquals(unfiltered + " at " + nowText, 2, out.size());
+                final DayOfWeek startDay = LocalDate.ofEpochDay(Math.floorDiv(out.getQuick(0), timestampDriver.fromDays(1))).getDayOfWeek();
+                final String interval = intervalToString(timestampDriver, out).toString();
+                for (DayFilter dayFilter : DAY_FILTERS) {
+                    final String expected = dayFilter.days().contains(startDay) ? interval : "[]";
+                    final String element = "[" + range + "#" + dayFilter.text() + "]";
+                    final String list = unfiltered + "#" + dayFilter.text();
+                    assertParsedAtEveryCheckLevel(expected, element, now);
+                    assertParsed(expected, list, now, IntervalUtils.TICK_CHECK_ALL);
+                    assertCompiledEvaluatesTo(expected, element, now, false);
+                    assertCompiledEvaluatesTo(expected, list, now, true);
+                }
+            }
+        }
+        // by hand
+        final long sunday = timestampDriver.parseFloorLiteral("2025-01-19T12:00:00.000000Z");
+        final long monday = timestampDriver.parseFloorLiteral("2025-01-20T12:00:00.000000Z");
+        final long mondayOne = timestampDriver.parseFloorLiteral("2025-01-20T01:00:00.000000Z");
+        assertParsedAtEveryCheckLevel(forTimestampType("[{lo=2025-01-19T10:00:00.000000Z, hi=2025-01-19T12:00:00.000000Z}]"), "[$now - 2h..$now#Sun]", sunday);
+        assertParsedAtEveryCheckLevel("[]", "[$now - 2h..$now#Mon]", sunday);
+        assertParsedAtEveryCheckLevel(forTimestampType("[{lo=2025-01-19T23:00:00.000000Z, hi=2025-01-20T01:00:00.000000Z}]"), "[$now - 2h..$now#Sun]", mondayOne);
+        assertParsedAtEveryCheckLevel("[]", "[$now - 2h..$now#Mon]", mondayOne);
+        assertParsedAtEveryCheckLevel("[]", "[$today + 570m..$today + 16h#workday]", sunday);
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2025-01-20T09:30:00.000000Z, hi=2025-01-20T16:00:00.000000Z}]"),
+                "[$today + 570m..$today + 16h#workday]",
+                monday
+        );
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterIgnoresListTimeAndDuration() throws SqlException {
+        // A range between two points in time with a day filter of its element ignores the time part
+        // and the duration of the list, as one without a day filter does. 2025-01-19 is a Sunday.
+        final long sunday = timestampType.getDriver().parseFloorLiteral("2025-01-19T12:00:00.000000Z");
+        final String tenToNoon = forTimestampType("[{lo=2025-01-19T10:00:00.000000Z, hi=2025-01-19T12:00:00.000000Z}]");
+        for (String listSuffix : new String[]{"T09:00;1h", "T[09:00,10:00];30m"}) {
+            assertParsedAtEveryCheckLevel(tenToNoon, "[$now - 2h..$now#Sun]" + listSuffix, sunday);
+            assertParsedAtEveryCheckLevel("[]", "[$now - 2h..$now#Mon]" + listSuffix, sunday);
+            assertCompiledEvaluatesTo(tenToNoon, "[$now - 2h..$now#Sun]" + listSuffix, sunday, false);
+            assertCompiledEvaluatesTo("[]", "[$now - 2h..$now#Mon]" + listSuffix, sunday, false);
+        }
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterInDynamicMode() throws SqlException {
+        // Dynamic mode keeps the day filter of the element on the encoded interval of a range between
+        // two points in time, for the runtime to apply, as it keeps the day filter of the list, which
+        // the one of the element replaces. Bit 0 of the mask is Monday, bit 6 Sunday.
+        final String now = "2025-01-19T12:00:00.000000Z";
+        final String tenToNoon = "{lo=2025-01-19T10:00:00.000000Z, hi=2025-01-19T12:00:00.000000Z";
+        assertEncodedIntervalWithNow("[" + tenToNoon + ", dayFilter=Mon}]", "[$now - 2h..$now]#Mon", now);
+        assertEncodedIntervalWithNow("[" + tenToNoon + ", dayFilter=Mon}]", "[$now - 2h..$now#Mon]", now);
+        assertEncodedOperations(1);
+        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 0));
+        assertEncodedIntervalWithNow("[" + tenToNoon + ", dayFilter=Mon}]", "[$now - 2h..$now#Mon]#Sun", now);
+        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 0));
+        assertEncodedIntervalWithNow("[" + tenToNoon + ", dayFilter=Sat,Sun}]", "[$now - 2h..$now#weekend]", now);
+        Assert.assertEquals(96, IntervalUtils.decodeDayFilterMask(out, 0));
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterReplacesListDayFilter() throws SqlException {
+        // The day filter of an element replaces the day filter of the list for that element, as for
+        // a range of days, see testDateVariableRangeWithElementDayFilter, and the other elements keep
+        // the one of the list. 2025-01-19 is a Sunday.
+        final long sunday = timestampType.getDriver().parseFloorLiteral("2025-01-19T12:00:00.000000Z");
+        final String[][] cases = {
+                {"[$now - 2h..$now#Sun]#Mon", "[{lo=2025-01-19T10:00:00.000000Z, hi=2025-01-19T12:00:00.000000Z}]"},
+                {"[$now - 2h..$now#Mon]#Sun", "[]"},
+                {"[$now - 2h..$now#Mon, $now - 26h..$now - 24h]#Sat", "[{lo=2025-01-18T10:00:00.000000Z, hi=2025-01-18T12:00:00.000000Z}]"}
+        };
+        for (String[] c : cases) {
+            final String expected = forTimestampType(c[1]);
+            assertParsedAtEveryCheckLevel(expected, c[0], sunday);
+            assertCompiledEvaluatesTo(expected, c[0], sunday, false);
+        }
+    }
+
+    @Test
+    public void testPointInTimeRangeElementSuffixErrorOrder() throws SqlException {
+        // A range between two points in time fails on the time part and on the text after the
+        // first ';' of the list before the day filter of its element, under the range order check
+        // on its order first, at its '..', and on the day filter of its element before its
+        // timezone, as a range of days does. A timezone after the day filter is part of the day
+        // filter, as for a single element.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long sunday = timestampDriver.parseFloorLiteral("2025-01-19T12:00:00.000000Z");
+        final String[][] cases = {
+                {"[$now - 2h..$now#Xyz]T25:00", "Invalid date: 2025-01-19T25:00"},
+                {"[$now - 2h..$now#Xyz];1x", "Invalid duration unit: x"},
+                {"[$now - 2h..$now@Bogus/Zone#Xyz]", "Invalid day name: Xyz"},
+                {"[$today..$tomorrow@Bogus/Zone#Xyz]", "Invalid day name: Xyz"},
+                {"[$now - 2h..$now#Mon@+05:00]", "Invalid day name: Mon@+05:00"},
+                {"[$now#Mon@+05:00]", "Invalid day name: Mon@+05:00"}
+        };
+        for (String[] c : cases) {
+            assertParseFailsAtEveryCheckLevel(c[0], sunday, c[1]);
+            assertFailsLikeBindVariable(c[0], sunday, c[1]);
+        }
+        assertParseFails("[$now..$now - 1h#Xyz]", sunday, IntervalUtils.TICK_CHECK_ALL, 11, RANGE_ORDER_ERROR);
+    }
+
+    @Test
+    public void testPointInTimeRangeElementSuffixFailsWhenRangeAddsNoInterval() throws SqlException {
+        // A range between two points in time that starts after it ends adds no interval below the
+        // range order check, and fails on a day filter of its element that does not parse all the
+        // same, as it does where it adds an interval; one that parses lets it add none. The compiled
+        // form fails as the SQL that holds it is validated. 2025-01-19 is a Sunday.
+        final NoIntervalRange[] ranges = {
+                new NoIntervalRange("$now..$now - 1h", "2025-01-19T12:00:00.000000Z", null, true, "$now - 1h..$now"),
+                new NoIntervalRange("$today + 570m..$now", "2025-01-19T03:00:00.000000Z", null, true, "$now - 1h..$now")
+        };
+        for (NoIntervalRange range : ranges) {
+            assertNoIntervalRangeFails(range, "[" + range.range() + "#Xyz]", "Invalid day name: Xyz");
+            assertNoIntervalRangeAddsNoInterval(range, "[" + range.range() + "#Mon]");
+            assertNoIntervalRangeAddsNoInterval(range, "[" + range.range() + "#Sun]");
+        }
+    }
+
+    @Test
     public void testRepeatingIntervalCountOne() throws SqlException {
         // Count=1 with period - the period is parsed but only one interval is generated
         // This tests the `if (count > 1)` branch being false
@@ -8979,6 +9357,9 @@ public class TickExprTest {
                     // a timezone that does not parse, which counts as well-formed, see
                     // DateVariableDetectionChecker
                     case 3 -> sink.put(pick(rnd, FUZZ_MALFORMED_ELEMENT_ZONES));
+                    // a timezone that ends at a day filter of the element, which can be one that
+                    // does not parse, which counts as well-formed, see DateVariableDetectionChecker
+                    case 4 -> sink.put(pick(rnd, FUZZ_ELEMENT_ZONES_BEFORE_DAY_FILTER)).put(pick(rnd, FUZZ_ELEMENT_DAY_FILTERS));
                     default -> {
                     }
                 }
@@ -9303,6 +9684,10 @@ public class TickExprTest {
     }
 
     private static String parseWithChecks(TimestampDriver timestampDriver, String expression, long now, int checks) {
+        return parseWithChecks(timestampDriver, configuration, expression, now, checks);
+    }
+
+    private static String parseWithChecks(TimestampDriver timestampDriver, CairoConfiguration configuration, String expression, long now, int checks) {
         final LongList intervals = new LongList();
         try {
             IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0, intervals, IntervalOperation.INTERSECT, new StringSink(), true, now, checks);
@@ -10078,6 +10463,34 @@ public class TickExprTest {
         );
     }
 
+    /**
+     * Asserts that the parser parses the expression with the configuration as it parses the list
+     * without one of its elements, at every check level, where the levels with the interval limit
+     * check fail with the error, and that the compiled form, which parses the expression on every
+     * evaluation, fails with it as the SQL that holds it is validated, at the position of the
+     * expression.
+     */
+    private void assertParsedAsWithoutElement(CairoConfiguration configuration, String expression, String withoutElement, long now, String limitError) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        for (int checks : TICK_CHECK_LEVELS) {
+            final String expected = parseWithChecks(timestampDriver, configuration, withoutElement, now, checks);
+            if ((checks & IntervalUtils.TICK_CHECK_INTERVAL_LIMIT) != 0) {
+                TestUtils.assertEquals(withoutElement, "error: " + limitError, expected);
+            }
+            TestUtils.assertEquals(expression + " [checks=" + checks + ']', expected, parseWithChecks(timestampDriver, configuration, expression, now, checks));
+        }
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 7)) {
+            Assert.assertTrue(expression, compiled.isParsedOnEvaluation());
+            try {
+                compiled.validate(now);
+                Assert.fail("validate should fail: " + expression);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(expression, limitError, e.getFlyweightMessage());
+                Assert.assertEquals(expression, 7, e.getPosition());
+            }
+        }
+    }
+
     private void assertParsedAtEveryCheckLevel(String expected, String expression, long now) throws SqlException {
         for (int checks : TICK_CHECK_LEVELS) {
             assertParsed(expected, expression, now, checks);
@@ -10221,7 +10634,8 @@ public class TickExprTest {
      * of its own counts as malformed: under a timezone of the list, the compiled form converts the
      * slot by both timezones, and the parser by its own. A timezone of an element that does not
      * parse counts as well-formed: the compiled form parses an expression with an element with a
-     * timezone of its own on every evaluation. The repeating interval of the parser, a duration, a
+     * timezone of its own on every evaluation, and so does a day filter of an element that does not
+     * parse. The repeating interval of the parser, a duration, a
      * period and a count, counts as malformed: the parser takes it, and the IR of the compiled form
      * rejects it. A range of business days that holds no day at a "now" reads neither the time part
      * nor the text after the first ';' of the list there, see {@link #hasBusinessDayRange}, so the
@@ -10385,6 +10799,268 @@ public class TickExprTest {
     }
 
     /**
+     * Checks date lists with a date variable range of either kind whose element has a timezone and
+     * a day filter or tick calendar of its own, among other elements, against the same suffix on a
+     * list of the range alone. At every "now" of the checker, with all the checks, the date list
+     * selects what the list of the range alone selects, with the timezone of the element, or else
+     * the one of the list, then the suffix of the element after the time part of the list and
+     * before its duration, together with what the list of the other elements selects with the
+     * time part, timezone and duration of the list. The compiled form of the date list selects the
+     * same, and the IR of the list of the range alone, where it has one, agrees with the parser.
+     * Every start of a range lies before every end at any "now", and a range spans at most five
+     * days, so no list fails. A negative duration turns a short interval into one that ends before
+     * it starts, and the union of such intervals depends on their order, so the checker joins two
+     * lists, and compares an IR with the parser, only where every interval ends after it starts.
+     */
+    static class ElementSuffixChecker {
+        private static final String[] DAY_ENDS = {"$today", "$tomorrow", "$today + 2d"};
+        private static final String[] DAY_STARTS = {"$today", "$yesterday", "$today - 2d"};
+        // the timezones of an element: those of the list, then offsets that a timezone which ran on
+        // into the day filter of its element took for UTC or GMT, or failed on
+        private static final String[] ELEMENT_ZONES = {"", "@+02:00", "@Europe/London", "@America/New_York", "@UTC+05", "@utc-03", "@GMT+05", "@Z", "@+05", "@-05", "@05"};
+        private static final int FIRST_ZONE_READ_INTO_SUFFIX = 4;
+        private static final String[] OTHER_ELEMENTS = {"$today", "$now", "$yesterday + 3h", "2024-01-05", "2025-01-24", "$tomorrow..$today + 2d", "$now - 5h..$now - 4h"};
+        private static final String[] POINT_ENDS = {"$now", "$NOW + 1h", "$Now + 45m", "$now + 1d"};
+        private static final String[] POINT_STARTS = {"$now - 2h", "$NOW - 30m", "$now - 1d", "$now - 90s", "$yesterday + 30m", "$yesterday + 23h"};
+        private final CairoConfiguration configuration;
+        private final String[] dayRangeDurations;
+        private final LongList intervals = new LongList();
+        private final String[] nowTexts;
+        private final long[] nows;
+        private final StringSink parseSink = new StringSink();
+        private final String[] pointRangeDurations;
+        // the number of expressions that the checker compared, for each suffix of the element
+        private final int[] suffixCounts;
+        private final String[] suffixes;
+        private final TimestampDriver timestampDriver;
+        // the shapes that the checker compared
+        int clippedDayRangeWithSlotZoneCount;
+        int dayRangeWithTimeListCount;
+        int droppedCount;
+        int irCount;
+        int keptCount;
+        int listZoneWithSuffixCount;
+        int otherElementsCount;
+        int pointInTimeRangeCount;
+        int startDayIsNotEndDayCount;
+        int zoneBeforeSuffixCount;
+        private int checkCount;
+
+        /**
+         * @param suffixes            the day filters or tick calendars of the element, with their '#'
+         * @param dayRangeDurations   the durations of the list of a range with a whole day at one end
+         * @param pointRangeDurations the durations of the list of a range between two points in time
+         */
+        ElementSuffixChecker(
+                TimestampDriver timestampDriver,
+                CairoConfiguration configuration,
+                String[] suffixes,
+                String[] dayRangeDurations,
+                String[] pointRangeDurations,
+                String[] nows
+        ) {
+            this.timestampDriver = timestampDriver;
+            this.configuration = configuration;
+            this.suffixes = suffixes;
+            this.dayRangeDurations = dayRangeDurations;
+            this.pointRangeDurations = pointRangeDurations;
+            this.nowTexts = nows;
+            this.nows = new long[nows.length];
+            for (int i = 0; i < nows.length; i++) {
+                this.nows[i] = timestampDriver.parseFloorLiteral(nows[i]);
+            }
+            this.suffixCounts = new int[suffixes.length];
+        }
+
+        /**
+         * Asserts that the checker compared each suffix, and each shape that both the day filters
+         * and the tick calendars make.
+         */
+        void assertEveryShape() {
+            for (int i = 0; i < suffixes.length; i++) {
+                Assert.assertTrue("suffix " + suffixes[i], suffixCounts[i] > 0);
+            }
+            Assert.assertTrue("a range between two points in time with a suffix", pointInTimeRangeCount > 0);
+            Assert.assertTrue("a range that its suffix drops", droppedCount > 0);
+            Assert.assertTrue("a range that its suffix keeps", keptCount > 0);
+            Assert.assertTrue("a suffix after the timezone of the list", listZoneWithSuffixCount > 0);
+            Assert.assertTrue("other elements", otherElementsCount > 0);
+            Assert.assertTrue("a range of days with a time list", dayRangeWithTimeListCount > 0);
+            Assert.assertTrue("a range of days that a point in time clips, with a time list slot that has a timezone", clippedDayRangeWithSlotZoneCount > 0);
+            Assert.assertTrue("an IR", irCount > 0);
+        }
+
+        void check(Rnd rnd) throws SqlException {
+            checkCount++;
+            // two points in time, a day and a point in time, or two days
+            final int kind = rnd.nextInt(4);
+            final boolean isPointInTime = kind < 2;
+            final boolean isClipped = kind == 2;
+            final boolean isDayStart = kind == 3 || (isClipped && rnd.nextBoolean());
+            final String start = pick(rnd, isDayStart ? DAY_STARTS : POINT_STARTS);
+            final String end = pick(rnd, kind == 3 || (isClipped && !isDayStart) ? DAY_ENDS : POINT_ENDS);
+            final String range = start + ".." + end;
+            final int zoneIndex = rnd.nextInt(ELEMENT_ZONES.length);
+            final String zone = ELEMENT_ZONES[zoneIndex];
+            final int suffixIndex = rnd.nextInt(suffixes.length);
+            final String suffix = suffixes[suffixIndex];
+            final String time = pick(rnd, FUZZ_TIMES);
+            final String listZone = pick(rnd, FUZZ_ZONES);
+            final String duration = pick(rnd, isPointInTime ? pointRangeDurations : dayRangeDurations);
+            // up to two other elements, before or after the range
+            final int otherCount = rnd.nextInt(3);
+            final int rangeIndex = rnd.nextInt(otherCount + 1);
+            final StringBuilder list = new StringBuilder("[");
+            final StringBuilder others = new StringBuilder("[");
+            for (int i = 0; i <= otherCount; i++) {
+                if (i > 0) {
+                    list.append(", ");
+                }
+                if (i == rangeIndex) {
+                    list.append(range).append(zone).append(suffix);
+                } else {
+                    final String other = pick(rnd, OTHER_ELEMENTS);
+                    list.append(other);
+                    others.append(others.length() > 1 ? ", " : "").append(other);
+                }
+            }
+            final String expression = list + "]" + time + listZone + duration;
+            final String rangeZone = zone.isEmpty() ? listZone : zone;
+            final String rangeList = "[" + range + "]" + time + rangeZone + suffix + duration;
+            final String otherList = otherCount > 0 ? others + "]" + time + listZone + duration : null;
+
+            final boolean hasSuffix = !suffix.isEmpty();
+            suffixCounts[suffixIndex]++;
+            pointInTimeRangeCount += isPointInTime && hasSuffix ? 1 : 0;
+            zoneBeforeSuffixCount += zoneIndex >= FIRST_ZONE_READ_INTO_SUFFIX && hasSuffix ? 1 : 0;
+            listZoneWithSuffixCount += zone.isEmpty() && !listZone.isEmpty() && hasSuffix ? 1 : 0;
+            dayRangeWithTimeListCount += !isPointInTime && time.indexOf('[') >= 0 && (hasSuffix || !zone.isEmpty()) ? 1 : 0;
+            clippedDayRangeWithSlotZoneCount += isClipped && !zone.isEmpty() && hasSuffix && time.indexOf('@') >= 0 ? 1 : 0;
+
+            CompiledTickExpression compiledRangeList = null;
+            try {
+                compiledRangeList = IntervalUtils.compileTickExpr(timestampDriver, configuration, rangeList, 0, rangeList.length(), 0);
+            } catch (SqlException e) {
+                // SQL rejects this list as it compiles, so it has no IR to compare
+            }
+            try (
+                    CompiledTickExpression ignore = compiledRangeList;
+                    CompiledTickExpression compiledExpression = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0)
+            ) {
+                for (int i = 0; i < nows.length; i++) {
+                    final long now = nows[i];
+                    final String context = expression + " at " + nowTexts[i];
+                    final LongList parsed = parse(expression, now, context);
+                    final LongList rangeParsed = parse(rangeList, now, context);
+                    LongList expected = rangeParsed;
+                    if (otherList != null) {
+                        final LongList otherParsed = parse(otherList, now, context);
+                        if (isWellFormed(rangeParsed) && isWellFormed(otherParsed)) {
+                            expected = union(rangeParsed, otherParsed);
+                            otherElementsCount++;
+                        } else {
+                            expected = null;
+                        }
+                    }
+                    if (expected != null) {
+                        final String expectedText = intervalToString(timestampDriver, expected).toString();
+                        TestUtils.assertEquals(
+                                context + "\nthe range alone: " + rangeList + (otherList != null ? "\nthe other elements: " + otherList : ""),
+                                expectedText,
+                                intervalToString(timestampDriver, parsed)
+                        );
+                    }
+                    final String parsedText = intervalToString(timestampDriver, parsed).toString();
+                    if (compiledExpression.isParsedOnEvaluation() || isWellFormed(parsed)) {
+                        intervals.clear();
+                        compiledExpression.evaluate(intervals, now);
+                        TestUtils.assertEquals(context + ", compiled", parsedText, intervalToString(timestampDriver, intervals));
+                    }
+                    if (compiledRangeList != null && !compiledRangeList.isParsedOnEvaluation() && isWellFormed(rangeParsed)) {
+                        final String rangeParsedText = intervalToString(timestampDriver, rangeParsed).toString();
+                        intervals.clear();
+                        compiledRangeList.evaluate(intervals, now);
+                        TestUtils.assertEquals(rangeList + " at " + nowTexts[i] + ", through its IR", rangeParsedText, intervalToString(timestampDriver, intervals));
+                        irCount++;
+                    }
+                    if (hasSuffix) {
+                        if (rangeParsed.size() > 0) {
+                            keptCount++;
+                        } else if (parse("[" + range + "]" + time + rangeZone + duration, now, context).size() > 0) {
+                            droppedCount++;
+                        }
+                        if (isPointInTime) {
+                            final LongList unfiltered = parse("[" + range + "]", now, context);
+                            if (timestampDriver.startOfDay(unfiltered.getQuick(0), 0) != timestampDriver.startOfDay(unfiltered.getQuick(1), 0)) {
+                                startDayIsNotEndDayCount++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        void log(String suffixKind) {
+            LOG.info().$("element suffix fuzz done [suffixes=").$(suffixKind)
+                    .$(", expressions=").$(checkCount)
+                    .$(", pointInTimeRanges=").$(pointInTimeRangeCount)
+                    .$(", dropped=").$(droppedCount)
+                    .$(", kept=").$(keptCount)
+                    .$(", startDayIsNotEndDay=").$(startDayIsNotEndDayCount)
+                    .$(", zoneBeforeSuffix=").$(zoneBeforeSuffixCount)
+                    .$(", listZoneWithSuffix=").$(listZoneWithSuffixCount)
+                    .$(", otherElements=").$(otherElementsCount)
+                    .$(", dayRangeWithTimeList=").$(dayRangeWithTimeListCount)
+                    .$(", clippedDayRangeWithSlotZone=").$(clippedDayRangeWithSlotZoneCount)
+                    .$(", ir=").$(irCount)
+                    .I$();
+        }
+
+        private static boolean isWellFormed(LongList intervals) {
+            for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                if (intervals.getQuick(i) > intervals.getQuick(i + 1)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Returns the union of two lists of intervals: the intervals of both, sorted by start, each
+         * joined to the one before it where the two overlap or touch.
+         */
+        private static LongList union(LongList a, LongList b) {
+            final ArrayList<long[]> all = new ArrayList<>();
+            for (LongList list : new LongList[]{a, b}) {
+                for (int i = 0, n = list.size(); i < n; i += 2) {
+                    all.add(new long[]{list.getQuick(i), list.getQuick(i + 1)});
+                }
+            }
+            all.sort(Comparator.comparingLong(interval -> interval[0]));
+            final LongList union = new LongList();
+            for (long[] interval : all) {
+                final int n = union.size();
+                if (n > 0 && interval[0] <= union.getQuick(n - 1) + 1) {
+                    union.setQuick(n - 1, Math.max(union.getQuick(n - 1), interval[1]));
+                } else {
+                    union.add(interval[0], interval[1]);
+                }
+            }
+            return union;
+        }
+
+        private LongList parse(String expression, long now, String context) {
+            final LongList result = new LongList();
+            try {
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0, result, IntervalOperation.INTERSECT, parseSink, true, now);
+            } catch (SqlException e) {
+                throw new AssertionError(expression + " fails, checking " + context + ": " + e.getFlyweightMessage());
+            }
+            return result;
+        }
+    }
+
+    /**
      * The shapes of the expressions of testCompiledDateRangeMergeFuzz(), which the generator counts
      * from its own choices.
      */
@@ -10397,6 +11073,12 @@ public class TickExprTest {
         int emptyDaysAfterFirstMergeCount;
         // an element that lies later than a range, before it in the list
         int laterElementBeforeRangeCount;
+    }
+
+    /**
+     * A day filter, the text after its '#', and the days that it holds.
+     */
+    private record DayFilter(String text, Set<DayOfWeek> days) {
     }
 
     /**

@@ -306,6 +306,31 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeRangeLiteralWithUnknownElementDayFilterFailsCreateAndActsAsNullInRefresh() throws Exception {
+        // A day filter of the element of a range between two points in time that does not parse,
+        // also after a timezone of the element, fails CREATE VIEW and CREATE MATERIALIZED VIEW at
+        // the literal. An older build created them, so a stored definition can hold such a
+        // literal: the database starts with it, a refresh runs it as a null value and keeps the
+        // materialized view valid, where it selected the rows of the range, and a query of the
+        // view fails on it. A refresh resolves $now against the "now" of its context, see
+        // testRowValueDateVariableResolvesLikeLiteral, so the hour after each "now" that it can
+        // resolve to, the clock on Tuesday 2024-01-02 and the start of the epoch on a Thursday,
+        // has a row. With a day filter of workdays, the views hold the hour after "now".
+        assertLiteralFailsCreateAndActsAsNullInRefresh(
+                """
+                        ('1970-01-01T00:30:00.000000Z', 1),
+                        ('2024-01-02T03:30:00.000000Z', 1),
+                        ('2024-01-02T09:00:00.000000Z', 1)
+                        """,
+                new String[]{"[$now..$now + 1h#Xyz]", "[$now..$now + 1h@UTC+05#Xyz]"},
+                "[$now..$now + 1h#wd]",
+                "2024-01-02T03:30:00.000000Z\t1",
+                new String[]{"[$now..$now + 1h#Xyz]"},
+                "Invalid day name: Xyz"
+        );
+    }
+
+    @Test
     public void testPointInTimeRangeLiteralWithMalformedDurationFailsCreateAndActsAsNullInRefresh() throws Exception {
         // A range between two points in time ignores its duration, which still has to parse: SQL
         // rejects a view and a materialized view whose literal has a duration that does not parse as
@@ -328,6 +353,105 @@ public class MatViewTickExprTest extends AbstractCairoTest {
                 new String[]{"$now..$now + 1h;1x"},
                 "Invalid duration unit: x"
         );
+    }
+
+    @Test
+    public void testRangeElementSuffixInViewsAcrossRestart() throws Exception {
+        // A view and a materialized view store the text of their query, which the database parses
+        // again after a restart. A range between two points in time with a day filter of its
+        // element, and a range of days with a timezone of its element before its day filter, select
+        // what the same ranges select with the suffix on the list, before the restart and after it,
+        // when the materialized views refresh and stay valid. On Sunday 2025-01-19 at 12:00,
+        // [$now - 2h..$now#Sun] holds the rows from 10:00 to 12:00, [$now - 2h..$now#Mon] none, and
+        // the Sunday at UTC+05 runs from 2025-01-18T19:00Z to 2025-01-19T19:00Z.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2025-01-18T18:00:00.000000Z', 1),
+                    ('2025-01-18T19:00:00.000000Z', 1),
+                    ('2025-01-19T05:00:00.000000Z', 1),
+                    ('2025-01-19T10:00:00.000000Z', 1),
+                    ('2025-01-19T11:00:00.000000Z', 1),
+                    ('2025-01-19T19:00:00.000000Z', 1)
+                    """);
+            drainWalQueue();
+            // the view, its rows on the Sunday, the literal of its materialized view, and that of
+            // the materialized view that has the suffix on the list
+            final String[][] views = {
+                    {"[$now - 2h..$now#Sun]", "2025-01-19T10:00:00.000000Z\t1\n2025-01-19T11:00:00.000000Z\t1\n", "[$now - 2h..$now]#Sun"},
+                    {"[$now - 2h..$now#Mon]", "", "[$now - 2h..$now]#Mon"},
+                    {
+                            "[$today..$tomorrow@UTC+05#Sun]",
+                            "2025-01-18T19:00:00.000000Z\t1\n2025-01-19T05:00:00.000000Z\t1\n2025-01-19T10:00:00.000000Z\t1\n2025-01-19T11:00:00.000000Z\t1\n",
+                            "[$today..$tomorrow]@UTC+05#Sun"
+                    }
+            };
+            for (int i = 0; i < views.length; i++) {
+                execute("CREATE VIEW v" + i + " AS (SELECT ts, v FROM base WHERE ts IN '" + views[i][0] + "')");
+                execute("CREATE MATERIALIZED VIEW mv" + i + " AS (SELECT ts, count() c FROM base WHERE ts IN '" + views[i][0] + "' SAMPLE BY 1h)");
+                execute("CREATE MATERIALIZED VIEW lmv" + i + " AS (SELECT ts, count() c FROM base WHERE ts IN '" + views[i][2] + "' SAMPLE BY 1h)");
+            }
+            drainWalAndMatViewQueues();
+            drainViewQueue();
+            for (int i = 0; i < views.length; i++) {
+                assertQuery("v" + i)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns("ts\tv\n" + views[i][1]);
+                assertSqlCursors("lmv" + i, "mv" + i);
+            }
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                drainWalAndMatViewQueues(restarted);
+                drainViewQueue(restarted);
+                final StringBuilder statuses = new StringBuilder("view_name\tview_status\n");
+                for (int i = 0; i < views.length; i++) {
+                    restarted.execute("REFRESH MATERIALIZED VIEW lmv" + i + " FULL", restartedContext);
+                    restarted.execute("REFRESH MATERIALIZED VIEW mv" + i + " FULL", restartedContext);
+                    statuses.append("lmv").append(i).append("\tvalid\n");
+                }
+                for (int i = 0; i < views.length; i++) {
+                    statuses.append("mv").append(i).append("\tvalid\n");
+                }
+                drainWalAndMatViewQueues(restarted);
+                assertQuery("SELECT view_name, view_status FROM materialized_views() ORDER BY view_name")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(statuses);
+                // the queries of the views run at 12:00
+                restartedContext.initNow();
+                final StringSink expected = new StringSink();
+                final StringSink actual = new StringSink();
+                for (int i = 0; i < views.length; i++) {
+                    assertQuery("v" + i)
+                            .withEngine(restarted)
+                            .withContext(restartedContext)
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .inferTimestamp()
+                            .sizeMayVary()
+                            .returns("ts\tv\n" + views[i][1]);
+                    TestUtils.printSql(restarted, restartedContext, "lmv" + i, expected);
+                    TestUtils.printSql(restarted, restartedContext, "mv" + i, actual);
+                    TestUtils.assertEquals("mv" + i, expected, actual);
+                }
+                restarted.releaseInactive();
+            }
+        });
     }
 
     @Test

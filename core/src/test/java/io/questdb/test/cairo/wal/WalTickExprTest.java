@@ -464,6 +464,54 @@ public class WalTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeRangeElementSuffixAppliesAtCommitTime() throws Exception {
+        // The apply runs a range between two points in time with a day filter of its element, and
+        // with a timezone of its element before it, against the commit time, as a literal and as a
+        // bind variable, in the interval scan and in the row filter. 2024-01-02 is a Tuesday: at
+        // 10:00 the range from 07:00 holds the rows of that morning with #Tue, and none with #Wed;
+        // at 15:00, 13:00 to 15:00 at UTC+05 is 08:00 to 10:00Z.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            assertUpdateApplied("ts IN '[$now - 3h..$now#Tue]'", "22211");
+            assertUpdateApplied("ts IN '[$now - 3h..$now#Wed]'", "11111");
+            assertUpdateApplied("ts NOT IN '[$now - 3h..$now#Wed]'", "22222");
+            assertUpdateApplied("ts2 IN '[$now - 3h..$now#Tue]'", "22211");
+            assertUpdateApplied("ts2 IN '[$now - 3h..$now#Wed]'", "11111");
+            assertBindUpdateApplied("ts IN $1", "[$now - 3h..$now#Wed]", "11111");
+            assertBindUpdateApplied("ts2 IN $1", "[$now - 3h..$now#Tue]", "22211");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T15:00:00.000000Z"));
+            assertUpdateApplied("ts IN '[$now - 2h..$now@UTC+05#Tue]'", "22211");
+            assertUpdateApplied("ts2 IN '[$now - 2h..$now@UTC+05#Tue]'", "22211");
+            assertBindUpdateApplied("ts IN $1", "[$now - 2h..$now@UTC+05#Tue]", "22211");
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementUnknownDayFilterFailsOrActsAsNull() throws Exception {
+        // A day filter of the element of a range between two points in time that does not parse
+        // fails a literal as the UPDATE compiles, before the client sees it succeed. The apply runs
+        // a bind variable with it as a null value, and so a literal that an older build wrote to
+        // the WAL, and the table keeps applying. At 10:00 the range holds the rows from 08:00.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            final String tickExpr = "[$now - 2h..$now#Xyz]";
+            final TableToken token = createTable(true);
+            assertUpdateRejected(token, "ts IN '" + tickExpr + "'", "Invalid day name: Xyz");
+            assertUpdateRejected(token, "ts NOT IN '" + tickExpr + "'", "Invalid day name: Xyz");
+            assertUpdateRejected(token, "ts2 IN '" + tickExpr + "'", "Invalid day name: Xyz");
+            assertUpdateRejected(token, "ts IN '[$now - 2h..$now@UTC+05#Xyz]'", "Invalid day name: Xyz");
+            assertApplied(token, "11111");
+            for (boolean isVarchar : new boolean[]{false, true}) {
+                assertBindUpdateApplied("ts IN $1", tickExpr, isVarchar, "11111");
+                assertBindUpdateApplied("ts NOT IN $1", tickExpr, isVarchar, "22222");
+                assertBindUpdateApplied("ts2 IN $1", tickExpr, isVarchar, "11111");
+                assertBindUpdateApplied("ts2 NOT IN $1", tickExpr, isVarchar, "22222");
+            }
+            assertLegacyLiteralAppliesAsNull(tickExpr);
+        });
+    }
+
+    @Test
     public void testPreparedUpdateCompilesWhileRangeStartsAfterItEnds() throws Exception {
         // The UPDATE compiles at 03:00, when the range starts after it ends, and runs at 12:00, when
         // it does not: compiling checks only what does not depend on the time the statement runs.

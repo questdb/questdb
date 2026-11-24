@@ -36,10 +36,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestTickCalendarService;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -56,6 +60,7 @@ import java.util.Arrays;
  */
 public class TickCalendarTest {
 
+    private static final Log LOG = LogFactory.getLog(TickCalendarTest.class);
     private static final StringSink sink = new StringSink();
     private static CairoConfiguration configuration;
 
@@ -402,14 +407,13 @@ public class TickCalendarTest {
         // A date variable range that adds no interval, one that starts after it ends, without the
         // range order check, or a range of business days that holds no business day, takes the
         // tick calendar of its element for one, as a day of the range does. A timezone before the
-        // calendar takes the rest of the element, so one that does not parse fails with the
-        // calendar in its text. 2025-01-28 is a Tuesday, and 2025-01-25 a Saturday.
+        // calendar ends at its '#'. 2025-01-28 is a Tuesday, and 2025-01-25 a Saturday.
         for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
             final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
             final String context = " [" + ColumnType.nameOf(timestampType) + ']';
             final long tuesday = driver.parseFloorLiteral("2025-01-28T10:00:00.000000Z");
             final long saturday = driver.parseFloorLiteral("2025-01-25T10:00:00.000000Z");
-            final String zoneError = "error: invalid timezone: Bogus/Zone#XNYS";
+            final String zoneError = "error: invalid timezone: Bogus/Zone";
             Assert.assertEquals(context, "error: Invalid date range: start is after end", parseTickExpr(driver, "[$tomorrow..$today@Bogus/Zone#XNYS]", tuesday));
             for (int checks : new int[]{IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
                 Assert.assertEquals(context, "[]", parseTickExpr(driver, "[$tomorrow..$today#XNYS]", tuesday, checks));
@@ -444,6 +448,79 @@ public class TickCalendarTest {
             );
             Assert.assertEquals(context, zoneError, parseTickExpr(driver, "[$today..$tomorrow@Bogus/Zone#XNYS]", tuesday));
             Assert.assertEquals(context, zoneError, parseTickExpr(driver, "[$today..$today + 0bd@Bogus/Zone#XNYS]", tuesday));
+        }
+    }
+
+    @Test
+    public void testDateVariableRangeElementCalendarMatchesListCalendarFuzz() throws SqlException {
+        // A date variable range of either kind with a timezone and a tick calendar of its element
+        // selects, among other elements, what the range selects alone with the same suffix on the
+        // list, see TickExprTest.ElementSuffixChecker. A range of days runs the tick calendar of
+        // its element on each of its days, and takes no negative duration here.
+        // questdb.fuzz.tickExpressions sets the number of expressions.
+        final int expressionCount = Integer.getInteger("questdb.fuzz.tickExpressions", 1_000);
+        final String[] nows = {
+                "2025-01-24T15:30:00.000000Z", // a Friday, in the XNYS session
+                "2025-01-24T03:00:00.000000Z", // a Friday, in the morning XHKG session
+                "2025-01-27T04:30:00.000000Z", // a Monday, in the XHKG lunch break
+                "2025-01-20T15:00:00.000000Z", // a Monday that XNYS closes for
+                "2025-01-25T12:00:00.000000Z", // a Saturday
+                "2025-01-26T23:30:00.000000Z", // half an hour before a Monday
+                "2025-03-10T14:00:00.000000Z" // the Monday after New York moves to summer time
+        };
+        final String[] calendars = {"", "#XNYS", "#XHKG", "#xnys"};
+        final String[] dayRangeDurations = {"", ";1h", ";30m", ";0s", ";1d"};
+        final String[] pointRangeDurations = {"", ";1h", ";30m", ";0s", ";-30m", ";1d"};
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TickExprTest.ElementSuffixChecker checker = new TickExprTest.ElementSuffixChecker(
+                    ColumnType.getTimestampDriver(timestampType),
+                    configuration,
+                    calendars,
+                    dayRangeDurations,
+                    pointRangeDurations,
+                    nows
+            );
+            for (int i = 0; i < expressionCount; i++) {
+                checker.check(rnd);
+            }
+            checker.log("tick calendar");
+            if (expressionCount >= 1_000) {
+                checker.assertEveryShape();
+                // a tick calendar after a timezone that reads as another zone, or fails, where it
+                // runs on into the tick calendar, such as UTC+05 or Z
+                Assert.assertTrue(checker.zoneBeforeSuffixCount > 0);
+            }
+        }
+    }
+
+    @Test
+    public void testDateVariableRangeElementZoneBeforeCalendar() throws SqlException {
+        // The timezone of a date variable range element ends at the tick calendar of the element,
+        // as the one of a single element and the one of the list do, so UTC-05 is an offset rather
+        // than UTC, and one that does not parse fails without the calendar in its text. On Friday
+        // 2025-01-24 XNYS trades from 14:30 to 21:00Z.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long friday = driver.parseFloorLiteral("2025-01-24T15:30:00.000000Z");
+            // 13:30 to 15:30 at -05:00 is 18:30 to 20:30Z
+            final String evening = forTimestampType("[{lo=2025-01-24T18:30:00.000000Z, hi=2025-01-24T20:30:00.000000Z}]", timestampType);
+            Assert.assertEquals(evening, parseTickExpr(driver, "[$now - 2h..$now]@UTC-05#XNYS", friday));
+            assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now@UTC-05#XNYS]", friday, evening);
+            assertCompiledParsesOnEvaluation(driver, "[$now - 2h..$now@UTC-05#XNYS]", friday, evening);
+            // 10:00 at -05:00 is 15:00Z, and the duration ends the minute an hour later
+            final String ten = forTimestampType("[{lo=2025-01-24T15:00:00.000000Z, hi=2025-01-24T16:00:59.999999Z}]", timestampType);
+            Assert.assertEquals(ten, parseTickExpr(driver, "[$today@UTC-05#XNYS]T10:00;1h", friday));
+            Assert.assertEquals(ten, parseTickExpr(driver, "[$today..$today]T10:00@UTC-05#XNYS;1h", friday));
+            assertParsedAtEveryCheckLevel(driver, "[$today..$today@UTC-05#XNYS]T10:00;1h", friday, ten);
+            assertCompiledParsesOnEvaluation(driver, "[$today..$today@UTC-05#XNYS]T10:00;1h", friday, ten);
+            // a range that starts after it ends
+            Assert.assertEquals("error: Invalid date range: start is after end", parseTickExpr(driver, "[$now..$now - 1h@Bogus/Zone#XNYS]", friday));
+            for (int checks : new int[]{IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
+                Assert.assertEquals("error: invalid timezone: Bogus/Zone", parseTickExpr(driver, "[$now..$now - 1h@Bogus/Zone#XNYS]", friday, checks));
+                Assert.assertEquals("[]", parseTickExpr(driver, "[$now..$now - 1h#XNYS]", friday, checks));
+                Assert.assertEquals("[]", parseTickExpr(driver, "[$now..$now - 1h@UTC-05#XNYS]", friday, checks));
+            }
         }
     }
 
@@ -1107,6 +1184,185 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testPointInTimeRangeElementCalendar() throws SqlException {
+        // A range between two points in time keeps the parts of its interval in the sessions of the
+        // tick calendar of its element, and ends each later by the duration of the list, as the tick
+        // calendar of the list does, at every check level. It ignores the time part of the list. On
+        // Friday 2025-01-24 the XNYS session runs from 14:30 to 21:00Z, and the range from 13:30 to
+        // 15:30Z.
+        final String[][] durations = {
+                // the duration, and the interval that it makes of the part of the range in the
+                // session, by hand, or null where the list form gives it
+                {"", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T15:30:00.000000Z}]"},
+                {";1h", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T16:30:00.000000Z}]"},
+                {";30m", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T16:00:00.000000Z}]"},
+                {";0s", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T15:30:00.000000Z}]"},
+                {";-30m", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T15:00:00.000000Z}]"},
+                {";1d", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-25T15:30:00.000000Z}]"},
+                {";1w", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-31T15:30:00.000000Z}]"},
+                {";1M", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-02-24T15:30:00.000000Z}]"},
+                {";1y", "[{lo=2025-01-24T14:30:00.000000Z, hi=2026-01-24T15:30:00.000000Z}]"},
+                // an end before the start
+                {";-2h", null}
+        };
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = " [" + ColumnType.nameOf(timestampType) + ']';
+            final long friday = driver.parseFloorLiteral("2025-01-24T15:30:00.000000Z");
+            for (String[] duration : durations) {
+                final String list = "[$now - 2h..$now]#XNYS" + duration[0];
+                final String expected = parseTickExpr(driver, list, friday);
+                if (duration[1] != null) {
+                    Assert.assertEquals(list + context, forTimestampType(duration[1], timestampType), expected);
+                }
+                Assert.assertEquals(list + context, expected, evaluateCompiledTickExpr(driver, list, friday));
+                assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now#XNYS]" + duration[0], friday, expected);
+                assertCompiledParsesOnEvaluation(driver, "[$now - 2h..$now#XNYS]" + duration[0], friday, expected);
+            }
+            // a Saturday, and the Friday before the session opens
+            assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now#XNYS]", driver.parseFloorLiteral("2025-01-25T12:00:00.000000Z"), "[]");
+            assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now#XNYS]", driver.parseFloorLiteral("2025-01-24T03:00:00.000000Z"), "[]");
+            // 11:30 to 15:30 at -01:00 is 12:30 to 16:30Z
+            final String atMinusOne = forTimestampType("[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T16:30:00.000000Z}]", timestampType);
+            Assert.assertEquals(context, atMinusOne, parseTickExpr(driver, "[$now - 4h..$now]@UTC-01#XNYS", friday));
+            assertParsedAtEveryCheckLevel(driver, "[$now - 4h..$now@UTC-01#XNYS]", friday, atMinusOne);
+            // XHKG trades from 01:30 to 04:00Z and from 05:00 to 08:00Z on Monday 2025-01-27, and the
+            // range runs from 02:30 to 04:30Z
+            final long monday = driver.parseFloorLiteral("2025-01-27T04:30:00.000000Z");
+            final String morning = forTimestampType("[{lo=2025-01-27T02:30:00.000000Z, hi=2025-01-27T03:59:59.999999Z}]", timestampType);
+            Assert.assertEquals(context, morning, parseTickExpr(driver, "[$now - 2h..$now]#XHKG", monday));
+            assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now#XHKG]", monday, morning);
+            final String morningAndHour = forTimestampType("[{lo=2025-01-27T02:30:00.000000Z, hi=2025-01-27T04:59:59.999999Z}]", timestampType);
+            Assert.assertEquals(context, morningAndHour, parseTickExpr(driver, "[$now - 2h..$now]#XHKG;1h", monday));
+            assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now#XHKG];1h", monday, morningAndHour);
+            // the time part of the list
+            final String withHour = forTimestampType("[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T16:30:00.000000Z}]", timestampType);
+            Assert.assertEquals(context, withHour, parseTickExpr(driver, "[$now - 2h..$now]T09:00#XNYS;1h", friday));
+            assertParsedAtEveryCheckLevel(driver, "[$now - 2h..$now#XNYS]T09:00;1h", friday, withHour);
+            assertCompiledParsesOnEvaluation(driver, "[$now - 2h..$now#XNYS]T09:00;1h", friday, withHour);
+        }
+    }
+
+    @Test
+    public void testPointInTimeRangeElementCalendarOverIntervalLimit() throws SqlException {
+        // A range between two points in time under the tick calendar of its element becomes an
+        // interval for each session, and the interval limit counts them, as it counts those of the
+        // tick calendar of the list. From 2025-01-01T12:00 to 2025-01-31T12:00Z, XNYS has the 19
+        // sessions from 01-02 to 01-30: the weekdays but the closures on 01-09 and 01-20, each from
+        // 14:30 to 21:00Z.
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        final String limitError = "error: Bracket expansion produces too many intervals (max 16)";
+        final String element = "[$now - 30d..$now#XNYS]";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = " [" + ColumnType.nameOf(timestampType) + ']';
+            final LongList expected = new LongList();
+            for (LocalDate day = LocalDate.of(2025, 1, 2); !day.isAfter(LocalDate.of(2025, 1, 30)); day = day.plusDays(1)) {
+                if (day.getDayOfWeek() != DayOfWeek.SATURDAY && day.getDayOfWeek() != DayOfWeek.SUNDAY && day.getDayOfMonth() != 9 && day.getDayOfMonth() != 20) {
+                    final long dayStart = driver.fromDays((int) day.toEpochDay());
+                    expected.add(dayStart + driver.fromMinutes(14 * 60 + 30), dayStart + driver.fromHours(21) - 1);
+                }
+            }
+            Assert.assertEquals(context, 2 * 19, expected.size());
+            final String sessions = intervalToString(driver, expected);
+            final long now = driver.parseFloorLiteral("2025-01-31T12:00:00.000000Z");
+            for (int checks : new int[]{IntervalUtils.TICK_CHECK_ALL, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT}) {
+                Assert.assertEquals(context, limitError, parseTickExpr(smallLimits, driver, "[$now - 30d..$now]#XNYS", now, checks));
+                Assert.assertEquals(context, limitError, parseTickExpr(smallLimits, driver, element, now, checks));
+            }
+            Assert.assertEquals(context, sessions, parseTickExpr(smallLimits, driver, "[$now - 30d..$now]#XNYS", now, 0));
+            Assert.assertEquals(context, sessions, parseTickExpr(smallLimits, driver, element, now, 0));
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, smallLimits, element, 0, element.length(), 7)) {
+                Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+                try {
+                    compiled.validate(now);
+                    Assert.fail("validate should fail: " + element + context);
+                } catch (SqlException e) {
+                    Assert.assertEquals(context, limitError, "error: " + e.getFlyweightMessage());
+                    Assert.assertEquals(context, 7, e.getPosition());
+                }
+            }
+            // the default limits
+            Assert.assertEquals(context, sessions, parseTickExpr(driver, element, now));
+            // a range of days after the range: the sessions do not merge into one interval of the
+            // range, so the check of each day counts them, as for a range of days under the tick
+            // calendar of its element
+            final String rangeOfDays = "[$today - 30d..$today#XNYS, $today - 30d..$today]";
+            Assert.assertEquals(context, "error: Date range expansion produces too many intervals (max 16)", parseTickExpr(smallLimits, driver, rangeOfDays, now, IntervalUtils.TICK_CHECK_ALL));
+            Assert.assertEquals(
+                    context,
+                    parseTickExpr(smallLimits, driver, rangeOfDays, now, IntervalUtils.TICK_CHECK_ALL),
+                    parseTickExpr(smallLimits, driver, "[$now - 30d..$now#XNYS, $today - 30d..$today]", now, IntervalUtils.TICK_CHECK_ALL)
+            );
+        }
+    }
+
+    @Test
+    public void testPointInTimeRangeElementCalendarWithListFilters() throws SqlException {
+        // The tick calendar of an element replaces the day filter of the list, as it does on a day
+        // of a range of days; a day filter of the element runs before the tick calendar of the list;
+        // and the tick calendar of the list runs after the one of the element, on what that keeps.
+        // On Friday 2025-01-24, XNYS trades from 14:30 to 21:00Z, XHKG from 01:30 to 04:00Z and from
+        // 05:00 to 08:00Z, and the range runs from 13:30 to 15:30Z.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long friday = driver.parseFloorLiteral("2025-01-24T15:30:00.000000Z");
+            final String kept = forTimestampType("[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T15:30:00.000000Z}]", timestampType);
+            // a range of days does the same
+            Assert.assertEquals(kept, parseTickExpr(driver, "[$today..$now#XNYS]#Sun", friday));
+            final String[][] cases = {
+                    {"[$now - 2h..$now#XNYS]#Sun", kept},
+                    {"[$now - 2h..$now#Fri]#XNYS", kept},
+                    {"[$now - 2h..$now#Sun]#XNYS", "[]"},
+                    {"[$now - 2h..$now#XNYS]#XHKG", "[]"}
+            };
+            for (String[] c : cases) {
+                assertParsedAtEveryCheckLevel(driver, c[0], friday, c[1]);
+                assertCompiledParsesOnEvaluation(driver, c[0], friday, c[1]);
+            }
+        }
+    }
+
+    @Test
+    public void testPointInTimeRangeElementCalendarWithRepeatingDuration() throws SqlException {
+        // A duration with a period and a count, which a tick calendar does not add, fails a range
+        // between two points in time under the tick calendar of its element where the session keeps
+        // part of the range, and adds no interval where it keeps none, as it does under the tick
+        // calendar of the list, and as a range of days with the tick calendar of its element does.
+        // The parser reads the duration only to add it to what the session keeps. The XNYS session
+        // of Friday 2025-01-24 runs from 14:30 to 21:00Z.
+        final String element = "[$now - 1h..$now#XNYS];1h;1d;3";
+        final String error = "error: Expected number before unit ';'";
+        final String[][] nows = {
+                {"2025-01-24T15:00:00.000000Z", error},
+                {"2025-01-24T03:00:00.000000Z", "[]"},
+                {"2025-01-25T15:00:00.000000Z", "[]"}
+        };
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String[] now : nows) {
+                final long timestamp = driver.parseFloorLiteral(now[0]);
+                final String context = " at " + now[0] + " [" + ColumnType.nameOf(timestampType) + ']';
+                Assert.assertEquals(element + context, now[1], parseTickExpr(driver, "[$now - 1h..$now]#XNYS;1h;1d;3", timestamp));
+                Assert.assertEquals(element + context, now[1], parseTickExpr(driver, "[$today..$now#XNYS];1h;1d;3", timestamp));
+                assertParsedAtEveryCheckLevel(driver, element, timestamp, now[1]);
+            }
+            // SQL validates the literal against the "now" it compiles at, and runs it at another
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, element, 0, element.length(), 7)) {
+                Assert.assertTrue(compiled.isParsedOnEvaluation());
+                compiled.validate(driver.parseFloorLiteral("2025-01-24T03:00:00.000000Z"));
+                try {
+                    compiled.evaluate(new LongList(), driver.parseFloorLiteral("2025-01-24T15:00:00.000000Z"));
+                    Assert.fail("evaluation should fail: " + element);
+                } catch (CairoException e) {
+                    Assert.assertEquals(error, "error: " + e.getFlyweightMessage());
+                    Assert.assertEquals(7, e.getPosition());
+                }
+            }
+        }
+    }
+
+    @Test
     public void testPointInTimeRangeSuffixUnderTickCalendar() {
         // A range between two points in time under a tick calendar: the parser checks the text after
         // the first ';' whether or not the session holds the range, and adds the duration to the end
@@ -1431,6 +1687,54 @@ public class TickCalendarTest {
     }
 
     /**
+     * Asserts that the compiled form of the expression, which parses it on every evaluation,
+     * validates it and evaluates it to the expected intervals or error.
+     */
+    private static void assertCompiledParsesOnEvaluation(TimestampDriver driver, String expression, long now, String expected) throws SqlException {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            Assert.assertTrue(expression, compiled.isParsedOnEvaluation());
+            if (!expected.startsWith("error: ")) {
+                compiled.validate(now);
+            }
+        }
+        Assert.assertEquals(expression, expected, evaluateCompiledTickExpr(driver, expression, now));
+    }
+
+    /**
+     * Asserts that the parser parses the expression to the expected intervals or error with every
+     * combination of the checks that depend on "now".
+     */
+    private static void assertParsedAtEveryCheckLevel(TimestampDriver driver, String expression, long now, String expected) {
+        for (int checks : new int[]{IntervalUtils.TICK_CHECK_ALL, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
+            Assert.assertEquals(expression + " [checks=" + checks + ']', expected, parseTickExpr(driver, expression, now, checks));
+        }
+    }
+
+    /**
+     * Returns a configuration with the test tick calendars, the given number of intervals after
+     * which a date range merges the intervals of each day into the ones so far, and the given
+     * limit on the merged intervals.
+     */
+    private static CairoConfiguration calendarConfiguration(int mergeThreshold, int maxIntervals) {
+        return new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir")) {
+            @Override
+            public @NotNull FactoryProvider getFactoryProvider() {
+                return configuration.getFactoryProvider();
+            }
+
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return mergeThreshold;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return maxIntervals;
+            }
+        };
+    }
+
+    /**
      * Returns the intervals that the compiled form evaluates the expression to, or its error.
      */
     private static String evaluateCompiledTickExpr(TimestampDriver driver, String expression, long now) {
@@ -1445,6 +1749,13 @@ public class TickCalendarTest {
         } catch (SqlException e) {
             return "compile error: " + e.getFlyweightMessage();
         }
+    }
+
+    /**
+     * Returns intervals given at microsecond precision at the precision of the timestamp type.
+     */
+    private static String forTimestampType(String expected, int timestampType) {
+        return ColumnType.isTimestampNano(timestampType) ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z") : expected;
     }
 
     private static String intervalToString(TimestampDriver driver, LongList intervals) {
@@ -1478,6 +1789,14 @@ public class TickCalendarTest {
      * error.
      */
     private static String parseTickExpr(TimestampDriver driver, String expression, long now, int checks) {
+        return parseTickExpr(configuration, driver, expression, now, checks);
+    }
+
+    /**
+     * Returns the intervals that the parser parses the expression to with the configuration and
+     * the checks, or its error.
+     */
+    private static String parseTickExpr(CairoConfiguration configuration, TimestampDriver driver, String expression, long now, int checks) {
         final LongList out = new LongList();
         try {
             IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, checks);

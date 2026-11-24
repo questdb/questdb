@@ -49,6 +49,52 @@ public class PGTickExprPreparedStatementTest extends BasePGTest {
     private static final long NOW_1200 = MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z");
 
     @Test
+    public void testPreparedPointInTimeRangeElementSuffixFollowsNowOfEachRun() throws Exception {
+        // A statement prepared once applies the day filter of the element of a range between two
+        // points in time on the day of each run, with the literal and with a bind variable: #Mon
+        // holds no row on Sunday 2025-01-19, and the rows from 10:00 to 12:00 on Monday. A timezone
+        // of the element before its day filter is an offset: 10:00 to 12:00 at UTC+05 is 05:00 to
+        // 07:00Z.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            final long sunday = MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z");
+            final long monday = MicrosFormatUtils.parseTimestamp("2025-01-20T12:00:00.000000Z");
+            setCurrentMicros(sunday);
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.execute("""
+                        INSERT INTO base VALUES
+                        ('2025-01-19T05:00:00.000000Z', 1),
+                        ('2025-01-19T06:00:00.000000Z', 1),
+                        ('2025-01-19T11:00:00.000000Z', 1),
+                        ('2025-01-20T11:00:00.000000Z', 1)
+                        """);
+            }
+            drainWalQueue();
+            final String none = "ts[TIMESTAMP],v[INTEGER]\n";
+            final String mondayRow = "ts[TIMESTAMP],v[INTEGER]\n2025-01-20 11:00:00.0,1\n";
+            try (
+                    PreparedStatement literal = connection.prepareStatement("SELECT ts, v FROM base WHERE ts IN '[$now - 2h..$now#Mon]'");
+                    PreparedStatement bind = connection.prepareStatement("SELECT ts, v FROM base WHERE ts IN ?")
+            ) {
+                bind.setString(1, "[$now - 2h..$now#Mon]");
+                for (int i = 0; i < 2; i++) {
+                    currentMicros = sunday;
+                    assertRows(literal, none);
+                    assertRows(bind, none);
+                    currentMicros = monday;
+                    assertRows(literal, mondayRow);
+                    assertRows(bind, mondayRow);
+                }
+                currentMicros = sunday;
+                bind.setString(1, "[$now - 2h..$now@UTC+05#Sun]");
+                for (int i = 0; i < 2; i++) {
+                    assertRows(bind, "ts[TIMESTAMP],v[INTEGER]\n2025-01-19 05:00:00.0,1\n2025-01-19 06:00:00.0,1\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStatementPreparedBeforeRangeStartRunsAfterIt() throws Exception {
         // At 03:00 the range from 09:30 to "now" starts after it ends, and from "now" to 1024 days
         // after today, 09:00 comes 1025 times, one more than the limit. A connection whose last

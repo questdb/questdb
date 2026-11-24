@@ -3638,9 +3638,12 @@ public final class IntervalUtils {
      * Each endpoint expression is either a whole day ($today, $yesterday, $tomorrow, optionally shifted by
      * whole days) or a point in time ($now, or a shift below a day). A range between two points in time
      * produces a single interval, which ignores the time part and the duration of the list; a time part
-     * or a duration that does not parse still fails it, whatever the order of the range. Otherwise the
+     * or a duration that does not parse still fails it, whatever the order of the range. It takes the
+     * day filter or tick calendar of its element as a day does: the day filter of the element, else the
+     * one of the list, keeps or drops the interval by the day it starts on, and a tick calendar keeps
+     * the parts of it in its sessions, and ends each later by the duration of the list. Otherwise the
      * range iterates the days from the start's day to the end's day, and clips the result to the
-     * endpoint that is a point in time, if any.
+     * endpoint that is a point in time, if any. The timezone of the element ends at its '#'.
      * <p>
      * Range type is determined by the END expression:
      * - If end expression ends with "bd", iterate business days only (skip Sat/Sun)
@@ -3766,6 +3769,23 @@ public final class IntervalUtils {
         }
 
         if (isPointInTimeRange) {
+            // The text after the range in its element: a timezone, then a day filter or tick
+            // calendar after the first '#', which the range reads as a single element of the list
+            // and a day of a range of days below read theirs. The timezone ends at that '#'.
+            int elemDayFilterMask = 0;
+            LongList elemExchangeSchedule = null;
+            int elemTzHi = elementEnd;
+            for (int j = rangeEnd; j < elementEnd; j++) {
+                if (seq.charAt(j) == '#') {
+                    elemExchangeSchedule = getExchangeSchedule(configuration, seq, j + 1, elementEnd);
+                    if (elemExchangeSchedule == null) {
+                        elemDayFilterMask = parseDayFilter(seq, j + 1, elementEnd, errorPos);
+                    }
+                    elemTzHi = j;
+                    break;
+                }
+            }
+
             // Time-based range: produce single interval from start to end
             int outSizeBeforeInterval = out.size();
             encodeInterval(startTimestamp, endTimestamp, operation, out);
@@ -3774,15 +3794,17 @@ public final class IntervalUtils {
                 applyLastEncodedInterval(timestampDriver, out);
             }
 
-            // Apply day filter BEFORE timezone conversion (local-time semantics)
-            // Day filter should check the day in local time, not UTC
-            if (dayFilterMask != 0) {
+            // The day filter of the element replaces that of the list, and a tick calendar of the
+            // element replaces both, as for a day of a range of days. The day filter applies before
+            // the timezone (local time), by the day the interval starts on.
+            final int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
+            if (activeDayFilterMask != 0 && elemExchangeSchedule == null) {
                 if (applyEncoded) {
                     // Static mode: filter intervals directly
-                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, true);
+                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, activeDayFilterMask, true);
                 } else {
                     // Dynamic mode: store mask for runtime evaluation
-                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, dayFilterMask);
+                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, activeDayFilterMask);
                 }
             }
 
@@ -3791,11 +3813,11 @@ public final class IntervalUtils {
             int activeTzLo = -1;
             int activeTzHi = -1;
 
-            int elemTzMarker = findTimezoneMarker(seq, rangeEnd, elementEnd);
+            int elemTzMarker = findTimezoneMarker(seq, rangeEnd, elemTzHi);
             if (elemTzMarker >= 0) {
                 // Element-level timezone (inside the range element)
                 activeTzLo = elemTzMarker + 1;
-                activeTzHi = elementEnd;
+                activeTzHi = elemTzHi;
             } else if (globalTzMarker >= 0) {
                 // Fall back to global timezone (outside brackets)
                 activeTzLo = globalTzLo;
@@ -3805,6 +3827,13 @@ public final class IntervalUtils {
             // Apply timezone AFTER day filter (converts local to UTC)
             if (activeTzLo >= 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+            }
+
+            // The tick calendar of the element after the timezone (UTC trading hours), then the
+            // duration of the list, which the range otherwise ignores, as for a day of a range of days
+            if (elemExchangeSchedule != null) {
+                applyExchangeFilterAndDuration(timestampDriver, elemExchangeSchedule, out, outSizeBeforeInterval, seq,
+                        durationSemicolon >= 0 ? durationSemicolon + 1 : -1, lim, errorPos);
             }
             return;
         }
@@ -3893,7 +3922,7 @@ public final class IntervalUtils {
 
             if (elemTzMarker >= 0) {
                 activeTzLo = elemTzMarker + 1;
-                activeTzHi = resolvedElementEnd;
+                activeTzHi = effectiveElementEndForTz;
                 effectiveElementEnd = elemTzMarker;
                 activeTzSeq = dateVarSink;
             } else if (globalTzMarker >= 0) {
@@ -5249,17 +5278,13 @@ public final class IntervalUtils {
      * Fails on the suffix of a date variable range element, {@code seq[rangeEnd, elementEnd)}, as
      * the expansion of the range fails on it, for a range that adds no interval. It reads that text
      * the way {@link #expandDateVariableRange} reads it, with the same functions, and appends
-     * nothing to {@code out}:
-     * <ul>
-     * <li>a range between two points in time reads the timezone that its interval takes, the text
-     * after the last '@' outside brackets before a ';', to the end of the element;</li>
-     * <li>a range of days appends the suffix to the date of each day, which holds none of '#', '@',
-     * '[', ']' and ';', so the searches below find what they find there. A day reads the day filter
-     * or tick calendar after the first '#', then parses its date with the text up to the timezone,
-     * which no date format takes when it is not empty, as it then starts with an '@', then the
-     * timezone, to the end of the element. Such a text fails with the date of {@code firstDay}, the
-     * first day of the range.</li>
-     * </ul>
+     * nothing to {@code out}: the day filter or tick calendar after the first '#', then the timezone,
+     * the text after the last '@' outside brackets before a ';', up to that '#' or to the end of the
+     * element. A range of days appends the suffix to the date of each day, which holds none of '#',
+     * '@', '[', ']' and ';', so the searches find what they find there, and a day parses its date
+     * with the text up to the timezone, which no date format takes when it is not empty, as it then
+     * starts with an '@'. Such a text fails with the date of {@code firstDay}, the first day of the
+     * range.
      */
     private static void validateRangeElementSuffix(
             TimestampDriver timestampDriver,
@@ -5274,16 +5299,8 @@ public final class IntervalUtils {
             StringSink sink,
             boolean applyEncoded
     ) throws SqlException {
-        // the timezone converts no interval from out.size() on, so applyTimezoneToIntervals()
-        // only parses it
-        if (isPointInTimeRange) {
-            final int tzMarker = findTimezoneMarker(seq, rangeEnd, elementEnd);
-            if (tzMarker >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, out.size(), seq, tzMarker + 1, elementEnd, errorPos, applyEncoded);
-            }
-            return;
-        }
-
+        // the day filter or tick calendar after the first '#', then the timezone before it, as the
+        // expansion reads them
         int tzSearchEnd = elementEnd;
         for (int i = rangeEnd; i < elementEnd; i++) {
             if (seq.charAt(i) == '#') {
@@ -5295,15 +5312,19 @@ public final class IntervalUtils {
             }
         }
         final int tzMarker = findTimezoneMarker(seq, rangeEnd, tzSearchEnd);
-        final int dateEnd = tzMarker >= 0 ? tzMarker : tzSearchEnd;
-        if (rangeEnd < dateEnd) {
-            sink.clear();
-            appendDate(timestampDriver, firstDay, sink);
-            sink.put(seq, rangeEnd, dateEnd);
-            throw SqlException.$(errorPos, "Invalid date: ").put(sink);
+        if (!isPointInTimeRange) {
+            final int dateEnd = tzMarker >= 0 ? tzMarker : tzSearchEnd;
+            if (rangeEnd < dateEnd) {
+                sink.clear();
+                appendDate(timestampDriver, firstDay, sink);
+                sink.put(seq, rangeEnd, dateEnd);
+                throw SqlException.$(errorPos, "Invalid date: ").put(sink);
+            }
         }
+        // the timezone converts no interval from out.size() on, so applyTimezoneToIntervals()
+        // only parses it
         if (tzMarker >= 0) {
-            applyTimezoneToIntervals(timestampDriver, configuration, out, out.size(), seq, tzMarker + 1, elementEnd, errorPos, applyEncoded);
+            applyTimezoneToIntervals(timestampDriver, configuration, out, out.size(), seq, tzMarker + 1, tzSearchEnd, errorPos, applyEncoded);
         }
     }
 

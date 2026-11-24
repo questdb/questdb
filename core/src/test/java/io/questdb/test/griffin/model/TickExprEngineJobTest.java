@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateVariableExpr;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
@@ -77,6 +78,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     private int fuzzNotParsedCount;
     private int fuzzRangeOrderCount;
     private int fuzzRejectedSuffixCount;
+    private int fuzzUnknownDayFilterOnReversedRangeCount;
     private int fuzzUnknownUnitNotParsedCount;
 
     /**
@@ -269,13 +271,15 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             // only the form parsing on every evaluation lets through, durations with a unit that
             // the timestamp drivers do not add, texts after the first ';' that do not parse, and
             // timezones of an element that do not parse on ranges that start after they end and
-            // on ranges of business days that hold no business day
+            // on ranges of business days that hold no business day, and day filters of an element
+            // that do not parse on ranges between two points in time that start after they end
             LOG.info().$("engine job fuzz done [rangeOrder=").$(fuzzRangeOrderCount)
                     .$(", notParsed=").$(fuzzNotParsedCount)
                     .$(", unknownUnitNotParsed=").$(fuzzUnknownUnitNotParsedCount)
                     .$(", rejectedSuffix=").$(fuzzRejectedSuffixCount)
                     .$(", malformedElementZoneRangeOrder=").$(fuzzMalformedElementZoneRangeOrderCount)
                     .$(", malformedElementZoneWithoutDay=").$(fuzzMalformedElementZoneWithoutDayCount)
+                    .$(", unknownDayFilterOnReversedRange=").$(fuzzUnknownDayFilterOnReversedRangeCount)
                     .I$();
             Assert.assertTrue(fuzzRangeOrderCount > 0);
             Assert.assertTrue(fuzzNotParsedCount > 0);
@@ -283,6 +287,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             Assert.assertTrue(fuzzRejectedSuffixCount > 0);
             Assert.assertTrue(fuzzMalformedElementZoneRangeOrderCount > 0);
             Assert.assertTrue(fuzzMalformedElementZoneWithoutDayCount > 0);
+            Assert.assertTrue(fuzzUnknownDayFilterOnReversedRangeCount > 0);
         });
     }
 
@@ -310,7 +315,13 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                             "[$tomorrow..$today@Bogus/Zone]",
                             "[$tomorrow..$today@Bogus/Zone, $tomorrow]",
                             "[$today + 570m..$now@Bogus/Zone]",
-                            "[$today..$now - 4h#Xyz]"
+                            "[$today..$now - 4h#Xyz]",
+                            "[$today + 570m..$now#Xyz]",
+                            // a range between two points in time that adds an interval, with a day
+                            // filter of its element that does not parse, and with a timezone that
+                            // does not parse before a day filter that does
+                            "[$now - 2h..$now#Xyz]",
+                            "[$now - 2h..$now@Bogus/Zone#Mon]"
                     }) {
                         try (CompiledTickExpression compiled = compile(driver, expression)) {
                             engineJob.setNowAndFixClock(driver.parseFloorLiteral("2024-01-02T03:00:00.000000Z"), driver.getTimestampType());
@@ -582,7 +593,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             String expression,
             boolean isMalformed,
             long now
-    ) {
+    ) throws SqlException {
         final String strict = parse(driver, expression, now, IntervalUtils.TICK_CHECK_ALL);
         final String withoutRangeOrder = parse(driver, expression, now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
         final String unchecked = parse(driver, expression, now, 0);
@@ -615,6 +626,15 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             } else if (strict.contains("invalid timezone: ") && hasMalformedZoneOnlyOnRangesWithoutDay(driver, expression, now)) {
                 fuzzMalformedElementZoneWithoutDayCount++;
             }
+        }
+        if (!isMalformed && hasUnknownDayFilterOnReversedPointInTimeRange(driver, expression, now)) {
+            // a day filter of its element that does not parse fails a range between two points in
+            // time that starts after it ends, whatever the checks, as it fails one that adds an
+            // interval
+            Assert.assertTrue(context, isError(strict));
+            Assert.assertTrue(context, isError(withoutRangeOrder));
+            Assert.assertTrue(context, isError(unchecked));
+            fuzzUnknownDayFilterOnReversedRangeCount++;
         }
         if (!isError(strict)) {
             Assert.assertEquals(context, strict, withoutRangeOrder);
@@ -750,6 +770,34 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns whether a generated expression has a range between two points in time with the day
+     * filter TickExprTest.FUZZ_UNKNOWN_DAY_FILTER of its element that starts after it ends at
+     * "now": the same range without its suffix fails on its order with all the checks.
+     */
+    private boolean hasUnknownDayFilterOnReversedPointInTimeRange(TimestampDriver driver, String expression, long now) throws SqlException {
+        for (int i = expression.indexOf(TickExprTest.FUZZ_UNKNOWN_DAY_FILTER); i >= 0; i = expression.indexOf(TickExprTest.FUZZ_UNKNOWN_DAY_FILTER, i + 1)) {
+            // a generated element of a date variable holds no ',' or '[', so the last one before the
+            // day filter starts it, and its expression ends at its timezone, if it has one
+            final int elementStart = Math.max(expression.lastIndexOf(',', i), expression.lastIndexOf('[', i)) + 1;
+            final int zone = expression.indexOf('@', elementStart);
+            final String range = expression.substring(elementStart, zone >= 0 && zone < i ? zone : i).trim();
+            final int dots = range.indexOf("..");
+            if (!range.startsWith("$") || dots < 0) {
+                continue;
+            }
+            final String start = range.substring(0, dots).trim();
+            final String end = range.substring(dots + 2).trim();
+            if (end.startsWith("$")
+                    && !DateVariableExpr.isDayLevel(DateVariableExpr.parseEncoded(start, 0, start.length(), 0))
+                    && !DateVariableExpr.isDayLevel(DateVariableExpr.parseEncoded(end, 0, end.length(), 0))
+                    && ("error: " + RANGE_ORDER_ERROR).equals(parse(driver, "[" + range + "]", now, IntervalUtils.TICK_CHECK_ALL))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String parse(TimestampDriver driver, String expression, long now, int checks) {

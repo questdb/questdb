@@ -24,10 +24,12 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -40,11 +42,13 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -777,6 +781,76 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableRangeElementSuffixInRowValueWithParallelFilterOnAndOff() throws Exception {
+        // A value of a row with a range and a timezone and day filter of its element selects what
+        // the literal selects, whether the filter runs in parallel, on a copy of the function for
+        // each worker, or on the thread of the query. On Sunday 2025-01-19 at 12:00,
+        // [$now - 2h..$now#Sun] holds the rows from 10:00 to 12:00, [$now - 2h..$now#Mon] none, and
+        // [$today..$tomorrow@UTC+05#Sun] the Sunday at UTC+05, from 2025-01-18T19:00Z on.
+        assertMemoryLeak(() -> {
+            // a row every 30 minutes from 2025-01-15T00:00 to 2025-01-27T23:30
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L) ts,
+                               '[$now - 2h..$now#Sun]'::STRING s1,
+                               '[$now - 2h..$now#Sun]'::VARCHAR vc1,
+                               '[$now - 2h..$now#Mon]'::STRING s2,
+                               '[$now - 2h..$now#Mon]'::VARCHAR vc2,
+                               '[$today..$tomorrow@UTC+05#Sun]'::STRING s3,
+                               '[$today..$tomorrow@UTC+05#Sun]'::VARCHAR vc3
+                        FROM long_sequence(624)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            final boolean isParallelFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
+            try {
+                for (boolean isParallel : new boolean[]{true, false}) {
+                    sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                    for (String[] column : new String[][]{
+                            {"s1", "5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"},
+                            {"vc1", "5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"},
+                            {"s2", "0\t\t"},
+                            {"vc2", "0\t\t"},
+                            {"s3", "48\t2025-01-18T19:00:00.000000Z\t2025-01-19T18:30:00.000000Z"},
+                            {"vc3", "48\t2025-01-18T19:00:00.000000Z\t2025-01-19T18:30:00.000000Z"}
+                    }) {
+                        assertQuery("SELECT ts FROM t WHERE ts IN " + column[0])
+                                .noLeakCheck()
+                                .assertsPlanContaining(isParallel ? "Async Filter" : "Filter filter: ts in " + column[0]);
+                        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN " + column[0])
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\tmin\tmax\n" + column[1] + "\n");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeElementZoneBeforeDayFilterInEveryFilterPath() throws Exception {
+        // The timezone of a date variable range element ends at the day filter of the element:
+        // UTC+05 is an offset rather than UTC, and +05 parses, for both kinds of range, in every
+        // path that a query takes. On Sunday 2025-01-19 at 12:00, 10:00 to 12:00 at UTC+05 is 05:00
+        // to 07:00Z, and the Sunday at UTC+05 runs from 2025-01-18T19:00Z to 2025-01-19T19:00Z.
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            try {
+                assertTickExprInEveryFilterPath("[$now - 2h..$now@UTC+05#Sun]", 5, "2025-01-19T05:00", "2025-01-19T07:00");
+                assertTickExprInEveryFilterPath("[$today..$tomorrow@UTC+05#Sun]", 48, "2025-01-18T19:00", "2025-01-19T18:30");
+                assertTickExprInEveryFilterPath("[$today..$tomorrow@+05#Sun]", 48, "2025-01-18T19:00", "2025-01-19T18:30");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDateVariableRangeKeepsEndpointTimeOfDay() throws Exception {
         // https://github.com/questdb/questdb/issues/8083
         // A range endpoint keeps its time of day when the other endpoint is a whole day
@@ -1456,6 +1530,278 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 // the form that SQL parses on every evaluation
                 assertLiteralFailsWhenQueryCompiles("[$today..$today + 600d, 2024-01-01]T[09:00,10:00]", "produces too many intervals (max 1024)");
             } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterFollowsNowOfEachRun() throws Exception {
+        // A query that holds a range between two points in time with a day filter of its element
+        // applies the day filter on the day of each run: compiled on Sunday 2025-01-19, the query
+        // with #Mon selects no row, then the rows of the range when it runs on Monday, as a literal
+        // and with a bind variable, which the query binds anew to #Sun after that
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            final String none = "count\tmin\tmax\n0\t\t\n";
+            final String monday = "count\tmin\tmax\n5\t2025-01-20T10:00:00.000000Z\t2025-01-20T12:00:00.000000Z\n";
+            try {
+                for (String sql : new String[]{
+                        "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '[$now - 2h..$now#Mon]'",
+                        "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1",
+                        "SELECT count(), min(ts), max(ts) FROM t WHERE ts2 IN $1"
+                }) {
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+                    setTickExprBindVariable("[$now - 2h..$now#Mon]", false);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(none);
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-20T12:00:00.000000Z"));
+                        assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(monday);
+                        if (sql.contains("$1")) {
+                            setTickExprBindVariable("[$now - 2h..$now#Sun]", true);
+                            assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(none);
+                        }
+                    }
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterInEveryContext() throws Exception {
+        // A range between two points in time with a day filter of its element selects, wherever a
+        // query holds it, the rows of the same query over the range when the range starts on the
+        // day of the filter, and no row otherwise, as a literal and as a bind variable of STRING
+        // and VARCHAR type. day_of_week() counts from Monday as 1. On Sunday 2025-01-19 at 12:00,
+        // [$now - 2h..$now#Sun] holds the rows from 10:00 to 12:00, and [$now - 2h..$now#Mon] none.
+        assertMemoryLeak(() -> {
+            // a row every 30 minutes from 2025-01-15T00:00 to 2025-01-27T23:30, with a symbol,
+            // without an index in t and with one in ti
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L) ts,
+                               (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s
+                        FROM long_sequence(624)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("CREATE TABLE ti (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ti SELECT ts, s FROM t");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            final String sundayReference = "BETWEEN dateadd('h', -2, now()) AND now() AND day_of_week(dateadd('h', -2, now())) = 7";
+            try {
+                assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts " + sundayReference)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tmin\tmax\n5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z\n");
+                for (String[] dayFilter : new String[][]{{"#Sun", "7"}, {"#Mon", "1"}}) {
+                    final String tickExpr = "[$now - 2h..$now" + dayFilter[0] + "]";
+                    final String reference = "BETWEEN dateadd('h', -2, now()) AND now() AND day_of_week(dateadd('h', -2, now())) = " + dayFilter[1];
+                    // ? stands for the tick expression
+                    for (String query : new String[]{
+                            "WITH c AS (SELECT * FROM t WHERE ts IN ?) SELECT count() FROM c",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?)",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a JOIN t b ON a.s = b.s",
+                            "SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a LEFT JOIN t b ON a.s = b.s",
+                            "SELECT count() FROM t a LEFT JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a ASOF JOIN t b",
+                            "SELECT count() FROM t a ASOF JOIN (SELECT * FROM t WHERE ts IN ?) b",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a CROSS JOIN t b",
+                            "SELECT count() FROM t a CROSS JOIN (SELECT * FROM t WHERE ts IN ?) b",
+                            "SELECT ts FROM t WHERE ts IN ? UNION SELECT ts FROM t WHERE ts < '2025-01-16'",
+                            "SELECT ts FROM t WHERE ts < '2025-01-16' UNION SELECT ts FROM t WHERE ts IN ?",
+                            "SELECT ts FROM t WHERE ts IN ? EXCEPT SELECT ts FROM t WHERE ts < '2025-01-19T11:00'",
+                            "SELECT ts FROM t WHERE ts < '2025-01-19T11:00' EXCEPT SELECT ts FROM t WHERE ts IN ?",
+                            "SELECT ts FROM t WHERE ts IN ? INTERSECT SELECT ts FROM t",
+                            "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN ?",
+                            "SELECT s, count() FROM t WHERE ts IN ? GROUP BY s ORDER BY s",
+                            "SELECT * FROM t WHERE ts IN ? LATEST ON ts PARTITION BY s ORDER BY s",
+                            "SELECT ts, count() FROM t WHERE ts IN ? SAMPLE BY 1h",
+                            "SELECT ts, row_number() OVER (PARTITION BY s ORDER BY ts) FROM t WHERE ts IN ?",
+                            "SELECT * FROM t WHERE ts IN ? ORDER BY ts LIMIT -1",
+                            // a symbol without an index, and one with an index
+                            "SELECT count() FROM t WHERE s = 'a' AND ts IN ?",
+                            "SELECT count() FROM ti WHERE s = 'a' AND ts IN ?"
+                    }) {
+                        final String referenceSql = query.replace("IN ?", reference);
+                        // the literal, and a bind variable of STRING and of VARCHAR type
+                        for (int holder = 0; holder < 3; holder++) {
+                            final String sql;
+                            if (holder == 0) {
+                                bindVariableService.clear();
+                                sql = query.replace("?", "'" + tickExpr + "'");
+                            } else {
+                                setTickExprBindVariable(tickExpr, holder == 2);
+                                sql = query.replace("?", "$1");
+                            }
+                            try (
+                                    RecordCursorFactory factory = select(sql);
+                                    RecordCursorFactory referenceFactory = select(referenceSql)
+                            ) {
+                                assertSameRows(referenceFactory, factory, sql);
+                            }
+                        }
+                    }
+                }
+                bindVariableService.clear();
+                // EXPLAIN shows the intervals of the range that the day filter keeps, in the row
+                // filter, where 1737280800000000 is 2025-01-19T10:00Z, 20,107 days and 10 hours
+                // after 1970 in microseconds, and in the interval scan
+                assertQuery("SELECT * FROM t WHERE ts IN '[$now - 2h..$now#Mon]' OR s = 'z'")
+                        .noLeakCheck()
+                        .assertsPlanContaining("filter: (ts in [] or s='z')");
+                assertQuery("SELECT * FROM t WHERE ts IN '[$now - 2h..$now#Sun]' OR s = 'z'")
+                        .noLeakCheck()
+                        .assertsPlanContaining("filter: (ts in [1737280800000000,1737288000000000] or s='z')");
+                assertQuery("SELECT * FROM t WHERE ts IN '[$now - 2h..$now#Sun]'")
+                        .noLeakCheck()
+                        .assertsPlanContaining("intervals: [(\"2025-01-19T10:00:00.000000Z\",\"2025-01-19T12:00:00.000000Z\")]");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterInEveryFilterPath() throws Exception {
+        // A range between two points in time with a day filter of its element selects the rows of
+        // the range where the range starts on a day of the filter, and no row otherwise, in every
+        // path that a query takes, and NOT IN the other rows. 2025-01-19 is a Sunday.
+        // https://github.com/questdb/questdb/issues/8225
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#Sun]", 5, "2025-01-19T10:00", "2025-01-19T12:00");
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#Mon]", 0, null, null);
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-20T12:00:00.000000Z"));
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#Mon]", 5, "2025-01-20T10:00", "2025-01-20T12:00");
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#Sun]", 0, null, null);
+                // a range across the partitions of the Sunday and the Monday, which starts on the
+                // Sunday
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-20T01:00:00.000000Z"));
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#Sun]", 5, "2025-01-19T23:00", "2025-01-20T01:00");
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#Mon]", 0, null, null);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterKeepsBothEnds() throws Exception {
+        // A range between two points in time with a day filter of its element that holds its first
+        // day keeps both of its ends: on Sunday 2025-01-19 at 12:00, [$now - 2h..$now#Sun] holds
+        // 10:00 and 12:00, not the microsecond before 10:00 or the one after 12:00, and
+        // [$now - 2h..$now#Mon] none of them. An empty table has no row in either.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE empty_table (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2025-01-19T09:59:59.999999Z'),
+                    ('2025-01-19T10:00:00.000000Z'),
+                    ('2025-01-19T12:00:00.000000Z'),
+                    ('2025-01-19T12:00:00.000001Z')
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            try {
+                for (String[] dayFilter : new String[][]{{"#Sun", "2\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"}, {"#Mon", "0\t\t"}}) {
+                    final String tickExpr = "'[$now - 2h..$now" + dayFilter[0] + "]'";
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN " + tickExpr)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n" + dayFilter[1] + "\n");
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM empty_table WHERE ts IN " + tickExpr)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n0\t\t\n");
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementDayFilterUnderTimestampFunction() throws Exception {
+        // A range between two points in time with a day filter of its element, below a function
+        // of the designated timestamp that the interval scan inverts: on Sunday 2025-01-19 at
+        // 12:00, the range from 09:00 to 11:00 holds the rows from 08:00 to 10:00 an hour before,
+        // with #Sun and none with #Mon
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+            try {
+                for (String[] dayFilter : new String[][]{{"#Sun", "5\t2025-01-19T08:00:00.000000Z\t2025-01-19T10:00:00.000000Z"}, {"#Mon", "0\t\t"}}) {
+                    final String tickExpr = "[$now - 3h..$now - 1h" + dayFilter[0] + "]";
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE dateadd('h', 1, ts) IN '" + tickExpr + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n" + dayFilter[1] + "\n");
+                    setTickExprBindVariable(tickExpr, false);
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE dateadd('h', 1, ts) IN $1")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n" + dayFilter[1] + "\n");
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementTickCalendarInEveryFilterPath() throws Exception {
+        // A range between two points in time with a tick calendar of its element selects the rows
+        // of the range in the sessions, which the duration of the list extends, in every path that
+        // a query takes, and NOT IN the other rows. On Friday 2025-01-24, XNYS trades from 14:30 to
+        // 21:00Z, and 13:30 to 15:30 at UTC-05 is 18:30 to 20:30Z.
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T15:30:00.000000Z"));
+            try {
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#XNYS]", 3, "2025-01-24T14:30", "2025-01-24T15:30");
+                assertTickExprInEveryFilterPath("[$now - 2h..$now#XNYS];1h", 5, "2025-01-24T14:30", "2025-01-24T16:30");
+                assertTickExprInEveryFilterPath("[$now - 2h..$now@UTC-05#XNYS]", 5, "2025-01-24T18:30", "2025-01-24T20:30");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeElementUnknownDayFilterFailsInEveryContext() throws Exception {
+        // A day filter of the element of a range between two points in time that does not parse
+        // fails the query wherever the query holds the range, with or without a timezone of the
+        // element before it: a literal as the query compiles, and a bind variable as it runs
+        assertMemoryLeak(() -> {
+            createContextTables();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String tickExpr : new String[]{"[$now - 2h..$now#Xyz]", "[$now - 2h..$now@UTC+05#Xyz]"}) {
+                    assertTickExprFailsInEveryContext(tickExpr, "Invalid day name: Xyz", tickExpr, "Invalid day name: Xyz");
+                }
+                // the table keeps answering, and 2024-01-02 is a Tuesday
+                assertIntrinsicRows("ts IN '[$now - 2h..$now#Tue]'", "3\t2024-01-02T08:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+            } finally {
+                bindVariableService.clear();
                 setCurrentMicros(-1);
             }
         });
@@ -2660,6 +3006,28 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         execute("INSERT INTO ti SELECT ts, s FROM t");
     }
 
+    /**
+     * Creates table t with a row every 30 minutes from 2025-01-15T00:00 to 2025-01-27T23:30, 624
+     * rows, in the designated timestamp ts, in timestamp ts2 and in DATE d, and v of 1 to 624, table
+     * tn with the same rows in a designated nanosecond timestamp, and table tu with them in a table
+     * without partitions.
+     */
+    private static void createHalfHourTables() throws SqlException {
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L) ts,
+                           timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L) ts2,
+                           timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L)::DATE d,
+                           x v
+                    FROM long_sequence(624)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("CREATE TABLE tn (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO tn SELECT ts::TIMESTAMP_NS, v FROM t");
+        execute("CREATE TABLE tu (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY NONE");
+        execute("INSERT INTO tu SELECT ts, v FROM t");
+    }
+
     private static void createHourlyTable() throws SqlException {
         // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00
         execute("""
@@ -2998,6 +3366,67 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // EXPLAIN compiles the query without running it
         final String explain = "EXPLAIN SELECT * FROM t WHERE ts IN '" + literal + "'";
         assertExceptionNoLeakCheck(explain, explain.indexOf('\''), literalError);
+    }
+
+    /**
+     * Asserts that the tick expression selects the given number of rows of the tables of
+     * {@link #createHalfHourTables}, from the first minute to the last, and NOT IN the other rows,
+     * on the designated timestamp, which takes the interval scan, on another timestamp, on a DATE,
+     * on a designated nanosecond timestamp and in a table without partitions, in the row filter of
+     * an OR with the JIT on and off, as a literal, and as a bind variable of STRING and of VARCHAR
+     * type.
+     */
+    private void assertTickExprInEveryFilterPath(String tickExpr, int count, String firstMinute, String lastMinute) throws Exception {
+        // the column, its table, and the seconds and fraction of a second that it prints
+        final String[][] columns = {
+                {"ts", "t", ":00.000000Z"},
+                {"ts2", "t", ":00.000000Z"},
+                {"d", "t", ":00.000Z"},
+                {"ts", "tn", ":00.000000000Z"},
+                {"ts", "tu", ":00.000000Z"}
+        };
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (String[] column : columns) {
+                final String in = "count\tmin\tmax\n" + count + '\t'
+                        + (count > 0 ? firstMinute + column[2] : "") + '\t'
+                        + (count > 0 ? lastMinute + column[2] : "") + '\n';
+                final String notIn = "count\tmin\tmax\n" + (624 - count) + "\t2025-01-15T00:00" + column[2] + "\t2025-01-27T23:30" + column[2] + '\n';
+                final String select = "SELECT count(), min(" + column[0] + "), max(" + column[0] + ") FROM " + column[1] + " WHERE " + column[0];
+                for (int holder = 0; holder < 3; holder++) {
+                    final String operand;
+                    if (holder == 0) {
+                        bindVariableService.clear();
+                        operand = "'" + tickExpr + "'";
+                    } else {
+                        setTickExprBindVariable(tickExpr, holder == 2);
+                        operand = "$1";
+                    }
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        final String context = tickExpr + " in " + column[1] + '.' + column[0] + " [holder=" + holder + ", jitMode=" + mode + ']';
+                        for (String[] query : new String[][]{
+                                {select + " IN " + operand, in},
+                                {select + " IN " + operand + " OR v = -1", in},
+                                {select + " NOT IN " + operand, notIn}
+                        }) {
+                            try {
+                                assertQuery(query[0])
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns(query[1]);
+                            } catch (AssertionError e) {
+                                throw new AssertionError(context, e);
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            bindVariableService.clear();
+            sqlExecutionContext.setJitMode(jitMode);
+        }
     }
 
     private void assertTickExprMatches(String tickExpr, String expectedRow) throws Exception {

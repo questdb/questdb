@@ -328,6 +328,70 @@ public class PGTickExprWalUpdateTest extends BasePGTest {
     }
 
     @Test
+    public void testPreparedWalUpdateWithUnknownElementDayFilterFails() throws Exception {
+        // A day filter of the element of a range between two points in time that does not parse
+        // fails a prepared UPDATE with the literal on every run, before the WAL has anything to
+        // apply, where the range holds the rows from 08:00 to 10:00. The WAL applies a bind
+        // variable that holds it as a null value, and keeps the table applying, while a query that
+        // a user runs fails on it.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE w (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.execute("""
+                        INSERT INTO w VALUES
+                        ('2024-01-02T08:00:00.000000Z', 1),
+                        ('2024-01-02T10:00:00.000000Z', 1),
+                        ('2024-01-03T09:00:00.000000Z', 1)
+                        """);
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("w");
+            final long seqTxn = engine.getTableSequencerAPI().lastTxn(token);
+            try (PreparedStatement update = connection.prepareStatement("UPDATE w SET v = 2 WHERE ts IN '[$now - 2h..$now#Xyz]'")) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        update.execute();
+                        Assert.fail("the UPDATE should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "Invalid day name: Xyz");
+                    }
+                }
+            }
+            // the WAL has nothing to apply
+            Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(token));
+
+            try (PreparedStatement update = connection.prepareStatement("UPDATE w SET v = 2 WHERE ts IN ?")) {
+                update.setString(1, "[$now - 2h..$now#Xyz]");
+                update.executeUpdate();
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT v FROM w")) {
+                sink.clear();
+                assertResultSet(
+                        """
+                                v[INTEGER]
+                                1
+                                1
+                                1
+                                """,
+                        sink,
+                        rs
+                );
+            }
+            try (PreparedStatement select = connection.prepareStatement("SELECT count() FROM w WHERE ts IN ?")) {
+                select.setString(1, "[$now - 2h..$now#Xyz]");
+                try (ResultSet ignore = select.executeQuery()) {
+                    Assert.fail("the query should fail");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid day name: Xyz");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPreparedWalUpdateWithTickExprBindVariable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
