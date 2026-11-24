@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.client.QuestDB;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.TransactionTooLargeException;
@@ -85,10 +86,62 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testPooledStrictLeaseReturnBeforeFirstConnectKeepsEarlierCommits() throws Exception {
+        // The server is down when the pool starts. Returning a strict lease whose rows
+        // auto-flush had already sent used to close the pooled sender, as if the server
+        // could not roll them back, and with it the rows an earlier lease had committed,
+        // which had not reached the server yet.
+        assertMemoryLeak(() -> {
+            int port = RestartableQwpServer.pickFreePort();
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                try (QuestDB db = QuestDB.connect(outageConf(port) + "transaction=strict;lazy_connect=true;")) {
+                    try (Sender lease = db.borrowSender()) {
+                        writeRows(lease, 0, 10);
+                        lease.flush();
+                    }
+                    try (Sender lease = db.borrowSender()) {
+                        // Returned without flush(): the pool discards this transaction.
+                        writeRows(lease, 1_000, 600);
+                    }
+                    server.start();
+                    try (Sender lease = db.borrowSender()) {
+                        writeRows(lease, 10_000, 5);
+                        lease.flush();
+                        Assert.assertTrue(lease.drain(60_000));
+                    }
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n15\t0\t10004\n");
+        });
+    }
+
+    @Test
+    public void testResetBeforeFirstConnectDiscardsStrictTransaction() throws Exception {
+        assertDiscardBeforeFirstConnect("transaction=strict;", Sender::reset);
+    }
+
+    @Test
+    public void testResetBeforeFirstConnectDiscardsTransaction() throws Exception {
+        assertDiscardBeforeFirstConnect("transaction=on;", Sender::reset);
+    }
+
+    @Test
     public void testResetDuringServerOutageDiscardsTransaction() throws Exception {
         // reset() used to wait 30 s for the server to ack the rollback, then abort the
         // transaction, so every later row and flush threw even after the server came back.
         assertDiscardDuringOutage("transaction=on;", Sender::reset);
+    }
+
+    @Test
+    public void testRollbackBeforeFirstConnectDiscardsStrictTransaction() throws Exception {
+        assertDiscardBeforeFirstConnect("transaction=strict;", Sender::rollback);
+    }
+
+    @Test
+    public void testRollbackBeforeFirstConnectDiscardsTransaction() throws Exception {
+        assertDiscardBeforeFirstConnect("transaction=on;", Sender::rollback);
     }
 
     @Test
@@ -266,6 +319,15 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=300000;";
     }
 
+    // For a server that is down when the sender starts: reconnects within milliseconds once
+    // the server is up, and keeps frames well within the server's cap before the sender has
+    // learned it. Each test drains before it closes, so the short close drain only bounds
+    // how long a failing test takes.
+    private static String outageConf(int port) {
+        return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=1000;"
+                + "reconnect_initial_backoff_millis=10;reconnect_max_backoff_millis=50;auto_flush_rows=200;";
+    }
+
     // A sender with no auto-flush trigger sends a transaction of any size in deferred
     // frames, commits it once on flush(), and closing it discards a transaction that
     // was never flushed, frames already sent included.
@@ -287,6 +349,30 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT count(), count_distinct(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
                     .returns("count\tcount_distinct\tmax\n5000\t5000\t4999\n");
+        });
+    }
+
+    // The server is down when the sender starts, so the sender cannot know yet whether it
+    // supports rollback. It used to assume it did not: rollback() threw and a strict reset()
+    // aborted the transaction, so every later row and flush threw even once the server was
+    // up, and reset() of a transaction=on transaction kept the rows already sent, so the next
+    // flush committed them. Only the transaction committed after the discard may land.
+    private void assertDiscardBeforeFirstConnect(String mode, Consumer<Sender> discard) throws Exception {
+        assertMemoryLeak(() -> {
+            int port = RestartableQwpServer.pickFreePort();
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                try (Sender sender = Sender.fromConfig(outageConf(port) + "initial_connect_retry=async;" + mode)) {
+                    writeRows(sender, 0, 600);
+                    discard.accept(sender);
+                    writeRows(sender, 10_000, 10);
+                    sender.flush();
+                    server.start();
+                    Assert.assertTrue(sender.drain(60_000));
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n10\t10000\t10009\n");
         });
     }
 
