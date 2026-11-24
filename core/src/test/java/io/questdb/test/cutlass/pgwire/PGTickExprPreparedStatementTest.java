@@ -24,10 +24,14 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
@@ -47,6 +51,40 @@ import java.sql.Statement;
 public class PGTickExprPreparedStatementTest extends BasePGTest {
     private static final long NOW_0300 = MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z");
     private static final long NOW_1200 = MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z");
+
+    @Test
+    public void testPreparedBareDateVariableTickCalendarDurationFollowsNowOfEachRun() throws Exception {
+        // A statement prepared once with a bind variable that holds a bare date variable expression
+        // with a tick calendar and a duration selects, on the day of each run, the minutes at 15:00
+        // and 16:00, each an hour longer: the 121 minutes from 15:00 to 17:00 on Friday 2025-01-24
+        // and on Monday 2025-01-27, which XNYS trades on from 14:30 to 21:00Z. Each mode of the server
+        // sets the engine up anew, with the test tick calendars.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            final long friday = MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z");
+            final long monday = MicrosFormatUtils.parseTimestamp("2025-01-27T12:00:00.000000Z");
+            setCurrentMicros(friday);
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // a row every minute of the four days from 2025-01-24 to 2025-01-27
+                statement.execute("INSERT INTO base SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L), 1 FROM long_sequence(5_760)");
+            }
+            drainWalQueue();
+            try (PreparedStatement bind = connection.prepareStatement("SELECT count(), min(ts), max(ts) FROM base WHERE ts IN ?")) {
+                bind.setString(1, "$todayT[15:00,16:00]#XNYS;1h");
+                for (int i = 0; i < 2; i++) {
+                    currentMicros = friday;
+                    assertRows(bind, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n121,2025-01-24 15:00:00.0,2025-01-24 17:00:00.0\n");
+                    currentMicros = monday;
+                    assertRows(bind, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n121,2025-01-27 15:00:00.0,2025-01-27 17:00:00.0\n");
+                }
+            }
+        }, () -> factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        });
+    }
 
     @Test
     public void testPreparedPointInTimeRangeElementSuffixFollowsNowOfEachRun() throws Exception {

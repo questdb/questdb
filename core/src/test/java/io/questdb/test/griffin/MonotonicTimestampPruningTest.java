@@ -24,9 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -35,8 +39,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1088,6 +1094,404 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInBareTickCalendarLiteralRejectedByIrInEveryContext() throws Exception {
+        // The static inversion consumes the literal wherever a query holds it, see
+        // testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion: it selects the 120
+        // minutes from 14:00 to 15:59 on Friday 2025-01-24, 60 of each symbol. The table has the
+        // 2,880 minutes of 2025-01-24 and 2025-01-25, 1,440 of each symbol. The literal that the
+        // parse at compile time leaves with two intervals fails in each, as in() cannot run it.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE ctx AS (
+                        SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L) ts,
+                               (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s,
+                               x v
+                        FROM long_sequence(2_880)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("CREATE TABLE ctxi (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ctxi SELECT ts, s, v FROM ctx");
+            setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+            try {
+                // ? stands for the predicate
+                final String[][] contexts = {
+                        {"WITH c AS (SELECT * FROM ctx WHERE ?) SELECT count() FROM c", "count\n120\n"},
+                        {"SELECT count() FROM (SELECT * FROM ctx WHERE ?)", "count\n120\n"},
+                        {"SELECT count() FROM (SELECT * FROM ctx WHERE ?) a JOIN ctx b ON a.s = b.s", "count\n172800\n"},
+                        {"SELECT count() FROM ctx a JOIN (SELECT * FROM ctx WHERE ?) b ON a.s = b.s", "count\n172800\n"},
+                        {"SELECT count(), max(b.ts) FROM (SELECT * FROM ctx WHERE ?) a ASOF JOIN ctx b", "count\tmax\n120\t2025-01-24T15:59:00.000000Z\n"},
+                        {"SELECT count(), max(b.ts) FROM ctx a ASOF JOIN (SELECT * FROM ctx WHERE ?) b", "count\tmax\n2880\t2025-01-24T15:59:00.000000Z\n"},
+                        {"SELECT count() FROM (SELECT ts FROM ctx WHERE ? UNION ALL SELECT ts FROM ctx)", "count\n3000\n"},
+                        {"SELECT ts, count() FROM ctx WHERE ? SAMPLE BY 1h", "ts\tcount\n2025-01-24T14:00:00.000000Z\t60\n2025-01-24T15:00:00.000000Z\t60\n"},
+                        {"SELECT s, ts FROM (SELECT * FROM ctx WHERE ? LATEST ON ts PARTITION BY s) ORDER BY s", "s\tts\na\t2025-01-24T15:59:00.000000Z\nb\t2025-01-24T15:58:00.000000Z\n"},
+                        {"SELECT count(), max(rn) FROM (SELECT ts, row_number() OVER (ORDER BY ts) rn FROM ctx WHERE ?)", "count\tmax\n120\t120\n"},
+                        {"SELECT ts FROM ctx WHERE ? ORDER BY ts LIMIT -1", "ts\n2025-01-24T15:59:00.000000Z\n"},
+                        // a symbol without an index, and one with an index
+                        {"SELECT count() FROM ctx WHERE s = 'a' AND ?", "count\n60\n"},
+                        {"SELECT count() FROM ctxi WHERE s = 'a' AND ?", "count\n60\n"}
+                };
+                final String oneInterval = "$todayT15:00:00Z#XNYS;1h";
+                final String twoIntervals = "$todayT[15:00:00Z,18:00:00Z]#XNYS;1h";
+                for (String[] context : contexts) {
+                    assertQuery(context[0].replace("?", "dateadd('h', 1, ts) IN '" + oneInterval + "'"))
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .inferTimestamp()
+                            .sizeMayVary()
+                            .returns(context[1]);
+                    final String failing = context[0].replace("?", "dateadd('h', 1, ts) IN '" + twoIntervals + "'");
+                    assertExceptionNoLeakCheck(failing, failing.indexOf("'" + twoIntervals), "Invalid time in time list: 15:00:00Z");
+                }
+                // the scan of the symbol filter, and of the index, reads the inverted interval only
+                for (String table : new String[]{"ctx", "ctxi"}) {
+                    assertQuery("SELECT * FROM " + table + " WHERE s = 'a' AND dateadd('h', 1, ts) IN '" + oneInterval + "'")
+                            .noLeakCheck()
+                            .assertsPlanContaining("intervals: [(\"2025-01-24T14:00:00.000000Z\",\"2025-01-24T15:59:59.999999Z\")]");
+                }
+                // EXPLAIN compiles the query without running it
+                final String explain = "EXPLAIN SELECT * FROM ctx WHERE dateadd('h', 1, ts) IN '" + twoIntervals + "'";
+                assertExceptionNoLeakCheck(explain, explain.indexOf("'$"), "Invalid time in time list: 15:00:00Z");
+                // the literal that SQL parses when the query runs adds the duration to the minute at
+                // 14:30 once, from 14:30 to 15:30, which the static inversion of the other literal holds
+                assertQuery("SELECT count(), min(ts), max(ts) FROM ctx WHERE ts IN '$todayT[14:30@UTC]#XNYS;1h' AND dateadd('h', 1, ts) IN '" + oneInterval + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tmin\tmax\n61\t2025-01-24T14:30:00.000000Z\t2025-01-24T15:30:00.000000Z\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testInBareTickCalendarLiteralRejectedByIrInView() throws Exception {
+        // A view compiles its query for each query of the view, and the static inversion parses the
+        // literal again each time, with the clock of that query: the 120 minutes from 14:00 to 15:59
+        // on Friday 2025-01-24, before and after the engine releases what it holds, and those of
+        // Monday 2025-01-27, when that query runs then, see
+        // testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion. A view with the literal that
+        // the parse leaves with two intervals fails to create.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+            try {
+                execute("CREATE VIEW vc AS (SELECT * FROM m WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h')");
+                drainViewQueue();
+                final String friday = "count\tmin\tmax\n120\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:59:00.000000Z\n";
+                assertMinuteRows("SELECT count(), min(ts), max(ts) FROM vc", friday);
+                engine.releaseInactive();
+                assertMinuteRows("SELECT count(), min(ts), max(ts) FROM vc", friday);
+                setCurrentMicros(parseMicros("2025-01-27T12:00:00.000000Z"));
+                assertMinuteRows("SELECT count(), min(ts), max(ts) FROM vc", "count\tmin\tmax\n120\t2025-01-27T14:00:00.000000Z\t2025-01-27T15:59:00.000000Z\n");
+                setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+                final String create = "CREATE VIEW vc2 AS (SELECT * FROM m WHERE dateadd('h', 1, ts) IN '$todayT[15:00:00Z,18:00:00Z]#XNYS;1h')";
+                assertExceptionNoLeakCheck(create, create.indexOf("'$"), "Invalid time in time list: 15:00:00Z");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion() throws Exception {
+        // g(ts) IN a bare date variable literal with a tick calendar and a duration whose time the IR
+        // rejects, such as 15:00:00Z, runs on the static inversion of the parse of the literal as the
+        // query compiles. That parse keeps making each time slot as wide as the duration before the
+        // tick calendar cuts it, and the calendar extends what it keeps by the duration again: the
+        // inversion takes a single interval only, and the residual in() cannot run such a literal,
+        // so a parse with other intervals would turn rows into errors. On Friday 2025-01-24, XNYS
+        // trades from 14:30 to 21:00Z, so 15:00:00Z;1h is [15:00, 16:00) cut by the session, then an
+        // hour longer: the 120 minutes from 15:00 to 16:59, which the chains that add an hour select
+        // an hour earlier. The bind variables of these literals select what the tick calendar keeps
+        // of the point in time, see testInBareTickCalendarLiteralWithoutIrAppliesDurationOnce.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+            try {
+                // literal, first and last minute that the chains select, and the minutes after them
+                final String[][] cases = {
+                        {"$todayT15:00:00Z#XNYS;1h", "15:00", "16:59", "120"},
+                        {"$todayT15:00:00UTC#XNYS;1h", "15:00", "16:59", "120"},
+                        // 14:00Z, a window from 14:00 cut at 14:30
+                        {"$todayT15:00:00+01:00#XNYS;1h", "14:30", "15:59", "90"},
+                        {"$todayT14:00:00Z#XNYS;1h", "14:30", "15:59", "90"},
+                        {"$todayT15:00:00Z#XNYS;30m", "15:00", "15:59", "60"},
+                        // after midnight
+                        {"$todayT20:30:00Z#XNYS;4h", "20:30", "00:59", "270"},
+                        // two windows that the duration joins
+                        {"$todayT[15:00:00Z,17:00:00Z]#XNYS;1h", "15:00", "18:59", "240"},
+                        // the weekend after the Friday has no session
+                        {"$today..$today+2dT15:00:00Z#XNYS;1h", "15:00", "16:59", "120"},
+                        // time slots with zones of their own, beside a timezone of the list that the IR rejects
+                        {"$todayT[15:00@UTC]@Bogus#XNYS;1h", "15:00", "16:59", "120"},
+                        {"$todayT[15:00@UTC,16:30@UTC]@Bogus#XNYS;1h", "15:00", "18:29", "210"},
+                        {"$todayT[15:00@UTC,17:00@UTC]@Bogus#XNYS;1h", "15:00", "18:59", "240"},
+                        {"$todayT[15:00@UTC,16:00@UTC]:[00,30]@Bogus#XNYS;1h", "15:00", "18:00", "181"},
+                        // an empty slot after the last, which the IR rejects
+                        {"$todayT[15:00,]#XNYS;1h", "15:00", "16:59", "120"},
+                        {"$todayT[15:00,16:30,]#XNYS;1h", "15:00", "18:29", "210"},
+                        // without a tick calendar, as a date list, without a duration, and with a day filter
+                        {"$todayT15:00:00Z;1h", "15:00", "15:59", "60"},
+                        {"[$today]T15:00:00Z#XNYS;1h", "15:00", "16:00", "61"},
+                        {"$todayT15:00:00Z#XNYS", "15:00", "15:00", "1"},
+                        {"$todayT15:00:00Z#Fri;1h", "15:00", "15:59", "60"}
+                };
+                for (String[] c : cases) {
+                    final long first = parseMicros("2025-01-24T" + c[1] + ":00.000000Z");
+                    final long last = parseMicros((c[2].startsWith("00") ? "2025-01-25T" : "2025-01-24T") + c[2] + ":00.000000Z");
+                    final String unshifted = "count\tmin\tmax\n" + c[3] + '\t' + formatMicros(first) + '\t' + formatMicros(last) + '\n';
+                    final String shifted = "count\tmin\tmax\n" + c[3] + '\t' + formatMicros(first - 3_600_000_000L) + '\t' + formatMicros(last - 3_600_000_000L) + '\n';
+                    // the inversion consumes the predicate: the scan reads the rows of the interval
+                    // and no filter remains, as for every chain below
+                    final String query = "SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN '" + c[0] + "'";
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("filter: null", "Interval forward scan on: m")
+                            .returns(shifted);
+                    assertMinuteRows("SELECT count(), min(ts), max(ts) FROM m WHERE ts + 3_600_000_000L IN '" + c[0] + "'", shifted);
+                    for (String chain : new String[]{"timestamp_floor('m', ts)", "to_timezone(ts, 'UTC')", "ts::timestamp_ns"}) {
+                        assertMinuteRows("SELECT count(), min(ts), max(ts) FROM m WHERE " + chain + " IN '" + c[0] + "'", unshifted);
+                    }
+                    assertMinuteRows(
+                            "SELECT count(), min(ts), max(ts) FROM mn WHERE dateadd('h', 1, ts) IN '" + c[0] + "'",
+                            shifted.replace(":00.000000Z", ":00.000000000Z")
+                    );
+                }
+                // the interval of 15:00:00Z;1h moves back an hour
+                assertQuery("SELECT * FROM m WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'")
+                        .noLeakCheck()
+                        .assertsPlanContaining("intervals: [(\"2025-01-24T14:00:00.000000Z\",\"2025-01-24T15:59:59.999999Z\")]");
+                // a duration of zero or less leaves an interval that ends before it starts, which
+                // the inversion turns into no row at all
+                for (String literal : new String[]{"$todayT15:00:00Z#XNYS;0h", "$todayT15:00:00Z#XNYS;", "$todayT15:00:00Z#XNYS;-1h"}) {
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN '" + literal + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Empty table")
+                            .returns("count\tmin\tmax\n0\t\t\n");
+                }
+                // a filter beside the inverted predicate, with the JIT on and off
+                final int jitMode = sqlExecutionContext.getJitMode();
+                try {
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        assertMinuteRows(
+                                "SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h' AND v > 0",
+                                "count\tmin\tmax\n120\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:59:00.000000Z\n"
+                        );
+                    }
+                } finally {
+                    sqlExecutionContext.setJitMode(jitMode);
+                }
+                // an empty table
+                execute("CREATE TABLE e (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                assertMinuteRows("SELECT count(), min(ts), max(ts) FROM e WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'", "count\tmin\tmax\n0\t\t\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversionErrors() throws Exception {
+        // The static inversion takes only a parse with a single interval, and in() fails a literal
+        // whose time the IR rejects, so g(ts) IN such a literal fails where the parse as the query
+        // compiles has no interval or several, or fails itself, see
+        // testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion. Each error points at the
+        // literal, and the table then keeps answering.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+            try {
+                final String select = "SELECT count(), min(ts), max(ts) FROM m WHERE ";
+                final String[][] cases = {
+                        // two intervals
+                        {"dateadd('h', 1, ts) IN '$todayT[15:00:00Z,18:00:00Z]#XNYS;1h'", "Invalid time in time list: 15:00:00Z"},
+                        {"dateadd('h', 1, ts) IN '$todayT[15:00@UTC,18:00@UTC]@Bogus#XNYS;1h'", "invalid timezone: Bogus"},
+                        // none, as 09:00Z lies before the session
+                        {"dateadd('h', 1, ts) IN '$todayT09:00:00Z#XNYS;1h'", "Invalid time override: 09:00:00Z"},
+                        // four, from Tuesday to Friday
+                        {"dateadd('h', 1, ts) IN '$today-3d..$todayT15:00:00Z#XNYS;1h'", "Invalid time override: 15:00:00Z"},
+                        // a parse that fails
+                        {"dateadd('h', 1, ts) IN '$todayT[15..16]:00@Bogus#XNYS;1h'", "invalid timezone: Bogus"},
+                        {"dateadd('h', 1, ts) IN '$todayT25:00:00Z#XNYS;1h'", "Invalid time override: 25:00:00Z"},
+                        {"dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1x'", "Invalid time override: 15:00:00Z"},
+                        // an inversion that is not exact keeps in(), and so do NOT IN and OR
+                        {"dateadd('M', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'", "Invalid time override: 15:00:00Z"},
+                        {"dateadd('h', 1, ts) NOT IN '$todayT15:00:00Z#XNYS;1h'", "Invalid time override: 15:00:00Z"},
+                        {"dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h' OR v = -1", "Invalid time override: 15:00:00Z"},
+                        {"ts IN '$todayT15:00:00Z#XNYS;1h'", "Invalid time override: 15:00:00Z"}
+                };
+                final String oneInterval = select + "dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'";
+                final String friday = "count\tmin\tmax\n120\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:59:00.000000Z\n";
+                for (String[] c : cases) {
+                    final String sql = select + c[0];
+                    // the error points at the literal, which starts with its date variable
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'$"), c[1]);
+                    assertMinuteRows(oneInterval, friday);
+                }
+                // Saturday 2025-01-25 has no session
+                setCurrentMicros(parseMicros("2025-01-25T12:00:00.000000Z"));
+                assertExceptionNoLeakCheck(oneInterval, oneInterval.indexOf("'$"), "Invalid time override: 15:00:00Z");
+                setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+                assertMinuteRows(oneInterval, friday);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testInBareTickCalendarLiteralRejectedByIrNearDst() throws Exception {
+        // The static inversion takes the literal through a function of a timezone near a change of
+        // its clocks, when the inversion is exact, Pacific/Auckland at UTC+13 on 2025-04-04 and
+        // 2025-04-05, before it moves to UTC+12 on 2025-04-06. On Friday 2025-04-04, XNYS trades from
+        // 13:30 to 20:00Z. The parse at compile time makes the hour 13 and the point 13:30:00Z
+        // ten-minute windows, the session keeps 13:30 to 13:40 of them, ten minutes longer: 13:30 to
+        // 13:49:59, 13:30 local time is 00:30Z, and a row every ten seconds gives 120 rows. The bind
+        // variable keeps the hour, which holds the point, cut at 13:30 and ten minutes longer,
+        // 13:30 to 14:09:59: 240 rows.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE a AS (
+                        SELECT timestamp_sequence('2025-04-03T00:00:00.000000Z', 10_000_000L) ts, x v
+                        FROM long_sequence(25_920)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(parseMicros("2025-04-04T12:00:00.000000Z"));
+            try {
+                final String literal = "$todayT[13,13:30:00Z]#XNYS;10m";
+                assertQuery("SELECT count(), min(ts), max(ts) FROM a WHERE to_timezone(ts, 'Pacific/Auckland') IN '" + literal + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("filter: null", "intervals: [(\"2025-04-04T00:30:00.000000Z\",\"2025-04-04T00:49:59.999999Z\")]")
+                        .returns("count\tmin\tmax\n120\t2025-04-04T00:30:00.000000Z\t2025-04-04T00:49:50.000000Z\n");
+                assertMinuteRows(
+                        "SELECT count(), min(ts), max(ts) FROM a WHERE to_utc(ts, 'Pacific/Auckland') IN '" + literal + "'",
+                        "count\tmin\tmax\n120\t2025-04-05T02:30:00.000000Z\t2025-04-05T02:49:50.000000Z\n"
+                );
+                bindVariableService.clear();
+                bindVariableService.setStr(0, literal);
+                assertMinuteRows(
+                        "SELECT count(), min(ts), max(ts) FROM a WHERE to_timezone(ts, 'Pacific/Auckland') IN $1",
+                        "count\tmin\tmax\n240\t2025-04-04T00:30:00.000000Z\t2025-04-04T01:09:50.000000Z\n"
+                );
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testInBareTickCalendarLiteralRejectedByIrStaysFrozen() throws Exception {
+        // The static inversion parses the literal once, as the query compiles, so a factory that a
+        // cache or a prepared statement holds keeps selecting the rows of that day: the 120 minutes
+        // from 14:00 to 15:59 on Friday 2025-01-24, on that Friday, on Saturday 2025-01-25 and on
+        // Monday 2025-01-27. A literal that SQL parses when the query runs selects the rows of the
+        // day of each run: the minute at 15:00, an hour longer, from 14:00 to 15:00, none on the
+        // Saturday, which has no session.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+            try (
+                    RecordCursorFactory frozen = select("SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'");
+                    RecordCursorFactory perRun = select("SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN '$todayT[15:00@UTC]#XNYS;1h'")
+            ) {
+                final String friday = "count\tmin\tmax\n120\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:59:00.000000Z\n";
+                final String[][] days = {
+                        // now, the rows of the literal that runs on the static inversion, of the other
+                        {"2025-01-24T12:00:00.000000Z", friday, "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n"},
+                        {"2025-01-25T12:00:00.000000Z", friday, "count\tmin\tmax\n0\t\t\n"},
+                        {"2025-01-27T12:00:00.000000Z", friday, "count\tmin\tmax\n61\t2025-01-27T14:00:00.000000Z\t2025-01-27T15:00:00.000000Z\n"}
+                };
+                for (String[] day : days) {
+                    setCurrentMicros(parseMicros(day[0]));
+                    assertFactory(frozen).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(day[1]);
+                    assertFactory(perRun).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(day[2]);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testInBareTickCalendarLiteralWithoutIrAppliesDurationOnce() throws Exception {
+        // g(ts) IN a bare date variable literal with a tick calendar and a duration that SQL parses
+        // when the query runs, as it has no IR, inverts the intervals of each run: each time slot
+        // keeps its own extent, the tick calendar keeps what its sessions hold of it, and the
+        // duration extends that by an hour, once. On Friday 2025-01-24, XNYS trades from 14:30 to
+        // 21:00Z. dateadd('h', 1, ts) selects the rows an hour before the intervals; with two of
+        // them, the inversion reads every row and the filter selects them. A bind variable selects
+        // the same rows, also for the literals that the IR rejects, which run on the static inversion
+        // as the query compiles, see testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
+            try {
+                final String select = "SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN ";
+                final String[][] literals = {
+                        // the minute at 15:00, an hour longer
+                        {"$todayT[15:00@UTC]#XNYS;1h", "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n"},
+                        // the minutes at 15:00 and 16:00, an hour longer, join
+                        {"$todayT[15..16]:00#XNYS;1h", "count\tmin\tmax\n121\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:00:00.000000Z\n"},
+                        {"$todayT[15..16]:00:00Z#XNYS;1h", "count\tmin\tmax\n121\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:00:00.000000Z\n"},
+                        // 14:00Z lies before the session, 15:00Z in it
+                        {"$todayT[15..16]:00:00+01:00#XNYS;1h", "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n"},
+                        // two intervals
+                        {"$todayT[15:00@UTC,17:00@UTC]#XNYS;1h", "count\tmin\tmax\n122\t2025-01-24T14:00:00.000000Z\t2025-01-24T17:00:00.000000Z\n"}
+                };
+                for (String[] literal : literals) {
+                    assertQuery(select + "'" + literal[0] + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("filter: dateadd('h',1,ts) in [")
+                            .returns(literal[1]);
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, literal[0]);
+                    assertMinuteRows(select + "$1", literal[1]);
+                }
+                // the bind variables of the literals that the IR rejects
+                final String[][] bindValues = {
+                        // the point 15:00:00Z, an hour longer
+                        {"$todayT15:00:00Z#XNYS;1h", "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n"},
+                        // 14:00Z lies before the session
+                        {"$todayT15:00:00+01:00#XNYS;1h", "count\tmin\tmax\n0\t\t\n"},
+                        {"$todayT[15:00:00Z,17:00:00Z]#XNYS;1h", "count\tmin\tmax\n122\t2025-01-24T14:00:00.000000Z\t2025-01-24T17:00:00.000000Z\n"},
+                        {"$todayT[15:00@UTC,16:30@UTC]@Bogus#XNYS;1h", "count\tmin\tmax\n122\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:30:00.000000Z\n"},
+                        // the point and nothing after it
+                        {"$todayT15:00:00Z#XNYS;0h", "count\tmin\tmax\n1\t2025-01-24T14:00:00.000000Z\t2025-01-24T14:00:00.000000Z\n"}
+                };
+                for (String[] bindValue : bindValues) {
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, bindValue[0]);
+                    assertMinuteRows(select + "$1", bindValue[1]);
+                }
+                // the literal of the first of those runs on the static inversion and keeps its rows
+                bindVariableService.clear();
+                assertMinuteRows(select + "'$todayT15:00:00Z#XNYS;1h'", "count\tmin\tmax\n120\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:59:00.000000Z\n");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testInDateVariableBareTimeListFollowsDayChange() throws Exception {
         // '$todayT[09:00,14:30]' holds a date variable, the same as '[$today]T[09:00,14:30]', so the
         // held factory must move the slots to Wednesday rather than keep the ones of Tuesday
@@ -2098,6 +2502,21 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         return data;
     }
 
+    /**
+     * Creates table m with a row every minute from 2025-01-24 to 2025-01-28, 7,200 rows, and table mn
+     * with the same rows in a nanosecond timestamp.
+     */
+    private static void createMinuteTables() throws Exception {
+        execute("""
+                CREATE TABLE m AS (
+                    SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L) ts, x v
+                    FROM long_sequence(7_200)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("CREATE TABLE mn (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO mn SELECT ts::TIMESTAMP_NS, v FROM m");
+    }
+
     private static void createTrades() throws Exception {
         execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
         execute("INSERT INTO trades VALUES " +
@@ -2122,6 +2541,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                 "(2, '2022-06-01T00:00:00.000000Z')," +
                 "(3, '2023-06-01T00:00:00.000000Z')," +
                 "(4, '2024-06-01T00:00:00.000000Z');");
+    }
+
+    private static String formatMicros(long micros) {
+        final StringSink sink = new StringSink();
+        MicrosTimestampDriver.INSTANCE.append(sink, micros);
+        return sink.toString();
     }
 
     private static String insertEveryTenMinutes(String from, int count) {
@@ -2240,6 +2665,18 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     /**
+     * Makes the engine use the test tick calendars, XNYS and XHKG, see {@link TestTickCalendarService}.
+     */
+    private static void useTickCalendar() {
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+    }
+
+    /**
      * Compiles the query once, then runs the same factory after each step. Besides the rows the steps
      * write, the table holds rows at 21:00 and 23:00 the day before and at 23:00 on 2024-01-02.
      */
@@ -2257,5 +2694,16 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                                 """
                 )
                 .mutateStepwise(steps);
+    }
+
+    /**
+     * Asserts the count, first and last timestamp that the query selects.
+     */
+    private void assertMinuteRows(String query, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 }

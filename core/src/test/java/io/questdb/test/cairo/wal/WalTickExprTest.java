@@ -24,8 +24,10 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
@@ -36,6 +38,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTickCalendarService;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -95,6 +99,78 @@ public class WalTickExprTest extends AbstractCairoTest {
                 }
             }
             assertApplied(token, "11111");
+        });
+    }
+
+    @Test
+    public void testBareDateVariableTickCalendarDurationInUpdate() throws Exception {
+        // An UPDATE with a bare date variable expression with a tick calendar and a duration updates
+        // what the tick calendar keeps of each time slot, extended by the duration once, as a query
+        // selects it, applied from the WAL and run directly. On Friday 2025-01-24, XNYS trades from
+        // 14:30 to 21:00Z: the minutes at 15:00 and 16:00, an hour longer, hold the 121 minutes from
+        // 15:00 to 17:00, and the minute at 15:00 the 61 minutes from 15:00 to 16:00, which
+        // dateadd('h', 1, ts) selects an hour earlier.
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+            try {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String name = isWal ? "w" : "nw";
+                    execute("CREATE TABLE " + name + " AS ("
+                            + "SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L) ts, 1 v FROM long_sequence(2_880)"
+                            + ") TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"));
+                    drainWalQueue();
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "$todayT[15:00,16:00]#XNYS;1h");
+                    try {
+                        update("UPDATE " + name + " SET v = 2 WHERE ts IN $1");
+                    } finally {
+                        bindVariableService.clear();
+                    }
+                    drainWalQueue();
+                    assertRowsWithValue(name, 2, "121\t2025-01-24T15:00:00.000000Z\t2025-01-24T17:00:00.000000Z");
+                    update("UPDATE " + name + " SET v = 3 WHERE dateadd('h', 1, ts) IN '$todayT[15:00@UTC]#XNYS;1h'");
+                    drainWalQueue();
+                    assertRowsWithValue(name, 3, "61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z");
+                }
+
+                // dateadd('h', 1, ts) IN a literal whose time the IR rejects runs on the static
+                // inversion of the parse as the statement compiles, which makes the minute at 15:00 an
+                // hour-wide window and extends what the session keeps of it by an hour again, see
+                // MonotonicTimestampPruningTest#testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion.
+                // The UPDATE of the table without WAL runs on it; the one of the WAL table compiles the
+                // filter for the apply, which in() cannot build, and fails before the client sees it
+                // succeed. The WAL table then keeps applying.
+                update("UPDATE nw SET v = 4 WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'");
+                assertRowsWithValue("nw", 4, "120\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:59:00.000000Z");
+                final TableToken walToken = engine.verifyTableName("w");
+                final String rejected = "UPDATE w SET v = 4 WHERE dateadd('h', 1, ts) IN '$todayT15:00:00Z#XNYS;1h'";
+                final long seqTxn = engine.getTableSequencerAPI().lastTxn(walToken);
+                assertExceptionNoLeakCheck(rejected, rejected.indexOf("'$"), "Invalid time override: 15:00:00Z");
+                Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(walToken));
+
+                // a duration that does not parse in a bind variable acts as a null value in the apply
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "$today#XNYS;1x");
+                try {
+                    update("UPDATE w SET v = 5 WHERE ts IN $1");
+                } finally {
+                    bindVariableService.clear();
+                }
+                update("UPDATE w SET v = 6 WHERE ts = '2025-01-25T00:00:00.000000Z'");
+                drainWalQueue();
+                Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(walToken));
+                assertRowsWithValue("w", 5, "0\t\t");
+                assertRowsWithValue("w", 6, "1\t2025-01-25T00:00:00.000000Z\t2025-01-25T00:00:00.000000Z");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
         });
     }
 
@@ -814,6 +890,17 @@ public class WalTickExprTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns(expectedRows(values));
+    }
+
+    /**
+     * Asserts the count, first and last timestamp of the rows of the table whose v is the value.
+     */
+    private void assertRowsWithValue(String tableName, int value, String expectedRow) throws Exception {
+        assertQuery("SELECT count(), min(ts), max(ts) FROM " + tableName + " WHERE v = " + value)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\tmin\tmax\n" + expectedRow + "\n");
     }
 
     private void assertUpdateApplied(String predicate, String values) throws Exception {

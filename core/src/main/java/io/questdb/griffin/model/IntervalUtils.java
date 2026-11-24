@@ -878,6 +878,34 @@ public final class IntervalUtils {
             long nowTimestamp,
             int checks
     ) throws SqlException {
+        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, applyEncoded, nowTimestamp, checks, false);
+    }
+
+    /**
+     * Parses a TICK interval expression as {@link #parseTickExpr(TimestampDriver, CairoConfiguration,
+     * CharSequence, int, int, int, LongList, short, StringSink, boolean, long, int)} does, except that with
+     * {@code isBareDurationPerDate} a bare date variable expression with a tick calendar and a duration, such
+     * as {@code $todayT15:00#XNYS;1h}, makes each of its dates and time slots as wide as the duration before
+     * the tick calendar cuts them, and the calendar extends what it keeps of them by the duration.
+     * WhereClauseParser's compile-time inversion of a literal that {@link #compileTickExpr} rejects is the
+     * only caller that sets it: that inversion accepts a single interval only, and the residual filter cannot
+     * evaluate such a literal, so it keeps the intervals it has always inverted.
+     */
+    public static void parseTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            long nowTimestamp,
+            int checks,
+            boolean isBareDurationPerDate
+    ) throws SqlException {
         assert applyEncoded || (checks & TICK_CHECK_RANGE_ORDER) != 0 : "dynamic mode cannot drop a range";
         assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
                 : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
@@ -964,7 +992,8 @@ public final class IntervalUtils {
                         applyEncoded,
                         outSize,
                         dayFilterMask,
-                        nowTimestamp
+                        nowTimestamp,
+                        false
                 );
                 // Apply tick calendar filter if specified
                 if (exchangeSchedule != null) {
@@ -1024,6 +1053,20 @@ public final class IntervalUtils {
                 wrappedSink.put(effectiveSeq, exprEnd, effectiveSeqLim);
             }
 
+            // A tick calendar keeps what its sessions hold of the dates of the expression, and the
+            // duration extends what they keep, as for a date list. The dates still parse with the
+            // duration, which fails them as it does without a calendar, but keep their own extent, see
+            // PendingSteps.isDurationAfterCalendar. A suffix with another ';', such as a repeating
+            // interval, keeps parsing with each date as its suffix, and so does every suffix that the
+            // caller parses with isBareDurationPerDate.
+            int semicolon = -1;
+            boolean isDurationAfterCalendar = false;
+            if (exchangeSchedule != null) {
+                semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
+                isDurationAfterCalendar = !isBareDurationPerDate
+                        && semicolon >= 0
+                        && findDurationSemicolon(wrappedSink, semicolon + 1, wrappedSink.length()) < 0;
+            }
             try {
                 expandDateList(
                         timestampDriver,
@@ -1039,11 +1082,15 @@ public final class IntervalUtils {
                         applyEncoded,
                         outSize,
                         dayFilterMask,
-                        nowTimestamp
+                        nowTimestamp,
+                        isDurationAfterCalendar
                 );
-                // Apply tick calendar filter if specified
                 if (exchangeSchedule != null) {
-                    int semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
+                    if (isDurationAfterCalendar && applyEncoded && out.size() > outSize + 2) {
+                        // own extents can hold one another, as a minute holds its seconds, and the tick
+                        // calendar intersects a sorted list of intervals that are apart
+                        unionBracketExpandedIntervals(out, outSize);
+                    }
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink,
                             semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
                 }
@@ -1091,7 +1138,7 @@ public final class IntervalUtils {
                     expandDateList(
                             timestampDriver, configuration, checks, wrappedSink, 0, wrappedSink.length(),
                             position, out, operation, dateSink, applyEncoded, outSize,
-                            dayFilterMask, nowTimestamp
+                            dayFilterMask, nowTimestamp, false
                     );
                     if (exchangeSchedule != null) {
                         int semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
@@ -1168,18 +1215,18 @@ public final class IntervalUtils {
                 // Parse without duration - use dateLim which excludes the duration suffix
                 if (tzMarkerPos >= 0) {
                     // Reconstruct without timezone and without duration
-                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, tzMarkerPos, position, out, operation);
+                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, tzMarkerPos, position, out, operation, false);
                 } else {
-                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, dateLim, position, out, operation);
+                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, dateLim, position, out, operation, false);
                 }
             } else if (tzMarkerPos >= 0 && semicolonPos >= 0) {
                 // Parse from reconstructed tzSink
-                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, operation, false);
             } else if (tzMarkerPos >= 0) {
                 // No semicolon, just truncate at timezone marker
-                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, operation, false);
             } else {
-                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, operation);
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, operation, false);
             }
             if (applyEncoded) {
                 applyLastEncodedInterval(timestampDriver, out);
@@ -2404,7 +2451,7 @@ public final class IntervalUtils {
                     null, -1, -1
             );
         } else {
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT, false);
             applyLastEncodedInterval(timestampDriver, tmp);
         }
 
@@ -2461,7 +2508,7 @@ public final class IntervalUtils {
             }
 
             tmp.setPos(dayCount);
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT, false);
             applyLastEncodedInterval(timestampDriver, tmp);
 
             for (int k = dayCount; k < tmp.size(); k += 2) {
@@ -2630,7 +2677,7 @@ public final class IntervalUtils {
                         null, -1, -1
                 );
             } else {
-                parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+                parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT, false);
                 applyLastEncodedInterval(timestampDriver, tmp);
             }
             if (tmp.size() >= 2) {
@@ -2970,6 +3017,9 @@ public final class IntervalUtils {
                         && pos + 1 < fullLim && Chars.isAsciiDigit(seq.charAt(pos + 1));
                 boolean hasSuffixDuration = seq.charAt(pos) == ';';
                 if (hasSuffixTime || hasSuffixDuration) {
+                    // the dates of a date variable, which alone keep their own extent with a
+                    // duration, are never month-level
+                    assert !isDurationAfterCalendar(pendingSteps);
                     boolean isExpanded = expandImpreciseDateInBracket(
                             timestampDriver, seq, pos, fullLim, errorPos, out, operation,
                             sink, applyEncoded, outSizeBeforeExpansion
@@ -2982,7 +3032,7 @@ public final class IntervalUtils {
             }
             // Note: sink always has content here (at minimum the expanded bracket value)
             sink.put(seq, pos, fullLim);
-            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion, isDurationAfterCalendar(pendingSteps));
             sink.clear(startLen);
             return false; // No time list bracket processed
         }
@@ -3186,6 +3236,8 @@ public final class IntervalUtils {
      * @param outSizeBeforeExpansion size of out before expansion started
      * @param dayFilterMask          bitmask for day-of-week filter (0 if not specified)
      * @param nowTimestamp           timestamp to use for resolving date variables ($today, $now, etc.)
+     * @param isDurationAfterCalendar whether the dates keep their own extent with the duration of the
+     *                               list, see {@link PendingSteps#isDurationAfterCalendar}
      */
     private static void expandDateList(
             TimestampDriver timestampDriver,
@@ -3201,7 +3253,8 @@ public final class IntervalUtils {
             boolean applyEncoded,
             int outSizeBeforeExpansion,
             int dayFilterMask,
-            long nowTimestamp
+            long nowTimestamp,
+            boolean isDurationAfterCalendar
     ) throws SqlException {
         // lo points to '[' - find the matching ']' for the date list
         int depth = 1;
@@ -3331,7 +3384,8 @@ public final class IntervalUtils {
                                 operation,
                                 sink,
                                 applyEncoded,
-                                outSizeBeforeExpansion
+                                outSizeBeforeExpansion,
+                                isDurationAfterCalendar
                         );
                         elementStart = i + 1;
                         continue;
@@ -3428,6 +3482,9 @@ public final class IntervalUtils {
                 int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
                 // Per-element exchange schedule (no global fallback here - global is applied after expandDateList)
                 LongList activeExchangeSchedule = elemExchangeSchedule;
+                // the dates keep their own extent only under the tick calendar of the list, whose
+                // '#' the parser strips, so the element has no tick calendar of its own
+                assert !isDurationAfterCalendar || activeExchangeSchedule == null;
 
                 // Remember output size before parsing this element
                 int outSizeBeforeElement = out.size();
@@ -3570,6 +3627,7 @@ public final class IntervalUtils {
                     elementSteps.durationSeq = seq;
                     elementSteps.durationLo = globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1;
                     elementSteps.durationLim = lim;
+                    elementSteps.isDurationAfterCalendar = isDurationAfterCalendar;
 
                     if (hasBrackets) {
                         // Element has field expansion brackets - use existing recursive expansion
@@ -3617,7 +3675,7 @@ public final class IntervalUtils {
                         assert elementSteps.hasTimeList == hadTimeListBracket;
                     } else {
                         // No brackets - parse directly
-                        parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                        parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion, isDurationAfterCalendar);
                     }
 
                     // Day filter applies BEFORE timezone conversion (based on local time), tick calendar
@@ -3679,7 +3737,8 @@ public final class IntervalUtils {
             short operation,
             StringSink sink,
             boolean applyEncoded,
-            int outSizeBeforeExpansion
+            int outSizeBeforeExpansion,
+            boolean isDurationAfterCalendar
     ) throws SqlException {
         // Find duration semicolon in suffix (for applying duration after tick calendar filter)
         int durationSemicolon = findDurationSemicolon(seq, suffixStart, lim);
@@ -3932,6 +3991,9 @@ public final class IntervalUtils {
 
             int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
             LongList activeExchangeSchedule = elemExchangeSchedule;
+            // the days keep their own extent only under the tick calendar of the list, whose '#'
+            // the parser strips, so the element has no tick calendar of its own
+            assert !isDurationAfterCalendar || activeExchangeSchedule == null;
             // Note: per-element day filter would always be 0 since '#' is stripped at top level
             int outSizeBeforeElement = out.size();
 
@@ -3991,6 +4053,7 @@ public final class IntervalUtils {
                 daySteps.durationSeq = seq;
                 daySteps.durationLo = durationSemicolon >= 0 ? durationSemicolon + 1 : -1;
                 daySteps.durationLim = lim;
+                daySteps.isDurationAfterCalendar = isDurationAfterCalendar;
 
                 if (hasBrackets) {
                     int expandedLim = sink.length();
@@ -4030,7 +4093,7 @@ public final class IntervalUtils {
                         sinks.release(expansionSink);
                     }
                 } else {
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion, isDurationAfterCalendar);
                 }
                 // Time list brackets have run the clip, day filter and timezone of the day on their
                 // slots, and marked the day so that its steps skip them
@@ -4107,7 +4170,7 @@ public final class IntervalUtils {
             sink.put('-');
             appendPaddedInt(sink, d, 2);
             sink.put(seq, suffixPos, fullLim);
-            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion, false);
         }
         return true;
     }
@@ -4235,6 +4298,7 @@ public final class IntervalUtils {
         }
         final boolean isClipped = enclosingSteps != null && enclosingSteps.isClipped;
         final boolean isDayFiltered = enclosingSteps != null && enclosingSteps.isDayFiltered;
+        final boolean isDurationAfterCalendar = enclosingSteps != null && enclosingSteps.isDurationAfterCalendar;
 
         // Check once if suffix contains brackets that need expansion (same for all elements)
         boolean hasSuffixBrackets = false;
@@ -4378,7 +4442,7 @@ public final class IntervalUtils {
                         );
                     } else {
                         // No brackets in suffix - parse directly
-                        parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                        parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion, isDurationAfterCalendar);
                     }
                     // Run the steps on the intervals that no merge has processed yet
                     if (slotSteps != null) {
@@ -4740,6 +4804,17 @@ public final class IntervalUtils {
         return true;
     }
 
+    // the setting of the element whose steps these are, or that encloses them, see
+    // PendingSteps.isDurationAfterCalendar
+    private static boolean isDurationAfterCalendar(@Nullable PendingSteps steps) {
+        for (PendingSteps s = steps; s != null; s = s.parent) {
+            if (s.isElement) {
+                return s.isDurationAfterCalendar;
+            }
+        }
+        return false;
+    }
+
     // the order of LongGroupSort over (lo, hi) groups, which a union sorts intervals by
     private static boolean isGroupBefore(long lo1, long hi1, long lo2, long hi2) {
         return lo1 < lo2 || (lo1 == lo2 && hi1 < hi2);
@@ -4887,17 +4962,18 @@ public final class IntervalUtils {
             LongList out,
             short operation,
             boolean applyEncoded,
-            int outSizeBeforeExpansion
+            int outSizeBeforeExpansion,
+            boolean isDurationAfterCalendar
     ) throws SqlException {
         if (applyEncoded) {
             // Static mode: convert to 2-long format
             // Union is done at the end of bracket expansion in parseTickExpr
-            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
+            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, operation, isDurationAfterCalendar);
             applyLastEncodedInterval(timestampDriver, out);
         } else {
             // Dynamic mode: keep 4-long format
             boolean isFirstInterval = out.size() == outSizeBeforeExpansion;
-            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, getEffectiveOp(operation, isFirstInterval));
+            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, getEffectiveOp(operation, isFirstInterval), isDurationAfterCalendar);
         }
     }
 
@@ -4908,7 +4984,8 @@ public final class IntervalUtils {
             int lim,
             int position,
             LongList out,
-            short operation
+            short operation,
+            boolean isDurationAfterCalendar
     ) throws SqlException {
         int writeIndex = out.size();
         int pos0 = 0, pos1 = 0, pos2 = 0;
@@ -4951,11 +5028,13 @@ public final class IntervalUtils {
                 }
             case 0:
                 // single semicolon, expect a period format after date
-                parseRange(timestampDriver, seq, lo, pos0, lim, position, operation, out);
+                parseRange(timestampDriver, seq, lo, pos0, lim, position, operation, out, isDurationAfterCalendar);
                 break;
             case 2:
                 // 2018-01-10T10:30:00.000Z;30m;2d;2
                 // means 10:30-11:00 every second day starting 2018-01-10
+                // a date that keeps its own extent has a single ';'
+                assert !isDurationAfterCalendar;
                 int period;
                 try {
                     period = Numbers.parseInt(seq, pos1 + 1, pos2 - 1);
@@ -4972,7 +5051,7 @@ public final class IntervalUtils {
                     throw SqlException.$(position, "Count must be positive");
                 }
 
-                parseRange(timestampDriver, seq, lo, pos0, pos1, position, operation, out);
+                parseRange(timestampDriver, seq, lo, pos0, pos1, position, operation, out, false);
                 char type = seq.charAt(pos2 - 1);
                 long low = decodeIntervalLo(out, writeIndex);
                 long hi = decodeIntervalHi(out, writeIndex);
@@ -5032,6 +5111,13 @@ public final class IntervalUtils {
         return ((long) year << 16) | ((long) month << 8) | lastDay;
     }
 
+    /**
+     * Parses a date followed by a duration, seq[lo, p) and seq(p, lim), into the interval from the
+     * start of the date as long as the duration. With isDurationAfterCalendar, the duration still
+     * fails the date as it does otherwise, but the date keeps its own extent: the interval that
+     * parseInterval() reads, or else the point in time that parseAnyFormat() reads, see
+     * PendingSteps.isDurationAfterCalendar.
+     */
     private static void parseRange(
             TimestampDriver timestampDriver,
             CharSequence seq,
@@ -5040,16 +5126,19 @@ public final class IntervalUtils {
             int lim,
             int position,
             short operation,
-            LongList out
+            LongList out,
+            boolean isDurationAfterCalendar
     ) throws SqlException {
         try {
             int index = out.size();
             timestampDriver.parseInterval(seq, lo, p, operation, out);
             long low = decodeIntervalLo(out, index);
             long endExclusive = addDuration(timestampDriver, low, seq, p + 1, lim, position);
-            long intervalLo = resolveDurationLo(low, endExclusive);
-            long intervalHi = resolveDurationHi(low, endExclusive);
-            replaceHiLoInterval(intervalLo, intervalHi, operation, out);
+            if (!isDurationAfterCalendar) {
+                long intervalLo = resolveDurationLo(low, endExclusive);
+                long intervalHi = resolveDurationHi(low, endExclusive);
+                replaceHiLoInterval(intervalLo, intervalHi, operation, out);
+            }
             return;
         } catch (NumericException ignore) {
             // try date instead
@@ -5057,9 +5146,13 @@ public final class IntervalUtils {
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
             long endExclusive = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
-            long intervalLo = resolveDurationLo(loMicros, endExclusive);
-            long intervalHi = resolveDurationHi(loMicros, endExclusive);
-            encodeInterval(intervalLo, intervalHi, operation, out);
+            if (isDurationAfterCalendar) {
+                encodeInterval(loMicros, loMicros, operation, out);
+            } else {
+                long intervalLo = resolveDurationLo(loMicros, endExclusive);
+                long intervalHi = resolveDurationHi(loMicros, endExclusive);
+                encodeInterval(intervalLo, intervalHi, operation, out);
+            }
         } catch (NumericException e) {
             throw SqlException.$(position, "Invalid date: ").put(seq, lo, p);
         }
@@ -5356,7 +5449,7 @@ public final class IntervalUtils {
             timeSink.put(date, dateLo, dateHi).put(seq, timeLo, timeHi);
             intervals.clear();
             if (Chars.indexOf(timeSink, '[') < 0) {
-                parseExpandedInterval(timestampDriver, timeSink, errorPos, intervals, IntervalOperation.INTERSECT, true, 0);
+                parseExpandedInterval(timestampDriver, timeSink, errorPos, intervals, IntervalOperation.INTERSECT, true, 0, false);
                 return;
             }
             final StringSink expansionSink = sinks.next();
@@ -5910,6 +6003,10 @@ public final class IntervalUtils {
         // the clip runs after the timezone step, to clipWindows
         boolean isClippedInUtc;
         boolean isDayFiltered;
+        // the dates of this element parse with the duration of the list after their only ';', which
+        // fails them as it does without a tick calendar, but keep their own extent: the tick calendar
+        // of the list adds the duration to what its sessions keep, see parseTickExpr()
+        boolean isDurationAfterCalendar;
         // an element of a date list, or a day of a date variable range, rather than a time list element
         boolean isElement;
         boolean isMultiDayIgnored;
@@ -5933,6 +6030,7 @@ public final class IntervalUtils {
             isClipped = false;
             isClippedInUtc = false;
             isDayFiltered = false;
+            isDurationAfterCalendar = false;
             isElement = false;
             isMultiDayIgnored = false;
             lo = 0;

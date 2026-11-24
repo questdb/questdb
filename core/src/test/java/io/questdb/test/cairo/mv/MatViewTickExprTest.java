@@ -24,10 +24,12 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursor;
@@ -42,6 +44,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -89,6 +92,50 @@ public class MatViewTickExprTest extends AbstractCairoTest {
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testBareDateVariableTickCalendarDurationInRefresh() throws Exception {
+        // A materialized view filtered by a bare date variable expression with a tick calendar and
+        // a duration that SQL parses when the query runs, the time list slot at 15:00 with a
+        // timezone of its own, refreshes to what the tick calendar keeps of the minute at 15:00,
+        // an hour longer: the half hours from 15:00 to 16:00 of Friday 2025-01-24, which XNYS
+        // trades on from 14:30 to 21:00Z, and which the test calendar is the only one of 2025 to
+        // hold of the days that the view selects. A refresh resolves the date variables against the
+        // "now" of its context, the clock or the start of the epoch, see
+        // testRowValueDateVariableResolvesLikeLiteral: $today is 2025-01-24 at the clock, and
+        // $today + 20112d at the start of the epoch.
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 1_800_000_000L), 1 FROM long_sequence(48)");
+            drainWalQueue();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (
+                        SELECT ts, count() c FROM base
+                        WHERE ts IN '$todayT[15:00@UTC]#XNYS;1h' OR ts IN '$today + 20112dT[15:00@UTC]#XNYS;1h'
+                        SAMPLE BY 30m
+                    )
+                    """);
+            drainWalAndMatViewQueues();
+            assertQuery("mv")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tc
+                            2025-01-24T15:00:00.000000Z\t1
+                            2025-01-24T15:30:00.000000Z\t1
+                            2025-01-24T16:00:00.000000Z\t1
+                            """);
+        });
     }
 
     @Test

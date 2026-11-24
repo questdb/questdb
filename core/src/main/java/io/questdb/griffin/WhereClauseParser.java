@@ -1887,6 +1887,9 @@ public final class WhereClauseParser implements Mutable {
             }
             tempInIntervals.clear();
             try {
+                // A literal with a date variable that compileTickExpr() rejects reaches this inversion, which
+                // in() cannot back with a residual filter, so it parses the literal as it always has, see
+                // IntervalUtils.parseTickExpr()
                 IntervalUtils.parseTickExpr(
                         outDriver,
                         executionContext.getCairoEngine().getConfiguration(),
@@ -1897,6 +1900,9 @@ public final class WhereClauseParser implements Mutable {
                         tempInIntervals,
                         IntervalOperation.INTERSECT,
                         intervalSink,
+                        true,
+                        outDriver.getTicks(),
+                        IntervalUtils.TICK_CHECK_ALL,
                         true
                 );
             } catch (SqlException | CairoException e) {
