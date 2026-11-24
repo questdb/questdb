@@ -412,6 +412,51 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testBareDateVariableWithTickCalendarLeavesLaterParsesAlone() throws SqlException {
+        // A bare date variable expression with a tick calendar and a duration marks the steps that
+        // its dates take from the pool of the thread to keep their own extent, see
+        // PendingSteps.isDurationAfterCalendar. The expressions that the thread parses next take
+        // the same steps from the pool, and a duration still makes each of their dates an hour
+        // long from 15:00: a bracket expansion without a date list, and the date of a date list
+        // beside a date variable, which compileTickExpr() expands as it compiles. Today is Friday
+        // 2025-01-24, which XNYS trades on from 14:30 to 21:00Z.
+        final String bare = "$todayT[15:00,16:00]#XNYS;1h";
+        final String expansion = "2025-01-[23..24]T15:00;1h";
+        final String dateList = "[2025-01-[22..23], $today]T15:00;1h";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long friday = driver.parseFloorLiteral(FRIDAY_NOON);
+            final String bareExpected = forTimestampType("[{lo=2025-01-24T15:00:00.000000Z, hi=2025-01-24T17:00:59.999999Z}]", timestampType);
+
+            Assert.assertEquals(bare, bareExpected, parseTickExpr(driver, bare, friday));
+            Assert.assertEquals(
+                    expansion,
+                    forTimestampType(
+                            "[{lo=2025-01-23T15:00:00.000000Z, hi=2025-01-23T15:59:59.999999Z},{lo=2025-01-24T15:00:00.000000Z, hi=2025-01-24T15:59:59.999999Z}]",
+                            timestampType
+                    ),
+                    parseTickExpr(driver, expansion, friday)
+            );
+
+            Assert.assertEquals(bare, bareExpected, parseTickExpr(driver, bare, friday));
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, dateList, 0, dateList.length(), 0)) {
+                Assert.assertFalse(dateList, compiled.isParsedOnEvaluation());
+                final LongList out = new LongList();
+                compiled.evaluate(out, friday);
+                Assert.assertEquals(
+                        dateList,
+                        forTimestampType(
+                                "[{lo=2025-01-22T15:00:00.000000Z, hi=2025-01-22T15:59:59.999999Z},{lo=2025-01-23T15:00:00.000000Z, hi=2025-01-23T15:59:59.999999Z},"
+                                        + "{lo=2025-01-24T15:00:00.000000Z, hi=2025-01-24T15:59:59.999999Z}]",
+                                timestampType
+                        ),
+                        intervalToString(driver, out)
+                );
+            }
+        }
+    }
+
+    @Test
     public void testBareDateVariableWithTickCalendarMatchesDateList() throws SqlException {
         // Every combination of a bare date variable expression, a time part, a timezone, a tick
         // calendar, a day filter or neither, and a duration, at seven "now"s: the expression parses
@@ -622,6 +667,48 @@ public class TickCalendarTest {
                 final LongList out = new LongList();
                 IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, false, friday, IntervalUtils.TICK_CHECK_ALL);
                 Assert.assertEquals(expression, expected, intervalToString(driver, out));
+            }
+        }
+    }
+
+    @Test
+    public void testBareDateVariableWithTickCalendarSteadyStateAllocatesNoJavaHeap() throws SqlException {
+        // Filters parse a bind value per execution and a string column per row. Once the thread has
+        // parsed it, a bare date variable expression with a tick calendar and a duration, whose time
+        // slots hold one another and unite before the tick calendar runs, parses without allocating.
+        // The minute of 15:00 on Friday 2025-01-24 holds the second 15:00:30, the session from 14:30
+        // to 21:00Z holds the minute, and the duration extends it by a minute.
+        final String expression = "$todayT[15:00,15:00:30]#XNYS;1m";
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                final String context = expression + " [" + ColumnType.nameOf(timestampType) + ']';
+                final long friday = driver.parseFloorLiteral(FRIDAY_NOON);
+                final long expectedLo = driver.parseFloorLiteral("2025-01-24T15:00:00.000000Z");
+                final long expectedHi = driver.parseFloorLiteral("2025-01-24T15:02:00.000000Z") - 1;
+                final LongList out = new LongList();
+                final StringSink scratch = new StringSink();
+                for (int i = 0; i < 20_000; i++) {
+                    out.clear();
+                    IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, scratch, true, friday, IntervalUtils.TICK_CHECK_ALL);
+                }
+                long minAllocatedBytes = Long.MAX_VALUE;
+                int expectedParseCount = 0;
+                for (int round = 0; round < 5; round++) {
+                    final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                    for (int i = 0; i < 10_000; i++) {
+                        out.clear();
+                        IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, scratch, true, friday, IntervalUtils.TICK_CHECK_ALL);
+                        if (out.size() == 2 && out.getQuick(0) == expectedLo && out.getQuick(1) == expectedHi) {
+                            expectedParseCount++;
+                        }
+                    }
+                    minAllocatedBytes = Math.min(minAllocatedBytes, threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+                }
+                Assert.assertEquals(context, forTimestampType("[{lo=2025-01-24T15:00:00.000000Z, hi=2025-01-24T15:01:59.999999Z}]", timestampType), intervalToString(driver, out));
+                Assert.assertEquals(context, 50_000, expectedParseCount);
+                Assert.assertEquals(context, 0, minAllocatedBytes);
             }
         }
     }
