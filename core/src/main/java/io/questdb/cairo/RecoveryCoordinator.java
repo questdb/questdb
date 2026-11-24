@@ -77,19 +77,28 @@ import io.questdb.std.str.Path;
  * </ul>
  */
 public class RecoveryCoordinator {
+    // In the database root while no engine runs on it, after a stop that closed every table writer without error.
+    public static final String CLEAN_STOP_FILE_NAME = "_clean_stop";
     private static final Log LOG = LogFactory.getLog(RecoveryCoordinator.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
+    // Whether the previous run stopped cleanly after its last apply; only recoverAtStart() sets it.
+    private final boolean isCleanStop;
     // Whether the last false answer of areEpochCopiesValid was a definite content mismatch, not a read failure.
     private boolean contentMismatch;
     // Whether a selected save point header was rewritten without its own sync; recover() flushes them all at its end.
     private boolean isHeaderFlushPending;
 
     public RecoveryCoordinator(CairoEngine engine) {
+        this(engine, false);
+    }
+
+    private RecoveryCoordinator(CairoEngine engine, boolean isCleanStop) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
+        this.isCleanStop = isCleanStop;
     }
 
     /**
@@ -691,10 +700,14 @@ public class RecoveryCoordinator {
         if (!restored) {
             // A power loss usually rolls _txn and _cv back to the save point, so nothing is restored, but the passes
             // applied after it can have left index state behind. Their sequencer records need not have survived:
-            // the apply runs ahead of the group flush. So every chain is cut back to the save point. Every partition
-            // is checked for files no chain names only when the WAL holds passes after the save point, which a clean
-            // stop with everything applied does not leave.
-            removeUnnamedPostingGenerations(token, src, sequencerFrontierOrUnknown(token) > epochSeqTxn);
+            // the apply runs ahead of the group flush. So every chain is cut back to the save point, unless the
+            // previous run stopped cleanly and the WAL holds no pass after the save point; a writer that failed
+            // mid-commit leaves one there. Every partition is checked for files no chain names only when the WAL
+            // holds such passes.
+            final boolean hasPassesAfterSavePoint = sequencerFrontierOrUnknown(token) > epochSeqTxn;
+            if (!isCleanStop || hasPassesAfterSavePoint) {
+                removeUnnamedPostingGenerations(token, src, hasPassesAfterSavePoint);
+            }
             pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn, selected.generation);
             LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
                     .$(", epochSeqTxn=").$(epochSeqTxn).I$();
@@ -1097,6 +1110,14 @@ public class RecoveryCoordinator {
         path.trimTo(tableRootLen);
     }
 
+    /**
+     * The start's {@link #recover()}. It reads and removes the clean-stop file first, and the removal is durable
+     * before any table is recovered, so that a run which does not stop cleanly leaves none behind.
+     */
+    public static void recoverAtStart(CairoEngine engine) {
+        new RecoveryCoordinator(engine, removeCleanStopFile(engine)).recover();
+    }
+
     // Pins the generation-zero save point a conversion to WAL or a REBASE WAL clone publishes outside a writer: it
     // names the table's partitions, and a writer pins only the save points it publishes itself.
     static void pinPublishedBaseline(CairoEngine engine, TableToken token, long baselineTxn) {
@@ -1125,6 +1146,21 @@ public class RecoveryCoordinator {
         }
     }
 
+    /**
+     * Leaves the clean-stop file for the next start once an engine stop closed every table writer, each with its
+     * close save point, without error. It takes no flush: a start that does not find it only does more work.
+     */
+    public static void writeCleanStopFile(CairoConfiguration configuration) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(CLEAN_STOP_FILE_NAME);
+            if (!ff.touch(path.$())) {
+                final int errno = ff.errno();
+                LOG.error().$("could not write clean stop file [path=").$(path).$(", errno=").$(errno).I$();
+            }
+        }
+    }
+
     // Whether a _cv file offset lies in the data of an area the header names. An area that was never written
     // names offset 0 and holds no data. Written so that a garbage header cannot overflow it.
     private static boolean isColumnVersionData(long offset, long areaOffset, long areaSize) {
@@ -1135,6 +1171,26 @@ public class RecoveryCoordinator {
         if (ff.exists(path.$()) && !ff.removeQuiet(path.$()) && ff.exists(path.$())) {
             throw CairoException.critical(ff.errno())
                     .put("could not remove stale adaptive epoch artifact [path=").put(path).put(']');
+        }
+    }
+
+    // Whether the database root held the clean-stop file. A start that cannot make its removal durable fails.
+    private static boolean removeCleanStopFile(CairoEngine engine) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(CLEAN_STOP_FILE_NAME);
+            if (!ff.exists(path.$())) {
+                return false;
+            }
+            if (!ff.removeQuiet(path.$())) {
+                throw CairoException.critical(ff.errno()).put("could not remove clean stop file [path=").put(path).put(']');
+            }
+            TableUtils.fsyncDirDurable(ff, path.of(configuration.getDbRoot()).$());
+            return true;
+        } catch (CairoException | CairoError e) {
+            engine.handleDataSyncFailure(e);
+            throw e;
         }
     }
 }

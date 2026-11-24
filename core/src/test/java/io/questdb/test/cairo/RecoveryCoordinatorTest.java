@@ -52,6 +52,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
@@ -699,6 +700,108 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         }
+    }
+
+    /**
+     * A start after a clean engine stop reads no POSTING key file; a start after a stop with a writer open does. The
+     * start removes the clean-stop file, so the start after the next power loss cuts the chains back to the save
+     * point: the power loss hit an apply that resealed an older partition's index, and kept its key file but lost
+     * its sequencer record, {@code _txn} and the files the new chain entry names. The index then returns the rows of
+     * the save point after the next commit takes the lost commit's txn.
+     */
+    @Test
+    public void testCleanStopSkipsPostingChainWalkOfOneStart() throws Exception {
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final AtomicInteger keyFileReads = new AtomicInteger();
+        final CrashFaultFilesFacade crashFf = new CrashFaultFilesFacade() {
+            @Override
+            public long length(LPSZ name) {
+                if (Utf8s.containsAscii(name, ".pk")) {
+                    keyFileReads.incrementAndGet();
+                }
+                return super.length(name);
+            }
+        };
+        crashFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // The apply below reseals an older partition's index and runs ahead of the group flush of its sequencer
+        // record; no periodic save point follows it.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 1_000_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+        assertMemoryLeak(crashFf, () -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+            execute("INSERT INTO t VALUES ('2024-01-01T10:00:00.000000Z', 'a', 1), ('2024-01-01T11:00:00.000000Z', 'b', 2), ('2024-01-02T10:00:00.000000Z', 'a', 3)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseAllWalWriters();
+            // An engine stop with a writer out of its pool leaves no clean-stop file.
+            final CairoEngine busyStop = new CairoEngine(configuration);
+            try (TableWriter ignored = busyStop.getWriter(tt, "test")) {
+                busyStop.close();
+            }
+            engine.getTxnScoreboardPool().remove(tt);
+            engine.getTableSequencerAPI().resetForReboot(tt);
+            keyFileReads.set(0);
+            RecoveryCoordinator.recoverAtStart(engine);
+            Assert.assertTrue("index key files read at a start after a stop with a writer open", keyFileReads.get() > 0);
+            // Every writer is closed with its save point; an engine stop leaves the clean-stop file.
+            new CairoEngine(configuration).close();
+            engine.getTxnScoreboardPool().remove(tt);
+            engine.getTableSequencerAPI().resetForReboot(tt);
+            keyFileReads.set(0);
+            RecoveryCoordinator.recoverAtStart(engine);
+            Assert.assertEquals("index key files read at a start after a clean stop", 0, keyFileReads.get());
+            // The first apply after a start takes a save point.
+            execute("INSERT INTO t VALUES ('2024-01-02T11:00:00.000000Z', 'a', 5)");
+            drainWalQueue();
+
+            crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                final TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-01-01T12:00:00.000000Z"));
+                row.putSym(1, "a");
+                row.putLong(2, 4);
+                row.append();
+                walWriter.commit();
+                drainWalQueue();
+                Assert.assertTrue("precondition: the apply ran ahead of its sequencer record's flush", tracker.getLocalDurableSeqTxn() < tracker.getWriterTxn());
+                try (Stream<java.nio.file.Path> files = Files.walk(Paths.get(root, tt.getDirName()))) {
+                    files.filter(p -> p.getFileName().toString().startsWith("s.pk")).forEach(p -> crashFf.markFileDurable(p.toString()));
+                }
+                crashFf.powerLoss();
+                walWriter.simulatePowerLossDropPending();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseAllWalWriters();
+            engine.releaseInactiveTableSequencers();
+            engine.releaseAllWriters();
+            crashFf.crash(engine.getConfiguration().getDbRoot());
+            engine.getTxnScoreboardPool().remove(tt);
+            engine.getTableSequencerAPI().resetForReboot(tt);
+            keyFileReads.set(0);
+            RecoveryCoordinator.recoverAtStart(engine);
+            Assert.assertTrue("index key files read at a start after a power loss", keyFileReads.get() > 0);
+            engine.notifyWalTxnRepublisher(tt);
+            drainWalQueue();
+            // The next commit takes the lost commit's txn.
+            execute("INSERT INTO t VALUES ('2024-01-03T10:00:00.000000Z', 'b', 6)");
+            drainWalQueue();
+            assertQuery("SELECT ts, v FROM t WHERE s = 'a'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T10:00:00.000000Z\t1
+                            2024-01-02T10:00:00.000000Z\t3
+                            2024-01-02T11:00:00.000000Z\t5
+                            """);
+        });
     }
 
     /**

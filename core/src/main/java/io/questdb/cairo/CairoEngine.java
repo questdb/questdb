@@ -1450,6 +1450,12 @@ public class CairoEngine implements Closeable, WriterSource {
             failure = Misc.freeBestEffort(failure, frameFactory);
             failure = Misc.freeBestEffort(failure, walLocker);
             failure = Misc.freeBestEffort(failure, memoryTrackerProvider);
+            // A writer still out of its pool, a failed close or a failed flush leaves no clean-stop file, and the
+            // next start then cuts every POSTING chain back to its table's save point.
+            if (failure == null && isCompleteInitDone && writerPool.getBusyCount() == 0 && !isDurabilityFailed()
+                    && !configuration.isReadOnlyInstance()) {
+                RecoveryCoordinator.writeCleanStopFile(configuration);
+            }
         } finally {
             // also when a free above throws, so a closed engine never hears a failure
             LIVE_ENGINES.remove(this);
@@ -1489,7 +1495,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Adaptive recovery runs after the table registry loads, so tables are enumerable, and before any WAL
         // apply or table open. For each WAL table with a save point it restores _txn, _cv and _meta from it, and
         // WAL apply then replays (epoch.seqTxn, frontier]. Outside adaptive it removes the save point.
-        new RecoveryCoordinator(this).recover();
+        RecoveryCoordinator.recoverAtStart(this);
         // Remove the restore trigger and checkpoint only after recovery: a crash before this repeats the restore.
         try {
             checkpointAgent.completeRecovery();
