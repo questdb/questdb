@@ -258,6 +258,12 @@ impl ParquetMetaWriter {
                 .map(RowGroupBlockBuilder::dedup_sort_version)
                 .collect(),
         );
+        fb.set_dedup_sort_keys(
+            self.row_groups
+                .iter()
+                .map(|builder| builder.dedup_sort_keys().clone())
+                .collect(),
+        );
         fb.validate_dedup_sort_versions()?;
         fb.write_to(&mut buf);
 
@@ -365,6 +371,8 @@ pub struct ParquetMetaUpdateWriter<'a> {
     prior_num_rows: Vec<u64>,
     /// Dedup sort version of each committed row group, unset resolved.
     prior_dedup_sort_versions: Vec<i64>,
+    /// First and last dedup key of each committed row group, empty when it stores none.
+    prior_dedup_sort_keys: Vec<(Vec<u8>, Vec<u8>)>,
     /// First index row of each committed row group, identity map resolved.
     prior_index_row_lo: Vec<u64>,
     /// Index rows the committed footer covers, identity map resolved.
@@ -406,6 +414,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let mut prior_block_offsets = Vec::with_capacity(rg_count);
         let mut prior_num_rows = Vec::with_capacity(rg_count);
         let mut prior_dedup_sort_versions = Vec::with_capacity(rg_count);
+        let mut prior_dedup_sort_keys = Vec::with_capacity(rg_count);
         let mut prior_index_row_lo = Vec::with_capacity(rg_count);
         let mut cumulative_rows = 0u64;
         for i in 0..rg_count {
@@ -414,6 +423,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             let num_rows = reader.row_group(i)?.num_rows();
             prior_num_rows.push(num_rows);
             prior_dedup_sort_versions.push(footer.row_group_dedup_sort_version(i)?);
+            prior_dedup_sort_keys.push(
+                footer
+                    .row_group_dedup_sort_keys(i)?
+                    .map_or((Vec::new(), Vec::new()), |(first, last)| {
+                        (first.to_vec(), last.to_vec())
+                    }),
+            );
             prior_index_row_lo.push(footer.row_group_index_row_lo(i)?.unwrap_or(cumulative_rows));
             cumulative_rows = cumulative_rows.saturating_add(num_rows);
         }
@@ -474,6 +490,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_block_offsets,
             prior_num_rows,
             prior_dedup_sort_versions,
+            prior_dedup_sort_keys,
             prior_index_row_lo,
             prior_index_row_count,
             is_index_row_map_dropped: false,
@@ -488,6 +505,17 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             .map(|entry| match entry {
                 RowGroupEntry::Existing { src } => self.prior_dedup_sort_versions[*src],
                 RowGroupEntry::New(builder) => builder.dedup_sort_version(),
+            })
+            .collect()
+    }
+
+    /// Reused row groups keep their committed dedup keys; new blocks carry their builder's.
+    fn resolve_dedup_sort_keys(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                RowGroupEntry::Existing { src } => self.prior_dedup_sort_keys[*src].clone(),
+                RowGroupEntry::New(builder) => builder.dedup_sort_keys().clone(),
             })
             .collect()
     }
@@ -821,6 +849,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
         fb.set_dedup_sort_versions(self.resolve_dedup_sort_versions());
+        fb.set_dedup_sort_keys(self.resolve_dedup_sort_keys());
         fb.validate_dedup_sort_versions()?;
         fb.set_index_row_map(if self.is_index_row_map_dropped {
             None
@@ -1199,6 +1228,67 @@ mod tests {
             dedup_sort_versions_of(&third, third_size),
             (false, vec![-1, -1, -1])
         );
+    }
+
+    fn dedup_sort_keys_of(file: &[u8], file_size: u64) -> Vec<Option<(Vec<u8>, Vec<u8>)>> {
+        let reader = ParquetMetaReader::from_file_size(file, file_size).unwrap();
+        reader.verify_checksum().unwrap();
+        let footer = reader.footer();
+        (0..reader.row_group_count() as usize)
+            .map(|i| {
+                footer
+                    .row_group_dedup_sort_keys(i)
+                    .unwrap()
+                    .map(|(first, last)| (first.to_vec(), last.to_vec()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dedup_sort_keys_follow_row_groups_across_updates() {
+        let (original, size) = make_simple_file();
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            let mut rg = index_row_map_rg(200);
+            rg.set_dedup_sort_version(3);
+            rg.set_dedup_sort_keys(vec![1, 2], vec![3, 4, 5]);
+            u.replace_row_group(0, rg).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+            let mut tail = index_row_map_rg(10);
+            tail.set_dedup_sort_version(3);
+            tail.set_dedup_sort_keys(vec![6], vec![7]);
+            u.add_row_group(tail);
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&first, first_size),
+            (true, vec![3, -1, 3])
+        );
+        assert_eq!(
+            dedup_sort_keys_of(&first, first_size),
+            vec![
+                Some((vec![1, 2], vec![3, 4, 5])),
+                None,
+                Some((vec![6], vec![7]))
+            ]
+        );
+        // A reused block keeps its committed keys at its new position.
+        let (second, second_size) = index_row_map_apply(&first, first_size, |u| {
+            u.reuse_row_group(0, 2).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&second, second_size),
+            (true, vec![3, 3, 3])
+        );
+        assert_eq!(
+            dedup_sort_keys_of(&second, second_size),
+            vec![
+                Some((vec![6], vec![7])),
+                Some((vec![1, 2], vec![3, 4, 5])),
+                Some((vec![6], vec![7]))
+            ]
+        );
+        // The index row map after the section still resolves.
+        assert!(index_row_map_of(&second, second_size).is_some());
     }
 
     #[test]
