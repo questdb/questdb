@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -45,16 +46,18 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * The one-shot POSTING index builds, ALTER TABLE ADD INDEX and REINDEX, index a partition into a first value file,
- * then seal it into a new one. Nothing reads the first generation, so the build leaves only the sealed generation in
- * each partition directory: one value file, and only the cover files of that generation.
+ * The one-shot POSTING index builds, ALTER TABLE ADD INDEX, a column type change to an indexed SYMBOL and REINDEX,
+ * index a partition into a first value file, then seal it into a new one. Nothing reads the first generation, so the
+ * build leaves only the sealed generation in each partition directory: one value file, and only the cover files of
+ * that generation.
  */
 @RunWith(Parameterized.class)
 public class PostingIndexBuildFilesTest extends AbstractCairoTest {
     private static final Pattern COVER_FILE = Pattern.compile("k\\.pc[0-9]+\\..*\\.([0-9]+)");
     private static final long DAY = 86_400_000_000L;
     private static final int DAYS = 3;
-    private static final Pattern VALUE_FILE = Pattern.compile("k\\.pv\\.([0-9]+)");
+    // k.pv.<sealTxn>, or k.pv.<columnNameTxn>.<sealTxn> for a column that has a name txn
+    private static final Pattern VALUE_FILE = Pattern.compile("k\\.pv\\.(?:[0-9]+\\.)?([0-9]+)");
     private final boolean isCovering;
 
     public PostingIndexBuildFilesTest(boolean isCovering) {
@@ -92,6 +95,18 @@ public class PostingIndexBuildFilesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(false, "WAL");
             execute("ALTER TABLE t ALTER COLUMN k ADD INDEX TYPE POSTING" + includeClause());
+            drainWalQueue();
+            assertOneGenerationPerPartition(DAYS);
+            assertIndexMatchesScan();
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeWal() throws Exception {
+        Assume.assumeFalse("a column type change takes no INCLUDE columns", isCovering);
+        assertMemoryLeak(() -> {
+            createTable("VARCHAR", "WAL");
+            execute("ALTER TABLE t ALTER COLUMN k TYPE SYMBOL INDEX TYPE POSTING");
             drainWalQueue();
             assertOneGenerationPerPartition(DAYS);
             assertIndexMatchesScan();
@@ -167,10 +182,14 @@ public class PostingIndexBuildFilesTest extends AbstractCairoTest {
         }
     }
 
-    // 4 symbols over DAYS day partitions
     private void createTable(boolean isIndexed, String walClause) throws Exception {
-        execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL" + (isIndexed ? " INDEX TYPE POSTING" + includeClause() : "")
-                + ", c0 LONG, c1 LONG, c2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+        createTable(isIndexed ? "SYMBOL INDEX TYPE POSTING" + includeClause() : "SYMBOL", walClause);
+    }
+
+    // 4 symbols over DAYS day partitions, in a column k of the given type
+    private void createTable(String kType, String walClause) throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, k " + kType + ", c0 LONG, c1 LONG, c2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY "
+                + walClause);
         final StringBuilder sql = new StringBuilder("INSERT INTO t VALUES ");
         for (int v = 0; v < 40; v++) {
             final long ts = (v % DAYS) * DAY + (v + 1) * 1_000_000L;

@@ -1934,6 +1934,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
             // it uses the primary column object as a temporary tool
             if (IndexType.isIndexed(indexType)) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
+                // As in addIndex, the build has no committed-txn source, so every build seal takes the ordered flush:
+                // after a power loss the restored _meta does not index the column, recovery leaves its files alone, and
+                // the replayed change accepts the files it finds. populateDenseIndexerList() below restores the source.
+                indexer.getWriter().setCommittedTxnSource(null);
                 try {
                     writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
                 } catch (Throwable th) {

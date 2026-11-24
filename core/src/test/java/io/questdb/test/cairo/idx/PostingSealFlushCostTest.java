@@ -48,17 +48,17 @@ import java.util.regex.Pattern;
 
 /**
  * Counts the flushes a POSTING index seal makes, per commit mode, for every kind of seal: the ADD INDEX build, the
- * reseal of older partitions by a WAL commit, the seal at a partition switch, the seal a fast WAL commit makes at the
- * generation cap of the last partition, and REINDEX.
+ * build of a column type change to an indexed SYMBOL, the reseal of older partitions by a WAL commit, the seal at a
+ * partition switch, the seal a fast WAL commit makes at the generation cap of the last partition, and REINDEX.
  * <p>
  * The expected counts come from what each mode promises, not from the code. ADAPTIVE recovers a WAL table to its last
  * save point and drops every chain entry stamped above it, so a seal of a commit in progress needs no flush; a seal
- * stamped with the committed txn (the generation cap, REINDEX), every seal of the ADD INDEX build, whose files no
- * recovery drops, and every seal of a table that takes no save point (a non-WAL table, a replica), takes the ordered
- * flush. Every other mode
- * takes the ordered flush for every seal: NOSYNC and ASYNC may lose commits on a power loss, but must not leave an
- * index that names files the purge of the superseded generation deleted, or files that never reached the disk. The
- * ordered flush is two disk waits: one device flush for every new value and cover file, then the {@code .pk} flush.
+ * stamped with the committed txn (the generation cap, REINDEX), every seal of an index build, whose files no recovery
+ * drops, and every seal of a table that takes no save point (a non-WAL table, a replica), takes the ordered flush.
+ * Every other mode takes the ordered flush for every seal: NOSYNC and ASYNC may lose commits on a power loss, but must
+ * not leave an index that names files the purge of the superseded generation deleted, or files that never reached the
+ * disk. The ordered flush is two disk waits: one device flush for every new value and cover file, then the
+ * {@code .pk} flush.
  * <p>
  * A rebuild of the index from the column data into a new value file, as a WAL commit into older partitions makes, is
  * not a seal: it flushes as before the seals took the ordered flush. Under SYNC the new value file reaches the disk
@@ -71,7 +71,8 @@ import java.util.regex.Pattern;
 public class PostingSealFlushCostTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final int INCLUDE_COLUMNS = 3;
-    private static final Pattern NEW_VALUE_FILE = Pattern.compile(".*[/\\\\]k\\.pv\\.[0-9]+$");
+    // k.pv.<sealTxn>, or k.pv.<columnNameTxn>.<sealTxn> for a column that has a name txn
+    private static final Pattern NEW_VALUE_FILE = Pattern.compile(".*[/\\\\]k\\.pv\\.([0-9]+\\.)?[0-9]+$");
     // The kinds of the files a rebuild flushed, in order.
     private static final StringBuilder REBUILD_FLUSHES = new StringBuilder();
     // The PostingIndexWriter methods that rebuild the index into a new value file, discardForRebuild() then
@@ -144,6 +145,24 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             execute("ALTER TABLE t ALTER COLUMN k ADD INDEX TYPE POSTING" + includeClause());
             drainWalQueue();
             assertSealFlushes(false, "ADD INDEX");
+            assertIndexMatchesScan();
+        });
+    }
+
+    // A column type change to an indexed SYMBOL builds and seals the index of the new column in every partition. As with
+    // ADD INDEX, the seals take the ordered flush in every mode: after a power loss the restored _meta does not index
+    // the column, recovery leaves its files alone, and the replayed change reuses the column name txn and accepts the
+    // files it finds.
+    @Test
+    public void testIndexBuildOfTypeChange() throws Exception {
+        Assume.assumeFalse("a column type change takes no INCLUDE columns", isCovering);
+        assertMemoryLeak(new CountingFacade(), () -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k VARCHAR, c0 LONG, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            insertAndApply(rowsOverDays(0, 20, 4));
+            resetCounts();
+            execute("ALTER TABLE t ALTER COLUMN k TYPE SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
+            assertSealFlushes(false, "ALTER COLUMN TYPE");
             assertIndexMatchesScan();
         });
     }
