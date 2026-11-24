@@ -12004,6 +12004,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] stagedCount = {0};
         sweepRecoveryPartitionSwitch(true, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, isRestarted, where) -> {
+            if (isRestarted) {
+                assertRecoveryTableIndexRows(recoveryXphiRowIds(fillerRowCount, isRecoveryPartitionSwitchCommitted() ? 40 : 35));
+            }
             if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(liveSealTxnBefore + 1)) {
                 stagedCount[0]++;
             }
@@ -14106,6 +14109,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     failureCount[0]++;
                     where = " [failed=" + failedCall + ']';
                     if (isSync && sweepFf.isFailedFlush()) {
+                        Assert.assertNotNull("a failed flush did not fail the partition switch" + where, failure);
                         Assert.assertTrue("a failed flush must stop the engine under SYNC" + where, engine.isDurabilityFailed());
                     }
                     if (sweepFf.isFailedKeyFileFlush() && headSealTxnOfRecoveryPartition() != liveSealTxnBefore) {
@@ -14215,12 +14219,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             final long liveSealTxnBefore = readPostingSealTxn(path, plen, indexName);
                             collectChainSealTxns(path, plen, indexName, chainSealTxnsBefore);
                             sweepFf.arm(failAt);
+                            boolean isThrown = false;
                             try {
                                 op.run(writer);
                             } catch (CairoException e) {
                                 if (sweepFf.failedCall() == null) {
                                     throw e;
                                 }
+                                isThrown = true;
                             } finally {
                                 failedCall = sweepFf.failedCall();
                                 sweepFf.disarm();
@@ -14240,8 +14246,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 // right after the failure, as the retry below takes the staged sealTxn again
                                 collectQueuedSealTxns(writer, queuedSealTxns);
                                 assertIndexFilesOfLiveGeneration(path, plen, indexName, queuedSealTxns, keptSealTxn, false, where);
-                                outcomeCounts[2] += assertOrphanPurgesSpanEveryTxn(path, plen, indexName, writer, chainSealTxnsBefore, where);
+                                if (commitModes[mode] == CommitMode.SYNC && sweepFf.isFailedFlush()) {
+                                    Assert.assertTrue("a failed flush did not fail the operation" + where, isThrown);
+                                }
+                                final int orphanPurgeCount = assertOrphanPurgesSpanEveryTxn(path, plen, indexName, writer, chainSealTxnsBefore, where);
+                                outcomeCounts[2] += orphanPurgeCount;
                                 if (isPoisoned(writer)) {
+                                    Assert.assertTrue("a failure that staged nothing poisoned the writer" + where, orphanPurgeCount > 0);
                                     outcomeCounts[0]++;
                                     assertPoisonedWriterRejectsAll(writer);
                                     expected.add(postingRows(maxRowBefore));
