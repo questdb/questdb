@@ -100,6 +100,8 @@ public final class IntervalUtils {
             new FiberLocal<>(() -> new ObjectStackPool<>(PendingSteps::new, 4));
     private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
+    // the intervals of the time part of a date list that validateTimeSuffix() parses and drops
+    private static final FiberLocal<LongList> tlTimeSuffixIntervals = new FiberLocal<>(LongList::new);
 
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
@@ -3258,6 +3260,17 @@ public final class IntervalUtils {
             globalTzHi = semicolonPos >= 0 ? semicolonPos : lim;
         }
 
+        // The time part of the suffix, as in T10:00, T10:00;1h, T10:00@TZ;1h or T[10:00@TZ,11:00],
+        // ends where a day reads its time to: at the first ';', or at the timezone of the list,
+        // which leaves the slots of a time list their own timezones
+        int suffixTimeEnd = suffixStart;
+        if (suffixStart < lim && seq.charAt(suffixStart) == 'T') {
+            suffixTimeEnd = globalDurationSemicolon >= 0 ? globalDurationSemicolon : lim;
+            if (globalTzMarker >= 0 && globalTzMarker < suffixTimeEnd) {
+                suffixTimeEnd = globalTzMarker;
+            }
+        }
+
         // Parse comma-separated date elements, respecting nested brackets
         int elementStart = contentStart;
 
@@ -3307,6 +3320,7 @@ public final class IntervalUtils {
                                 rangeOpPos,
                                 lim,
                                 suffixStart,
+                                suffixTimeEnd,
                                 globalTzMarker,
                                 globalTzLo,
                                 globalTzHi,
@@ -3419,33 +3433,20 @@ public final class IntervalUtils {
                 int outSizeBeforeElement = out.size();
 
                 // Check if element already has a time component (contains 'T' followed by digit)
-                boolean elementHasTime = false;
+                int elementTimeStart = -1;
                 for (int j = resolvedElementStart; j < effectiveElementEnd - 1; j++) {
                     char ec = elementSeq.charAt(j);
                     if (ec == 'T' && Chars.isAsciiDigit(elementSeq.charAt(j + 1))) {
-                        elementHasTime = true;
+                        elementTimeStart = j;
                         break;
                     }
                 }
-
-                // Find where the time part of suffix ends (at ';' or '@' or end)
-                // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h, T[10:00@TZ,11:00]
-                int suffixTimeEnd = suffixStart;
-                if (suffixStart < lim && seq.charAt(suffixStart) == 'T') {
-                    // Find where time ends (at ';', '@', or end). The slots of a time list may carry
-                    // their own timezone, so an '@' inside brackets does not end the time.
-                    int bracketDepth = 0;
-                    while (suffixTimeEnd < lim) {
-                        char sc = seq.charAt(suffixTimeEnd);
-                        if (sc == '[') {
-                            bracketDepth++;
-                        } else if (sc == ']') {
-                            bracketDepth--;
-                        } else if (bracketDepth == 0 && (sc == ';' || sc == '@')) {
-                            break;
-                        }
-                        suffixTimeEnd++;
-                    }
+                boolean elementHasTime = elementTimeStart >= 0;
+                if (elementHasTime && suffixStart < suffixTimeEnd) {
+                    // The element keeps its own time and skips the time part of the list below. That
+                    // time part still fails it as it fails a day, on the date of the element, before
+                    // the text after the first ';' does.
+                    validateTimeSuffix(timestampDriver, configuration, elementSeq, resolvedElementStart, elementTimeStart, seq, suffixStart, suffixTimeEnd, errorPos);
                 }
 
                 // When the element is an imprecise date (month or year level) and
@@ -3636,10 +3637,10 @@ public final class IntervalUtils {
      * <p>
      * Each endpoint expression is either a whole day ($today, $yesterday, $tomorrow, optionally shifted by
      * whole days) or a point in time ($now, or a shift below a day). A range between two points in time
-     * produces a single interval, which ignores the time part and the duration of the list; a duration
-     * that does not parse still fails it, whatever the order of the range. Otherwise the range iterates
-     * the days from the start's day to the end's day, and clips the result to the endpoint that is a
-     * point in time, if any.
+     * produces a single interval, which ignores the time part and the duration of the list; a time part
+     * or a duration that does not parse still fails it, whatever the order of the range. Otherwise the
+     * range iterates the days from the start's day to the end's day, and clips the result to the
+     * endpoint that is a point in time, if any.
      * <p>
      * Range type is determined by the END expression:
      * - If end expression ends with "bd", iterate business days only (skip Sat/Sun)
@@ -3664,6 +3665,7 @@ public final class IntervalUtils {
             int rangeOpPos,
             int lim,
             int suffixStart,
+            int suffixTimeEnd,
             int globalTzMarker,
             int globalTzLo,
             int globalTzHi,
@@ -3741,12 +3743,20 @@ public final class IntervalUtils {
         if (rangeLo > rangeHi && (checks & TICK_CHECK_RANGE_ORDER) != 0) {
             throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
         }
-        if (isPointInTimeRange && durationSemicolon >= 0) {
-            // The range is one interval from start to end, which ignores the duration of the list, as
-            // the compiled form does. A duration that does not parse fails it as it fails a day, and
-            // whatever the order of the range: that order depends on "now", and SQL checks a literal
-            // against the "now" it compiles at, not the one it runs at.
-            validateDurationSuffix(timestampDriver, seq, durationSemicolon, lim, errorPos);
+        if (isPointInTimeRange) {
+            // The range is one interval from start to end, which ignores the time part and the duration
+            // of the list, as the compiled form does. A time part that does not parse fails it as it
+            // fails a day, on the date of the start, and so does a duration, after the time part. Both
+            // fail it whatever the order of the range: that order depends on "now", and SQL checks a
+            // literal against the "now" it compiles at, not the one it runs at.
+            if (suffixStart < suffixTimeEnd) {
+                sink.clear();
+                appendDate(timestampDriver, startTimestamp, sink);
+                validateTimeSuffix(timestampDriver, configuration, sink, 0, sink.length(), seq, suffixStart, suffixTimeEnd, errorPos);
+            }
+            if (durationSemicolon >= 0) {
+                validateDurationSuffix(timestampDriver, seq, durationSemicolon, lim, errorPos);
+            }
         }
         if (rangeLo > rangeHi) {
             // without the range order check, such a range adds no interval, and still fails on a
@@ -5294,6 +5304,68 @@ public final class IntervalUtils {
         }
         if (tzMarker >= 0) {
             applyTimezoneToIntervals(timestampDriver, configuration, out, out.size(), seq, tzMarker + 1, elementEnd, errorPos, applyEncoded);
+        }
+    }
+
+    /**
+     * Fails on the time part of a date list, {@code seq[timeLo, timeHi)}, which starts with 'T', as a
+     * day fails on it, for an element that keeps a time of its own and so ignores that time part: a
+     * point in time, a range between two points in time, or a date with a time. It parses the date
+     * {@code date[dateLo, dateHi)} followed by the time part the way {@link #expandDateList} parses a
+     * day of the list with it, with the same errors, into a list that it then drops, so it appends
+     * nothing to the intervals of the caller. The timezone and the text after the first ';' of the
+     * list are not part of the time part, and the time part adds no interval, so the interval limit
+     * does not apply.
+     */
+    private static void validateTimeSuffix(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence date,
+            int dateLo,
+            int dateHi,
+            CharSequence seq,
+            int timeLo,
+            int timeHi,
+            int errorPos
+    ) throws SqlException {
+        final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
+        final StringSink timeSink = sinks.next();
+        final LongList intervals = tlTimeSuffixIntervals.get();
+        try {
+            timeSink.put(date, dateLo, dateHi).put(seq, timeLo, timeHi);
+            intervals.clear();
+            if (Chars.indexOf(timeSink, '[') < 0) {
+                parseExpandedInterval(timestampDriver, timeSink, errorPos, intervals, IntervalOperation.INTERSECT, true, 0);
+                return;
+            }
+            final StringSink expansionSink = sinks.next();
+            try {
+                expandBracketsRecursive(
+                        timestampDriver,
+                        configuration,
+                        0,
+                        timeSink,
+                        0,
+                        timeSink.length(),
+                        timeSink.length(),
+                        errorPos,
+                        intervals,
+                        IntervalOperation.INTERSECT,
+                        expansionSink,
+                        0,
+                        true,
+                        0,
+                        null,
+                        null,
+                        -1,
+                        -1
+                );
+            } finally {
+                sinks.release(expansionSink);
+            }
+        } finally {
+            intervals.clear();
+            sinks.release(timeSink);
         }
     }
 

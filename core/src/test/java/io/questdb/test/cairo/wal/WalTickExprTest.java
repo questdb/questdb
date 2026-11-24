@@ -157,8 +157,11 @@ public class WalTickExprTest extends AbstractCairoTest {
             // a range between two points in time ignores its duration, which still has to parse:
             // from 03:00 to 10:00 it would hold the rows of the first day. A range that starts
             // after it ends needs a timezone of its element that parses too: $today would hold
-            // the rows of the first day.
-            for (String bindValue : new String[]{BAD_ZONE, null, "$now..$now + 7h;1h#Tue", "[$tomorrow..$today@Bogus/Zone, $today]"}) {
+            // the rows of the first day. A point in time ignores the time part of the list, which
+            // still has to parse: 08:00 would hold the first row.
+            for (String bindValue : new String[]{
+                    BAD_ZONE, null, "$now..$now + 7h;1h#Tue", "[$tomorrow..$today@Bogus/Zone, $today]", "[$today + 8h]T[25:00]"
+            }) {
                 for (boolean isVarchar : new boolean[]{false, true}) {
                     // the interval scan
                     assertBindUpdateApplied("ts IN $1", bindValue, isVarchar, "11111");
@@ -230,6 +233,20 @@ public class WalTickExprTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T03:00:00.000000Z"));
             assertLegacyLiteralAppliesAsNull("[2024-01T[09:00,10:00], $today]T09:00");
+        });
+    }
+
+    @Test
+    public void testLegacyLiteralWithMalformedTimeOfPointInTimeAppliesAsNull() throws Exception {
+        // A WAL that an older build wrote can hold an UPDATE with a literal that SQL now parses on
+        // every evaluation and rejects as it compiles: an element that keeps its own time, under a
+        // time part of the list that does not parse. The apply keeps the table applying, and runs it
+        // as a null value. The literals selected the row at 09:00 on the day of the commit.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T03:00:00.000000Z"));
+            for (String tickExpr : new String[]{"[$today + 9h@+00:00]T[25:00]", "[$now + 6h..$now + 6h@+00:00]T25:00"}) {
+                assertLegacyLiteralAppliesAsNull(tickExpr);
+            }
         });
     }
 
@@ -311,6 +328,11 @@ public class WalTickExprTest extends AbstractCairoTest {
             assertUpdateRejected(token, "ts NOT IN '[$tomorrow..$today@Invalid/Zone]'", "invalid timezone: Invalid/Zone");
             assertUpdateRejected(token, "ts IN '[$tomorrow..$today#Xyz]T[09..10]:30'", "Invalid day name: Xyz");
             assertUpdateRejected(token, "ts2 NOT IN '[" + INVERTED_AT_0300 + "@Invalid/Zone]T[09..10]:30'", "invalid timezone: Invalid/Zone");
+            // an element that keeps its own time, under a time part of the list that does not parse:
+            // the literal selected the row at 08:00, or every other row
+            assertUpdateRejected(token, "ts IN '[$today + 8h@+00:00]T[25:00]'", "Invalid date: 2024-01-02T25:00");
+            assertUpdateRejected(token, "ts NOT IN '[$now + 5h..$now + 5h@+00:00]T25:00'", "Invalid date: 2024-01-02T25:00");
+            assertUpdateRejected(token, "ts2 IN '[$now + 5h]T[08..09]:99'", "Invalid date: 2024-01-02T08:99");
             assertUpdateRejected(token, "ts NOT IN '[$today..$now - 4h#Xyz]'", "Invalid day name: Xyz");
             assertUpdateRejected(token, "ts NOT IN '[$tomorrow..$today@+02:00@UTC]'", "Invalid date: 2024-01-03@+02:00");
             for (String sql : new String[]{

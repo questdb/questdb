@@ -281,6 +281,31 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeLiteralWithMalformedTimeFailsCreateAndActsAsNullInRefresh() throws Exception {
+        // An element that keeps its own time ignores the time part of the list, which still has to
+        // parse: SQL rejects a view and a materialized view whose literal, one that it parses on
+        // every evaluation, has a time part that does not parse, as it creates them. An older build
+        // created them, so a stored definition can hold such a literal: the database starts with it,
+        // a refresh runs it as a null value and keeps the materialized view valid, where it selected
+        // the rows of the element, and a query of the view fails on it. A refresh resolves $now
+        // against the "now" of its context, see testRowValueDateVariableResolvesLikeLiteral, so the
+        // hour after each "now" that it can resolve to, the clock and the start of the epoch, has a
+        // row. With a time part that parses, the views hold the hour after "now".
+        assertLiteralFailsCreateAndActsAsNullInRefresh(
+                """
+                        ('1970-01-01T00:30:00.000000Z', 1),
+                        ('2024-01-02T03:30:00.000000Z', 1),
+                        ('2024-01-02T09:00:00.000000Z', 1)
+                        """,
+                new String[]{"[$now..$now + 1h@+00:00]T[25:00]", "[$now@+00:00, $now..$now + 1h]T25:00"},
+                "[$now..$now + 1h@+00:00]T[10:00]",
+                "2024-01-02T03:30:00.000000Z\t1",
+                new String[]{"[$now..$now + 1h@+00:00]T[25:00]", "[$now@+00:00, $now..$now + 1h]T25:00"},
+                "Invalid date: 2024-01-02T25:00"
+        );
+    }
+
+    @Test
     public void testPointInTimeRangeLiteralWithMalformedDurationFailsCreateAndActsAsNullInRefresh() throws Exception {
         // A range between two points in time ignores its duration, which still has to parse: SQL
         // rejects a view and a materialized view whose literal has a duration that does not parse as
