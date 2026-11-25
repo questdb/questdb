@@ -156,7 +156,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
 
-            final int dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
+            final int dims = ColumnType.decodeKnownArrayDimensionality(arrayArg.getType());
             if (dims > 0 && dim > dims) {
                 throw SqlException.position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
@@ -239,10 +239,10 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             // init() is for. Decoding a compile-time snapshot here would read -1 dimensions and reject
             // every index. arrayColumnType above stays a snapshot because it is only read on the
             // arrayColumnIndex >= 0 fast path, where the arg is a plain column whose type is final.
-            this.dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
+            this.dims = ColumnType.decodeKnownArrayDimensionality(arrayArg.getType());
             // getInt()'s fast path hands dim to an unchecked shape read, so it may only run once dim
-            // has been bounds-checked against a real dimensionality. decodeWeakArrayDimensionality
-            // yields -1 for weak dims and 0 for a NULL type, either of which disables that check - so
+            // has been bounds-checked against a real dimensionality. decodeKnownArrayDimensionality
+            // yields -1 for weak dims and for a bind variable bound to NULL, which disables that check - so
             // the fast path is only sound while a plain array column always decodes to dims >= 1.
             assert arrayColumnIndex < 0 || dims > 0
                     : "array column with no concrete dimensionality: " + ColumnType.nameOf(arrayArg.getType());

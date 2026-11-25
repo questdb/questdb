@@ -26,15 +26,19 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -42,10 +46,14 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
 
@@ -1324,6 +1332,78 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-26T00:00:00.000000Z\t147.5
                             2025-06-27T00:00:00.000000Z\t1045.0
                             """);
+        });
+    }
+
+    @Test
+    public void testArrayFunctionsOfNullArrayBindVariable() throws Exception {
+        final String[] expressions = {
+                "$1 + ARRAY[1.0, 2.0]",
+                "ARRAY[1.0, 2.0] + $1",
+                "$1 - ARRAY[1.0, 2.0]",
+                "$1 * ARRAY[1.0, 2.0]",
+                "$1 / ARRAY[1.0, 2.0]",
+                "transpose($1) + transpose($1)",
+                "transpose($1) - transpose($1)",
+                "transpose($1) * transpose($1)",
+                "transpose($1) / transpose($1)",
+                "array_position($1, 1.0)",
+                "array_position($1, null)",
+                "array_position($1, x::double)",
+                "insertion_point($1, 1.0)",
+                "insertion_point($1, 1.0, true)",
+                "dot_product($1, ARRAY[1.0, 2.0])",
+                "dot_product(ARRAY[1.0, 2.0], $1)",
+                "matmul($1, ARRAY[[1.0], [2.0]])",
+                "matmul(ARRAY[[1.0, 2.0]], $1)",
+                "l2price(1.0, $1, ARRAY[1.0, 2.0])",
+                "l2price(1.0, ARRAY[1.0, 2.0], $1)",
+                "array_elem_sum($1, ARRAY[1.0, 2.0])",
+                "dim_length($1, 1)",
+                "dim_length($1, x::int)",
+        };
+        assertMemoryLeak(() -> {
+            for (String expression : expressions) {
+                final String sql = "SELECT " + expression + " v FROM long_sequence(1)";
+                bindVariableService.clear();
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .assertsPlanContaining("long_sequence count: 1");
+                final String[] expected = {
+                        print(expression.replace("$1", "null::double[]")),
+                        print(expression.replace("$1", "ARRAY[1.0, 2.0]")),
+                };
+                bindVariableService.clear();
+                try (
+                        RecordCursorFactory factory = select("SELECT " + expression + " v FROM long_sequence(1)");
+                        DirectArray array = newDoubleArray(2)
+                ) {
+                    for (int i = 0; i < 3; i++) {
+                        bindVariableService.setArray(0, i == 1 ? array : null);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            sink.clear();
+                            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                            TestUtils.assertEquals(expression, expected[i % 2], sink);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayFunctionsRejectBoundArrayOfWrongDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            assertBoundArrayRejected("array_position($1, 1.0)", 2, "array is not one-dimensional");
+            assertBoundArrayRejected("array_position($1, null)", 2, "array is not one-dimensional");
+            assertBoundArrayRejected("array_position($1, x::double)", 2, "array is not one-dimensional");
+            assertBoundArrayRejected("insertion_point($1, 1.0)", 2, "array is not one-dimensional");
+            assertBoundArrayRejected("insertion_point($1, 1.0, true)", 2, "array is not one-dimensional");
+            assertBoundArrayRejected("l2price(1.0, $1, ARRAY[1.0, 2.0])", 2, "not a one-dimensional array");
+            assertBoundArrayRejected("l2price(1.0, ARRAY[1.0, 2.0], $1)", 2, "not a one-dimensional array");
+            assertBoundArrayRejected("matmul($1, ARRAY[[1.0], [2.0]])", 3, "left array is not one or two-dimensional");
+            assertBoundArrayRejected("matmul(ARRAY[[1.0, 2.0]], $1)", 3, "right array is not one or two-dimensional");
+            assertBoundArrayRejected("dot_product($1, ARRAY[1.0, 2.0])", 2, "arrays have different number of dimensions");
         });
     }
 
@@ -3534,6 +3614,13 @@ public class ArrayTest extends AbstractCairoTest {
                             product
                             [[8.0],[14.0],[20.0]]
                             """);
+            assertQuery("SELECT matmul(ARRAY[1.0, 2.0], ARRAY[[1.0], [2.0]]) AS product, matmul(ARRAY[[1.0], [2.0]], ARRAY[3.0]) AS product2 FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            product\tproduct2
+                            [[5.0]]\t[[3.0],[6.0]]
+                            """);
         });
     }
 
@@ -5177,11 +5264,57 @@ public class ArrayTest extends AbstractCairoTest {
         }
     }
 
+    private static DirectArray newDoubleArray(int... shape) {
+        final DirectArray array = new DirectArray(configuration);
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.length));
+        int length = 1;
+        for (int d = 0; d < shape.length; d++) {
+            array.setDimLen(d, shape[d]);
+            length *= shape[d];
+        }
+        array.applyShape();
+        final MemoryA mem = array.startMemoryA();
+        for (int i = 0; i < length; i++) {
+            mem.putDouble(i + 1);
+        }
+        return array;
+    }
+
+    private void assertBoundArrayRejected(String expression, int dims, String message) throws Exception {
+        final String sql = "SELECT " + expression + " v FROM long_sequence(1)";
+        bindVariableService.clear();
+        final int[] shape = new int[dims];
+        Arrays.fill(shape, 1);
+        try (
+                RecordCursorFactory factory = select(sql);
+                DirectArray array = newDoubleArray(shape)
+        ) {
+            bindVariableService.setArray(0, array);
+            try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                Assert.fail(expression);
+            } catch (SqlException e) {
+                TestUtils.assertContains(expression, e.getFlyweightMessage(), message);
+                Assert.assertEquals(expression, sql.indexOf("$1"), e.getPosition());
+            }
+        }
+    }
+
     private void assertSubArray(String expr, String expected) throws Exception {
         assertQuery("SELECT " + expr + " x FROM tango")
                 .noLeakCheck()
                 .expectSize()
                 .returns("x\n" + expected + '\n');
+    }
+
+    private String print(String expression) throws Exception {
+        final StringSink out = new StringSink();
+        try (
+                RecordCursorFactory factory = select("SELECT " + expression + " v FROM long_sequence(1)");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), out);
+        }
+        return out.toString();
     }
 
     private void testLengthOverParquetOneDimension(boolean rawArrayEncoding) throws Exception {

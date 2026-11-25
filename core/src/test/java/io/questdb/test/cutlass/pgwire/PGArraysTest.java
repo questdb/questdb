@@ -185,6 +185,25 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindFunctionsWithNullArray() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT array_position(?, 1.0) p, insertion_point(?, 1.0) i, matmul(?, ARRAY[[1.0], [2.0]]) m, l2price(1.0, ?, ARRAY[1.0, 2.0]) l, ? + ARRAY[1.0, 2.0] s"
+            )) {
+                for (int i = 0; i < 2; i++) {
+                    for (int p = 1; p <= 5; p++) {
+                        stmt.setArray(p, null);
+                    }
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet("p[INTEGER],i[INTEGER],m[ARRAY],l[DOUBLE],s[ARRAY]\nnull,null,null,null,null\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayBindNullPercentiles() throws Exception {
         // a NULL percentile list fails like a NULL percentile does, rather than yielding {}
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {

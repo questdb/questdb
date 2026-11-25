@@ -254,6 +254,17 @@ public final class ColumnType {
     }
 
     /**
+     * Returns the number of dimensions of the given type, or -1 when it is not an array of known dimensionality: an
+     * array bind variable with weak dimensionality, or one bound to NULL.
+     */
+    public static int decodeKnownArrayDimensionality(int encodedType) {
+        if (!isArray(encodedType) || (encodedType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0) {
+            return -1;
+        }
+        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+    }
+
+    /**
      * Returns the number of dimensions for the given array type or -1 in case of an array with weak dimensionality,
      * e.g. array type of bind variable.
      */

@@ -132,9 +132,9 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (dimsLeft != dimsRight) {
+            final int dimsLeft = ColumnType.decodeKnownArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeKnownArrayDimensionality(rightArg.getType());
+            if (dimsLeft > 0 && dimsRight > 0 && dimsLeft != dimsRight) {
                 throw SqlException.position(leftArgPos)
                         .put("arrays have different number of dimensions [dimsLeft=").put(dimsLeft)
                         .put(", dimsRight=").put(dimsRight).put(']');

@@ -157,7 +157,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         MultiArgFunction.super.init(symbolTableSource, executionContext);
         int resolvedDims = 0;
         for (int i = 0, n = args.size(); i < n; i++) {
-            int d = ColumnType.decodeWeakArrayDimensionality(args.getQuick(i).getType());
+            int d = ColumnType.decodeKnownArrayDimensionality(args.getQuick(i).getType());
             if (d > 0) {
                 resolvedDims = d;
                 break;

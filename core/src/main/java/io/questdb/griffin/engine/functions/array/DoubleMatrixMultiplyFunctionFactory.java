@@ -92,6 +92,12 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 this.leftArgPos = leftArgPos;
                 this.rightArgPos = rightArgPos;
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+                if (ColumnType.decodeKnownArrayDimensionality(leftArg.getType()) == 1) {
+                    leftDerived = new DerivedArrayView();
+                }
+                if (ColumnType.decodeKnownArrayDimensionality(rightArg.getType()) == 1) {
+                    rightDerived = new DerivedArrayView();
+                }
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -177,15 +183,15 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            final int dimsLeft = ColumnType.decodeKnownArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeKnownArrayDimensionality(rightArg.getType());
             if (dimsLeft == 1) {
                 if (leftDerived == null) {
                     leftDerived = new DerivedArrayView();
                 }
             } else if (dimsLeft == 2) {
                 leftDerived = null;
-            } else {
+            } else if (dimsLeft > 2) {
                 throw SqlException.position(leftArgPos).put("left array is not one or two-dimensional");
             }
 
@@ -195,7 +201,7 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 }
             } else if (dimsRight == 2) {
                 rightDerived = null;
-            } else {
+            } else if (dimsRight > 2) {
                 throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
             }
         }

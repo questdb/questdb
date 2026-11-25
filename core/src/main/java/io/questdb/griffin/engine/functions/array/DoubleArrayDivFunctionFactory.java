@@ -168,12 +168,15 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
-            arrayOut.setType(type);
-
-            validateAssignedType();
+            final int dims = Math.max(
+                    ColumnType.decodeKnownArrayDimensionality(leftArg.getType()),
+                    ColumnType.decodeKnownArrayDimensionality(rightArg.getType())
+            );
+            if (dims > 0) {
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dims);
+                arrayOut.setType(type);
+                validateAssignedType();
+            }
         }
 
         @Override
