@@ -87,6 +87,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -116,6 +117,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             k1\tS5\t2022-02-26T01:52:00.000000Z
             k1\tS4\t2022-02-26T03:02:00.000000Z
             """;
+    // The posting indexes the split-removal repair tests build: one without covered columns, and one that covers
+    // a fixed-size and a var-size column.
+    private static final String[] SPLIT_REMOVAL_INDEX_CLAUSES = {"POSTING", "POSTING INCLUDE (v, vc)"};
 
     @Test
     public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsAllVarSizeWal() throws Exception {
@@ -19866,6 +19870,109 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitRemovalRepairMovesWholeParentIntoLastPartitionWal() throws Exception {
+        // Every row of the parent shares one timestamp, so the repair cannot carve a single line off it: it
+        // moves the whole parent into a fresh partition. The emptied split is the last partition and holds more
+        // rows than the parent, so the fresh partition takes its place as the last one with fewer rows than the
+        // writer's transient row count still names.
+        setSplitRemovalRepairProperties();
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < SPLIT_REMOVAL_INDEX_CLAUSES.length; i++) {
+                final String table = "t_split_whole_parent_" + i;
+                execute("""
+                        CREATE TABLE %s AS (
+                            SELECT CASE WHEN x = 18_000 THEN 'last' ELSE 'k' || (x %% 4) END::SYMBOL sym,
+                                x v,
+                                ('vc' || x)::VARCHAR vc,
+                                CASE WHEN x <= 18_000 THEN '2024-01-01'::TIMESTAMP
+                                    ELSE dateadd('s', (x - 18_001)::INT, '2024-01-01T05:00:00'::TIMESTAMP) END ts
+                            FROM long_sequence(20_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """.formatted(table));
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE " + SPLIT_REMOVAL_INDEX_CLAUSES[i]);
+                drainWalQueue();
+                // An O3 write at 04:00 cuts the rows from 05:00 off into a split.
+                execute("""
+                        INSERT INTO %s
+                        SELECT 'k0', x + 100_000, ('o3_' || x)::VARCHAR, timestamp_sequence('2024-01-01T04:00:00', 1_000L)
+                        FROM long_sequence(200)
+                        """.formatted(table));
+                drainWalQueue();
+                // In-order rows grow the split, the last partition, past the parent.
+                execute("""
+                        INSERT INTO %s
+                        SELECT 'k2', x + 200_000, ('grow_' || x)::VARCHAR, timestamp_sequence('2024-01-01T06:00:00', 100_000L)
+                        FROM long_sequence(30_000)
+                        """.formatted(table));
+                drainWalQueue();
+                assertQuery("SELECT name, numRows FROM table_partitions('" + table + "')")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01\t18000
+                                2024-01-01T000000-000001\t32200
+                                """);
+
+                replaceFromOnlySplitWithNoRows(table);
+
+                assertQuery("SELECT name, numRows FROM table_partitions('" + table + "')")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01\t18000
+                                """);
+                assertSplitRemovalRepairIndex(table, i, "2024-01-01T00:00:00.000000Z");
+            }
+        });
+    }
+
+    @Test
+    public void testSplitRemovalRepairOfLastPartitionWal() throws Exception {
+        // testSplitRemovalRepairBuildsCoveredSidecarWal without the row in a later day: the emptied split is the
+        // last partition, so the fresh split that takes the parent's last row becomes the last partition. Its
+        // index reseal runs before the writer's transient row count, which still names the emptied split's rows,
+        // catches up with the fresh split's single row.
+        setSplitRemovalRepairProperties();
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < SPLIT_REMOVAL_INDEX_CLAUSES.length; i++) {
+                final String table = "t_split_last_" + i;
+                execute("""
+                        CREATE TABLE %s AS (
+                            SELECT CASE WHEN x = 18_000 THEN 'last' ELSE 'k' || (x %% 4) END::SYMBOL sym,
+                                x v,
+                                ('vc' || x)::VARCHAR vc,
+                                timestamp_sequence('2024-01-01', 1_000_000L) ts
+                            FROM long_sequence(20_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """.formatted(table));
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE " + SPLIT_REMOVAL_INDEX_CLAUSES[i]);
+                drainWalQueue();
+                // An O3 write well inside the day cuts the rows from 05:00 off into a split.
+                execute("""
+                        INSERT INTO %s
+                        SELECT 'k0', x + 100_000, ('o3_' || x)::VARCHAR, timestamp_sequence('2024-01-01T05:00:00', 1_000L)
+                        FROM long_sequence(200)
+                        """.formatted(table));
+                drainWalQueue();
+
+                replaceFromOnlySplitWithNoRows(table);
+
+                assertQuery("SELECT name, numRows FROM table_partitions('" + table + "')")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01\t17999
+                                2024-01-01T045958-000001\t1
+                                """);
+                assertSplitRemovalRepairIndex(table, i, "2024-01-01T04:59:59.000000Z");
+            }
+        });
+    }
+
+    @Test
     public void testStringPageFrameDataCorrectness() throws Exception {
         // STRING columns also go through the page frame path now
         assertMemoryLeak(() -> {
@@ -21673,6 +21780,32 @@ public class CoveringIndexTest extends AbstractCairoTest {
         return mem == null ? -1 : mem.size();
     }
 
+    /**
+     * Commits a replace of everything from the table's only split up, with no rows: the split, the last
+     * partition, loses every row, and the writer repairs the removal from the split's parent.
+     */
+    private static void replaceFromOnlySplitWithNoRows(String table) throws Exception {
+        final TableToken tableToken = engine.verifyTableName(table);
+        final long splitTs;
+        try (TableReader reader = engine.getReader(tableToken)) {
+            Assert.assertEquals("the O3 write did not split the day", 2, reader.getTxFile().getPartitionCount());
+            splitTs = reader.getTxFile().getPartitionTimestampByIndex(1);
+        }
+        try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+            walWriter.commitWithParams(splitTs, Long.MAX_VALUE, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+        drainWalQueue();
+        Assert.assertFalse("the replace commit suspended " + table, engine.getTableSequencerAPI().isSuspended(tableToken));
+    }
+
+    private static void setSplitRemovalRepairProperties() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1_000);
+        // Merge-append would rewrite the day in place instead of splitting it.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
+
     private static long sidecarFileLengthOnDisk(Path basePath, CharSequence name, int includeIdx) {
         int len = basePath.size();
         try {
@@ -21771,6 +21904,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    private void assertLastRows(String sql, boolean isCovering, String plan, String expected) throws Exception {
+        // The covering factory reads the covered values from the index: it knows its size and offers no
+        // random access.
+        final QueryAssertion assertion = assertQuery(sql).timestamp("ts").withPlanContaining(plan);
+        if (isCovering) {
+            assertion.noRandomAccess().expectSize();
+        }
+        assertion.returns(expected);
+    }
+
     private void assertNullPrefixQueryOpensNoColumnMappings(String query, String expected) throws Exception {
         final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
         ff = counter;
@@ -21867,6 +22010,53 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .assertsPlanNotContaining("CoveringIndex");
             assertSqlCursors(sql.replace("SELECT ", "SELECT /*+ no_index */ "), sql);
         }
+    }
+
+    /**
+     * Checks the posting index of a table that a split-removal repair left with the row 'last' at lastTs in its
+     * new last partition, then appends a row to that partition and checks that the index takes it.
+     */
+    private void assertSplitRemovalRepairIndex(String table, int clauseIndex, String lastTs) throws Exception {
+        final boolean isCovering = SPLIT_REMOVAL_INDEX_CLAUSES[clauseIndex].contains("INCLUDE");
+        final String plan = isCovering ? "CoveringIndex" : "Index forward scan on: sym";
+        final String lastSql = "SELECT sym, v, vc, ts FROM " + table + " WHERE sym = 'last'";
+        assertLastRows(lastSql, isCovering, plan, """
+                sym\tv\tvc\tts
+                last\t18000\tvc18000\t%s
+                """.formatted(lastTs));
+        // The first symbol of the table, 'k1', has key 0, the key a row past the end of a column file reads as.
+        // The rows left are x in [1, 18_000], and x % 4 = 1 for 4_500 of them, from 1 to 17_997.
+        final String k1Sql = "SELECT count(), min(v), max(v) FROM " + table + " WHERE sym = 'k1'";
+        assertQuery(k1Sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining(plan)
+                .returns("""
+                        count\tmin\tmax
+                        4500\t1\t17997
+                        """);
+        for (String sql : new String[]{lastSql, k1Sql, "SELECT sym, count() FROM " + table + " WHERE sym IN ('k0', 'k1', 'k2', 'k3', 'last') ORDER BY sym"}) {
+            assertSqlCursors(sql.replace("SELECT ", "SELECT /*+ no_index */ "), sql);
+        }
+
+        execute("INSERT INTO " + table + " VALUES ('last', 300_000, 'appended', '2024-01-01T07:00:00')");
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(table)));
+        assertLastRows(lastSql, isCovering, plan, """
+                sym\tv\tvc\tts
+                last\t18000\tvc18000\t%s
+                last\t300000\tappended\t2024-01-01T07:00:00.000000Z
+                """.formatted(lastTs));
+        // The appended row takes the row id past the repaired rows, which an index built over the removed
+        // split's row count would have given to 'k1'.
+        assertQuery(k1Sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining(plan)
+                .returns("""
+                        count\tmin\tmax
+                        4500\t1\t17997
+                        """);
     }
 
     /**

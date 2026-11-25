@@ -99,6 +99,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private SqlExecutionResources executionResources;
     private CharSequence expiryMaterializingViewName;
     private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
@@ -331,6 +332,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public Decimal64 getDecimal64() {
         return decimal64;
+    }
+
+    @Override
+    public @Nullable SqlExecutionResources getExecutionResources() {
+        return executionResources;
     }
 
     @Override
@@ -753,6 +759,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setExecutionResources(@Nullable SqlExecutionResources resources) {
+        this.executionResources = resources;
+    }
+
+    @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
     }
@@ -987,6 +998,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         isViewMetadataSubquery = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
+        this.executionResources = null;
         this.memoryTracker = null;
         this.queryRegistryOwnerId = -1;
         // Defensive: a query reusing this per-connection context must never inherit a

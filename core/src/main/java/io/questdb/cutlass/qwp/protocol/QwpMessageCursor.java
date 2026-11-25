@@ -67,6 +67,8 @@ public class QwpMessageCursor implements Mutable {
     private long currentTableAddress;
     private int currentTableIndex;
     private boolean deltaSymbolDictEnabled;
+    // Where the first table block starts, past the delta symbol dictionary.
+    private long firstTableAddress;
     private boolean gorillaEnabled;
     // Message state
     private long payloadAddress;
@@ -91,6 +93,7 @@ public class QwpMessageCursor implements Mutable {
         tableCount = 0;
         currentTableIndex = -1;
         currentTableAddress = 0;
+        firstTableAddress = 0;
         gorillaEnabled = false;
         deltaSymbolDictEnabled = false;
         connectionSymbolDict = null;
@@ -202,12 +205,30 @@ public class QwpMessageCursor implements Mutable {
             currentTableAddress = parseDeltaSymbolDict(currentTableAddress);
         }
 
+        this.firstTableAddress = currentTableAddress;
         this.currentTableIndex = -1;
     }
 
     public void releaseCachedResources() {
         clear();
         tableBlockCursor.releaseCachedResources();
+    }
+
+    /**
+     * Goes back to the message's first table block: the next {@link #nextTable()} parses
+     * it again. The delta symbol dictionary is not parsed again; it stays applied to the
+     * connection's dictionary.
+     */
+    public void resetTableIteration() {
+        currentTableIndex = -1;
+        currentTableAddress = firstTableAddress;
+    }
+
+    /**
+     * Sets where table blocks keep each table's schema parse; null parses every block.
+     */
+    public void setSchemaCache(QwpSchemaCache schemaCache) {
+        tableBlockCursor.setSchemaCache(schemaCache);
     }
 
     /**
