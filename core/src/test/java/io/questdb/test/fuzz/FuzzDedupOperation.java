@@ -10,7 +10,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
-/** An empty key list disables dedup; otherwise it includes the designated timestamp. */
+/**
+ * An empty key list disables dedup; otherwise it includes the designated timestamp.
+ */
 public class FuzzDedupOperation implements FuzzTransactionOperation {
     private final IntList keys = new IntList();
 

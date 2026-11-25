@@ -20,7 +20,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
-/** An owned, replayable row snapshot. Symbols are captured as strings, never table-local IDs. */
+/**
+ * An owned, replayable row snapshot. Symbols are captured as strings, never table-local IDs.
+ */
 public class FuzzCopyRowOperation implements FuzzTransactionOperation {
     private final RecordChain chain;
     private final GenericRecordMetadata metadata;

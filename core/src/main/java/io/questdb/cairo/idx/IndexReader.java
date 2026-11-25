@@ -281,7 +281,9 @@ public interface IndexReader extends Closeable {
          */
         int find(long timestamp, long sourceRowRef);
 
-        /** Next output slot supplied by the same stored row, strictly after {@code after}. */
+        /**
+         * Next output slot supplied by the same stored row, strictly after {@code after}.
+         */
         default int findNext(long timestamp, long sourceRowRef, int after) {
             return -1;
         }
@@ -319,7 +321,9 @@ public interface IndexReader extends Closeable {
             return this != NONE;
         }
 
-        /** Whether this frame is exact, with each source row occurring at most once. */
+        /**
+         * Whether this frame is exact, with each source row occurring at most once.
+         */
         default boolean isExactRowCount() {
             return false;
         }

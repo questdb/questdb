@@ -192,7 +192,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return ((TableReaderMetadataColumn) columnMetadata.getQuick(columnIndex)).getDenseSymbolIndex();
     }
 
-    /** Resolve stable IDs through type changes that preceded Delta activation. */
+    /**
+     * Resolve stable IDs through type changes that preceded Delta activation.
+     */
     public int getHistoricalWriterIndex(int columnId, int columnType) {
         final MemoryR memory = getMetaMem();
         for (int writer = writerColumnCount - 1; writer >= 0; writer--) {
@@ -283,7 +285,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return writerColumnCount;
     }
 
-    /** Includes tombstoned columns, which can still be keys of historical Delta Runs. */
+    /**
+     * Includes tombstoned columns, which can still be keys of historical Delta Runs.
+     */
     public CharSequence getWriterColumnName(int writerIndex) {
         if (writerIndex < 0 || writerIndex >= writerColumnCount) {
             throw CairoException.critical(0).put("invalid historical writer column [index=").put(writerIndex).put(']');

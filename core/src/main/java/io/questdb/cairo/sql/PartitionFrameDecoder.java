@@ -36,7 +36,9 @@ import io.questdb.std.QuietCloseable;
  * logical subframes, then releases the window before the backing views.
  */
 public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietCloseable {
-    /** Supplies keys from a requested preceding base window; views are consumed synchronously. */
+    /**
+     * Supplies keys from a requested preceding base window; views are consumed synchronously.
+     */
     default void addBaseWindow(int windowIndex, long baseViewsAddress, int baseViewCount) {
         throw new UnsupportedOperationException();
     }
@@ -116,7 +118,9 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
             long memoryTrackerAddress
     );
 
-    /** Earlier base window needed to resolve a shared timestamp, or -1 when ready. */
+    /**
+     * Earlier base window needed to resolve a shared timestamp, or -1 when ready.
+     */
     default int requiredBaseWindow() {
         return -1;
     }

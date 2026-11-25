@@ -406,7 +406,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getDataVersion();
     }
 
-    /** Borrowed until the partition closes; never exposes tombstones as query columns. */
+    /**
+     * Borrowed until the partition closes; never exposes tombstones as query columns.
+     */
     public HistoricalColumn getHistoricalColumn(int partitionIndex, int columnId, int type) {
         for (int i = historicalColumns.size() - 1; i >= 0; i--) {
             final HistoricalColumn column = historicalColumns.getQuick(i);
@@ -2990,7 +2992,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public record HistoricalColumn(int partitionIndex, int columnId, MemoryCMR data, MemoryCMR aux, long top) implements Closeable {
+    public record HistoricalColumn(int partitionIndex, int columnId, MemoryCMR data, MemoryCMR aux,
+                                   long top) implements Closeable {
         @Override
         public void close() {
             Misc.free(data);

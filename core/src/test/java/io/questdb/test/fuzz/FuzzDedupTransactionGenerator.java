@@ -11,7 +11,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-/** Adds dedup/key/schema history and detached row copies to an insert-only transaction stream. */
+/**
+ * Adds dedup/key/schema history and detached row copies to an insert-only transaction stream.
+ */
 public class FuzzDedupTransactionGenerator {
     /**
      * Returns an independently owned stream. The caller must close both streams.
