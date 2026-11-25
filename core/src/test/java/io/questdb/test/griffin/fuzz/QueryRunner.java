@@ -914,7 +914,14 @@ public class QueryRunner {
         final String failureLabel = "concurrent cancellation after " + checksBeforeCancel + " checks";
         boolean armed = false;
         setTupleLayout(sql);
-        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+        // The owner keeps the compiler while it holds the factory, as runOnce() does: findAll()
+        // walks the plan, and a serial hash join prints the join context of its compile, which
+        // points into the compiler's pools. Another owner that took the released compiler would
+        // compile over that context.
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = engine.select(compiler, sql, executionContext)
+        ) {
             final ObjList<AsyncHashJoinRecordCursorFactory> joins = ParallelHashJoinTestUtils.findAll(factory, executionContext);
             if (joins.size() == 0) {
                 return Result.skipped("plan has no parallel hash join");
