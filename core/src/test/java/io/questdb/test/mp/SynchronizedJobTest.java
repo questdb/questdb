@@ -30,27 +30,29 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SynchronizedJobTest {
+    private static final int LOCK_WORD_CLEARANCE = 128;
 
     @Test
     public void testLockWordHasCacheLinesOfItsOwn() {
-        // the surefire argLine passes -XX:-RestrictContended, which lets HotSpot apply @Contended
-        // outside the JDK; it pads the field with 128 bytes on each side
-        final long lockedOffset = Unsafe.getFieldOffset(SynchronizedJob.class, "locked");
+        // HotSpot places subclass fields into 4-byte gaps in a superclass layout, and CountingJob's
+        // int field can fill such a gap; every field must still sit 128 bytes clear of the lock word,
+        // on either side of it
+        final long lockedOffset = lockWordOffset();
         Assert.assertTrue(
-                "lock word is not padded, is -XX:-RestrictContended missing? [offset=" + lockedOffset + ']',
-                lockedOffset >= 128
+                "lock word is not padded from the object start [offset=" + lockedOffset + ']',
+                lockedOffset >= LOCK_WORD_CLEARANCE
         );
-        final long subclassOffset = Unsafe.getFieldOffset(CountingJob.class, "runs");
-        Assert.assertTrue(
-                "subclass field shares the lock word's cache lines [lockedOffset=" + lockedOffset
-                        + ", subclassOffset=" + subclassOffset + ']',
-                subclassOffset - lockedOffset >= 128
-        );
+        for (Class<?> clazz : List.of(CountingJob.class, SynchronizedJob.class)) {
+            assertClearOfLockWord(clazz, lockedOffset);
+        }
     }
 
     @Test
@@ -99,6 +101,34 @@ public class SynchronizedJobTest {
         }
         Assert.assertTrue(job.run(Job.RUNNING_STATUS));
         Assert.assertEquals(1, job.runs);
+    }
+
+    private static void assertClearOfLockWord(Class<?> clazz, long lockedOffset) {
+        final long lockedEnd = lockedOffset + Long.BYTES;
+        for (Field field : clazz.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            final long offset = Unsafe.getFieldOffset(clazz, field.getName());
+            final long end = offset + Unsafe.arrayIndexScale(field.getType().arrayType());
+            Assert.assertTrue(
+                    "field shares the lock word's cache lines [field=" + clazz.getSimpleName() + '.' + field.getName()
+                            + ", offset=" + offset + ", lockedOffset=" + lockedOffset + ']',
+                    end <= lockedOffset - LOCK_WORD_CLEARANCE || offset >= lockedEnd + LOCK_WORD_CLEARANCE
+            );
+        }
+    }
+
+    // the lock word lives in a package-private superclass of SynchronizedJob
+    private static long lockWordOffset() {
+        for (Class<?> clazz = SynchronizedJob.class; clazz != null; clazz = clazz.getSuperclass()) {
+            for (Field field : clazz.getDeclaredFields()) {
+                if (field.getName().equals("locked")) {
+                    return Unsafe.getFieldOffset(clazz, "locked");
+                }
+            }
+        }
+        throw new AssertionError("SynchronizedJob has no lock word");
     }
 
     private static class CountingJob extends SynchronizedJob {

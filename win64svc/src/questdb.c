@@ -102,8 +102,7 @@ void buildJavaArgs(CONFIG *config) {
                       " --add-opens=java.base/java.lang.reflect=" QUESTDB_NATIVE_MODULES
                       " --add-opens=java.base/java.nio=" QUESTDB_NATIVE_MODULES
                       " --add-opens=java.base/java.time.zone=" QUESTDB_NATIVE_MODULES
-                      " --add-exports=java.base/jdk.internal.vm=" QUESTDB_NATIVE_MODULES
-                      " -XX:-RestrictContended";
+                      " --add-exports=java.base/jdk.internal.vm=" QUESTDB_NATIVE_MODULES;
 
     // put together classpath
 

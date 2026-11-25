@@ -369,7 +369,6 @@ function start {
     --add-opens=java.base/java.nio=io.questdb
     --add-opens=java.base/java.time.zone=io.questdb
     --add-exports=java.base/jdk.internal.vm=io.questdb
-    -XX:-RestrictContended
     ${PROFILER_AGENT}
     ${JVM_PREPEND}
     "
