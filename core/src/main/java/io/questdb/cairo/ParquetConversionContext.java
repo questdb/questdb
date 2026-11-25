@@ -180,11 +180,6 @@ public class ParquetConversionContext implements Closeable {
         return lastDecodedColumnCount;
     }
 
-    @TestOnly
-    public long getLastDecodedRowGroupBytes() {
-        return rowGroupBuffers.sumChunkBytes(0, lastDecodedColumnCount);
-    }
-
     public int getMemoryTag() {
         return memoryTag;
     }
@@ -215,7 +210,11 @@ public class ParquetConversionContext implements Closeable {
         return partitionUpdater;
     }
 
+    /**
+     * The decode buffers of a row group. {@link #releaseResources()} frees them, this reopens them.
+     */
     public RowGroupBuffers getRowGroupBuffers() {
+        rowGroupBuffers.reopen();
         return rowGroupBuffers;
     }
 
@@ -244,8 +243,19 @@ public class ParquetConversionContext implements Closeable {
     }
 
     /**
+     * Frees the decode buffers; their getters reopen them. The buffers grow to the
+     * largest decode and never shrink: a merge of a long run of rows that share a
+     * timestamp decodes many row groups at once, and a worker that kept them would
+     * hold that memory for good.
+     */
+    public void releaseDecodeBuffers() {
+        Misc.free(rowGroupBuffers);
+    }
+
+    /**
      * Releases native handles and file descriptors that borrow from the current
-     * parquet mappings while retaining the Java scratch containers for reuse.
+     * parquet mappings, and frees the decode buffers, while retaining the Java
+     * scratch containers for reuse.
      */
     public void releaseResources() {
         if (partitionDecoder != null) {
@@ -254,6 +264,7 @@ public class ParquetConversionContext implements Closeable {
         if (partitionUpdater != null) {
             partitionUpdater.close();
         }
+        releaseDecodeBuffers();
     }
 
     void setLastDecodedColumnCount(int lastDecodedColumnCount) {

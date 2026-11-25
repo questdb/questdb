@@ -345,8 +345,8 @@ public class HashJoinGroupByBuildStageTest extends AbstractCairoTest {
                     } catch (TableReferenceOutOfDateException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "table schema has changed [table=u]");
                     }
-                    // A context that tolerates the change, such as a queued export's, keeps the
-                    // compile-time choice and runs to the same result.
+                    // A context that tolerates the change keeps the compile-time choice and runs
+                    // to the same result.
                     Assert.assertEquals(expected, result(factory, tolerant));
                     Assert.assertEquals(expected, result(factory, tolerant));
                     Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());

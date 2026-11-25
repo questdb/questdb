@@ -154,9 +154,8 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *         frame) shapes (both default true). They share the join band with
  *         the ASOF/LT/SPLICE temporal joins, so enabling them splits that
  *         band rather than widening it; with both off the band is
- *         temporal-only and draws the original rnd stream. Their WHERE is
- *         master-side only, so the FUNCTION fault is woven there like the
- *         other shapes.</li>
+ *         temporal-only. Their WHERE is master-side only, so the FUNCTION
+ *         fault is woven there like the other shapes.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin=true|false} &mdash; generate
  *         equi-join GROUP BY shapes (an INNER, LEFT, RIGHT or FULL join on one
  *         or two of the shared key columns under a keyed or scalar aggregate),
@@ -885,8 +884,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "107"},
-                        {"questdb.fuzz.s1", "109"},
+                        {"questdb.fuzz.s0", "402"},
+                        {"questdb.fuzz.s1", "12469"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
@@ -920,8 +919,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "48514"},
-                        {"questdb.fuzz.s1", "630374"},
+                        {"questdb.fuzz.s0", "1082"},
+                        {"questdb.fuzz.s1", "33549"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
@@ -1012,15 +1011,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // as the parallel join axis compares the rows with the ordinary plan's. Frames of two rows leave
     // a short first read fewer frames to dispatch than the probe has. One query in twenty is an
     // equi-join, and one in about forty of those runs a form of an operator without a LIMIT under
-    // the rows a client reads first: the seed draws five such executions in 600 queries, where
+    // the rows a client reads first: the seed draws four such executions in 600 queries, where
     // most seeds draw none or one.
     @Test
     public void testParallelJoinFirstReadFormsAxis() throws Exception {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "600"},
-                        {"questdb.fuzz.s0", "17"},
-                        {"questdb.fuzz.s1", "27"},
+                        {"questdb.fuzz.s0", "502"},
+                        {"questdb.fuzz.s1", "15569"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
@@ -1042,8 +1041,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "600"},
-                        {"questdb.fuzz.s0", "99"},
-                        {"questdb.fuzz.s1", "100"},
+                        {"questdb.fuzz.s0", "205"},
+                        {"questdb.fuzz.s1", "6362"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
@@ -1067,8 +1066,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "31337"},
-                        {"questdb.fuzz.s1", "27182"},
+                        {"questdb.fuzz.s0", "604"},
+                        {"questdb.fuzz.s1", "18731"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "3"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "1"},
@@ -1101,8 +1100,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "600"},
-                        {"questdb.fuzz.s0", "99"},
-                        {"questdb.fuzz.s1", "100"},
+                        {"questdb.fuzz.s0", "308"},
+                        {"questdb.fuzz.s1", "9555"},
                         {FuzzConfig.STORAGE_PROP, "true"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "4"},
                 },
