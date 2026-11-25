@@ -136,15 +136,20 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                 if (eventSubSeq == null) {
                     throw busyException;
                 }
+                // On a WAL table the busy entry is a WAL writer: every pooled WAL writer of the table is in use. The
+                // fallback below would apply the operation through the table's TableWriter, outside the WAL. The
+                // sequencer would never learn of the change: a structural one fails the next WAL apply and suspends
+                // the table, and any other one lands ahead of the WAL transactions not applied yet, and is never
+                // replicated. Report the table busy instead; HTTP retries the statement, other clients can retry it.
+                // Only an operation that bypasses the WAL on purpose takes the fallback.
+                if (tableToken.isWal() && !forceWalBypass) {
+                    throw busyException;
+                }
                 fireAsyncEnqueueObserver();
-                // Demote write-fence for the async-enqueue fallback. The success path is fenced in
-                // applyFenced, but a WAL writer-pool exhaustion routes here: the enqueue applies the
-                // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
-                // no replicated sequencer txn for a WAL table, so on a demoting node the change is
-                // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
-                // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
-                // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
-                // role-switch-independent robustness gap is left for a dedicated fix.)
+                // Read-only fence for the async-enqueue fallback. The success path is fenced in applyFenced. The
+                // enqueue applies the operation through the legacy non-WAL writer pool (getWriterOrPublishCommand);
+                // re-check read-only before enqueuing so a lockdown or a demote that flipped the flag refuses
+                // cleanly instead.
                 //
                 // The eager check below is a fast-refuse optimization; the authoritative re-check runs
                 // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the
@@ -236,12 +241,12 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
      * The fence is a strict no-op for pure-OSS deployments: the read lock is uncontended and
      * isReadOnlyMode() returns the static read-only-instance flag, so the only cost is one uncontended
      * lock/unlock and one volatile read. The EntryUnavailableException async-queue branch in execute()
-     * is the writer-busy enqueue fallback. It is NOT only a non-WAL path: a WAL writer-pool exhaustion
-     * routes a WAL UPDATE here too, and the legacy enqueue applies it without minting a replicated
-     * sequencer txn, so on a demoting node it would be a silent acked-loss. That branch therefore
-     * carries its own read-only re-check under the same role-switch READ lock (see execute()),
-     * symmetric with this fence: the re-check and the enqueue are atomic against the flip's flag
-     * publish, refusing cleanly on a demote. The inline-apply success path is the one fenced here.
+     * is the writer-busy enqueue fallback. A WAL table takes it only for a force/WAL-bypass operation:
+     * a WAL writer-pool exhaustion reports the table busy instead, since the legacy enqueue mints no
+     * sequencer txn. That branch carries its own read-only re-check under the same role-switch READ
+     * lock (see execute()), symmetric with this fence: the re-check and the enqueue are atomic against
+     * the flip's flag publish, refusing cleanly on a demote. The inline-apply success path is the one
+     * fenced here.
      */
     private long applyFenced(T operation, TableWriterAPI writer, boolean forceWalBypass) {
         // An authorized force/WAL-bypass break-glass alter (a system-admin FORCE alter on a

@@ -26,8 +26,8 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
@@ -138,7 +138,8 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
                         }
                     }
                 } catch (SqlException | CairoException | ImplicitCastException e) {
-                    // QueryRunner skips the generated queries the engine rejects as well.
+                    // QueryRunner skips the generated queries the engine rejects as well, including
+                    // out-of-range casts such as a LONG constant that does not fit a DECIMAL.
                 }
             }
             final String counts = "symbol map: " + keptThroughSymbolMap + ", SymbolColumn: " + keptThroughSymbolColumn
