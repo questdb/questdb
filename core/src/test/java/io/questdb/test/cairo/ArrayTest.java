@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -1336,6 +1337,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayFunctionsForgetDimensionalityOfPreviousBind() throws Exception {
+        assertMemoryLeak(() -> {
+            final int weakArrayType = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
+            for (String expression : new String[]{"transpose($1) + transpose($1)", "array_elem_sum($1, $1)"}) {
+                bindVariableService.clear();
+                bindVariableService.define(0, weakArrayType, 0);
+                try (
+                        RecordCursorFactory factory = select("SELECT dim_length(" + expression + ", $2) v FROM long_sequence(1)");
+                        DirectArray array = newDoubleArray(2)
+                ) {
+                    bindVariableService.setArray(0, array);
+                    bindVariableService.setInt(1, 1);
+                    TestUtils.assertEquals(expression, "v\n2\n", printOrError(factory));
+                    bindVariableService.clear();
+                    bindVariableService.define(0, weakArrayType, 0);
+                    bindVariableService.setInt(1, 2);
+                    TestUtils.assertEquals(expression, "v\nnull\n", printOrError(factory));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayFunctionsOfNullArrayBindVariable() throws Exception {
         final String[] expressions = {
                 "$1 + ARRAY[1.0, 2.0]",
@@ -1385,6 +1409,58 @@ public class ArrayTest extends AbstractCairoTest {
                             CursorPrinter.println(cursor, factory.getMetadata(), sink);
                             TestUtils.assertEquals(expression, expected[i % 2], sink);
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayFunctionsOfSubqueryArrayBindVariable() throws Exception {
+        final String[] expressions = {
+                "a + ARRAY[1.0, 2.0]",
+                "ARRAY[1.0, 2.0] + a",
+                "a - ARRAY[1.0, 2.0]",
+                "ARRAY[1.0, 2.0] - a",
+                "a * ARRAY[1.0, 2.0]",
+                "ARRAY[1.0, 2.0] * a",
+                "a / ARRAY[1.0, 2.0]",
+                "ARRAY[1.0, 2.0] / a",
+                "array_position(a, 3.0)",
+                "array_position(a, null)",
+                "array_position(a, x::double)",
+                "insertion_point(a, 2.5)",
+                "insertion_point(a, 2.5, true)",
+                "l2price(1.0, a, ARRAY[1.0, 2.0])",
+                "l2price(1.0, ARRAY[1.0, 2.0], a)",
+                "matmul(a, ARRAY[[1.0], [2.0]])",
+                "matmul(ARRAY[[1.0, 2.0]], a)",
+                "dim_length(a, 2)",
+                "dim_length(a, x::int + 1)",
+                "array_elem_sum(a, ARRAY[1.0, 2.0])",
+                "array_elem_min(a, null::DOUBLE[])",
+                "array_elem_max(a, a)",
+                "array_elem_avg(a, a)",
+        };
+        final String[] literals = {
+                "ARRAY[1.0, 2.0]",
+                "ARRAY[[1.0, 2.0], [3.0, 4.0]]",
+                "ARRAY[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]",
+        };
+        final int[][] shapes = {{2}, {2, 2}, {2, 2, 2}};
+        assertMemoryLeak(() -> {
+            for (String expression : expressions) {
+                final String sql = "SELECT " + expression + " v FROM (SELECT $1 a, x FROM long_sequence(1))";
+                for (int i = 0; i < shapes.length; i++) {
+                    final String expected = printOrError(sql.replace("$1", literals[i]));
+                    bindVariableService.clear();
+                    bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+                    try (
+                            RecordCursorFactory factory = select(sql);
+                            DirectArray array = newDoubleArray(shapes[i])
+                    ) {
+                        bindVariableService.setArray(0, array);
+                        TestUtils.assertEquals(expression + " over " + literals[i], expected, printOrError(factory));
                     }
                 }
             }
@@ -1522,6 +1598,20 @@ public class ArrayTest extends AbstractCairoTest {
                             array_position\tarray_position1\tarray_position2\tarray_position3
                             5\t6\tnull\t1
                             """);
+            execute("CREATE TABLE strided (arr DOUBLE[][], v DOUBLE)");
+            execute("INSERT INTO strided VALUES (ARRAY[[1.0, 2.0], [null, 4.0]], null), (ARRAY[[null, 2.0], [3.0, 4.0]], null)");
+            assertQuery("""
+                    SELECT array_position(transpose(arr)[1], null) c1, array_position(transpose(arr)[2], null) c2,
+                        array_position(transpose(arr)[1], v) c1_runtime
+                    FROM strided
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c1\tc2\tc1_runtime
+                            2\tnull\t2
+                            1\tnull\t1
+                            """);
         });
     }
 
@@ -1542,6 +1632,21 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("array_position\n1\n");
+            execute("CREATE TABLE no_nan (arr DOUBLE[], v DOUBLE)");
+            execute("INSERT INTO no_nan VALUES (ARRAY[1.0, 2.0], null), (ARRAY[]::DOUBLE[], null), (null, null)");
+            assertQuery("SELECT array_position(arr, null) c, array_position(arr, v) c_runtime FROM no_nan")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\tc_runtime
+                            null\tnull
+                            null\tnull
+                            null\tnull
+                            """);
+            assertQuery("SELECT array_position(ARRAY[1.0, 2.0], null) c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nnull\n");
         });
     }
 
@@ -3562,6 +3667,17 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("l2\n1.5\n");
+            execute("CREATE TABLE book (sizes DOUBLE[][], prices DOUBLE[][])");
+            execute("INSERT INTO book VALUES (ARRAY[[1.0, 0.5], [3.0, 0.5]], ARRAY[[10.0, 0.0], [20.0, 0.0]])");
+            assertQuery("""
+                    SELECT l2price(2.0, transpose(sizes)[1], ARRAY[10.0, 20.0]) s,
+                        l2price(2.0, ARRAY[1.0, 3.0], transpose(prices)[1]) p,
+                        l2price(2.0, transpose(sizes)[1], transpose(prices)[1]) sp
+                    FROM book
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\tp\tsp\n15.0\t15.0\t15.0\n");
         });
     }
 
@@ -5315,6 +5431,24 @@ public class ArrayTest extends AbstractCairoTest {
             CursorPrinter.println(cursor, factory.getMetadata(), out);
         }
         return out.toString();
+    }
+
+    private String printOrError(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            return printOrError(factory);
+        } catch (SqlException e) {
+            return e.getPosition() + ": " + e.getFlyweightMessage();
+        }
+    }
+
+    private String printOrError(RecordCursorFactory factory) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final StringSink out = new StringSink();
+            CursorPrinter.println(cursor, factory.getMetadata(), out);
+            return out.toString();
+        } catch (SqlException | CairoException e) {
+            return e.getPosition() + ": " + e.getFlyweightMessage();
+        }
     }
 
     private void testLengthOverParquetOneDimension(boolean rawArrayEncoding) throws Exception {

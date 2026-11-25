@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -86,6 +87,9 @@ public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory
             ArrayView arr = arrayArg.getArray(rec);
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
+            }
+            if (arr.getDimCount() != 1) {
+                throw CairoException.nonCritical().position(arrayArgPos).put("array is not one-dimensional");
             }
             boolean ahead = aheadEqual.getBool(rec);
             int index = arr.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), ahead);

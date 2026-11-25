@@ -3098,7 +3098,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             } catch (TextImportException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
             }
-            Assert.assertNull(engine.getTableTokenIfExists("t"));
+            final TableToken token = engine.lockTableName("t");
+            Assert.assertNotNull(token);
+            engine.unlockTableName(token);
         }
     }
 

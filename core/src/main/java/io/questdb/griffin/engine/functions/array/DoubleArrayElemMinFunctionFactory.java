@@ -52,12 +52,12 @@ public class DoubleArrayElemMinFunctionFactory implements FunctionFactory {
         int resolvedDims = AbstractDoubleArrayElemFunction.validateArgsAndResolveDims(
                 position, args, argPositions, "array_elem_min"
         );
-        return new Func(configuration, new ObjList<>(args), resolvedDims);
+        return new Func(configuration, new ObjList<>(args), resolvedDims, position);
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
-        Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
-            super(configuration, args, resolvedDims);
+        Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims, int position) {
+            super(configuration, args, resolvedDims, position);
         }
 
         @Override

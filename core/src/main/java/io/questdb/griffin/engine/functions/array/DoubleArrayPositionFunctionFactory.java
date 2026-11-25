@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -75,12 +76,19 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         return new ArrayIndexOfFunc(arrayArg, arrayArgPos, valueArg);
     }
 
+    private static void checkOneDimensional(ArrayView array, int position) {
+        if (array.getDimCount() != 1) {
+            throw CairoException.nonCritical().position(position).put("array is not one-dimensional");
+        }
+    }
+
     private static int linearSearchNaN(ArrayView array) {
         if (array.isNull() || array.isEmpty()) {
             return Numbers.INT_NULL;
         }
-        for (int i = 0, dimLen = array.getDimLen(0); i < dimLen; i++) {
-            if (Numbers.isNull(array.getDouble(i))) {
+        final int stride = array.getStride(0);
+        for (int i = 0, index = 0, n = array.getDimLen(0); i < n; i++, index += stride) {
+            if (Numbers.isNull(array.getDouble(index))) {
                 return i;
             }
         }
@@ -125,6 +133,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (array.isNull()) {
                 return Numbers.INT_NULL;
             }
+            checkOneDimensional(array, arrayArgPos);
             double value = valueArg.getDouble(rec);
             int index = Numbers.isNull(value) ? linearSearchNaN(array) : linearSearchValue(array, value);
             return Numbers.INT_NULL == index ? Numbers.INT_NULL : index + 1;
@@ -176,6 +185,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
+            checkOneDimensional(arr, arrayArgPos);
             int pos = linearSearchValue(arr, value);
             return Numbers.INT_NULL == pos ? Numbers.INT_NULL : pos + 1;
         }
@@ -214,7 +224,9 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return linearSearchNaN(arr) + 1;
+            checkOneDimensional(arr, arrayArgPos);
+            final int pos = linearSearchNaN(arr);
+            return Numbers.INT_NULL == pos ? Numbers.INT_NULL : pos + 1;
         }
 
         @Override
