@@ -57,7 +57,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -321,18 +320,41 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquet() throws Exception {
-        runConvertPartitionToParquetFuzz(generateRandom(LOG), null, true);
-    }
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        setRndParquetRewriteGate(rnd);
 
-    @Test
-    public void testConvertPartitionToParquetAppendsNonAsciiVarcharInPlace() throws Exception {
-        // Pins the run that showed an in-place update of a Parquet partition keeping the ASCII flag of a
-        // VARCHAR column that had just received a non-ASCII value. The next rewrite of the partition
-        // corrected the flag, so only a reader that scans the table between the two sees it. The run
-        // takes that path under the ASYNC commit mode, and without the replace commits and the random
-        // rewrite gate that came later: with them the seed makes another run.
-        runConvertPartitionToParquetFuzz(generateRandom(LOG, 3176735989029557L, 1795001355429L), "async", false);
-        Assert.assertEquals(CommitMode.ASYNC, engine.getConfiguration().getCommitMode());
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
+                0.0,
+                0.05, // setTtlProb: rare, for the same reason; replace also stops at the SET TTL iteration
+                0.1, // replaceProb
+                0,
+                0.1,
+                0.1,
+                0.01, // addCoveringIndexProb
+                0.1 // SET FORMAT PARQUET|NATIVE probability
+        );
+        // Several days, so CONVERT PARTITION reaches days behind the active one too.
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        fuzzer.setScanningTablesDuringParallelApply(true);
+        runParquetFuzz(rnd, false);
     }
 
     /**
@@ -1511,51 +1533,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     // runs they pin.
     private void replayPinnedSeedsWithoutVacuum() {
         fuzzer.setVacuumProbability(0);
-    }
-
-    // commitMode, when given, pins the commit mode of the run; setTestParams() can restart the test setup, which
-    // gives the engine the commit mode of the fuzz test class, so it is set after. hasReplace adds replace commits
-    // and a random parquet rewrite gate.
-    private void runConvertPartitionToParquetFuzz(Rnd rnd, @Nullable String commitMode, boolean hasReplace) throws Exception {
-        setTestParams(rnd);
-        if (commitMode != null) {
-            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        }
-        if (hasReplace) {
-            setRndParquetRewriteGate(rnd);
-        }
-
-        setFuzzProbabilities(
-                0.01,
-                0.01,
-                0.01,
-                0.1,
-                0.05,
-                0.05,
-                0.1,
-                0.1,
-                1.0,
-                0.01,
-                0.01,
-                0.5,
-                0.5,
-                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
-                0.0,
-                0.05, // setTtlProb: rare, for the same reason; replace also stops at the SET TTL iteration
-                hasReplace ? 0.1 : 0.0, // replaceProb
-                0,
-                0.1,
-                0.1,
-                0.01, // addCoveringIndexProb
-                0.1 // SET FORMAT PARQUET|NATIVE probability
-        );
-        // Several days, so CONVERT PARTITION reaches days behind the active one too.
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
-        setFuzzProperties(rnd);
-        setRndConvertedDayShapeProperties(rnd, fuzzer);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
-        fuzzer.setScanningTablesDuringParallelApply(true);
-        runParquetFuzz(rnd, false);
     }
 
     private void runConvertSplitAndCompositeNoSentinelWideningFuzz(Rnd rnd) throws Exception {

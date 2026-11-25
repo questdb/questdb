@@ -3911,6 +3911,9 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // Replays the steps of the WalWriterFuzzTest.testConvertPartitionToParquet run that found the stale flag:
+    // CONVERT PARTITION TO PARQUET, ADD COLUMN VARCHAR, a commit that rewrites the partition with ASCII values
+    // in the new column, then 41 O3 rows with non-ASCII values that go in place as new row groups, and a read.
     private void testVarcharAsciiFlagOnInPlaceAppendToAddedColumn(String walMode, String gapValue) throws Exception {
         assertMemoryLeak(() -> {
             createVarcharAsciiFlagTables(walMode);
