@@ -270,11 +270,15 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // maxTimestamp moves back to 2022-02-25; partitionTimestampHi stays at 2022-02-26.
             commitNoRowsWithRangeReplace(tableToken, "2022-02-26", "2022-02-27");
 
-            // Commit B: a plain insert into an earlier (native) partition. Do NOT drain in between,
-            // so the apply job runs A and B back-to-back on the same writer instance.
+            execute("alter table rg add column b int");
+
+            // Commit B: a plain insert into an earlier (native) partition, which needs a column top
+            // for b there. Do NOT drain in between, so the apply job runs A and B back-to-back on the
+            // same writer instance.
             try (WalWriter ww = engine.getWalWriter(tableToken)) {
                 TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T13:00"));
                 row.putInt(0, 999);
+                row.putInt(ww.getMetadata().getColumnIndex("b"), 100);
                 row.append();
                 ww.commit();
             }
@@ -284,10 +288,10 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
 
             // The last partition (2022-02-26) is gone and commit B's row landed in 2022-02-24.
-            assertQuery("select count() count, min(ts) min, max(ts) max from rg")
+            assertQuery("select count() count, min(ts) min, max(ts) max, count(b) nb, sum(b) sb from rg")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\tmin\tmax\n143\t2022-02-24T12:30:00.000000Z\t2022-02-25T23:45:00.000000Z\n");
+                    .returns("count\tmin\tmax\tnb\tsb\n143\t2022-02-24T12:30:00.000000Z\t2022-02-25T23:45:00.000000Z\t1\t100\n");
         });
     }
 
