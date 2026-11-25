@@ -130,8 +130,8 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // segments take ordinals 0..MAX_CLOSED_SEGMENTS - 1, in the order they were opened.
     private static final int RESIDUAL_KEY_SET = MAX_CLOSED_SEGMENTS;
     // segmentStart, segmentEndExclusive, minTs, maxTs, keySetIndex,
-    // isKeyDomainOverflowed, hasNullKey per entry, ordered by segmentStart ascending.
-    private static final int STRIDE = 7;
+    // isKeyDomainOverflowed, hasNullKey, rowCount per entry, ordered by segmentStart ascending.
+    private static final int STRIDE = 8;
     // The affected keys of each segment, in the order the segments were opened rather than
     // in segment order: an entry names its list by index, so a segment inserted ahead of
     // another does not have to move anyone's keys. Each list holds distinct base symbol
@@ -256,6 +256,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             final int base = index * STRIDE;
             segments.setQuick(base + 2, Math.min(segments.getQuick(base + 2), ts));
             segments.setQuick(base + 3, Math.max(segments.getQuick(base + 3), ts));
+            segments.setQuick(base + 7, segments.getQuick(base + 7) + 1);
             addKey(base, key);
             return true;
         }
@@ -438,6 +439,17 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      */
     public long getSegmentMinTs(int index) {
         return segments.getQuick(index * STRIDE + 2);
+    }
+
+    /**
+     * @return how many rows the walk placed in closed segment {@code index}, one per base row
+     * the change set inserted there. Every one of them sits between
+     * {@link #getSegmentMinTs(int)} and {@link #getSegmentMaxTs(int)}, so it is the insert
+     * delta of any range holding those two; the closed segment's keyed route proves its
+     * stored rows against it
+     */
+    public long getSegmentRowCount(int index) {
+        return segments.getQuick(index * STRIDE + 7);
     }
 
     /**
@@ -774,8 +786,10 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
         }
         // Inserted in reverse so each add() lands ahead of the ones before it, leaving
         // (segmentStart, segmentEndExclusive, minTs, maxTs, keySetIndex,
-        // isKeyDomainOverflowed, hasNullKey) in order at the entry's own base offset.
+        // isKeyDomainOverflowed, hasNullKey, rowCount) in order at the entry's own base
+        // offset. The row that opens the entry is its first.
         final int base = index * STRIDE;
+        segments.add(base, 1);
         segments.add(base, 0);
         segments.add(base, 0);
         segments.add(base, keySetIndex);

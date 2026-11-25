@@ -58,13 +58,41 @@ public class LiveViewCheckpointSegmentLoopTest {
         // alone and repair nothing else.
         final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
         loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
-        loop.addSegment(10, 11, 12, null, true);
+        loop.addSegment(10, 11, 12, 3, null, true);
 
         loop.removeFirstSegment();
 
         Assert.assertEquals(10, loop.getInFlightSegmentStart());
         Assert.assertNull(loop.getInFlightKeys());
         Assert.assertFalse(loop.hasInFlightNullKey());
+        // The row count is not part of the key domain: a segment read whole carries it too.
+        Assert.assertEquals(3, loop.getInFlightRowCount());
+    }
+
+    @Test
+    public void testTheRowCountLeavesWithItsSegment() {
+        // The segment in flight is the one its keyed route reads the count of, so the count
+        // must not outlive it: not past its repair, not past an empty queue's removal, and not
+        // past a refill of the scratch for another change set.
+        final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
+        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        loop.addSegment(10, 11, 12, 7, null, false);
+        loop.addSegment(20, 21, 22, 8, null, false);
+
+        loop.removeFirstSegment();
+        Assert.assertEquals(7, loop.getInFlightRowCount());
+        loop.segmentRepaired();
+        Assert.assertEquals(0, loop.getInFlightRowCount());
+        loop.removeFirstSegment();
+        Assert.assertEquals(8, loop.getInFlightRowCount());
+        loop.removeFirstSegment();
+        Assert.assertEquals("an empty queue puts no segment in flight", 0, loop.getInFlightRowCount());
+
+        loop.addSegment(30, 31, 32, 9, null, false);
+        loop.removeFirstSegment();
+        Assert.assertEquals(9, loop.getInFlightRowCount());
+        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        Assert.assertEquals("a refill clears the segment in flight", 0, loop.getInFlightRowCount());
     }
 
     @Test
@@ -105,8 +133,8 @@ public class LiveViewCheckpointSegmentLoopTest {
         // that precedes the next fill - walks all of it.
         final LiveViewCheckpointSegmentLoop parked = new LiveViewCheckpointSegmentLoop();
         parked.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
-        parked.addSegment(10, 11, 12, null, false);
-        parked.addSegment(20, 21, 22, source, false);
+        parked.addSegment(10, 11, 12, 1, null, false);
+        parked.addSegment(20, 21, 22, 2, source, false);
         // The first segment is taken off the queue and parks mid-replay.
         parked.removeFirstSegment();
 
@@ -116,6 +144,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         resumed.removeFirstSegment();
 
         Assert.assertEquals(20, resumed.getInFlightSegmentStart());
+        Assert.assertEquals(2, resumed.getInFlightRowCount());
         Assert.assertNotNull(resumed.getInFlightKeys());
         Assert.assertEquals(1, resumed.getInFlightKeys().size());
         Assert.assertEquals(7, resumed.getInFlightKeys().getQuick(0));
@@ -128,7 +157,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         // like from here.
         final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
         loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
-        loop.addSegment(10, 11, 12, source, true);
+        loop.addSegment(10, 11, 12, 1, source, true);
 
         source.clear();
         source.add(9);
@@ -153,18 +182,21 @@ public class LiveViewCheckpointSegmentLoopTest {
         // turn a domain something else had since overwritten.
         final LiveViewCheckpointSegmentLoop scratch = new LiveViewCheckpointSegmentLoop();
         scratch.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2);
-        scratch.addSegment(10, 11, 12, first, false);
-        scratch.addSegment(20, 21, 22, second, true);
+        scratch.addSegment(10, 11, 12, 4, first, false);
+        scratch.addSegment(20, 21, 22, 5, second, true);
         scratch.removeFirstSegment();
 
         final LiveViewCheckpointSegmentLoop session = new LiveViewCheckpointSegmentLoop();
         session.copyFrom(scratch);
         // The worker plans something else entirely against the same scratch.
         scratch.ofChangeSet(0, 5, 6, 500, 600, Numbers.LONG_NULL, Numbers.LONG_NULL, false, 6);
-        scratch.addSegment(90, 91, 92, other, false);
+        scratch.addSegment(90, 91, 92, 9, other, false);
+        scratch.removeFirstSegment();
+        Assert.assertEquals(9, scratch.getInFlightRowCount());
         scratch.copyFrom(session);
 
         Assert.assertEquals(10, scratch.getInFlightSegmentStart());
+        Assert.assertEquals("the parked segment's row count comes back with it", 4, scratch.getInFlightRowCount());
         Assert.assertEquals(1, scratch.size());
         Assert.assertEquals(20, scratch.getSegmentStart(0));
         Assert.assertEquals(30, scratch.getResidualMinTs());
@@ -174,7 +206,9 @@ public class LiveViewCheckpointSegmentLoopTest {
         Assert.assertEquals(1, inFlight.getQuick(0));
 
         scratch.segmentRepaired();
+        Assert.assertEquals("no segment is in flight between two", 0, scratch.getInFlightRowCount());
         scratch.removeFirstSegment();
+        Assert.assertEquals(5, scratch.getInFlightRowCount());
         final IntList next = scratch.getInFlightKeys();
         Assert.assertNotNull(next);
         Assert.assertEquals(2, next.size());

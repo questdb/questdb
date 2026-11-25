@@ -492,6 +492,39 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     }
 
     @Test
+    public void testEachClosedSegmentCountsTheRowsItWasGiven() throws Exception {
+        // A closed segment's keyed read proves the view's stored rows of the segment against its
+        // base rows less the ones the change set inserted, so each segment counts its own rows:
+        // a repeated timestamp twice, a row whose segment opens ahead of an existing one without
+        // moving that one's count, and nothing for the rows the residual takes.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            try (LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet()) {
+                changeSet.of(DAY_8, 16);
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 5, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 5, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 1, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 - 3 * DAY + 1, 2, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 2, SymbolTable.VALUE_IS_NULL, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 - 2 * DAY + 1, 3, plan));
+
+                Assert.assertEquals(3, changeSet.getClosedSegmentCount());
+                Assert.assertEquals(DAY_8 - 3 * DAY, changeSet.getSegmentStart(0));
+                Assert.assertEquals(1, changeSet.getSegmentRowCount(0));
+                Assert.assertEquals(DAY_8 - 2 * DAY, changeSet.getSegmentStart(1));
+                Assert.assertEquals(1, changeSet.getSegmentRowCount(1));
+                Assert.assertEquals(DAY_8 - DAY, changeSet.getSegmentStart(2));
+                Assert.assertEquals("a repeated row and a null key count as rows", 3, changeSet.getSegmentRowCount(2));
+
+                // of() rebinds the scratch for the next repair, counts included.
+                changeSet.of(DAY_8, 16);
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 5, 1, plan));
+                Assert.assertEquals(1, changeSet.getSegmentRowCount(0));
+            }
+        });
+    }
+
+    @Test
     public void testTooManyDistinctSegmentsGiveUpRatherThanRepairingThemAll() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // Each segment costs its own replay, replacement commit and timeline splice, so a

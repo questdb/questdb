@@ -6324,6 +6324,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     segmentChangeSet.getSegmentStart(i),
                     segmentChangeSet.getSegmentMinTs(i),
                     segmentChangeSet.getSegmentMaxTs(i),
+                    segmentChangeSet.getSegmentRowCount(i),
                     isKeyed ? segmentChangeSet.getSegmentKeys(i) : null,
                     isKeyed && segmentChangeSet.hasSegmentNullKey(i)
             );
@@ -6519,7 +6520,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Whether the live view still holds, at and above {@code outputLowTs}, exactly the base
+     * Whether the live view still holds, at and above {@code replayLowTs}, exactly the base
      * rows it consumed there, which is the premise an open-segment keyed replay's arithmetic
      * stands on.
      * <p>
@@ -6530,40 +6531,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * and TTL eviction retire base rows without retracting the output the view derived from
      * them. When such a row sits at or above the floor under a key the repair follows, the
      * replay emits nothing to pair it with, so the upsert leaves it in place, the proof
-     * still balances, and the published timeline restores it.
+     * still balances, and the published timeline restores it. See {@link #isStoredRangeIntact}
+     * for the count that rules it out.
      * <p>
-     * The routes' own gate turns the question into a count. An insert-only, unfiltered
-     * correction over a base that does not deduplicate gives one output row per consumed
-     * base row, and the forward path keeps both rows of a repeated pair. So the base rows at
-     * and above the floor are the ones the view consumed there, less the ones a removal
-     * retired, plus the ones the insert delta counts and the ones an ATTACH PARTITION brought
-     * in. No WAL commit carries an attached row, so the view never consumes one. Without
-     * attached rows the equality below holds exactly when no base row the view consumed at or
-     * above the floor is gone. With them, a removal and an attach of as many rows balance it
-     * - one partition dropped and another attached, or one partition replaced by an image of
-     * itself - and the upsert leaves the removed row's output in place.
-     * <p>
-     * So the count is trusted only where no attached row can sit: over a base whose truncate
+     * That count cannot tell a removed row from an attached one of the same number, and no WAL
+     * commit carries an attached row, so the view never consumes one. A drop and an attach of
+     * as many rows - one partition dropped and another attached, or one partition replaced by
+     * an image of itself - balance it, and the upsert leaves the removed row's output in place,
+     * inside the corrected key's running sequence. So the count is trusted only where no
+     * attached row can sit among the rows the route rewrites: over a base whose truncate
      * version is still zero, which no partition-level change has ever touched, or at and
      * above the floor of a match this process recorded, with no partition attached to the
      * base since; see {@link LiveViewInstance#isBaseMatchedFrom}. A view loaded at startup
      * holds no match until its first seed or whole-range repair, so over a base with a
-     * partition history the first such repair after a restart reads the range whole. A
-     * removal below the floor does not matter, because neither route touches a stored row
-     * below it, and nor does an attach below a match's floor.
-     * <p>
-     * A possible attached row, a mismatch, a floor inside a partition this cannot search, or
-     * a count that throws declines the route, and the repair replaces the range whole, which
-     * drops such a row. The cost is the partition metadata of both tables plus one binary
-     * search in each, once per repair.
+     * partition history the first such repair after a restart reads the range whole. An
+     * attach below the match's floor does not matter to the corrected key: its replay reads
+     * the attached rows and emits from the floor up.
      *
      * @param baseReader  the repair's pinned base reader
+     * @param replayLowTs L, the lowest base row the whole-range read of the same repair reads
      * @param outputLowTs R, the lowest output row the route emits
      * @return true when the route's arithmetic still describes the view's stored rows
      */
     private boolean isOpenSegmentStoredSuffixIntact(
             LiveViewInstance instance,
             TableReader baseReader,
+            long replayLowTs,
             long outputLowTs
     ) {
         final long truncateVersion = baseReader.getTxFile().getTruncateVersion();
@@ -6587,40 +6580,120 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         }
-        final long insertedRowDelta = segmentChangeSet.getResidualRowCount();
+        return isStoredRangeIntact(
+                instance,
+                baseReader,
+                replayLowTs,
+                outputLowTs,
+                Long.MAX_VALUE,
+                segmentChangeSet.getResidualRowCount()
+        );
+    }
+
+    /**
+     * Whether the live view still holds, in {@code [replayLowTs, highTsExclusive)}, exactly
+     * the base rows it consumed there, which every keyed route of an unfiltered view needs
+     * before it leaves the rows of the keys it does not follow where they stand.
+     * <p>
+     * A keyed route recomputes the keys a correction touched and keeps every other key's
+     * stored rows: the open segment's routes upsert, see
+     * {@link #isOpenSegmentStoredSuffixIntact}, and a closed segment's merges or upserts. The
+     * whole-range read of the same repair reads every key from {@code L} and rewrites every
+     * key's output from {@code R} up. DROP PARTITION, DETACH PARTITION and TTL eviction retire
+     * base rows without retracting the output the view derived from them, so a retired row of
+     * a key the keyed route does not follow anywhere in {@code [L, H)} gives the two reads
+     * different rows: its own output, when it sits at or above {@code R}, and the running
+     * values above {@code R} it fed. Without this check what a late row leaves of the other
+     * keys would depend on which read the cost model priced cheaper. A row retired below
+     * {@code L} feeds neither read, and one at or above {@code H} sits outside both.
+     * <p>
+     * An insert-only, unfiltered correction over a base that does not deduplicate gives one
+     * output row per consumed base row, and the forward path keeps both rows of a repeated
+     * pair. So the base rows in the range are the ones the view consumed there, less the ones
+     * a removal retired, plus the {@code insertedRowDelta} the correction adds and the ones an
+     * ATTACH PARTITION brought in. Without an attach the equality below holds exactly when no
+     * base row the view consumed in the range is gone. An attach of as many rows as a removal
+     * balances it. The open segment's attach guard rules that out among the rows its upsert
+     * rewrites, see {@link #isOpenSegmentStoredSuffixIntact}; anywhere else in the range, and
+     * in a closed segment, whose merge pairs every stored row of the corrected keys, such a
+     * balance can only leave the other keys' rows as they stood.
+     * <p>
+     * A mismatch, a bound inside a partition this cannot search, or a count that throws
+     * declines the route, and the repair replaces the range whole, which restates such rows.
+     * The cost is the partition metadata of both tables plus one binary search per bound in
+     * each, once per repair.
+     *
+     * @param baseReader       the repair's pinned base reader
+     * @param replayLowTs      L, the lowest base row the whole-range read reads
+     * @param outputLowTs      R, the lowest output row the route emits, for the log
+     * @param highTsExclusive  H, where the route's replacement stops, or {@link Long#MAX_VALUE}
+     *                         for the open segment's, which runs to the end of the table
+     * @param insertedRowDelta the base rows the correction inserted into the range, none of
+     *                         which the view has consumed
+     * @return true when the route may keep the stored rows of the keys it does not follow
+     */
+    private boolean isStoredRangeIntact(
+            LiveViewInstance instance,
+            TableReader baseReader,
+            long replayLowTs,
+            long outputLowTs,
+            long highTsExclusive,
+            long insertedRowDelta
+    ) {
+        final boolean isOpenSegment = highTsExclusive == Long.MAX_VALUE;
+        final String routeName = isOpenSegment ? "open segment" : "segment";
         final long baseRowsBelow;
+        final long baseRows;
         final long storedRowsBelow;
         final long storedRows;
         try {
-            baseRowsBelow = countDurableRowsBelow(baseReader, outputLowTs);
+            baseRowsBelow = countDurableRowsBelow(baseReader, replayLowTs);
+            baseRows = isOpenSegment ? baseReader.size() : countDurableRowsBelow(baseReader, highTsExclusive);
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                 hooks.beforeStoredRowCount();
-                storedRowsBelow = countDurableRowsBelow(lvReader, outputLowTs);
-                storedRows = lvReader.size();
+                storedRowsBelow = countDurableRowsBelow(lvReader, replayLowTs);
+                storedRows = isOpenSegment ? lvReader.size() : countDurableRowsBelow(lvReader, highTsExclusive);
             }
         } catch (Throwable t) {
             // Counting is not repairing: a count that could not be taken costs the keyed route
             // and nothing else, as a durable coordinate the resume cannot measure does. The
             // resume calls this with the replay already armed, and its decline clears it.
-            LOG.info().$("live view open segment keyed replay declined, stored rows could not be counted [view=")
+            if (!isOpenSegment) {
+                stats.inc(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT);
+            }
+            LOG.info().$("live view ").$(routeName).$(" keyed replay declined, stored rows could not be counted [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
             return false;
         }
-        // A -1 says the floor's partition could not be searched, which leaves no count to
+        // A -1 says a bound's partition could not be searched, which leaves no count to
         // compare, not a count of -1.
         if (baseRowsBelow > -1
+                && baseRows > -1
                 && storedRowsBelow > -1
-                && baseReader.size() - baseRowsBelow == storedRows - storedRowsBelow + insertedRowDelta) {
+                && storedRows > -1
+                && baseRows - baseRowsBelow == storedRows - storedRowsBelow + insertedRowDelta) {
             return true;
         }
+        if (!isOpenSegment) {
+            stats.inc(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT);
+        }
         final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
-        LOG.info().$("live view open segment keyed replay declined, stored rows at or above its floor"
-                        + " are not the base rows it consumed [view=").$(instance.getDefinition().getViewName())
-                .$(", outputLowTs=").$ts(driver, outputLowTs)
-                .$(", storedRows=").$(storedRows)
+        // The counts below are of the rows under L, and of every row under H; for the open
+        // segment that is every row of the table. L is logged only where it is not R.
+        final LogRecord record = LOG.info().$("live view ").$(routeName)
+                .$(" keyed replay declined, stored rows at or above its floor are not the base rows it consumed [view=")
+                .$(instance.getDefinition().getViewName());
+        if (replayLowTs != outputLowTs) {
+            record.$(", replayLowTs=").$ts(driver, replayLowTs);
+        }
+        record.$(", outputLowTs=").$ts(driver, outputLowTs);
+        if (!isOpenSegment) {
+            record.$(", highTsExclusive=").$ts(driver, highTsExclusive);
+        }
+        record.$(", storedRows=").$(storedRows)
                 .$(", storedRowsBelow=").$(storedRowsBelow)
-                .$(", baseRows=").$(baseReader.size())
+                .$(", baseRows=").$(baseRows)
                 .$(", baseRowsBelow=").$(baseRowsBelow)
                 .$(", insertedRowDelta=").$(insertedRowDelta)
                 .I$();
@@ -6631,7 +6704,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Records on {@code instance} that its stored rows at and above {@code floorTs} match what
      * its query makes of the base rows there, as {@code reader} read them: a seed or a
      * whole-range repair writes every one of them from that read. See
-     * {@link #isOpenSegmentStoredSuffixIntact}.
+     * {@link #isStoredRangeIntact}.
      */
     private void recordBaseMatch(LiveViewInstance instance, TableReader reader, long floorTs) {
         instance.recordBaseMatch(
@@ -8217,7 +8290,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     && armOpenSegmentKeyedReplay(instance, reader)
                     && instance.getCompiledPlan().getPageFrameFactory()
                     .isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())
-                    && isOpenSegmentStoredSuffixIntact(instance, reader, emitLowTs)) {
+                    && isOpenSegmentStoredSuffixIntact(instance, reader, scanLowTs, emitLowTs)) {
                 isColdKeyedRoute = openStoredRowCursor(instance, emitLowTs, Long.MAX_VALUE) != null;
             }
             if (!isColdKeyedRoute) {
@@ -8300,6 +8373,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             )) {
                 declineStoredRows(instance, "a root the repair re-versions no longer covers its timestamp group");
                 isClosedSegmentKeyed = false;
+            } else if (instance.getCompiledPlan().getFilter() == null && !isStoredRangeIntact(
+                    instance,
+                    reader,
+                    scanLowTs,
+                    emitLowTs,
+                    plan.getHighTsExclusive(),
+                    segmentLoop.getInFlightRowCount()
+            )) {
+                // The keys outside Q keep their stored rows, and those may hold the output of
+                // a base row a DROP, DETACH or TTL eviction has since retired, or running
+                // values it fed. The whole segment's read restates them, so an unfiltered view
+                // reads whole whenever its stored rows in [L, H) are not the base rows it
+                // consumed there: what a late row leaves of the other keys then does not
+                // depend on which read priced cheaper. The keys in Q need no count, because
+                // the merge pairs each of their stored rows with a replayed one.
+                //
+                // No attach guard stands beside the count, unlike the open segment's: an
+                // attach of as many rows as a removal can only leave the other keys' rows as
+                // they stood, and a guard would have to hold a match below L that no
+                // closed-segment repair records, which would read every such segment whole
+                // after a restart over a base with a partition history.
+                //
+                // A filtered view emits no row for a base row its filter rejects, so no count
+                // pairs its stored rows with base rows. It keeps the keyed route, and with it
+                // the other keys' rows as they stood, until a repair reads them whole.
+                isClosedSegmentKeyed = false;
             } else {
                 isClosedSegmentKeyed = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive()) != null;
             }
@@ -8377,7 +8476,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // anchor root's shape, which the executor's restore answers by declining.
         boolean isKeyed = isOpenSegmentKeyedReplayAvailable(instance, route, replayLowTs)
                 && armOpenSegmentKeyedReplay(instance, reader);
-        if (isKeyed && !isOpenSegmentStoredSuffixIntact(instance, reader, plan.getOutputLowTs())) {
+        if (isKeyed && !isOpenSegmentStoredSuffixIntact(instance, reader, replayLowTs, plan.getOutputLowTs())) {
             // The view keeps rows above the anchor that the base no longer produces, or the
             // count that would rule that out could not be taken, and the upsert would leave
             // such rows in place, so the resume reads every key instead. The check runs after
@@ -12647,9 +12746,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // every row after it off a base commit the drain consumes from sweepSeqTxn + 1.
                 // A sweep that resumed over rows on disk read some of them off an earlier
                 // snapshot, maybe in an earlier process, and records nothing. A filtered view
-                // can resume past rows that wrote nothing, but no keyed repair serves a filtered
-                // view. Recorded at the pin rather than at the sweep's end: a re-pin in this
-                // process over rows already written records nothing, and leaves this match to
+                // can resume past rows that wrote nothing, but no keyed repair reads a filtered
+                // view's match. Recorded at the pin rather than at the sweep's end: a re-pin in
+                // this process over rows already written records nothing, and leaves this match to
                 // stand for rows read off two snapshots. A partition attached between them is on
                 // record above this one's truncate version, which is what voids the match.
                 recordBaseMatch(instance, reader, viewLowerBoundTimestamp);
@@ -17675,7 +17774,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Costed like the bound it serves rather than like the view's age. Partitions
      * whose metadata upper bound is already below {@code ts} contribute their
      * recorded size with no file opened at all; only the one partition the boundary
-     * falls inside is opened and binary-searched, and the walk stops there.
+     * falls inside is opened and binary-searched, and the walk stops there. A boundary
+     * at or below a partition's own start opens nothing: the walk stops at that
+     * partition, which holds no row below it.
      *
      * @return the row count, or {@code -1} when the boundary partition is not
      * native and cannot be searched through the reader's mapped columns - the
@@ -17694,6 +17795,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Every row this partition can hold is below the boundary.
                 count += partitionRows;
                 continue;
+            }
+            if (reader.getPartitionMinTimestampFromMetadata(p) >= ts) {
+                // Every row this partition holds is at or above the boundary, and so is every
+                // later partition's. A repair's range starts and ends on anchor boundaries,
+                // which partition boundaries often share, so its count reads no partition at
+                // either end.
+                break;
             }
             if (reader.getPartitionFormatFromMetadata(p) != PartitionFormat.NATIVE) {
                 return -1;

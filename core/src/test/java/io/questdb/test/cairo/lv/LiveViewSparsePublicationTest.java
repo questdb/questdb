@@ -117,6 +117,8 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     // case stays a sub-second unit test.
     private static final int FORWARD_COMMITS = 32;
     private static final int ROWS_PER_ACCOUNT_PER_DAY = 4;
+    // The WHERE clause of every view the case creates; see filterTheViews().
+    private String viewWhereClause = "";
 
     @Test
     public void testABoundaryTheKeyedScanNeverCrossesKeepsItsOwnPosition() throws Exception {
@@ -465,8 +467,10 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // removal: every pass over it is insert-only. The stored acct-1 row at 10:00
         // outlives its evicted base row all the same. The correction below it lands in an
         // hour past the TTL horizon too, so the apply writes it and evicts it again, and
-        // the repair it triggers recomputes acct-1 from what the base still holds.
+        // the repair it triggers recomputes acct-1 from what the base still holds. Over a
+        // filtered view, so the merge's pairing is what notices, see filterTheViews().
         armSparseRepair();
+        filterTheViews();
         assertMemoryLeak(() -> {
             final StringBuilder seed = new StringBuilder();
             seed.append(row(2, 10, 0, 0, "acct-1", 2.0))
@@ -506,6 +510,498 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             }
             // Short of the TTL horizon's reach, so the restart's own row evicts nothing.
             assertRestartRestoresFromTimeline(row(3, 12, 10, 0, "acct-2"));
+        });
+    }
+
+    @Test
+    public void testALateRowOfAnotherKeyOverADroppedPartitionReadsTheClosedDayWhole() throws Exception {
+        // The drop takes acct-1's row at 10:00, and a late acct-2 row at 05:00 then repairs the
+        // closed day. A read by key follows acct-2 alone and keeps acct-1's stored rows: the one
+        // the view derived from the dropped hour, at 3.0, and 12:00's running sum, at 7.0, which
+        // still counts it. The day's whole read restates both, so the view is unfiltered and its
+        // stored rows of the day are not the base rows it consumed there, the keyed read has to
+        // decline. acct-1 then runs 1.0 at 01:00 and 5.0 at 12:00, as the base says.
+        armSparseRepair();
+        assertLateRowOverARemovalReadsTheClosedDayWhole(
+                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
+                "TIMESTAMP",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-02T12:00:00.000000Z\tacct-1\t5.0
+                        2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                        """,
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testALateRowOfAnotherKeyOverADroppedPartitionReadsTheClosedDayWholeWithoutTheDedupKeys() throws Exception {
+        // The same over a view created without the identity, whose read by key merges every
+        // other key's stored rows into its replacement rather than upserting: the merge would
+        // copy acct-1's stale rows forward just the same.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
+        assertLateRowOverARemovalReadsTheClosedDayWhole(
+                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
+                "TIMESTAMP",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-02T12:00:00.000000Z\tacct-1\t5.0
+                        2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                        """,
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testALateRowOfAnotherKeyOverADetachedPartitionReadsTheClosedDayWhole() throws Exception {
+        // DETACH PARTITION retires the row the way DROP PARTITION does, and the count cannot
+        // tell the two apart.
+        armSparseRepair();
+        assertLateRowOverARemovalReadsTheClosedDayWhole(
+                "ALTER TABLE tx DETACH PARTITION LIST '2026-01-02T10'",
+                "TIMESTAMP",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-02T12:00:00.000000Z\tacct-1\t5.0
+                        2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                        """,
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testALateRowOfAnotherKeyOverADroppedPartitionLogsItsCountInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The first case over a base whose created_at has nanosecond precision. The day held 65
+        // rows in both tables before the late row: acct-1's three, acct-2's two and acct-3's
+        // sixty. The drop took one from the base and the late row added one, so the base holds
+        // the 65 the view holds, one short of the view's 65 and the late row. Nothing sits
+        // below the day's start, and the line names the day's start, the late row and the next
+        // day's start in nanoseconds.
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertLateRowOverARemovalReadsTheClosedDayWhole(
+                    "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
+                    "TIMESTAMP_NS",
+                    """
+                            created_at\taccount_id\tcumulative_sum
+                            2026-01-02T01:00:00.000000000Z\tacct-1\t1.0
+                            2026-01-02T12:00:00.000000000Z\tacct-1\t5.0
+                            2026-01-03T01:00:00.000000000Z\tacct-1\t1.0
+                            2026-01-04T01:00:00.000000000Z\tacct-1\t1.0
+                            2026-01-05T01:00:00.000000000Z\tacct-1\t1.0
+                            """,
+                    true,
+                    capture
+            );
+            capture.assertLogged("live view segment keyed replay declined, stored rows at or above its floor are not the base"
+                    + " rows it consumed [view=lv, replayLowTs=2026-01-02T00:00:00.000000000Z,"
+                    + " outputLowTs=2026-01-02T05:00:00.000000000Z, highTsExclusive=2026-01-03T00:00:00.000000000Z,"
+                    + " storedRows=65, storedRowsBelow=0, baseRows=65, baseRowsBelow=0, insertedRowDelta=1]");
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testALateRowOfAnotherKeyOverARemovalBelowItsFloorReadsTheClosedDayWhole() throws Exception {
+        // The drop takes acct-1's row at 01:00, below the late acct-2 row at 05:00 and so below
+        // every row either read writes. Both keep the stored 01:00 row, but acct-1's rows above
+        // 05:00 still count it: a read by key keeps them at 3.0 and 7.0, while the day's whole
+        // read replays acct-1 from the day's start and restates them as 2.0 and 6.0. The count
+        // therefore starts at the day's start, where the whole read does, and not at 05:00.
+        armSparseRepair();
+        assertLateRowOverARemovalReadsTheClosedDayWhole(
+                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T01'",
+                "TIMESTAMP",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-02T10:00:00.000000Z\tacct-1\t2.0
+                        2026-01-02T12:00:00.000000Z\tacct-1\t6.0
+                        2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+                        2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                        """,
+                // A repair converges only the range it replaces, so the stored 01:00 row outlives
+                // its base row either way.
+                false,
+                null
+        );
+    }
+
+    @Test
+    public void testALateRowOverATtlEvictedPartitionOfAnotherKeyReadsTheClosedDayWhole() throws Exception {
+        // TTL evicts the 10:00 hour as the apply commits the head, with no sequencer entry of its
+        // own, so no walk of the base's log sees the removal. The count sees it all the same.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            final StringBuilder seed = new StringBuilder();
+            seed.append(row(2, 10, 0, 0, "acct-1", 2.0))
+                    .append(", ").append(row(2, 12, 0, 0, "acct-1", 4.0));
+            for (int minute = 1; minute < 60; minute++) {
+                seed.append(", ").append(row(2, 12, minute, 0, "acct-3"));
+            }
+            seed.append(", ").append(row(2, 13, 0, 0, "acct-2", 32.0))
+                    .append(", ").append(row(3, 1, 0, 0, "acct-1"))
+                    .append(", ").append(row(3, 1, 10, 0, "acct-2"));
+            createBase(seed.toString());
+            execute("ALTER TABLE tx SET TTL 24 HOURS");
+            drainWalQueue();
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                setCurrentMicros(ts("2026-01-05T00:00:00.000000Z"));
+                // The head. Its apply ages the 10:00 hour of 2026-01-02 past the horizon and
+                // keeps the 12:00 hour, which ends 23 hours below it.
+                commit(row(3, 12, 0, 0, "acct-2"), job);
+                Assert.assertEquals(1, rowsAt("2026-01-02T10:00:00.000000Z", "acct-1"));
+
+                // A late acct-2 row at 05:00, past the horizon too, so the apply writes it and
+                // evicts it again. The repair still reads the day from 05:00 up, where a read by
+                // acct-2 would keep acct-1's stale 10:00 row and its 12:00 sum of 6.0.
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                assertClosedDayReadWhole(job);
+                Assert.assertEquals(0, rowsAt("2026-01-02T10:00:00.000000Z", "acct-1"));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T12:00:00.000000Z\tacct-1\t4.0
+                                2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                                """,
+                        dumpRowsOf("acct-1")
+                );
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+            assertRestartRestoresFromTimeline(row(3, 12, 10, 0, "acct-2"));
+        });
+    }
+
+    @Test
+    public void testALateRowOverARemovalOnAnotherDayStillReadsTheClosedDayByKey() throws Exception {
+        // The drop takes every row of 2026-01-03, above the repaired day's end. Neither read of
+        // 2026-01-02 reads it, so the count of the day balances and the read by key stays. The
+        // view keeps the rows it derived from the dropped day, as it keeps every such row.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-03T01'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-02T05:00:00.000000Z\tacct-2\t108.0
+                                2026-01-02T13:00:00.000000Z\tacct-2\t140.0
+                                2026-01-03T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-04T01:10:00.000000Z\tacct-2\t1.0
+                                """,
+                        dumpRowsOf("acct-2")
+                );
+                Assert.assertEquals(1, rowsAt("2026-01-03T01:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(1, rowsAt("2026-01-03T01:20:00.000000Z", "acct-3"));
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testALateRowAfterAnAttachOnAnotherDayStillReadsTheClosedDayByKey() throws Exception {
+        // A closed day's read by key takes no ATTACH PARTITION guard, unlike the open day's: the
+        // base detaches 2026-01-03 and takes the same rows back, which moves its truncate version
+        // and puts an attach on record in this process, and the repair of 2026-01-02 still reads
+        // by key. Its count balances, since neither read reads 2026-01-03.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-03T01'");
+                drainWalQueue();
+                attachDetached("2026-01-03T01");
+                driveRefreshToQuiescence(job);
+                Assert.assertNotEquals(
+                        "the attach must be on record, or the case covers nothing",
+                        Numbers.LONG_NULL,
+                        engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("tx")).getPartitionAttachTruncateVersion()
+                );
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+            assertRestartRestoresFromTimeline(row(5, 2, 0, 0, "acct-2"));
+        });
+    }
+
+    @Test
+    public void testALateRowAfterARestartOverABaseWithAPartitionHistoryStillReadsTheClosedDayByKey() throws Exception {
+        // The open day's routes read whole after a restart over a base whose truncate version is
+        // off zero, until a whole-range repair records a match. A closed day's count needs no
+        // match, so its read by key survives the restart.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-04T01'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(row(5, 2, 0, 0, "acct-2"), job);
+                assertRestoredFromTimeline("lv");
+                Assert.assertEquals(Numbers.LONG_NULL, instanceOf("lv").getBaseMatchTruncateVersion());
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                // The view keeps the 2026-01-04 row the drop took.
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-02T05:00:00.000000Z\tacct-2\t108.0
+                                2026-01-02T13:00:00.000000Z\tacct-2\t140.0
+                                2026-01-03T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-04T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-05T02:00:00.000000Z\tacct-2\t1.0
+                                """,
+                        dumpRowsOf("acct-2")
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testALateRowOverADropAndAnAttachOfAsManyRowsInItsDayKeepsTheOtherKeysAsTheyStood() throws Exception {
+        // The tradeoff a closed day's count leaves: the base detaches an acct-3 row at 11:00
+        // before the view exists, drops acct-1's row at 10:00 once the view holds it, and
+        // takes the acct-3 row back, which the view never consumes. One row out and one in
+        // balance the day's count, so the late acct-2 row reads by key, and the rows of acct-1
+        // and acct-3 stay as they stood: the stale 10:00 row and the 12:00 sum that counts it,
+        // and no row for the attached one. acct-2, the key the repair follows, is exact.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBase(seedWithALoneRowAtTen() + ", " + row(2, 11, 0, 0, "acct-3", 16.0));
+            execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-02T11'");
+            drainWalQueue();
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'");
+                drainWalQueue();
+                attachDetached("2026-01-02T11");
+                driveRefreshToQuiescence(job);
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-02T10:00:00.000000Z\tacct-1\t3.0
+                                2026-01-02T12:00:00.000000Z\tacct-1\t7.0
+                                2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                """,
+                        dumpRowsOf("acct-1")
+                );
+                Assert.assertEquals(0, rowsAt("2026-01-02T11:00:00.000000Z", "acct-3"));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-02T05:00:00.000000Z\tacct-2\t108.0
+                                2026-01-02T13:00:00.000000Z\tacct-2\t140.0
+                                2026-01-03T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-04T01:10:00.000000Z\tacct-2\t1.0
+                                """,
+                        dumpRowsOf("acct-2")
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testALateRowOfAnotherKeyInAFilteredViewKeepsTheDroppedRowsOutput() throws Exception {
+        // The other tradeoff. A filtered view emits no row for a base row its filter rejects, so
+        // no count pairs its stored rows with base rows, and its read by key stays over the
+        // drop: acct-1's stale 10:00 row and the 12:00 sum that counts it stay as they stood
+        // until a repair reads them whole. acct-2, the key the repair follows, is exact.
+        armSparseRepair();
+        filterTheViews();
+        assertMemoryLeak(() -> {
+            createView(seedWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-02T10:00:00.000000Z\tacct-1\t3.0
+                                2026-01-02T12:00:00.000000Z\tacct-1\t7.0
+                                2026-01-03T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-04T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                """,
+                        dumpRowsOf("acct-1")
+                );
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-02T05:00:00.000000Z\tacct-2\t108.0
+                                2026-01-02T13:00:00.000000Z\tacct-2\t140.0
+                                2026-01-03T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-04T01:10:00.000000Z\tacct-2\t1.0
+                                """,
+                        dumpRowsOf("acct-2")
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testAClosedDayWhoseStoredRowCountFaultsReadsTheDayWhole() throws Exception {
+        // A count that could not be taken proves nothing about the stored rows, so the closed
+        // day reads whole, as it does on a mismatch: no refresh fault, and no replay left armed.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                hooks(job).setSimulateStoredSuffixCountFault();
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertFalse(
+                        "the count must have faulted, or the case covers nothing",
+                        hooks(job).isStoredSuffixCountFaultArmed()
+                );
+                assertClosedDayReadWhole(job);
+                Assert.assertFalse(job.isKeyedReplayArmedForTest());
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testClosedDaysBehindAParkKeepTheirInsertCounts() throws Exception {
+        // One commit corrects 2026-01-02 and 2026-01-03, and one replayed row per refresh turn
+        // parks the first day's replay, so the second day's count reads its insert delta off the
+        // loop the park carried across turns. A loop that lost it would find the second day one
+        // row short and read it whole.
+        armSparseRepair();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                commit(correction("acct-2") + ", " + row(3, 0, 30, 0, "acct-3"), job);
+
+                Assert.assertTrue("the first day's replay must park, or the case covers nothing",
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0);
+                Assert.assertEquals(2, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                Assert.assertEquals(2, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testAClosedDayUnderTheViewsStartFromStillReadsByKey() throws Exception {
+        // The view starts at 02:00 on 2026-01-02, so acct-1's base row at 01:00 produces no
+        // output. The count starts where the read does, at the view's boundary rather than at
+        // the day's start, and balances: the read by key stays.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBase(seedWithALoneRowAtTen());
+            execute("create live view lv flush every 100ms start from '2026-01-02T02:00:00.000000Z' as "
+                    + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-02T05:00:00.000000Z\tacct-2\t108.0
+                                2026-01-02T13:00:00.000000Z\tacct-2\t140.0
+                                2026-01-03T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-04T01:10:00.000000Z\tacct-2\t1.0
+                                """,
+                        dumpRowsOf("acct-2")
+                );
+                Assert.assertEquals(0, rowsAt("2026-01-02T01:00:00.000000Z", "acct-1"));
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
         });
     }
 
@@ -910,18 +1406,113 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAColdKeyedHeadMissOverARemovalBelowItsFloorStillPublishesSparsely() throws Exception {
+    public void testAColdKeyedHeadMissOverARemovalBetweenItsOriginAndItsFloorReplacesItsRange() throws Exception {
         // The drop takes the acct-1 row at 01:00, below the correction at 05:00 and so below
-        // every row the repair rewrites. The rows the cold route recomputes and the rows it
-        // leaves in place are exactly what replacing [05:00, +inf) would leave, so the count
-        // has to balance and the route has to stay. The stored 01:00 row stays either way: a
-        // repair converges only the range it replaces.
+        // every row the repair rewrites, but above the open day's origin, where the cold route
+        // and the whole-range read both start reading. The count starts there too, because a
+        // removed row there feeds the running values above 05:00 of every key the whole read
+        // restates, so the route declines. The row is acct-1's, the key the cold route would
+        // follow, so both reads leave the same rows here: the stored 01:00 row stays, as a
+        // repair converges only the range it replaces, and acct-1 above it restarts from 100.0.
         armSparseRepair();
         assertMemoryLeak(() -> {
             createView(seedAnOpenDayWithALoneRowAtTen());
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-05T01'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+
+                assertColdKeyedRouteDeclined(job);
+                Assert.assertEquals("the count, not the attach guard, declines it", 0, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T05:00:00.000000Z\tacct-1\t100.0
+                                2026-01-05T10:00:00.000000Z\tacct-1\t102.0
+                                2026-01-05T12:00:00.000000Z\tacct-1\t106.0
+                                """,
+                        dumpRowsOf("acct-1")
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverARemovalOfAnotherKeyBelowItsFloorReplacesItsRange() throws Exception {
+        // The drop takes acct-2's row at 02:00, between the open day's origin and the acct-1
+        // correction at 05:00. A read by acct-1 keeps acct-2's 13:00 row at 40.0, its running
+        // sum still counting the dropped 8.0; the whole-range read replays acct-2 from the
+        // origin and restates it as 32.0. The count from the origin declines the cold route,
+        // so the row does not depend on which read priced cheaper. The stored 02:00 row stays,
+        // below every row either read rewrites.
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createView(seedAnOpenDayWithALoneRowAtTen());
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-05T02'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+
+                    capture.start();
+                    commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+                    capture.drain();
+                    capture.stop();
+
+                    assertColdKeyedRouteDeclined(job);
+                    TestUtils.assertEquals(
+                            """
+                                    created_at\taccount_id\tcumulative_sum
+                                    2026-01-02T01:10:00.000000Z\tacct-2\t1.0
+                                    2026-01-05T02:00:00.000000Z\tacct-2\t8.0
+                                    2026-01-05T13:00:00.000000Z\tacct-2\t32.0
+                                    """,
+                            dumpRowsOf("acct-2")
+                    );
+                    TestUtils.assertEquals(
+                            """
+                                    created_at\taccount_id\tcumulative_sum
+                                    2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                    2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                    2026-01-05T05:00:00.000000Z\tacct-1\t101.0
+                                    2026-01-05T10:00:00.000000Z\tacct-1\t103.0
+                                    2026-01-05T12:00:00.000000Z\tacct-1\t107.0
+                                    """,
+                            dumpRowsOf("acct-1")
+                    );
+                    // The day held 65 rows in both tables, 2026-01-02 two more below the origin.
+                    // The drop took one from the base and the correction added one.
+                    capture.assertLogged("live view open segment keyed replay declined, stored rows at or above its floor are"
+                            + " not the base rows it consumed [view=lv, replayLowTs=2026-01-05T00:00:00.000000Z,"
+                            + " outputLowTs=2026-01-05T05:00:00.000000Z, storedRows=67, storedRowsBelow=2, baseRows=67,"
+                            + " baseRowsBelow=2, insertedRowDelta=1]");
+                    assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverARemovalBelowItsOriginStillPublishesSparsely() throws Exception {
+        // The drop takes both rows of 2026-01-02, below the open day's origin. Neither read of
+        // the open day reads them, so the count balances and the cold route stays. The view
+        // keeps the rows it derived from the dropped hour, as it keeps every such row.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAnOpenDayWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-02T01'");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
 
@@ -935,9 +1526,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                                 created_at\taccount_id\tcumulative_sum
                                 2026-01-02T01:00:00.000000Z\tacct-1\t1.0
                                 2026-01-05T01:00:00.000000Z\tacct-1\t1.0
-                                2026-01-05T05:00:00.000000Z\tacct-1\t100.0
-                                2026-01-05T10:00:00.000000Z\tacct-1\t102.0
-                                2026-01-05T12:00:00.000000Z\tacct-1\t106.0
+                                2026-01-05T05:00:00.000000Z\tacct-1\t101.0
+                                2026-01-05T10:00:00.000000Z\tacct-1\t103.0
+                                2026-01-05T12:00:00.000000Z\tacct-1\t107.0
                                 """,
                         dumpRowsOf("acct-1")
                 );
@@ -1006,12 +1597,13 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
     @Test
     public void testAColdKeyedHeadMissWhoseFloorSitsInAParquetPartitionReplacesItsRange() throws Exception {
-        // The count needs the first base row at or above the correction, and a Parquet
-        // partition has no mapped timestamp column to binary-search for it. The correction
-        // lands in one, so the count is unavailable and the cold route has to decline. The
-        // fixture holds no base row below the correction and one stored row above it whose
-        // base row is gone, which is the shape where taking the unsearchable partition's -1
-        // for a row count would balance the comparison.
+        // The correction lands in a Parquet partition, which has no mapped timestamp column to
+        // binary-search. The count starts at the open day's origin, below that partition's own
+        // start, so it takes the partition's rows off its metadata without searching it, and
+        // the stored row above the correction whose base row is gone declines the cold route.
+        // The fixture holds no base row below the correction, which is the shape where a
+        // count that took an unsearchable partition's -1 for a row count would balance the
+        // comparison.
         armSparseRepair();
         assertMemoryLeak(() -> {
             final StringBuilder seed = new StringBuilder();
@@ -1542,8 +2134,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // the pair both stored rows wait for. The upsert would give each stored row that
         // one row's values and leave two identical rows where the base holds one. A
         // pairing that counted the stored repeat as one waiting row would let the single
-        // replayed row pair both.
+        // replayed row pair both. Over a filtered view, see filterTheViews().
         armSparseRepair();
+        filterTheViews();
         assertMemoryLeak(() -> {
             createView(seedWithALoneRowAtTen() + ", " + row(2, 10, 0, 0, "acct-1", 3.0));
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1634,7 +2227,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // replayed instant with a late acct-9 row. tx names acct-9 with tx2's integer for
         // acct-2, and lv stores acct-2 under lv2's integer for it, so a cache that outlived
         // lv2's repair would resolve the acct-9 row to lv's acct-2 and pair the stale row.
+        // Both views are filtered, see filterTheViews().
         armSparseRepair();
+        filterTheViews();
         assertMemoryLeak(() -> {
             createView(seedWithALoneRowAtTenInAnotherSymbolOrder());
             createBase("tx2", seedWithALoneRowAtTen(), "");
@@ -2770,6 +3365,87 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Holds a closed day's repair to its whole read: the read by key priced cheaper, so it was
+     * the one the repair would have taken, and the count declined it, so the repair replayed
+     * nothing by key and published nothing sparsely.
+     */
+    private void assertClosedDayReadWhole(LiveViewRefreshJob job) {
+        Assert.assertEquals(
+                "the read by key must have priced cheaper, or the case covers nothing",
+                1,
+                job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
+        );
+        Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_STORED_ROWS_DECLINE_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT));
+        Assert.assertEquals(1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD));
+        Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+    }
+
+    /**
+     * Drives a late acct-2 row at 05:00 into the closed day 2026-01-02 of
+     * {@link #seedWithALoneRowAtTen()}, after {@code removal} took one of its acct-1 rows, over
+     * a base whose created_at is of {@code timestampType}. Holds the repair to the day's whole
+     * read and acct-1's rows to {@code expectedAcct1}, written in microseconds. acct-2's rows
+     * of the day, the key the late row corrects, run 8.0, 108.0 and 140.0 either way.
+     *
+     * @param isRecomputed whether the view then equals a from-base recompute, which it does
+     *                     not when the removed row sat below the late one
+     * @param capture      the log of the repair, or null
+     */
+    private void assertLateRowOverARemovalReadsTheClosedDayWhole(
+            String removal,
+            String timestampType,
+            String expectedAcct1,
+            boolean isRecomputed,
+            @Nullable LogCapture capture
+    ) throws Exception {
+        final String fraction = ColumnType.isTimestampNano(ColumnType.typeOf(timestampType)) ? ".000000000Z" : ".000000Z";
+        assertMemoryLeak(() -> {
+            createBase("tx", seedWithALoneRowAtTen(), "", timestampType);
+            createViewOverBase("100ms");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // The head, which closes 2026-01-02 below it.
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                execute(removal);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                if (capture != null) {
+                    capture.start();
+                }
+                commit(row(2, 5, 0, 0, "acct-2", 100.0), job);
+                if (capture != null) {
+                    capture.drain();
+                    capture.stop();
+                }
+
+                assertClosedDayReadWhole(job);
+                TestUtils.assertEquals(expectedAcct1.replace(".000000Z", fraction), dumpRowsOf("acct-1"));
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-02T05:00:00.000000Z\tacct-2\t108.0
+                                2026-01-02T13:00:00.000000Z\tacct-2\t140.0
+                                2026-01-03T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-04T01:10:00.000000Z\tacct-2\t1.0
+                                """.replace(".000000Z", fraction),
+                        dumpRowsOf("acct-2")
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+                if (!isRecomputed) {
+                    return;
+                }
+                assertViewMatchesRecompute();
+            }
+            assertRestartRestoresFromTimeline(row(5, 2, 0, 0, "acct-2"));
+        });
+    }
+
+    /**
      * Holds a correction in the open day to the whole-range replacement a cold keyed route
      * declines to: the route priced cheaper, so it was the one the repair would have taken,
      * and yet it replayed nothing by key, derived no checkpoint position from the insert
@@ -2816,6 +3492,8 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * Drives a correction over a closed day from which {@code removal} took one row, and
      * holds the repair to what a from-base recompute produces: rows first, then a restart
      * that has to come back on the timeline the repair published rather than stop the view.
+     * The view is filtered, so the keyed route reaches the merge, whose pairing has to notice
+     * the stored row the replay does not re-emit.
      *
      * @param seedRows          the base's rows, which put the removed row alone in its
      *                          hourly partition on 2026-01-02
@@ -2837,6 +3515,8 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             boolean isSparseAttempted,
             boolean isParked
     ) throws Exception {
+        // The merge's pairing is what catches the removed row here, see filterTheViews().
+        filterTheViews();
         assertMemoryLeak(() -> {
             createView(seedRows);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -3461,7 +4141,21 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     private void createViewOverBase(String viewName, String baseName, String flushEvery) throws Exception {
         execute("create live view " + viewName + " flush every " + flushEvery + " start from beginning as "
                 + "select created_at, account_id, sum(amount) over w as cumulative_sum "
-                + "from " + baseName + " window w as (partition by account_id order by created_at anchor daily '00:00')");
+                + "from " + baseName + viewWhereClause
+                + " window w as (partition by account_id order by created_at anchor daily '00:00')");
+    }
+
+    /**
+     * Gives every view the case creates from here on a filter that keeps every row the
+     * fixtures write, all of which carry a positive amount. The view holds what the unfiltered
+     * one holds, so the from-base recompute still describes it, but no count pairs a filtered
+     * view's stored rows with base rows: a closed segment's keyed route then stands on the
+     * merge's pairing alone, which is what the cases over a removed row of a corrected key
+     * exercise. Over an unfiltered view the count declines that route before the merge pairs
+     * anything.
+     */
+    private void filterTheViews() {
+        viewWhereClause = " where amount > 0";
     }
 
     /**

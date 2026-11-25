@@ -1201,9 +1201,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                     final LiveViewInstance instance = viewInstance();
                     final long keyedRepairsBefore = job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT);
 
-                    // The executor's prologue counts the view's rows below the floor through a
-                    // reader of its own first, and the fault lets that open through.
-                    fault.armAppliedScan("2026-01-02T01", 1);
+                    // The executor's prologue counts the view's rows below the floor at 00:30,
+                    // which sits below the partition's own start, so the count reads its row
+                    // count off the partition metadata and the merge's read is the first open.
+                    fault.armAppliedScan("2026-01-02T01", 0);
                     commit(correction("acct-1"), job);
 
                     Assert.assertTrue("the keyed replay's merge must have met the fault", fault.hasAppliedScanFired());

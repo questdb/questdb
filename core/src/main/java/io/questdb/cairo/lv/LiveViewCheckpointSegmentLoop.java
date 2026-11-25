@@ -70,11 +70,11 @@ import org.jetbrains.annotations.Nullable;
  * and a symbol integer a reader has handed out never names another value in it.
  */
 public final class LiveViewCheckpointSegmentLoop {
-    // segmentStart, minTs, maxTs, keySetIndex, hasNullKey per queued entry, oldest first -
-    // the order a repair has to take them in, because a later segment's cumulative row
-    // positions depend on how many rows the earlier ones added. keySetIndex is -1 for a
+    // segmentStart, minTs, maxTs, keySetIndex, hasNullKey, rowCount per queued entry, oldest
+    // first - the order a repair has to take them in, because a later segment's cumulative
+    // row positions depend on how many rows the earlier ones added. keySetIndex is -1 for a
     // segment carrying no key domain, which is every segment the cost model turned down.
-    private static final int STRIDE = 5;
+    private static final int STRIDE = 6;
     // Q per queued segment, named by an index the entry carries rather than by the entry's
     // position: the queue drains from its head, and an index that travels with the entry is
     // one no removal has to move. Retained across repairs and cleared rather than dropped,
@@ -88,6 +88,7 @@ public final class LiveViewCheckpointSegmentLoop {
     private boolean hasInFlightNullKey;
     private long holdSeqTxn = Numbers.LONG_NULL;
     private int inFlightKeySetIndex = -1;
+    private long inFlightRowCount;
     private long inFlightSegmentStart = Numbers.LONG_NULL;
     private boolean isOpen;
     private boolean isResidualInsertOnly;
@@ -102,6 +103,8 @@ public final class LiveViewCheckpointSegmentLoop {
      * Queues one segment the loop has not reached yet, with the key domain its repair may
      * follow.
      *
+     * @param rowCount   how many base rows the change set inserted into the segment, which
+     *                   its keyed route proves the view's stored rows against
      * @param keys       the segment's affected keys as the pinned reader's symbol integers,
      *                   or null when its repair must read every row of it. Copied rather
      *                   than referenced: the change set these come from is refilled by the
@@ -114,6 +117,7 @@ public final class LiveViewCheckpointSegmentLoop {
             long segmentStart,
             long minTs,
             long maxTs,
+            long rowCount,
             @Nullable DirectIntList keys,
             boolean hasNullKey
     ) {
@@ -131,6 +135,7 @@ public final class LiveViewCheckpointSegmentLoop {
         segments.add(maxTs);
         segments.add(keySetIndex);
         segments.add(keys != null && hasNullKey ? 1 : 0);
+        segments.add(rowCount);
     }
 
     public void clear() {
@@ -141,6 +146,7 @@ public final class LiveViewCheckpointSegmentLoop {
         isOpen = false;
         inFlightKeySetIndex = -1;
         hasInFlightNullKey = false;
+        inFlightRowCount = 0;
         inFlightSegmentStart = Numbers.LONG_NULL;
         viewLowerBoundTimestamp = 0;
         holdSeqTxn = Numbers.LONG_NULL;
@@ -169,6 +175,7 @@ public final class LiveViewCheckpointSegmentLoop {
         isOpen = src.isOpen;
         inFlightKeySetIndex = src.inFlightKeySetIndex;
         hasInFlightNullKey = src.hasInFlightNullKey;
+        inFlightRowCount = src.inFlightRowCount;
         inFlightSegmentStart = src.inFlightSegmentStart;
         viewLowerBoundTimestamp = src.viewLowerBoundTimestamp;
         holdSeqTxn = src.holdSeqTxn;
@@ -218,6 +225,14 @@ public final class LiveViewCheckpointSegmentLoop {
      */
     public @Nullable IntList getInFlightKeys() {
         return inFlightKeySetIndex < 0 ? null : keySets.getQuick(inFlightKeySetIndex);
+    }
+
+    /**
+     * @return how many base rows the change set inserted into the segment the loop is
+     * repairing, or 0 when no segment is in flight
+     */
+    public long getInFlightRowCount() {
+        return inFlightRowCount;
     }
 
     /**
@@ -353,6 +368,7 @@ public final class LiveViewCheckpointSegmentLoop {
             inFlightSegmentStart = Numbers.LONG_NULL;
             inFlightKeySetIndex = -1;
             hasInFlightNullKey = false;
+            inFlightRowCount = 0;
             return;
         }
         inFlightSegmentStart = segments.getQuick(0);
@@ -360,6 +376,7 @@ public final class LiveViewCheckpointSegmentLoop {
         // entry did, so dropping the entry costs no copy.
         inFlightKeySetIndex = (int) segments.getQuick(3);
         hasInFlightNullKey = segments.getQuick(4) != 0;
+        inFlightRowCount = segments.getQuick(5);
         segments.removeIndexBlock(0, STRIDE);
     }
 
@@ -374,6 +391,7 @@ public final class LiveViewCheckpointSegmentLoop {
             inFlightKeySetIndex = -1;
         }
         hasInFlightNullKey = false;
+        inFlightRowCount = 0;
         segmentsRepaired++;
     }
 
