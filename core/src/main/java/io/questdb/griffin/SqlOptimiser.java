@@ -11573,11 +11573,16 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (sampleBy != null && nested.getGroupByPosition() > 0) {
-                final int groupByPosition = nested.getGroupBy().size() > 0
-                        && nested.getGroupBy().getQuick(0).position > nested.getGroupByPosition()
-                        ? nested.getGroupBy().getQuick(0).position
+                // The error points at the first key when the key follows GROUP BY in the text, and at
+                // GROUP BY otherwise. The variables a client declares outside the text read as a
+                // DECLARE block ahead of it, though their positions lie past it, see
+                // SqlParser.QUERY_VARIABLES_POSITION, so a key that one of them supplies points at
+                // GROUP BY.
+                final int keyPosition = nested.getGroupBy().size() > 0 ? nested.getGroupBy().getQuick(0).position : -1;
+                final int errorPosition = keyPosition > nested.getGroupByPosition() && keyPosition < SqlParser.QUERY_VARIABLES_POSITION
+                        ? keyPosition
                         : nested.getGroupByPosition();
-                throw SqlException.$(groupByPosition, "SELECT query must not contain both GROUP BY and SAMPLE BY");
+                throw SqlException.$(errorPosition, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
             if (sampleBy != null && isWindowJoin(nested)) {

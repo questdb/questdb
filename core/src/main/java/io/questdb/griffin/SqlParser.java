@@ -137,7 +137,8 @@ public class SqlParser {
     // allowance of MAX_QUERY_MODELS_PER_CHAR for its text, see checkParseBudget().
     public static final int MAX_QUERY_MODELS = 1_000;
     // The query models a statement's parse may take for each character of the text it parses
-    // once: its own text and the body of every view it reads, see checkParseBudget().
+    // once: its own text, the variables a client declared for it outside that text and the body
+    // of every view it reads, see checkParseBudget().
     public static final int MAX_QUERY_MODELS_PER_CHAR = 2;
     // The characters a statement's parse may write to the compiler's character store, before the
     // allowance of MAX_STORED_CHARS_PER_CHAR for its text, see checkParseBudget().
@@ -9215,7 +9216,8 @@ public class SqlParser {
             wcm.of(lo + 1, visibleCtes, definitionModel);
             // For every later reference, see parseWith(). The declarations stay as the definition's
             // parse saw them: they belong to the query that holds this WITH, whose DECLARE block
-            // comes ahead of the WITH, and a statement's top-level WITH has none.
+            // comes ahead of the WITH. A statement's top-level WITH has only the variables a client
+            // declared for the statement outside its text, if any, see parseQueryVariables().
             withDecls.add(decls);
             withDigits.add(definitionDigit);
             withModels.add(wcm);

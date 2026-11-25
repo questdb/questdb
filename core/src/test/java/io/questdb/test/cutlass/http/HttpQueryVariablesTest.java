@@ -167,11 +167,26 @@ public class HttpQueryVariablesTest extends AbstractTest {
 
     @Test
     public void testErrorInQueryKeepsItsPosition() throws Exception {
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> assertGet(
-                "{\"query\":\"SELECT @a, nope_fn()\",\"error\":\"unknown function name: nope_fn()\",\"position\":11}",
-                "SELECT @a, nope_fn()",
-                "@a := 1"
-        )));
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            assertGet(
+                    "{\"query\":\"SELECT @a, nope_fn()\",\"error\":\"unknown function name: nope_fn()\",\"position\":11}",
+                    "SELECT @a, nope_fn()",
+                    "@a := 1"
+            );
+            // A query cannot have both GROUP BY and SAMPLE BY, whatever the variables hold. The
+            // error points at GROUP BY in the query, also when a variable supplies the key.
+            engine.execute("CREATE TABLE t (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            final String sql = "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY @k";
+            for (String url : new String[]{"/query", "/exp", "/api/v1/sql/validate"}) {
+                final Utf8StringSink sink = new Utf8StringSink();
+                Assert.assertEquals("400", testHttpClient.get(url, sql, "@k := s", null, sink));
+                TestUtils.assertEquals(
+                        "{\"query\":\"" + sql + "\",\"error\":\"SELECT query must not contain both GROUP BY and SAMPLE BY\",\"position\":"
+                                + sql.indexOf("GROUP BY") + '}',
+                        sink.toString()
+                );
+            }
+        }));
     }
 
     @Test

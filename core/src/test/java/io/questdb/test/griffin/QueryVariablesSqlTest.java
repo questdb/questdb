@@ -170,13 +170,56 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     public void testExplainReadsVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT)");
-            final StringSink expected = new StringSink();
-            printSql("EXPLAIN DECLARE @lim := 3 SELECT v FROM t WHERE v > @lim", expected);
-            final StringSink actual = new StringSink();
-            final String sql = "EXPLAIN SELECT v FROM t WHERE v > @lim";
-            withVariables("@lim := 3", sql, () -> printSql(sql, actual));
-            TestUtils.assertContains(expected, "filter:");
-            TestUtils.assertEquals(expected, actual);
+            // the statement with the assignments as a DECLARE block that opens it, and the statement
+            // sent with them; EXPLAIN parses a statement that opens with SELECT apart from one that
+            // opens with a table name, its own DECLARE block or a bracket
+            final String[][] statements = {
+                    {"EXPLAIN DECLARE @lim := 3 SELECT v FROM t WHERE v > @lim", "EXPLAIN SELECT v FROM t WHERE v > @lim"},
+                    {"EXPLAIN DECLARE @lim := 3 t WHERE v > @lim", "EXPLAIN t WHERE v > @lim"},
+                    {"EXPLAIN DECLARE @lim := 3, @b := @lim + 1 SELECT v FROM t WHERE v > @b", "EXPLAIN DECLARE @b := @lim + 1 SELECT v FROM t WHERE v > @b"},
+                    {"EXPLAIN DECLARE @lim := 3 (SELECT v FROM t WHERE v > @lim)", "EXPLAIN (SELECT v FROM t WHERE v > @lim)"},
+            };
+            for (String[] statement : statements) {
+                final StringSink expected = new StringSink();
+                printSql(statement[0], expected);
+                TestUtils.assertContains(expected, "filter:");
+                final StringSink actual = new StringSink();
+                withVariables("@lim := 3", statement[1], () -> printSql(statement[1], actual));
+                TestUtils.assertEquals(expected, actual);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByWithSampleByPointsIntoStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            // A query cannot have both GROUP BY and SAMPLE BY. The error points at the first GROUP BY
+            // key where the key follows GROUP BY in the text, and at GROUP BY otherwise. A key that a
+            // variable supplies sits in the variables, which read as a DECLARE block ahead of the
+            // statement: the error points at GROUP BY, as it does with that block, and lies in the
+            // statement, not in the variables.
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String message = "SELECT query must not contain both GROUP BY and SAMPLE BY";
+            // variables, statement, and the text in the statement that the error points at
+            final String[][] cases = {
+                    {"@k := s1", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY @k", "GROUP BY"},
+                    {"@k := concat(s1, 'x')", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY @k", "GROUP BY"},
+                    {"@k := s1", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY @k, s2", "GROUP BY"},
+                    {"@k := s1", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY ROLLUP(@k)", "GROUP BY"},
+                    // the first key is the statement's own
+                    {"@k := s1", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY s2, @k", "s2, @k"},
+                    {"@k := s1", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY ROLLUP(s2, @k)", "s2, @k"},
+                    // no key at all
+                    {"@k := s1", "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY GROUPING SETS (())", "GROUP BY"},
+            };
+            for (String[] c : cases) {
+                final String variables = c[0];
+                final String sql = c[1];
+                final int position = sql.indexOf(c[2]);
+                final String declared = "DECLARE " + variables + ' ' + sql;
+                assertQuery(declared).noLeakCheck().fails(declared.length() - sql.length() + position, message);
+                withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck().fails(position, message));
+            }
         });
     }
 
