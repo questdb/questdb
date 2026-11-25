@@ -1465,6 +1465,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
@@ -1544,6 +1545,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
         let int_col = Column {
             name: "v",
@@ -1559,6 +1561,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: false,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition {
@@ -1975,6 +1978,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
         let short_col = Column {
             name: "v",
@@ -1990,6 +1994,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: false,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition {
@@ -2159,6 +2164,7 @@ mod tests {
                     strided_timestamp_16: false,
                     designated_timestamp_ascending: true,
                     parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                    dense_symbol_dictionary: false,
                 };
                 let value_col = Column {
                     name: "v",
@@ -2174,6 +2180,7 @@ mod tests {
                     strided_timestamp_16: false,
                     designated_timestamp_ascending: false,
                     parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                    dense_symbol_dictionary: false,
                 };
                 row_group.push(Partition {
                     table: "test".to_string(),

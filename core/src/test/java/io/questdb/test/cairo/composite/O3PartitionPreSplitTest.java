@@ -29,16 +29,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3CompositeMergeStrategy;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.PartitionGeometryFile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -46,11 +43,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -1296,7 +1289,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             // A composite partition's very first real record is always generation 0 - nothing has had a
             // reason to rotate yet - so faking the near-full copy AT generation 0 is what a genuine
             // 100MB fill would also leave behind.
-            plantFakeGeometryRecordNearFileLimit("x", DAY_03, 0);
+            NearFullGeometryFixture.plantCommittedRecord(engine, "x", DAY_03, 0);
 
             // Another relocation, landing on the now-near-full generation: publish has to rotate rather
             // than grow past MAX_FILE_SIZE.
@@ -1363,7 +1356,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
             // Skip straight to the last generation the format has: nothing else about reaching it is
             // under test here, only what happens once there is nowhere left to rotate to.
-            plantFakeGeometryRecordNearFileLimit("x", DAY_03, 15);
+            NearFullGeometryFixture.plantCommittedRecord(engine, "x", DAY_03, NearFullGeometryFixture.LAST_GENERATION);
 
             execute(
                     "CREATE TABLE w AS (SELECT x::INT + 2000000 i, -x - 2000000L AS j," +
@@ -1392,46 +1385,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
         });
-    }
-
-    /**
-     * Plants a byte-identical copy of {@code tableName}'s currently-committed {@code _geometry} record
-     * for {@code partitionTs} inside {@code fakeGeneration}'s own file, 8 bytes short of
-     * {@link PartitionGeometryFile#MAX_FILE_SIZE} - a sparse write, not 100MB of real I/O - and re-points
-     * {@code _txn}'s geometry ref at that copy. The next commit that publishes for this partition then
-     * sees a genuinely near-full (or, at {@code fakeGeneration == 15}, fully exhausted) generation,
-     * without this test having to write anywhere near that much data through ordinary commits.
-     */
-    private static void plantFakeGeometryRecordNearFileLimit(String tableName, long partitionTs, int fakeGeneration) throws Exception {
-        try (TableWriter writer = getWriter(tableName)) {
-            TxWriter tx = writer.getTxWriter();
-            final int partitionIndex = tx.getPartitionIndex(partitionTs);
-            final long committedRef = tx.getGeometryRef(partitionIndex);
-            // Ask the reader rather than test a bit directly: which bit carries COMPOSITE is an
-            // implementation detail of the offset-3 word, and it shares that word with REMOTE and
-            // SEQ_TXN_VALID.
-            Assert.assertTrue("partition is not composite ahead of the fake-up", tx.isPartitionComposite(partitionIndex));
-            final int realGeneration = TxReader.geometryGeneration(committedRef);
-            final long realOffset = TxReader.geometryOffset(committedRef);
-            final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-            // 8 bytes of headroom - less than any real record (HEADER_SIZE alone is 48) - so the planted
-            // copy's own committed size is already enough to push the next write past MAX_FILE_SIZE,
-            // regardless of exactly how many pieces either record holds.
-            final long fakeOffset = PartitionGeometryFile.MAX_FILE_SIZE - 8;
-            final FilesFacade geometryFf = configuration.getFilesFacade();
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(writer.getTableToken());
-                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_WRITER)) {
-                    geometryFile.read(geometryFf, path, realGeneration, realOffset);
-                    geometryFile.append(geometryFf, path, fakeGeneration, fakeOffset, configuration.getCommitMode());
-                }
-            }
-
-            tx.setPartitionGeometryRef(partitionTs, TxReader.packGeometryRef(fakeGeneration, fakeOffset));
-            tx.commit(new ObjList<>());
-        }
     }
 
     /**

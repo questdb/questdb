@@ -34,6 +34,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -102,6 +103,30 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     public int getMaxEntries() {
         return maxEntries;
+    }
+
+    /**
+     * Adds the id of the thread that holds each slot of the table, in every segment, to the sink,
+     * one id per slot, and takes no slot. Leaves out the slots that the calling thread holds with
+     * no tenant: a lock attempt of the thread that failed took them, and {@link #lock} on the thread
+     * passes over them. A slot of the calling thread that holds a tenant counts: lock() fails on it.
+     */
+    public void getOwnerThreads(TableToken tableToken, LongList sink) {
+        Entry<T> e = entries.get(tableToken.getDirName());
+        if (e == null) {
+            return;
+        }
+        final long thread = Thread.currentThread().threadId();
+        do {
+            for (int i = 0; i < segmentSize; i++) {
+                final long owner = Unsafe.arrayGetVolatile(e.allocations, i);
+                // same thread, don't need to order reads
+                if (owner != UNALLOCATED && (owner != thread || e.getTenant(i) != null)) {
+                    sink.add(owner);
+                }
+            }
+            e = e.next;
+        } while (e != null);
     }
 
     /**
