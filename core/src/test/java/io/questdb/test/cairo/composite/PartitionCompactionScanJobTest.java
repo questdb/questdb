@@ -42,6 +42,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Files;
@@ -1003,7 +1004,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * A copy is never installed on the active partition, whose files take rows the copy never sees.
+     * A copy is installed on the active partition only while it is sealed: an unsealed one's files take rows the copy
+     * never sees.
      */
     @Test
     public void testParquetCopyInstallRefusesADayThatBecameActiveAfterItsBuild() throws Exception {
@@ -1122,6 +1124,37 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The copy of a sealed active partition is safe only while the seal holds: once lifted, the day takes rows again.
+     */
+    @Test
+    public void testParquetCopyInstallRefusesAnActiveDayUnsealedAfterItsBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetCopyTable("gv");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                Assert.assertTrue(ownerWriter.removePartition(MicrosFormatUtils.parseTimestamp("2020-01-03T00:00:00.000000Z")));
+                ownerWriter.getTxWriter().setPartitionReadOnly(0, true);
+                ownerWriter.bumpPartitionTableVersion();
+                final String stagedBuild = stageParquetCopy(ownerWriter, token, day);
+                ownerWriter.getTxWriter().setPartitionReadOnly(0, false);
+                ownerWriter.bumpPartitionTableVersion();
+                Assert.assertEquals(
+                        "only the seal must have moved",
+                        "nameTxn=-1, rows=100, columnVersion=-1, metadataVersion=0, active=true, split=false," +
+                                " parquet=false, copy=false, composite=false, remote=false",
+                        parquetCopyInputs(ownerWriter, day)
+                );
+                assertParquetCopyRefused(ownerWriter, stagedBuild);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertParquetCopyRequestDeclined(token, day);
+            assertQuery("SELECT count() c FROM gv").noRandomAccess().expectSize().returns("c\n100\n");
+        });
+    }
+
     @Test
     public void testParquetCopyInstallRefusesAnOpenTransactionWritingTheDay() throws Exception {
         assertMemoryLeak(() -> {
@@ -1146,6 +1179,86 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             assertParquetCopyRebuilt(token, day, 101);
             assertQuery("SELECT count() c FROM go").noRandomAccess().expectSize().returns("c\n111\n");
+        });
+    }
+
+    /**
+     * A sealed active partition takes no more rows and, with no WAL LAG parked in it, holds exactly what {@code _txn}
+     * records, so it takes a copy like an older day. A storage policy uploads the copy before it evicts the partition.
+     */
+    @Test
+    public void testParquetCopyRequestCopiesASealedActiveDay() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetCopyTable("gs");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableWriter writer = engine.getWriter(token, "seal")) {
+                Assert.assertTrue(writer.removePartition(MicrosFormatUtils.parseTimestamp("2020-01-03T00:00:00.000000Z")));
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.bumpPartitionTableVersion();
+                Assert.assertEquals(
+                        "nameTxn=-1, rows=100, columnVersion=-1, metadataVersion=0, active=true, split=false," +
+                                " parquet=false, copy=false, composite=false, remote=false",
+                        parquetCopyInputs(writer, day)
+                );
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertParquetCopyRebuilt(token, day, 100);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("the copy must leave the day sealed", reader.getTxFile().isPartitionReadOnly(0));
+            }
+            assertQuery("SELECT count() c, min(i) lo, max(i) hi FROM gs")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\tlo\thi\n100\t1\t100\n");
+        });
+    }
+
+    /**
+     * WAL LAG parked in the active partition sits in its files past the committed rows, where a copy built off a
+     * reader snapshot never looks: even a sealed active partition takes no copy until the LAG is applied.
+     */
+    @Test
+    public void testParquetCopyRequestDeclinesASealedActiveDayWithWalLag() throws Exception {
+        // A merge-append table takes no LAG at all, and the test default turns merge-append on.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+        assertMemoryLeak(() -> {
+            // Real clock: the apply job's time quota only trips when the clock moves between transactions.
+            setCurrentMicros(-1);
+            execute("CREATE TABLE gw (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO gw VALUES (1, '2020-01-01T00')");
+            execute("INSERT INTO gw VALUES (2, '2020-01-01T01')");
+            execute("INSERT INTO gw VALUES (3, '2020-01-01T02')");
+            execute("INSERT INTO gw VALUES (4, '2020-01-01T03')");
+            execute("INSERT INTO gw VALUES (5, '2020-01-01T02')");
+            final TableToken token = engine.verifyTableName("gw");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+
+            // One transaction per apply run: the fourth stays in LAG because the fifth is still pending.
+            node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            for (int i = 0; i < 4; i++) {
+                engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl().setMaxBlockRowCount(1);
+                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                    walApplyJob.run();
+                }
+            }
+            try (TableWriter writer = engine.getWriter(token, "seal")) {
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.bumpPartitionTableVersion();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day must be the sealed active partition", 1, tx.getPartitionCount());
+                Assert.assertTrue(tx.isPartitionReadOnly(0));
+                Assert.assertEquals("the fourth transaction must be parked in LAG", 1, tx.getLagRowCount());
+                Assert.assertFalse(tx.isLastPartitionFrozen());
+            }
+
+            assertParquetCopyRequestDeclined(token, day);
         });
     }
 

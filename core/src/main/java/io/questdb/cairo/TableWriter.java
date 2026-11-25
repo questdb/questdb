@@ -4278,7 +4278,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Installs a staged parquet copy beside a plain native partition's files and marks it parquet_generated.
      * The partition has to still be as the copy found it; see {@link #swapMergedLogicalPartition} for why each
-     * expected value is re-checked.
+     * expected value is re-checked. The newest partition takes a copy only while it is frozen, see
+     * {@link TxReader#isLastPartitionFrozen()}: otherwise its files take rows the copy never sees.
      */
     public void installGeneratedParquet(
             long partitionTimestamp,
@@ -4295,25 +4296,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isOpenedPartitionConflict = !commitOpenTransactionThatOpenedPartitions(logicalPartitionTimestamp);
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         final long liveNameTxn = partitionIndex > -1 ? txWriter.getPartitionNameTxn(partitionIndex) : -1;
+        final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
         final boolean isInTransaction = inTransaction();
         final boolean isTransactionConflict = isOpenedPartitionConflict || isInTransaction
                 && (partitionIndex < 0 || !isPartitionRangeClearOfOpenTransaction(partitionIndex, partitionIndex + 1, logicalPartitionTimestamp));
         final boolean stale = isTransactionConflict
                 || partitionIndex < 0
-                || partitionIndex >= txWriter.getPartitionCount() - 1
+                || (partitionIndex == lastPartitionIndex && !txWriter.isLastPartitionFrozen())
                 || txWriter.isPartitionParquet(partitionIndex)
                 || txWriter.isPartitionParquetGenerated(partitionIndex)
                 || txWriter.isPartitionComposite(partitionIndex)
                 || txWriter.isPartitionRemote(partitionIndex)
                 || txWriter.isPartitionDeltaActive(partitionIndex)
                 || liveNameTxn != expectedNameTxn
-                || txWriter.getPartitionSize(partitionIndex) != expectedRowCount
+                // The writer's own accessor: _txn keeps the last partition's row count as the transient one.
+                || getPartitionSize(partitionIndex) != expectedRowCount
                 || columnVersionWriter.getMaxPartitionVersion(partitionTimestamp) != expectedColumnVersion
                 || getPartitionSquashTracker(partitionIndex) != expectedSquashTracker
                 || getMetadataVersion() != expectedMetadataVersion
                 // The copy is of the whole logical partition: a split on either side holds rows it does not.
                 || partitionTimestamp != logicalPartitionTimestamp
-                || txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) == logicalPartitionTimestamp;
+                || (partitionIndex < lastPartitionIndex
+                && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) == logicalPartitionTimestamp);
 
         other.trimTo(pathSize);
         setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, expectedNameTxn);

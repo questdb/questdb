@@ -699,6 +699,19 @@ public class TxReader implements Closeable, Mutable {
         return lagOrdered;
     }
 
+    /**
+     * Whether the newest partition is frozen: read-only, so the writer appends nothing more to it, and with no WAL LAG
+     * parked in its files past the committed rows. Its files then hold exactly the rows {@code _txn} records, as an
+     * older partition's do, so a copy built off a reader snapshot misses nothing.
+     */
+    public boolean isLastPartitionFrozen() {
+        final int partitionCount = getPartitionCount();
+        return partitionCount > 0
+                && isPartitionReadOnly(partitionCount - 1)
+                && lagRowCount == 0
+                && lagTxnCount == 0;
+    }
+
     public boolean isPartitionDeltaActive(int i) {
         return isPartitionDeltaActiveByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }

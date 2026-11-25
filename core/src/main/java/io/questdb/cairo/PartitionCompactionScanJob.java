@@ -1209,7 +1209,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             int partitionIndex,
             long logicalPartitionTimestamp
     ) {
-        if (partitionIndex == txReader.getPartitionCount() - 1
+        // The newest partition takes appends in place and parks WAL LAG past its committed rows, both of which a copy
+        // built off a reader snapshot misses; only a frozen one holds exactly what _txn records. The install re-checks.
+        if ((partitionIndex == txReader.getPartitionCount() - 1 && !txReader.isLastPartitionFrozen())
                 || txReader.isPartitionParquet(partitionIndex)
                 || txReader.isPartitionParquetGenerated(partitionIndex)
                 || txReader.isPartitionRemote(partitionIndex)
