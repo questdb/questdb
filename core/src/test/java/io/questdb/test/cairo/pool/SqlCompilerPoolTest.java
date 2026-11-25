@@ -67,7 +67,7 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
             @Override
-            protected Iterable<FunctionFactory> getFunctionFactories() {
+            public Iterable<FunctionFactory> getFunctionFactories() {
                 final ArrayList<FunctionFactory> factories = new ArrayList<>();
                 super.getFunctionFactories().forEach(factories::add);
                 factories.add(new CloseFailingCursorFunctionFactory());

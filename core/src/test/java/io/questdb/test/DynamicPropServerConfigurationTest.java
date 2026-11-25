@@ -2145,6 +2145,33 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSqlLegacyPlannerEnabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertFalse(serverMain.getConfiguration().getCairoConfiguration().isSqlLegacyPlannerEnabled());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.legacy.planner.enabled=true\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlLegacyPlannerEnabled());
+                // the engine, and so every context that follows the server, sees the reloaded value
+                Assert.assertTrue(serverMain.getEngine().getConfiguration().isSqlLegacyPlannerEnabled());
+                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(serverMain.getEngine(), 1)) {
+                    Assert.assertTrue(context.isLegacyPlannerEnabled());
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.legacy.planner.enabled=false\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertFalse(serverMain.getEngine().getConfiguration().isSqlLegacyPlannerEnabled());
+            }
+        });
+    }
+
+    @Test
     public void testUnknownPropertyAdditionIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {

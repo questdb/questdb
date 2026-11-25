@@ -49,6 +49,12 @@ public interface HttpRequestHeader {
 
     ObjList<? extends Utf8Sequence> getHeaderNames();
 
+    /**
+     * The planner the request chose with the {@code Legacy-Planner} header, as
+     * {@link io.questdb.griffin.SqlExecutionContextImpl#legacyPlannerOf} reads it.
+     */
+    int getLegacyPlanner();
+
     DirectUtf8Sequence getMethod();
 
     DirectUtf8Sequence getMethodLine();

@@ -195,7 +195,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 return;
             }
 
-            final RecordCursorFactory factory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext.getSecurityContext()));
+            final RecordCursorFactory factory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext));
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
                 if (!state.isSqlExecutionOwnerStarted()) {

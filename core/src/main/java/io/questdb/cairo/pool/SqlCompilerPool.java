@@ -199,6 +199,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.generateViewFactory(viewSql, executionContext);
+        }
+
+        @Override
         public ExecutionModel generateViewExecutionModel(
                 CharSequence viewSql,
                 SqlExecutionContext executionContext,

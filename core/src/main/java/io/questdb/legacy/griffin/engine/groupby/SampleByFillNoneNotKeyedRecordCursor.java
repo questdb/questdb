@@ -1,0 +1,89 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin.engine.groupby;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.std.ObjList;
+
+class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
+    private final SimpleMapValue value;
+
+    public SampleByFillNoneNotKeyedRecordCursor(
+            CairoConfiguration configuration,
+            SimpleMapValue value,
+            ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
+            ObjList<Function> recordFunctions,
+            int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos,
+            boolean isFromToUtc
+    ) {
+        super(
+                configuration,
+                recordFunctions,
+                timestampIndex,
+                timestampType,
+                timestampSampler,
+                groupByFunctions,
+                groupByFunctionsUpdater,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos,
+                isFromToUtc
+        );
+        this.value = value;
+        record.of(value);
+    }
+
+    @Override
+    public boolean hasNext() {
+        // initTimestamps() returns true when it aggregated the NULL bucket into the value: that bucket goes out first
+        return initTimestamps() || (baseRecord != null && notKeyedLoop(value));
+    }
+
+    @Override
+    protected boolean aggregateNullTimestampRows() {
+        return notKeyedNullLoop(value);
+    }
+}

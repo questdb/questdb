@@ -2026,6 +2026,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlLegacyPlannerEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isSqlOrderBySortEnabled() {
         return true;
     }

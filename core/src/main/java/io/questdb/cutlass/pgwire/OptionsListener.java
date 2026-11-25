@@ -25,5 +25,12 @@
 package io.questdb.cutlass.pgwire;
 
 public interface OptionsListener {
+
+    /**
+     * Sets the planner the connection chose with the {@code legacy_planner} setting, see
+     * {@link io.questdb.griffin.SqlExecutionContextImpl#setLegacyPlanner(int)}.
+     */
+    void setLegacyPlanner(int legacyPlanner);
+
     void setSqlTimeout(long sqlTimeout);
 }

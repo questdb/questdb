@@ -402,10 +402,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return httpCircuitBreaker;
     }
 
+    /**
+     * The connection's execution context, with the planner the current request chose, see
+     * {@link HttpRequestHeader#getLegacyPlanner()}.
+     */
     public SqlExecutionContextImpl getOrCreateSqlExecutionContext(CairoEngine engine, int workerCount) {
         if (httpSqlExecutionContext == null) {
             httpSqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         }
+        httpSqlExecutionContext.setLegacyPlanner(headerParser.getLegacyPlanner());
         return httpSqlExecutionContext;
     }
 

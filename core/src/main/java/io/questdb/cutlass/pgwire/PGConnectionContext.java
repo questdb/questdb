@@ -337,6 +337,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.clear(pendingWriters);
         Misc.clear(authenticator);
         Misc.clear(bindVariableService);
+        sqlExecutionContext.setLegacyPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER);
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         freezeRecvBuffer = false;
@@ -486,6 +487,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setAuthenticator(SocketAuthenticator authenticator) {
         this.authenticator = authenticator;
+    }
+
+    @Override
+    public void setLegacyPlanner(int legacyPlanner) {
+        sqlExecutionContext.setLegacyPlanner(legacyPlanner);
     }
 
     @Override
@@ -691,6 +697,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.put(MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE);
         tlsSessionStarting = true;
         responseUtf8Sink.sendBufferAndReset();
+    }
+
+    // Returns the insert cache key of the SQL text for the current planner, which the pipeline entry remembers, so
+    // that a reload of the server's planner does not reuse an insert the other planner compiled.
+    private CharSequence insertCacheKey(PGPipelineEntry entry, CharSequence sqlText) {
+        final boolean isLegacyPlanner = sqlExecutionContext.isLegacyPlannerEnabled();
+        entry.setLegacyPlanner(isLegacyPlanner);
+        return SelectCacheKey.of(null, isLegacyPlanner, sqlText, selectCacheKeySink);
     }
 
     private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws PGMessageProcessingException {
@@ -1102,7 +1116,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        final TypesAndInsert tai = taiCache.poll(utf16SqlText);
+        final TypesAndInsert tai = taiCache.poll(insertCacheKey(pipelineCurrentEntry, utf16SqlText));
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
@@ -1430,13 +1444,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    // Returns the select cache key of the SQL text for the current principal. The pipeline entry
-    // remembers the principal's scope, so that it returns its statement to the same scope, even
-    // when the principal changes before the statement closes, e.g. by assuming a service account.
+    // Returns the select cache key of the SQL text for the current principal and planner. The pipeline
+    // entry remembers both, so that it returns its statement to the same key, even when the principal
+    // changes before the statement closes, e.g. by assuming a service account.
     private CharSequence selectCacheKey(PGPipelineEntry entry, CharSequence sqlText) {
         final CharSequence scope = sqlExecutionContext.getSecurityContext().getSelectCacheScope();
+        final boolean isLegacyPlanner = sqlExecutionContext.isLegacyPlannerEnabled();
         entry.setSelectCacheScope(scope);
-        return SelectCacheKey.of(scope, sqlText, selectCacheKeySink);
+        entry.setLegacyPlanner(isLegacyPlanner);
+        return SelectCacheKey.of(scope, isLegacyPlanner, sqlText, selectCacheKeySink);
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {

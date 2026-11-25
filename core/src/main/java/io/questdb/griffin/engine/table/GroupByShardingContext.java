@@ -93,7 +93,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     volatile boolean sharded;
     boolean shardedHint;
 
-    GroupByShardingContext(
+    public GroupByShardingContext(
             CairoConfiguration configuration,
             ColumnTypes keyTypes,
             ColumnTypes valueTypes,
@@ -152,8 +152,19 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         Misc.freeObjList(destShards);
     }
 
+    public GroupByMapFragment getFragment(int slotId) {
+        if (slotId == -1) {
+            return ownerFragment;
+        }
+        return perWorkerFragments.getQuick(slotId);
+    }
+
     public AsyncQueryProgressState getProgressState() {
         return progressState;
+    }
+
+    public boolean isSharded() {
+        return sharded;
     }
 
     public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
@@ -163,12 +174,170 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return perWorkerLocks.acquireSlot(carrierId, circuitBreaker);
     }
 
+    public void maybeEnableSharding(GroupByMapFragment fragment, long functionCardinalityIncrement) {
+        fragment.totalFunctionCardinality += functionCardinalityIncrement;
+        // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
+        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
+            sharded = true;
+        }
+    }
+
+    public Map mergeOwnerMap() {
+        return mergeOwnerMap(getFunctionUpdater(-1));
+    }
+
     public void mergeShard(int slotId, int shardIndex) {
         mergeShard(shardIndex, getFunctionUpdater(slotId));
     }
 
+    /**
+     * Merges per-worker shard maps into destination shards in parallel.
+     * The owner thread publishes merge tasks and work-steals when the queue is full.
+     *
+     * @return destination shard maps (non-intersecting key sets)
+     */
+    public ObjList<Map> mergeShards(
+            MessageBus messageBus,
+            WorkStealingStrategy workStealingStrategy,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
+            SOUnboundedCountDownLatch postAggregationDoneLatch,
+            AtomicInteger postAggregationStartedCounter
+    ) {
+        postAggregationCircuitBreaker.reset();
+        postAggregationStartedCounter.set(0);
+        postAggregationDoneLatch.reset();
+
+        // First, make sure to shard all non-sharded maps, if any.
+        shardAll();
+
+        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
+        final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
+        final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
+        final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
+        final WorkStealingStrategy strategy = workStealingStrategy.of(postAggregationStartedCounter);
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        ownerLoop.of(dispatcher, circuitBreaker, progressState);
+        ownerLoop.tryAcquirePublication();
+
+        if (!ownerLoop.hasPublication()) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+                ownerLoop.checkBeforeHelping();
+                mergeShard(-1, shardIndex);
+            }
+            finalizeShardStats();
+            return destShards;
+        }
+
+        int queuedCount = 0;
+        int ownCount = 0;
+        int reclaimed = 0;
+        int total = 0;
+        int mergedCount = 0; // positive completed-task count; the latch counts down from zero
+
+        try {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+                while (true) {
+                    ownerLoop.observeProgress();
+                    long cursor = pubSeq.next();
+                    if (cursor < 0) {
+                        mergedCount = -postAggregationDoneLatch.getCount();
+                        if (mergedCount == queuedCount || strategy.shouldSteal(mergedCount)) {
+                            ownerLoop.checkBeforeHelping();
+                            mergeShard(-1, shardIndex);
+                            ownCount++;
+                            total++;
+                            mergedCount = -postAggregationDoneLatch.getCount();
+                            break;
+                        }
+                        if (!ownerLoop.awaitProgress()) {
+                            ownerLoop.pause();
+                        }
+                    } else {
+                        queue.get(cursor).of(
+                                postAggregationCircuitBreaker,
+                                postAggregationStartedCounter,
+                                postAggregationDoneLatch,
+                                this,
+                                shardIndex
+                        );
+                        pubSeq.done(cursor);
+                        queuedCount++;
+                        total++;
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            postAggregationCircuitBreaker.cancel();
+            throw th;
+        } finally {
+            try {
+                ownerLoop.releasePublication();
+            } finally {
+                while (true) {
+                    ownerLoop.observeProgress();
+                    if (postAggregationDoneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+                    if (isOwnerTripped) {
+                        postAggregationCircuitBreaker.cancel();
+                    }
+
+                    if (!ownerLoop.isOwnerParkable() && strategy.shouldSteal(mergedCount)) {
+                        long cursor = subSeq.next();
+                        if (cursor > -1) {
+                            GroupByMergeShardTask task = queue.get(cursor);
+                            // run() releases the slot
+                            if (dispatcher != null) {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this, dispatcher);
+                            } else {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
+                            }
+                            reclaimed++;
+                        } else {
+                            ownerLoop.pause();
+                        }
+                    } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
+                        ownerLoop.pause();
+                    }
+                    mergedCount = -postAggregationDoneLatch.getCount();
+                }
+            }
+        }
+
+        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
+            finalizeShardStats();
+        }
+
+        LOG.debug().$("merge shards done [total=").$(total)
+                .$(", ownCount=").$(ownCount)
+                .$(", reclaimed=").$(reclaimed)
+                .$(", queuedCount=").$(queuedCount)
+                .I$();
+
+        return destShards;
+    }
+
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    public void reopen() {
+        if (shardedHint) {
+            // Looks like we had to shard during previous execution, so let's do it ahead of time.
+            sharded = true;
+        }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        memoryTracker = tracker;
+        ownerFragment.setMemoryTracker(tracker);
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
+        }
     }
 
     private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater) {
@@ -334,180 +503,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return destShards;
     }
 
-    GroupByMapFragment getFragment(int slotId) {
-        if (slotId == -1) {
-            return ownerFragment;
-        }
-        return perWorkerFragments.getQuick(slotId);
-    }
-
     GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         if (slotId == -1 || perWorkerFunctionUpdaters == null) {
             return ownerFunctionUpdater;
         }
         return perWorkerFunctionUpdaters.getQuick(slotId);
-    }
-
-    boolean isSharded() {
-        return sharded;
-    }
-
-    void maybeEnableSharding(GroupByMapFragment fragment, long functionCardinalityIncrement) {
-        fragment.totalFunctionCardinality += functionCardinalityIncrement;
-        // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
-        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
-            sharded = true;
-        }
-    }
-
-    Map mergeOwnerMap() {
-        return mergeOwnerMap(getFunctionUpdater(-1));
-    }
-
-    /**
-     * Merges per-worker shard maps into destination shards in parallel.
-     * The owner thread publishes merge tasks and work-steals when the queue is full.
-     *
-     * @return destination shard maps (non-intersecting key sets)
-     */
-    ObjList<Map> mergeShards(
-            MessageBus messageBus,
-            WorkStealingStrategy workStealingStrategy,
-            SqlExecutionCircuitBreaker circuitBreaker,
-            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
-            SOUnboundedCountDownLatch postAggregationDoneLatch,
-            AtomicInteger postAggregationStartedCounter
-    ) {
-        postAggregationCircuitBreaker.reset();
-        postAggregationStartedCounter.set(0);
-        postAggregationDoneLatch.reset();
-
-        // First, make sure to shard all non-sharded maps, if any.
-        shardAll();
-
-        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
-        final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
-        final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
-        final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
-        final WorkStealingStrategy strategy = workStealingStrategy.of(postAggregationStartedCounter);
-        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
-        ownerLoop.of(dispatcher, circuitBreaker, progressState);
-        ownerLoop.tryAcquirePublication();
-
-        if (!ownerLoop.hasPublication()) {
-            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
-                ownerLoop.checkBeforeHelping();
-                mergeShard(-1, shardIndex);
-            }
-            finalizeShardStats();
-            return destShards;
-        }
-
-        int queuedCount = 0;
-        int ownCount = 0;
-        int reclaimed = 0;
-        int total = 0;
-        int mergedCount = 0; // positive completed-task count; the latch counts down from zero
-
-        try {
-            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
-                while (true) {
-                    ownerLoop.observeProgress();
-                    long cursor = pubSeq.next();
-                    if (cursor < 0) {
-                        mergedCount = -postAggregationDoneLatch.getCount();
-                        if (mergedCount == queuedCount || strategy.shouldSteal(mergedCount)) {
-                            ownerLoop.checkBeforeHelping();
-                            mergeShard(-1, shardIndex);
-                            ownCount++;
-                            total++;
-                            mergedCount = -postAggregationDoneLatch.getCount();
-                            break;
-                        }
-                        if (!ownerLoop.awaitProgress()) {
-                            ownerLoop.pause();
-                        }
-                    } else {
-                        queue.get(cursor).of(
-                                postAggregationCircuitBreaker,
-                                postAggregationStartedCounter,
-                                postAggregationDoneLatch,
-                                this,
-                                shardIndex
-                        );
-                        pubSeq.done(cursor);
-                        queuedCount++;
-                        total++;
-                        break;
-                    }
-                }
-            }
-        } catch (Throwable th) {
-            postAggregationCircuitBreaker.cancel();
-            throw th;
-        } finally {
-            try {
-                ownerLoop.releasePublication();
-            } finally {
-                while (true) {
-                    ownerLoop.observeProgress();
-                    if (postAggregationDoneLatch.done(queuedCount)) {
-                        break;
-                    }
-                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
-                    if (isOwnerTripped) {
-                        postAggregationCircuitBreaker.cancel();
-                    }
-
-                    if (!ownerLoop.isOwnerParkable() && strategy.shouldSteal(mergedCount)) {
-                        long cursor = subSeq.next();
-                        if (cursor > -1) {
-                            GroupByMergeShardTask task = queue.get(cursor);
-                            // run() releases the slot
-                            if (dispatcher != null) {
-                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this, dispatcher);
-                            } else {
-                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
-                            }
-                            reclaimed++;
-                        } else {
-                            ownerLoop.pause();
-                        }
-                    } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                        ownerLoop.pause();
-                    }
-                    mergedCount = -postAggregationDoneLatch.getCount();
-                }
-            }
-        }
-
-        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
-            finalizeShardStats();
-        }
-
-        LOG.debug().$("merge shards done [total=").$(total)
-                .$(", ownCount=").$(ownCount)
-                .$(", reclaimed=").$(reclaimed)
-                .$(", queuedCount=").$(queuedCount)
-                .I$();
-
-        return destShards;
-    }
-
-    void reopen() {
-        if (shardedHint) {
-            // Looks like we had to shard during previous execution, so let's do it ahead of time.
-            sharded = true;
-        }
-    }
-
-    void setMemoryTracker(@Nullable MemoryTracker tracker) {
-        memoryTracker = tracker;
-        ownerFragment.setMemoryTracker(tracker);
-        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
-        }
     }
 
     void shardAll() {

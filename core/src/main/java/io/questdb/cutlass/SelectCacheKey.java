@@ -39,17 +39,23 @@ public final class SelectCacheKey {
     }
 
     /**
-     * Returns the key of the SQL text in the given scope: the SQL text itself for the shared
-     * {@code null} scope, otherwise the text qualified by the scope, written to the sink. The
-     * qualified key starts with a NUL, which no SQL text starts with, and length-prefixes the
-     * scope, so no scope and text pair can spell the key of another.
+     * Returns the key of the SQL text in the given scope, for the planner that compiles it. The logical-plan planner
+     * keys the shared {@code null} scope by the SQL text itself. Every other key goes to the sink: a NUL, or a SOH for
+     * the legacy planner, which no SQL text starts with; then the scope after its length, or a '-', which no length
+     * starts with, for the shared scope; then the SQL text. So no planner, scope and text spell the key of another.
      */
-    public static CharSequence of(@Nullable CharSequence scope, @NotNull CharSequence sqlText, @NotNull StringSink sink) {
-        if (scope == null) {
+    public static CharSequence of(@Nullable CharSequence scope, boolean isLegacyPlanner, @NotNull CharSequence sqlText, @NotNull StringSink sink) {
+        if (scope == null && !isLegacyPlanner) {
             return sqlText;
         }
         sink.clear();
-        sink.put('\u0000').put(scope.length()).put(':').put(scope).put(sqlText);
+        sink.put(isLegacyPlanner ? '\u0001' : '\u0000');
+        if (scope == null) {
+            sink.put('-');
+        } else {
+            sink.put(scope.length()).put(':').put(scope);
+        }
+        sink.put(sqlText);
         return sink;
     }
 }

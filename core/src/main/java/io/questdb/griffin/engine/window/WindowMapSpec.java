@@ -34,6 +34,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -201,6 +202,46 @@ public final class WindowMapSpec {
             @NotNull RecordMetadata baseMetadata,
             @NotNull ColumnTypes recordTypes
     ) {
+        final int orderCount = orderBy.size();
+        final IntList orderColumnIndexes = new IntList(orderCount);
+        for (int i = 0; i < orderCount; i++) {
+            final ExpressionNode node = orderBy.getQuick(i);
+            if (node == null || node.token == null) {
+                return null;
+            }
+            final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
+            if (columnIndex < 0) {
+                return null;
+            }
+            orderColumnIndexes.add(columnIndex);
+        }
+        return of(
+                context,
+                partitionBy.size(),
+                (index, term, sink) -> WindowKeyExpressionIdentity.render(partitionBy.getQuick(index), term, baseMetadata, sink),
+                orderColumnIndexes,
+                orderByDirections,
+                isOrderDismissed,
+                function,
+                recordTypes
+        );
+    }
+
+    /**
+     * The spec of the function's map, as the overload that reads the parsed PARTITION BY and ORDER BY derives it, from
+     * the count of the PARTITION BY terms, the identity of each term that reads no column of the record directly, and
+     * the record columns of the ORDER BY terms.
+     */
+    public static @Nullable WindowMapSpec of(
+            @NotNull WindowContext context,
+            int partitionTermCount,
+            @NotNull PartitionTermIdentity partitionTermIdentity,
+            @NotNull IntList orderColumnIndexes,
+            @NotNull IntList orderByDirections,
+            boolean isOrderDismissed,
+            @NotNull WindowFunction function,
+            @NotNull ColumnTypes recordTypes
+    ) {
         if (context.isEmpty()) {
             return null;
         }
@@ -213,7 +254,7 @@ public final class WindowMapSpec {
         final int partitionCount = partitionByFunctions == null ? 0 : partitionByFunctions.size();
         if (partitionCount == 0
                 || contextKeyTypes.getColumnCount() != partitionCount
-                || partitionBy.size() != partitionCount) {
+                || partitionTermCount != partitionCount) {
             return null;
         }
         final IntList partitionColumnIndexes = new IntList(partitionCount);
@@ -243,7 +284,7 @@ public final class WindowMapSpec {
             if (columnIndex >= 0) {
                 WindowKeyExpressionIdentity.renderColumn(columnIndex, term.getType(), identity);
             } else {
-                if (!WindowKeyExpressionIdentity.render(partitionBy.getQuick(i), term, baseMetadata, identity)) {
+                if (!partitionTermIdentity.render(i, term, identity)) {
                     return null;
                 }
                 hasExpressionKey = true;
@@ -251,19 +292,9 @@ public final class WindowMapSpec {
             partitionColumnIndexes.add(columnIndex);
             keyColumnTypes.add(contextKeyTypes.getColumnType(i));
         }
-        final int orderCount = orderBy.size();
-        final IntList orderColumnIndexes = new IntList(orderCount);
+        final int orderCount = orderColumnIndexes.size();
         final IntList orderDirections = new IntList(orderCount);
         for (int i = 0; i < orderCount; i++) {
-            final ExpressionNode node = orderBy.getQuick(i);
-            if (node == null || node.token == null) {
-                return null;
-            }
-            final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
-            if (columnIndex < 0) {
-                return null;
-            }
-            orderColumnIndexes.add(columnIndex);
             orderDirections.add(orderByDirections.getQuick(i));
         }
         return new WindowMapSpec(
@@ -273,7 +304,7 @@ public final class WindowMapSpec {
                 // reference is the compiling function's and is never freed here.
                 hasExpressionKey ? partitionByFunctions : null,
                 keyColumnTypes,
-                orderColumnIndexes,
+                new IntList(orderColumnIndexes),
                 orderDirections,
                 isOrderDismissed,
                 context.getOrderByScanDirection(),
@@ -524,5 +555,15 @@ public final class WindowMapSpec {
                 + ", passCount=" + passCount
                 + ", pass1ScanDirection=" + pass1ScanDirection
                 + '}';
+    }
+
+    /**
+     * Renders into the sink the identity of the PARTITION BY term at {@code index}, which compiled to {@code term} and
+     * reads no column of the record directly, and reports whether this build can name it, see
+     * {@link WindowKeyExpressionIdentity#render(ExpressionNode, Function, RecordMetadata, CharSink)}.
+     */
+    @FunctionalInterface
+    public interface PartitionTermIdentity {
+        boolean render(int index, Function term, CharSink<?> sink);
     }
 }

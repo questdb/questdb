@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -99,6 +98,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long timeout;
     private CreateTableOperation createParquetOp;
     private int errorPosition;
+    // whether the legacy planner compiled the query, which qualifies its select cache key, see getSelectCacheKey()
+    private boolean isSelectCacheLegacyPlanner;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
     // the select cache scope of the principal the query runs for, see getSelectCacheKey()
@@ -192,7 +193,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             if (queryCacheable && !isClosing && isOwnerEnded) {
                 try {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink),
+                            SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, sqlText, selectCacheKeySink),
                             recordCursorFactory
                     );
                 } catch (Throwable th) {
@@ -204,6 +205,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
         queryCacheable = false;
         selectCacheScope = null;
+        isSelectCacheLegacyPlanner = false;
         sqlText.clear();
         queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
@@ -256,13 +258,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Returns the select cache key of the query for the principal it runs for, and remembers the
-     * principal's scope, so that clearing the state returns the factory to the same scope it came
-     * from or was compiled in.
+     * Returns the select cache key of the query for the principal it runs for and the planner that compiles it, and
+     * remembers both, so that clearing the state returns the factory to the same key it came from or was compiled for.
      */
-    public CharSequence getSelectCacheKey(SecurityContext securityContext) {
-        selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink);
+    public CharSequence getSelectCacheKey(SqlExecutionContext executionContext) {
+        selectCacheScope = executionContext.getSecurityContext().getSelectCacheScope();
+        isSelectCacheLegacyPlanner = executionContext.isLegacyPlannerEnabled();
+        return SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, sqlText, selectCacheKeySink);
     }
 
     public boolean isQueryCacheable() {

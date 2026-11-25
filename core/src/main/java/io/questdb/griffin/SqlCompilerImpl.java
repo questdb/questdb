@@ -268,6 +268,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    // The compiler of the legacy planner this one leased for the statements it hands over, until clear() returns it.
+    private LegacySqlCompiler legacyCompiler;
     // The re-parses of the statement left to absorb a table going out of date, shared by binding and code generation.
     private int remainingRecompileAttempts;
     private LogicalPlan root;
@@ -558,6 +560,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             clearExceptSqlText();
         } finally {
             sqlText = null;
+            legacyCompiler = Misc.free(legacyCompiler);
         }
     }
 
@@ -567,7 +570,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw new IllegalStateException("close was already called");
         }
         closed = true;
-        Throwable failure = Misc.freeBestEffort(null, vacuumColumnVersions);
+        Throwable failure = Misc.freeBestEffort(null, legacyCompiler);
+        failure = Misc.freeBestEffort(failure, vacuumColumnVersions);
         failure = Misc.freeBestEffort(failure, path);
         failure = Misc.freeBestEffort(failure, renamePath);
         failure = Misc.freeBestEffort(failure, codeGenerator);
@@ -586,6 +590,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.isLegacyPlannerEnabled()) {
+            return legacyCompiler().compile(sqlText, executionContext);
+        }
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
@@ -630,6 +637,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
     ) throws Exception {
+        if (executionContext.isLegacyPlannerEnabled()) {
+            legacyCompiler().compileBatch(batchText, executionContext, batchCallback, this);
+            return;
+        }
         clear();
         lexer.of(batchText);
         isSingleQueryMode = false;
@@ -802,6 +813,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryModel = compileExecutionModel(executionContext).getQueryModel();
             }
         }
+    }
+
+    @Override
+    public RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.isLegacyPlannerEnabled()) {
+            return legacyCompiler().generateViewFactory(viewSql, executionContext);
+        }
+        return SqlUtil.generateFactory(this, generateExecutionModel(viewSql, executionContext), executionContext);
     }
 
     @Override
@@ -7121,6 +7140,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
+    }
+
+    private LegacySqlCompiler legacyCompiler() {
+        if (legacyCompiler == null) {
+            legacyCompiler = engine.getLegacyPlanner().getSqlCompiler();
+        }
+        return legacyCompiler;
     }
 
     private void lightlyValidateInsertModel(InsertModel model) throws SqlException {

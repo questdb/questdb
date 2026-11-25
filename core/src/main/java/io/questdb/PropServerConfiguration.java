@@ -619,6 +619,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinSymbolTranslationCacheCapacity;
     private final boolean sqlLatestByJitEnabled;
     private final long sqlLatestByRowCount;
+    private final boolean sqlLegacyPlannerEnabled;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
@@ -1893,6 +1894,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByJitEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, true);
+            this.sqlLegacyPlannerEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, false);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, this.sqlHashJoinLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
@@ -6358,6 +6360,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlLatestByJitEnabled() {
             return sqlLatestByJitEnabled;
+        }
+
+        @Override
+        public boolean isSqlLegacyPlannerEnabled() {
+            return sqlLegacyPlannerEnabled;
         }
 
         @Override

@@ -1,0 +1,632 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin.model;
+
+import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadLagWindowFunctionFactoryHelper;
+import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
+
+public final class WindowExpression extends QueryColumn {
+    // Live-view ANCHOR clause kinds. NONE means no ANCHOR was specified — the
+    // default for any non-live-view query and also the live-view default unless the
+    // user wrote ANCHOR EXPRESSION or ANCHOR DAILY.
+    public static final byte ANCHOR_KIND_DAILY = 2;
+    public static final byte ANCHOR_KIND_EXPRESSION = 1;
+    public static final byte ANCHOR_KIND_NONE = 0;
+    public static final int CURRENT = 3;
+    public static final int EXCLUDE_CURRENT_ROW = 1;
+    public static final int EXCLUDE_GROUP = 2;
+    public static final int EXCLUDE_NO_OTHERS = 4;
+    public static final int EXCLUDE_TIES = 3;
+    public final static ObjectFactory<WindowExpression> FACTORY = WindowExpression::new;
+    public static final int FOLLOWING = 2;
+    public static final int FRAMING_RANGE = 1; // 1
+    public static final int FRAMING_ROWS = FRAMING_RANGE + 1; // 2
+    public static final int FRAMING_GROUPS = FRAMING_ROWS + 1; // 3
+    public static final int PRECEDING = 1;
+    public static final char TIME_UNIT_DAY = 'd';
+    public static final char TIME_UNIT_HOUR = 'h';
+    public static final char TIME_UNIT_MICROSECOND = 'u';
+    public static final char TIME_UNIT_MILLISECOND = 'T';
+    public static final char TIME_UNIT_MINUTE = 'm';
+    public static final char TIME_UNIT_NANOSECOND = 'n';
+    public static final char TIME_UNIT_SECOND = 's';
+    private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
+    private final IntList orderByDirection = new IntList(2);
+    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    // ANCHOR clause state. Set only for live-view WINDOW specs; null/zero
+    // for everything else.
+    private ExpressionNode anchorExpression;
+    private byte anchorKind = ANCHOR_KIND_NONE;
+    private int anchorPosition;
+    // ANCHOR DAILY '<HH:MM>' [tz] — captured at parse time. Desugared into
+    // anchorExpression by the live-view validator.
+    private long anchorDailyTimeUs;
+    private CharSequence anchorDailyTimeZone;
+    // For window inheritance: WINDOW w2 AS (w1 ROWS ...) — stores the base window name
+    private CharSequence baseWindowName;
+    private int baseWindowNamePosition;
+    private int exclusionKind = EXCLUDE_NO_OTHERS;
+    private int exclusionKindPos;
+    private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+    private boolean ignoreNulls = false;
+    private int nullsDescPos = 0;
+    // The optimiser binds names once; codegen clones this recipe before every validation/parse.
+    private ExpressionNode pendingSubsample;
+    private boolean isSubsampleProjectionPending;
+    private boolean hasSubsampleSourceTimestamp;
+    private int subsamplePosition;
+    private long rowsHi = Long.MAX_VALUE;
+    private ExpressionNode rowsHiExpr;
+    private int rowsHiExprPos;
+    private char rowsHiExprTimeUnit;
+    private int rowsHiKind = CURRENT;
+    private int rowsHiKindPos = 0;
+    private long rowsLo = Long.MIN_VALUE;
+    private ExpressionNode rowsLoExpr;
+    private int rowsLoExprPos;
+    private char rowsLoExprTimeUnit;
+    private int rowsLoKind = PRECEDING;
+    private int rowsLoKindPos = 0;
+    // Set ONLY by SqlOptimiser.desugarSubsample on the internal __keep_subsample keep-flag column.
+    // Marks this window column as the desugared SUBSAMPLE keep flag, which the outer projection above
+    // the WHERE filter is guaranteed to drop (its boolean never surfaces in output). The keep-flag
+    // filter fusion in code generation fuses ONLY a function carrying this marker; a hand-written
+    // window query that projects a row-selecting keep boolean must NOT fuse, because the fused cursor
+    // skips writing the boolean and a projected copy would read false for every kept row.
+    private boolean subsampleKeepFlag = false;
+    // For OVER window_name syntax - stores the referenced window name
+    private CharSequence windowName;
+    private int windowNamePosition;
+    // Compiler-only identity retained after the optimizer expands OVER window_name
+    // and clears windowName. This survives cloning so checkpoint identities do not
+    // depend on optimizer object traversal.
+    private CharSequence resolvedWindowName;
+    private boolean resolvedWindowAnchored;
+
+    private WindowExpression() {
+    }
+
+    /**
+     * SQL keyword for a {@code TIME_UNIT_*} code, so a message can name the unit the
+     * user wrote instead of the internal char ({@code 'T'} for milliseconds,
+     * {@code 'u'} for microseconds). Callers that render a frame bound prefix it with
+     * a space themselves. A unit code of 0 means the bound carries no unit at all,
+     * which has no keyword; callers must not reach here with it.
+     */
+    public static CharSequence timeUnitName(char timeUnit) {
+        return switch (timeUnit) {
+            case TIME_UNIT_NANOSECOND -> "nanosecond";
+            case TIME_UNIT_MICROSECOND -> "microsecond";
+            case TIME_UNIT_MILLISECOND -> "millisecond";
+            case TIME_UNIT_SECOND -> "second";
+            case TIME_UNIT_MINUTE -> "minute";
+            case TIME_UNIT_HOUR -> "hour";
+            case TIME_UNIT_DAY -> "day";
+            default -> "[unknown unit]";
+        };
+    }
+
+    public void addOrderBy(ExpressionNode node, int direction) {
+        orderBy.add(node);
+        orderByDirection.add(direction);
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        anchorKind = ANCHOR_KIND_NONE;
+        anchorExpression = null;
+        anchorPosition = 0;
+        anchorDailyTimeUs = 0;
+        anchorDailyTimeZone = null;
+        baseWindowName = null;
+        baseWindowNamePosition = 0;
+        partitionBy.clear();
+        orderBy.clear();
+        orderByDirection.clear();
+        rowsLoExpr = null;
+        rowsLoExprPos = 0;
+        rowsLoExprTimeUnit = 0;
+        rowsHiExpr = null;
+        rowsHiExprPos = 0;
+        rowsHiExprTimeUnit = 0;
+        rowsLoKind = PRECEDING;
+        rowsLoKindPos = 0;
+        rowsHiKind = CURRENT;
+        rowsHiKindPos = 0;
+        framingMode = FRAMING_RANGE;
+        rowsLo = Long.MIN_VALUE;
+        rowsHi = Long.MAX_VALUE;
+        exclusionKind = EXCLUDE_NO_OTHERS;
+        exclusionKindPos = 0;
+        ignoreNulls = false;
+        nullsDescPos = 0;
+        subsampleKeepFlag = false;
+        pendingSubsample = null;
+        isSubsampleProjectionPending = false;
+        hasSubsampleSourceTimestamp = false;
+        subsamplePosition = 0;
+        windowName = null;
+        windowNamePosition = 0;
+        resolvedWindowName = null;
+        resolvedWindowAnchored = false;
+    }
+
+    /**
+     * Copies the window specification (partition by, order by, frame) from another WindowExpression.
+     * Used when resolving named window references in the optimizer.
+     * <p>
+     * ExpressionNode references in partition-by, order-by, and frame bound lists are deep-cloned
+     * so that each referencing window function gets independent copies. This prevents mutation
+     * from one window function's literal rewriting pass (e.g., recursiveReplace) from corrupting
+     * another function that references the same named window.
+     *
+     * @param source the named window definition to copy from
+     * @param pool   the expression node pool used for deep-cloning
+     */
+    public void copySpecFrom(WindowExpression source, ObjectPool<ExpressionNode> pool) {
+        this.partitionBy.clear();
+        for (int i = 0, n = source.partitionBy.size(); i < n; i++) {
+            this.partitionBy.add(ExpressionNode.deepClone(pool, source.partitionBy.getQuick(i)));
+        }
+
+        this.orderBy.clear();
+        for (int i = 0, n = source.orderBy.size(); i < n; i++) {
+            this.orderBy.add(ExpressionNode.deepClone(pool, source.orderBy.getQuick(i)));
+        }
+        this.orderByDirection.clear();
+        this.orderByDirection.addAll(source.orderByDirection);
+
+        this.framingMode = source.framingMode;
+        this.rowsLo = source.rowsLo;
+        this.rowsLoExpr = ExpressionNode.deepClone(pool, source.rowsLoExpr);
+        this.rowsLoExprPos = source.rowsLoExprPos;
+        this.rowsLoExprTimeUnit = source.rowsLoExprTimeUnit;
+        this.rowsLoKind = source.rowsLoKind;
+        this.rowsLoKindPos = source.rowsLoKindPos;
+        this.rowsHi = source.rowsHi;
+        this.rowsHiExpr = ExpressionNode.deepClone(pool, source.rowsHiExpr);
+        this.rowsHiExprPos = source.rowsHiExprPos;
+        this.rowsHiExprTimeUnit = source.rowsHiExprTimeUnit;
+        this.rowsHiKind = source.rowsHiKind;
+        this.rowsHiKindPos = source.rowsHiKindPos;
+
+        this.exclusionKind = source.exclusionKind;
+        this.exclusionKindPos = source.exclusionKindPos;
+
+        // ignoreNulls and nullsDescPos are NOT copied - they are function-specific
+
+        this.windowName = null;
+        this.windowNamePosition = 0;
+    }
+
+    public WindowExpression deepClone(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) {
+        WindowExpression dst = windowExpressionPool.next();
+        dst.of(getAlias(), ExpressionNode.deepClone(expressionNodePool, getAst()));
+        dst.setIncludeIntoWildcard(isIncludeIntoWildcard());
+        dst.copySpecFrom(this, expressionNodePool);
+        dst.ignoreNulls = this.ignoreNulls;
+        dst.nullsDescPos = this.nullsDescPos;
+        dst.baseWindowName = this.baseWindowName;
+        dst.baseWindowNamePosition = this.baseWindowNamePosition;
+        dst.windowName = this.windowName;
+        dst.windowNamePosition = this.windowNamePosition;
+        dst.resolvedWindowName = this.resolvedWindowName;
+        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
+        dst.subsampleKeepFlag = this.subsampleKeepFlag;
+        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
+        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
+        if (dst.getAst() != null) {
+            dst.getAst().windowExpression = dst;
+        }
+        return dst;
+    }
+
+    public long getAnchorDailyTimeUs() {
+        return anchorDailyTimeUs;
+    }
+
+    public CharSequence getAnchorDailyTimeZone() {
+        return anchorDailyTimeZone;
+    }
+
+    public ExpressionNode getAnchorExpression() {
+        return anchorExpression;
+    }
+
+    public byte getAnchorKind() {
+        return anchorKind;
+    }
+
+    public int getAnchorPosition() {
+        return anchorPosition;
+    }
+
+    public CharSequence getBaseWindowName() {
+        return baseWindowName;
+    }
+
+    public int getBaseWindowNamePosition() {
+        return baseWindowNamePosition;
+    }
+
+    public int getExclusionKind() {
+        return exclusionKind;
+    }
+
+    public int getExclusionKindPos() {
+        return exclusionKindPos;
+    }
+
+    public int getFramingMode() {
+        return framingMode;
+    }
+
+    public int getNullsDescPos() {
+        return nullsDescPos;
+    }
+
+    public ObjList<ExpressionNode> getOrderBy() {
+        return orderBy;
+    }
+
+    public IntList getOrderByDirection() {
+        return orderByDirection;
+    }
+
+    public ObjList<ExpressionNode> getPartitionBy() {
+        return partitionBy;
+    }
+
+    public long getRowsHi() {
+        return rowsHi;
+    }
+
+    public ExpressionNode getPendingSubsample() {
+        return pendingSubsample;
+    }
+
+    public int getSubsamplePosition() {
+        return subsamplePosition;
+    }
+
+    public boolean hasSubsampleSourceTimestamp() {
+        return hasSubsampleSourceTimestamp;
+    }
+
+    public ExpressionNode getRowsHiExpr() {
+        return rowsHiExpr;
+    }
+
+    public int getRowsHiExprPos() {
+        return rowsHiExprPos;
+    }
+
+    public char getRowsHiExprTimeUnit() {
+        return rowsHiExprTimeUnit;
+    }
+
+    public int getRowsHiKind() {
+        return rowsHiKind;
+    }
+
+    public int getRowsHiKindPos() {
+        return rowsHiKindPos;
+    }
+
+    public long getRowsLo() {
+        return rowsLo;
+    }
+
+    public CharSequence getResolvedWindowName() {
+        return resolvedWindowName;
+    }
+
+    public ExpressionNode getRowsLoExpr() {
+        return rowsLoExpr;
+    }
+
+    public int getRowsLoExprPos() {
+        return rowsLoExprPos;
+    }
+
+    public char getRowsLoExprTimeUnit() {
+        return rowsLoExprTimeUnit;
+    }
+
+    public int getRowsLoKind() {
+        return rowsLoKind;
+    }
+
+    public int getRowsLoKindPos() {
+        return rowsLoKindPos;
+    }
+
+    public CharSequence getWindowName() {
+        return windowName;
+    }
+
+    public int getWindowNamePosition() {
+        return windowNamePosition;
+    }
+
+    public boolean hasBaseWindow() {
+        return baseWindowName != null;
+    }
+
+    public boolean isIgnoreNulls() {
+        return ignoreNulls;
+    }
+
+    public boolean isNamedWindowReference() {
+        return windowName != null;
+    }
+
+    public boolean isNonDefaultFrame() {
+        // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+        // anything other than that is custom
+        return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
+    }
+
+    public boolean isSubsampleProjectionPending() {
+        return isSubsampleProjectionPending;
+    }
+
+    public boolean isResolvedWindowAnchored() {
+        return resolvedWindowAnchored;
+    }
+
+    /**
+     * @return {@code true} iff this window column is the internal {@code __keep_subsample} keep flag
+     * created by {@link io.questdb.legacy.griffin.SqlOptimiser#desugarSubsample}. Only such columns may be
+     * fused by the keep-flag filter fusion in code generation.
+     */
+    public boolean isSubsampleKeepFlag() {
+        return subsampleKeepFlag;
+    }
+
+    @Override
+    public boolean isWindowExpression() {
+        return true;
+    }
+
+    @Override
+    public WindowExpression of(CharSequence alias, ExpressionNode ast) {
+        return (WindowExpression) super.of(alias, ast);
+    }
+
+    public void setAnchorDaily(long timeUs, CharSequence timeZone, int position) {
+        this.anchorKind = ANCHOR_KIND_DAILY;
+        this.anchorDailyTimeUs = timeUs;
+        this.anchorDailyTimeZone = timeZone;
+        this.anchorPosition = position;
+    }
+
+    public void setAnchorExpression(ExpressionNode expression, int position) {
+        this.anchorKind = ANCHOR_KIND_EXPRESSION;
+        this.anchorExpression = expression;
+        this.anchorPosition = position;
+    }
+
+    public void setBaseWindowName(CharSequence baseWindowName, int baseWindowNamePosition) {
+        this.baseWindowName = baseWindowName;
+        this.baseWindowNamePosition = baseWindowNamePosition;
+    }
+
+    public void setExclusionKind(int exclusionKind, int exclusionKindPos) {
+        this.exclusionKind = exclusionKind;
+        this.exclusionKindPos = exclusionKindPos;
+    }
+
+    public void setFramingMode(int framingMode) {
+        this.framingMode = framingMode;
+    }
+
+    public void setIgnoreNulls(boolean ignoreNulls) {
+        this.ignoreNulls = ignoreNulls;
+    }
+
+    public void setNullsDescPos(int nullsDescPos) {
+        this.nullsDescPos = nullsDescPos;
+    }
+
+    /**
+     * Marks this window column as the internal {@code __keep_subsample} keep flag. Called ONLY by
+     * {@link io.questdb.legacy.griffin.SqlOptimiser#desugarSubsample}; see {@link #isSubsampleKeepFlag()}.
+     */
+    public void setSubsampleKeepFlag(boolean subsampleKeepFlag) {
+        this.subsampleKeepFlag = subsampleKeepFlag;
+    }
+
+    public void setPendingSubsample(ExpressionNode pendingSubsample, int position, boolean hasSourceTimestamp) {
+        this.pendingSubsample = pendingSubsample;
+        this.subsamplePosition = position;
+        this.hasSubsampleSourceTimestamp = hasSourceTimestamp;
+        this.isSubsampleProjectionPending = pendingSubsample != null;
+    }
+
+    public void setSubsampleProjectionPending(boolean isSubsampleProjectionPending) {
+        this.isSubsampleProjectionPending = isSubsampleProjectionPending;
+    }
+
+    public void setRowsHi(long rowsHi) {
+        this.rowsHi = rowsHi;
+    }
+
+    public void setRowsHiExpr(ExpressionNode rowsHiExpr, int rowsHiExprPos) {
+        this.rowsHiExpr = rowsHiExpr;
+        this.rowsHiExprPos = rowsHiExprPos;
+    }
+
+    public void setRowsHiExprTimeUnit(char rowsHiExprTimeUnit) {
+        this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
+    }
+
+    public void setRowsHiKind(int rowsHiKind, int rowsHiKindPos) {
+        this.rowsHiKind = rowsHiKind;
+        this.rowsHiKindPos = rowsHiKindPos;
+    }
+
+    public void setRowsLo(long rowsLo) {
+        this.rowsLo = rowsLo;
+    }
+
+    public void setRowsLoExpr(ExpressionNode rowsLoExpr, int rowsLoExprPos) {
+        this.rowsLoExpr = rowsLoExpr;
+        this.rowsLoExprPos = rowsLoExprPos;
+    }
+
+    public void setRowsLoExprTimeUnit(char rowsLoExprTimeUnit) {
+        this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
+    }
+
+    public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
+        this.rowsLoKind = rowsLoKind;
+        this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setResolvedWindow(CharSequence resolvedWindowName, boolean resolvedWindowAnchored) {
+        this.resolvedWindowName = resolvedWindowName;
+        this.resolvedWindowAnchored = resolvedWindowAnchored;
+    }
+
+    public void setWindowName(CharSequence windowName, int windowNamePosition) {
+        this.windowName = windowName;
+        this.windowNamePosition = windowNamePosition;
+    }
+
+    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
+        CharSequence token = getAst().token;
+
+        // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
+        if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) ||
+                Chars.equalsIgnoreCase(token, LastValueDoubleWindowFunctionFactory.NAME)) &&
+                orderBy.size() == 0 && modelOrder.size() == 0) {
+            return true;
+        }
+
+        // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
+        boolean stopOrderBy = framingMode == FRAMING_RANGE && isRangeFrameDependOnSubqueryOrderBy(getAst().token) &&
+                orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
+
+        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
+        if (stopOrderBy) {
+            boolean sameOrder = true;
+            if (modelOrder.size() < orderBy.size()) {
+                sameOrder = false;
+            } else {
+                for (int i = 0, max = orderBy.size(); i < max; i++) {
+                    if (!Chars.equalsIgnoreCase(modelOrder.getQuick(i).token, orderBy.getQuick(i).token) ||
+                            modelOrderDirection.getQuick(i) != orderByDirection.getQuick(i)) {
+                        sameOrder = false;
+                        break;
+                    }
+                }
+            }
+            stopOrderBy = !sameOrder;
+        }
+        return stopOrderBy;
+    }
+
+    private static boolean isRangeFrameDependOnSubqueryOrderBy(CharSequence funName) {
+        return !Chars.equalsIgnoreCase(funName, RowNumberFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, RankFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, DenseRankFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LEAD_NAME)
+                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LAG_NAME);
+    }
+
+    /**
+     * Copies this window for one read of a declared variable whose value holds it, see
+     * {@link ExpressionNode#deepCloneSharingQueries}. {@code ast} is the read's clone of the function
+     * call this window belongs to. The copy clones the window's expressions the same way, so it
+     * shares their sub-query nodes, and copies every other field as it stands.
+     */
+    WindowExpression deepCloneSharingQueries(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode ast
+    ) {
+        final WindowExpression dst = windowExpressionPool.next();
+        dst.of(null, ast, isIncludeIntoWildcard(), getColumnType());
+        dst.setAlias(getAlias(), getAliasPosition());
+        dst.setGenerated(isGenerated());
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            dst.partitionBy.add(ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, partitionBy.getQuick(i)));
+        }
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            dst.orderBy.add(ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, orderBy.getQuick(i)));
+        }
+        dst.orderByDirection.addAll(orderByDirection);
+        dst.anchorExpression = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, anchorExpression);
+        dst.anchorKind = anchorKind;
+        dst.anchorPosition = anchorPosition;
+        dst.anchorDailyTimeUs = anchorDailyTimeUs;
+        dst.anchorDailyTimeZone = anchorDailyTimeZone;
+        dst.baseWindowName = baseWindowName;
+        dst.baseWindowNamePosition = baseWindowNamePosition;
+        dst.exclusionKind = exclusionKind;
+        dst.exclusionKindPos = exclusionKindPos;
+        dst.framingMode = framingMode;
+        dst.ignoreNulls = ignoreNulls;
+        dst.nullsDescPos = nullsDescPos;
+        dst.pendingSubsample = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, pendingSubsample);
+        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
+        dst.rowsHi = rowsHi;
+        dst.rowsHiExpr = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, rowsHiExpr);
+        dst.rowsHiExprPos = rowsHiExprPos;
+        dst.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
+        dst.rowsHiKind = rowsHiKind;
+        dst.rowsHiKindPos = rowsHiKindPos;
+        dst.rowsLo = rowsLo;
+        dst.rowsLoExpr = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, rowsLoExpr);
+        dst.rowsLoExprPos = rowsLoExprPos;
+        dst.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
+        dst.rowsLoKind = rowsLoKind;
+        dst.rowsLoKindPos = rowsLoKindPos;
+        dst.subsampleKeepFlag = subsampleKeepFlag;
+        dst.windowName = windowName;
+        dst.windowNamePosition = windowNamePosition;
+        dst.resolvedWindowName = resolvedWindowName;
+        dst.resolvedWindowAnchored = resolvedWindowAnchored;
+        return dst;
+    }
+}

@@ -25,7 +25,15 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.legacy.griffin.LegacyPlannerImpl;
 
 public interface SqlCompilerFactory {
     SqlCompilerImpl getInstance(CairoEngine engine);
+
+    /**
+     * Creates the engine's legacy planner, whose compilers match the ones {@link #getInstance(CairoEngine)} creates.
+     */
+    default LegacyPlanner newLegacyPlanner(CairoEngine engine) {
+        return new LegacyPlannerImpl(engine);
+    }
 }

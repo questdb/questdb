@@ -105,6 +105,29 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.singleRowFactory = singleRowFactory;
     }
 
+    /**
+     * Whether a factory over these inputs scans time frames: a full forward scan of the table, with no filter, that
+     * reads the table's designated timestamp as its own.
+     */
+    public static boolean isTimeFrameScan(
+            RecordMetadata metadata,
+            PartitionFrameCursorFactory partitionFrameCursorFactory,
+            RowCursorFactory rowCursorFactory,
+            boolean framingSupported,
+            IntList columnIndexes,
+            boolean supportsRandomAccess,
+            @Nullable Function filter
+    ) {
+        final int timestampIndex = metadata.getTimestampIndex();
+        final int tableTimestampIndex = partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
+        return framingSupported && supportsRandomAccess
+                && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
+                && timestampIndex != -1
+                && (tableTimestampIndex == -1 || columnIndexes.getQuick(timestampIndex) == tableTimestampIndex)
+                && partitionFrameCursorFactory.getOrder() == ORDER_ASC
+                && filter == null;
+    }
+
     @Override
     public boolean followedOrderByAdvice() {
         return followsOrderByAdvice;
@@ -535,13 +558,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     }
 
     private boolean isTimeFrameScan() {
-        final int timestampIndex = getMetadata().getTimestampIndex();
-        final int tableTimestampIndex = partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
-        return framingSupported && supportsRandomAccess
-                && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
-                && timestampIndex != -1
-                && (tableTimestampIndex == -1 || columnIndexes.getQuick(timestampIndex) == tableTimestampIndex)
-                && partitionFrameCursorFactory.getOrder() == ORDER_ASC
-                && filter == null;
+        return isTimeFrameScan(getMetadata(), partitionFrameCursorFactory, rowCursorFactory, framingSupported, columnIndexes, supportsRandomAccess, filter);
     }
 }

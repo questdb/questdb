@@ -42,6 +42,7 @@ import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
@@ -1194,6 +1195,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         @Override
         public ObjList<? extends Utf8Sequence> getHeaderNames() {
             return headerNames;
+        }
+
+        @Override
+        public int getLegacyPlanner() {
+            return SqlExecutionContextImpl.LEGACY_PLANNER_SERVER;
         }
 
         @Override

@@ -40,6 +40,7 @@ import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerDisconnectedException;
@@ -2144,6 +2145,11 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         @Override
         public ObjList<? extends Utf8Sequence> getHeaderNames() {
             return headerNames;
+        }
+
+        @Override
+        public int getLegacyPlanner() {
+            return SqlExecutionContextImpl.LEGACY_PLANNER_SERVER;
         }
 
         @Override

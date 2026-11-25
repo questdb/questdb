@@ -178,6 +178,10 @@ public final class OperatorExpression {
         return commutative;
     }
 
+    public boolean isSymbol() {
+        return symbol;
+    }
+
     public boolean greaterPrecedence(int otherPrecedence) {
         return (leftAssociative && precedence >= otherPrecedence) || (!leftAssociative && precedence > otherPrecedence);
     }

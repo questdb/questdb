@@ -98,6 +98,13 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     /**
+     * Compiles the SELECT of a view into its factory, for the job that checks the view's state and metadata: like
+     * {@link #generateExecutionModel}, it raises no compile-view events, so checking a view queues no check of the
+     * views it reads. The planner the context selects compiles it.
+     */
+    RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException;
+
+    /**
      * Parses and optimises the SELECT of a view like {@link #generateExecutionModel}, and collects the
      * tables and columns it reads into {@code outDependencies}, replacing what the map held. The set is
      * the one CREATE VIEW records, so a caller that stores a view definition grants the view the same

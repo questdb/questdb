@@ -214,7 +214,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    RecordCursorFactory detachBase() {
+    public RecordCursorFactory detachBase() {
         final RecordCursorFactory detachedBase = base;
         base = null;
         return detachedBase;

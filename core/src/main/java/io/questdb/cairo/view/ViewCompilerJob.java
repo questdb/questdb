@@ -34,8 +34,6 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -151,10 +149,13 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewDefinition.getViewSql(), executionContext);
             // view went from invalid to valid state
             // we should also update view metadata, if there was a change
-            final ViewMetadata viewMetadata = getUpdatedViewMetadata(executionContext, viewToken, compiler, executionModel);
+            final ViewMetadata viewMetadata = getUpdatedViewMetadata(
+                    viewToken,
+                    compiler,
+                    compiler.generateViewFactory(viewDefinition.getViewSql(), executionContext)
+            );
             reset(engine, viewToken, viewMetadata, updateTimestamp);
         } catch (SqlException | CairoException e) {
             invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
@@ -166,13 +167,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     // checks for view metadata changes
     // returns new view metadata if there is a change, otherwise returns null
     private static @Nullable ViewMetadata getUpdatedViewMetadata(
-            SqlExecutionContext executionContext,
             TableToken viewToken,
             SqlCompiler compiler,
-            ExecutionModel executionModel
-    ) throws SqlException {
+            RecordCursorFactory viewFactory
+    ) {
         try (
-                RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext);
+                RecordCursorFactory factory = viewFactory;
                 TableMetadata currentMetadata = compiler.getEngine().getTableMetadata(viewToken)
         ) {
             final RecordMetadata newMetadata = factory.getMetadata();

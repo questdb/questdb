@@ -2100,6 +2100,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlLegacyPlannerEnabled() {
+        return getDelegate().isSqlLegacyPlannerEnabled();
+    }
+
+    @Override
     public boolean isSqlOrderBySortEnabled() {
         return getDelegate().isSqlOrderBySortEnabled();
     }

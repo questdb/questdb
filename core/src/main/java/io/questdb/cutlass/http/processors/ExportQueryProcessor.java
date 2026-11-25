@@ -170,7 +170,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     circuitBreaker.of(context.getFd())
             );
             sqlExecutionContext.initNow();
-            state.recordCursorFactory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext.getSecurityContext()));
+            state.recordCursorFactory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext));
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(state.sqlText, sqlExecutionContext);

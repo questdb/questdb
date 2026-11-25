@@ -193,6 +193,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
+    // whether the legacy planner compiled the statement, which qualifies its cache keys, see SelectCacheKey
+    private boolean isLegacyPlanner;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -301,10 +303,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink), tas);
+            tasCache.put(SelectCacheKey.of(selectCacheScope, isLegacyPlanner, sqlText, selectCacheKeySink), tas);
             tas = null;
         } else if (tai != null) {
-            taiCache.put(sqlText, tai);
+            taiCache.put(SelectCacheKey.of(null, isLegacyPlanner, sqlText, selectCacheKeySink), tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
         }
@@ -382,6 +384,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryMemoryTracker = null;
         queryExecutionResources = null;
         selectCacheScope = null;
+        isLegacyPlanner = false;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlReturnRowCount = 0;
@@ -1120,6 +1123,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.errorMessagePosition = errorMessagePosition;
     }
 
+    public void setLegacyPlanner(boolean isLegacyPlanner) {
+        this.isLegacyPlanner = isLegacyPlanner;
+    }
+
     public void setNamedPortal(boolean portal, Utf8String namedPortal) {
         this.portal = portal;
         // because this is now a prepared statement, it means the entry is
@@ -1352,6 +1359,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
         this.selectCacheScope = blueprint.selectCacheScope;
+        this.isLegacyPlanner = blueprint.isLegacyPlanner;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;

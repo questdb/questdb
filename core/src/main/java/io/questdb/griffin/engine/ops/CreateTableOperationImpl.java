@@ -702,7 +702,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      */
     @Override
     public void updateOperationFutureTableToken(TableToken tableToken) {
-        future.tableToken = tableToken;
+        future.setTableToken(tableToken);
     }
 
     @Override

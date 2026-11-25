@@ -554,6 +554,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return false;
     }
 
+    /**
+     * Whether the page frames serve a backward scan, which a negative limit drives: only a single-key scan has one,
+     * so the legacy planner sends the negative limits of a multi-key scan to the serial path. The legacy planner asks
+     * only a factory that {@link #supportsPageFrameCursor() supports page frames}.
+     */
+    public boolean supportsNegativeLimitPageFrame() {
+        assert supportsPageFrameCursor();
+        return singleKeyPageFrameCursor != null;
+    }
+
     @Override
     public boolean supportsPageFrameCursor() {
         // A backup means this factory may serve the query from a plan that exposes no page

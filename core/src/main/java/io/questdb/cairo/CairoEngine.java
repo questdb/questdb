@@ -125,6 +125,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.LegacyPlanner;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -377,6 +378,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry;
     private FrameFactory frameFactory;
     private volatile boolean isCompleteInitDone;
+    private volatile LegacyPlanner legacyPlanner;
     private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
     // Governs the adaptive durable epoch on the apply side (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
@@ -1440,6 +1442,8 @@ public class CairoEngine implements Closeable, WriterSource {
             failure = Misc.freeBestEffort(failure, liveViewRegistry);
             failure = Misc.freeBestEffort(failure, liveViewStateStore);
             failure = Misc.freeBestEffort(failure, sqlCompilerPool);
+            // after the compilers, which return the legacy compilers they lease
+            failure = Misc.freeBestEffort(failure, legacyPlanner);
             failure = Misc.freeBestEffort(failure, writerPool);
             failure = Misc.freeBestEffort(failure, readerPool);
             failure = Misc.freeBestEffort(failure, sequencerMetadataPool);
@@ -2400,6 +2404,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return frameFactory;
     }
 
+    /**
+     * Creates the function factories the engine's {@link FunctionFactoryCache} holds, for a cache of their own.
+     */
+    public Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
+    }
+
     public FunctionFactoryCache getFunctionFactoryCache() {
         return ffCache;
     }
@@ -2421,6 +2432,24 @@ public class CairoEngine implements Closeable, WriterSource {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    /**
+     * The planner {@link io.questdb.griffin.SqlCompilerImpl} falls back to while
+     * {@link SqlExecutionContext#isLegacyPlannerEnabled()} holds, created on first use.
+     */
+    public LegacyPlanner getLegacyPlanner() {
+        LegacyPlanner planner = legacyPlanner;
+        if (planner == null) {
+            synchronized (this) {
+                planner = legacyPlanner;
+                if (planner == null) {
+                    planner = getSqlCompilerFactory().newLegacyPlanner(this);
+                    legacyPlanner = planner;
+                }
+            }
+        }
+        return planner;
     }
 
     public LiveViewRegistry getLiveViewRegistry() {
@@ -5718,10 +5747,6 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     protected @Nullable CharSequence getEnterpriseVersion() {
         return null;
-    }
-
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     /**

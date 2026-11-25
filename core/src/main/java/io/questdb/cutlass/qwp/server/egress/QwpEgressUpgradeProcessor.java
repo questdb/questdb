@@ -1350,6 +1350,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // select cache scope qualifies the key, see SecurityContext.getSelectCacheScope().
             final CharSequence cacheKey = SelectCacheKey.of(
                     sqlCtx.getSecurityContext().getSelectCacheScope(),
+                    sqlCtx.isLegacyPlannerEnabled(),
                     decoder.buildSelectCacheKey(state.getBindVariableService()),
                     scopedSelectCacheKeySink
             );

@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -132,6 +131,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
+    // whether the legacy planner compiled the query, which qualifies its select cache key, see getSelectCacheKey()
+    private boolean isSelectCacheLegacyPlanner;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -206,7 +207,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (recordCursorFactory != null) {
                 if (queryCacheable && ownerEndFailure == null) {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink),
+                            SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, query, selectCacheKeySink),
                             recordCursorFactory
                     );
                 } else {
@@ -215,6 +216,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 recordCursorFactory = null;
             }
             selectCacheScope = null;
+            isSelectCacheLegacyPlanner = false;
             query.clear();
             columnNameSink.clear();
             queryState = QUERY_SETUP_FIRST_RECORD;
@@ -347,13 +349,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Returns the select cache key of the query for the principal it runs for, and remembers the
-     * principal's scope, so that clear() returns the factory to the same scope it came from or was
-     * compiled in.
+     * Returns the select cache key of the query for the principal it runs for and the planner that compiles it, and
+     * remembers both, so that clear() returns the factory to the same key it came from or was compiled for.
      */
-    public CharSequence getSelectCacheKey(SecurityContext securityContext) {
-        selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink);
+    public CharSequence getSelectCacheKey(SqlExecutionContext executionContext) {
+        selectCacheScope = executionContext.getSecurityContext().getSelectCacheScope();
+        isSelectCacheLegacyPlanner = executionContext.isLegacyPlannerEnabled();
+        return SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, query, selectCacheKeySink);
     }
 
     public long getStatementTimeout() {

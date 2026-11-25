@@ -216,6 +216,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isLegacyPlannerEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }

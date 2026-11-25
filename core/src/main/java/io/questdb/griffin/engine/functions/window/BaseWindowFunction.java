@@ -76,6 +76,13 @@ public abstract class BaseWindowFunction implements WindowFunction {
         }
     }
 
+    /**
+     * The output column this function writes its result to, as {@link #setColumnIndex(int)} set it.
+     */
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
     @Override
     public abstract String getName();
 
