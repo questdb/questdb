@@ -6048,10 +6048,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * The run may not end on the last {@code _txn} entry. That partition is the one this writer holds open, and
      * whose files carry the WAL lag rows past the live ones - rows no piece accounts for and the copy therefore
-     * never saw. The writer's own squash folds the active logical partition on commit; this path stands down.
+     * never saw. The writer's own squash folds the active logical partition on commit; this path stands down. The
+     * one exception is a parquet conversion of a frozen run ({@link TxReader#isLastPartitionRunFrozen}), which a
+     * storage policy seals before it converts: it takes no rows and parks no LAG, so its files hold exactly what
+     * {@code _txn} records. Its native append columns are closed once the parquet folder is in, as
+     * {@link #convertPartitionNativeToParquet} leaves them.
      * <p>
      * READ ONLY source folders are merged like any other. The merged folder is READ ONLY when any source folder
-     * is, set in the same {@code _txn} commit that swaps it in, so the freeze is never lost.
+     * is, set in the same {@code _txn} commit that swaps it in, so the freeze is never lost. A sealed folder keeps
+     * its seal stamp too: the parquet file takes the seal's seqTxn, whether the seal applied before the build or
+     * between the build and this swap, which moves nothing else this re-checks.
      * A non-negative {@code parquetFileSize} marks a parquet conversion.
      * <p>
      * {@code isIndexLinkedAtSwap} marks a conversion whose staging directory holds no index files. The re-check
@@ -6087,11 +6093,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 : -1;
         final boolean isTransactionConflict = isOpenedPartitionConflict || isInTransaction
                 && (firstIndex < 0 || !isPartitionRangeClearOfOpenTransaction(firstIndex, firstIndex + folderCount, logicalPartitionTimestamp));
+        final int partitionCount = txWriter.getPartitionCount();
         // A run that reaches the last entry is the active logical partition - see the method doc.
+        final boolean isLastRun = firstIndex > -1 && firstIndex + folderCount == partitionCount;
         boolean stale = isTransactionConflict
                 || firstIndex < 0
                 || liveMetadataVersion != expectedMetadataVersion
-                || firstIndex + folderCount > txWriter.getPartitionCount() - 1;
+                || firstIndex + folderCount > partitionCount
+                || (isLastRun && !(isParquetConversion && txWriter.isLastPartitionRunFrozen(firstIndex)));
         for (int i = 0; !stale && i < folderCount; i++) {
             final int offset = i * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
             final int partitionIndex = firstIndex + i;
@@ -6099,12 +6108,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     || txWriter.getPartitionNameTxn(partitionIndex) != folders.getQuick(offset + 1)
                     // A parquet conversion carries an upload over - see below; nothing else may drop one.
                     || (!isParquetConversion && txWriter.isPartitionRemote(partitionIndex))
-                    // A seal moves nothing checked here, and the new entry would lose its stamp. The conversion
-                    // skips a frozen partition, so the sealed native goes on through its upload.
-                    || (isParquetConversion && txWriter.isPartitionSealStamped(partitionIndex))
                     || txWriter.isPartitionDeltaActive(partitionIndex)
                     || txWriter.isPartitionParquet(partitionIndex)
-                    || txWriter.getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
+                    // The writer's own accessor: _txn keeps the last partition's row count as the transient one.
+                    || getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
                     || compositePartitionGeneration(partitionIndex) != folders.getQuick(offset + 2)
                     || columnVersionWriter.getMaxPartitionVersion(folders.getQuick(offset)) != folders.getQuick(offset + 4)
                     || getPartitionSquashTracker(partitionIndex) != folders.getQuick(offset + 5);
@@ -6113,7 +6120,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The run has to still BE the logical partition: a split that appeared on either side of it holds
             // rows the staging copy does not, and dropping its entry would drop those rows.
             stale = txWriter.getLogicalPartitionTimestamp(folders.getQuick(0)) != logicalPartitionTimestamp
-                    || txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(firstIndex + folderCount)) == logicalPartitionTimestamp
+                    || (!isLastRun
+                    && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(firstIndex + folderCount)) == logicalPartitionTimestamp)
                     || (firstIndex > 0
                     && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(firstIndex - 1)) == logicalPartitionTimestamp);
         }
@@ -6145,6 +6153,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedWriterTxn, -1L);
         }
 
+        if (isParquetConversion) {
+            stampConvertedRunSeal(firstIndex, folderCount);
+        }
         if (isIndexLinkedAtSwap) {
             linkSourceIndexFilesIntoMergeStaging(logicalPartitionTimestamp, expectedSrcNameTxn, folderCount);
         }
@@ -18475,6 +18486,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", aroundOpenTransaction=").$(isInTransaction)
                 .I$();
 
+        // Only a parquet conversion of a frozen run takes the last entry, see swapMergedLogicalPartition.
+        final boolean isLastRun = firstIndex + folderCount == txWriter.getPartitionCount();
         long mergedSeqTxn = 0;
         boolean isMergedReadOnly = false;
         boolean isMergedSealStamped = false;
@@ -18505,8 +18518,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setPartitionRemote(firstIndex, true);
             }
             if (isMergedSealStamped) {
-                // The writer's own conversion converts a sealed folder too: its footer takes the folder's stamp, so the bit stays.
-                // The async swap refuses a sealed folder, so it never gets here sealed.
+                // The footer took the sealed folder's stamp, in the build or at the swap, so the bit stays.
                 txWriter.setPartitionSealStamped(firstIndex, true);
             }
         } else {
@@ -18538,6 +18550,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Filled and drained here: a list built before the commit may be cleared by it without draining.
         try {
+            if (isLastRun) {
+                // Like convertPartitionNativeToParquet: the replaced folder's native append columns close, and stay
+                // closed. newRow() and the WAL apply route rows aimed at a parquet last partition through O3.
+                lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                closeActivePartition(false);
+            }
             partitionRemoveCandidates.clear();
             for (int i = 0; i < folderCount; i++) {
                 final int offset = i * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
@@ -22451,6 +22469,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.close(parquetMetaFd);
             }
             other.trimTo(stagedDirLen);
+        }
+    }
+
+    /**
+     * Gives the parquet conversion staged at {@link #other} the seal stamp of a sealed run: the highest seqTxn of the
+     * run's folders, the one the build stamps, read again here because a seal can apply between the build and the
+     * swap. The copy holds the rows the seal froze. Removes the staging directory when the stamp fails.
+     */
+    private void stampConvertedRunSeal(int firstIndex, int folderCount) {
+        boolean isSealStamped = false;
+        long seqTxn = -1;
+        for (int i = 0; i < folderCount; i++) {
+            isSealStamped |= txWriter.isPartitionSealStamped(firstIndex + i);
+            seqTxn = Math.max(seqTxn, nativePartitionSeqTxn(firstIndex + i));
+        }
+        if (!isSealStamped || seqTxn < 1) {
+            return;
+        }
+        try {
+            stampStagedParquetSeqTxn(other.size(), seqTxn);
+        } catch (Throwable th) {
+            if (ff.exists(other.$()) && !ff.rmdir(other, false)) {
+                LOG.error().$("could not remove staged logical partition merge [path=").$(other).I$();
+            }
+            other.trimTo(pathSize);
+            throw th;
         }
     }
 

@@ -1183,7 +1183,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Converts the requested logical partition into one parquet folder; true when dispatched.
+     * Converts the requested logical partition into one parquet folder; true when dispatched. The newest logical
+     * partition converts only while frozen (see {@link TxReader#isLastPartitionRunFrozen}): its files take appends in
+     * place and park WAL LAG past its committed rows, both of which a copy built off a reader snapshot misses. A storage
+     * policy seals it first, so that every instance converts the same rows. The swap re-checks.
      */
     private boolean convertRequestedPartition(
             TableToken tableToken,
@@ -1193,7 +1196,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             int hi,
             long logicalPartitionTimestamp
     ) {
-        if (hi == txReader.getPartitionCount()) {
+        if (hi == txReader.getPartitionCount() && !txReader.isLastPartitionRunFrozen(lo)) {
             return false;
         }
         long liveRows = 0;

@@ -732,6 +732,23 @@ public class TxReader implements Closeable, Mutable {
                 && lagTxnCount == 0;
     }
 
+    /**
+     * Whether every folder from {@code lo} to the newest one is read-only, with the newest one frozen as
+     * {@link #isLastPartitionFrozen()} requires. A seal folds the newest logical partition into one folder, but a copy
+     * of the whole run misses nothing only when none of its folders takes rows.
+     */
+    public boolean isLastPartitionRunFrozen(int lo) {
+        if (lo < 0 || !isLastPartitionFrozen()) {
+            return false;
+        }
+        for (int i = lo, n = getPartitionCount() - 1; i < n; i++) {
+            if (!isPartitionReadOnly(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean isPartitionDeltaActive(int i) {
         return isPartitionDeltaActiveByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
