@@ -36,6 +36,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
@@ -43,6 +44,9 @@ import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.client.std.Decimal128;
+import io.questdb.client.std.Decimal256;
+import io.questdb.client.std.Decimal64;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
@@ -95,6 +99,10 @@ import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
+    private static final int[] DECIMAL_PRECISIONS = {18, 38, 76};
+    private static final byte[] DECIMAL_TYPE_CODES = {
+            QwpConstants.TYPE_DECIMAL64, QwpConstants.TYPE_DECIMAL128, QwpConstants.TYPE_DECIMAL256
+    };
     // base max 12:00 and REFRESH LIMIT 1 HOUR put the view's boundary bucket floor at 11:00
     private static final String MANAGED_ZONE_MESSAGE = "backfill row falls in or past the managed zone of materialized view [view=v, "
             + "maxRowTs=2024-09-10T12:45:00.000000Z, rowBucket=[2024-09-10T12:00:00.000000Z, 2024-09-10T13:00:00.000000Z), "
@@ -404,6 +412,133 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             drainWalQueue();
             assertQuery("SELECT count() FROM first_t").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
             assertQuery("SELECT count() FROM second_t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testDecimalScaleAbovePrecisionRejectedOnColumnAdd() throws Exception {
+        // A decimal's scale cannot exceed the digits its type holds. No correct
+        // client sends such a block, so the frames carry a patched scale byte.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dec_add (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("dec_add");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            long ts = 1_000_000L;
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int t = 0; t < DECIMAL_TYPE_CODES.length; t++) {
+                    final byte typeCode = DECIMAL_TYPE_CODES[t];
+                    final int precision = DECIMAL_PRECISIONS[t];
+                    final String column = "d" + precision;
+                    // 127 and 128 sit either side of the scale byte's sign bit
+                    for (int wireScale : new int[]{precision + 1, 127, 128, 255}) {
+                        prepareDecimalBlock(state, "dec_add", column, typeCode, 2, wireScale, ts++);
+                        state.processPreparedMessage();
+                        Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                        TestUtils.assertContains(
+                                state.getErrorText(),
+                                "decimal scale exceeds " + QwpConstants.getTypeName(typeCode)
+                                        + " precision [column=" + column + ", scale=" + wireScale + ", maxScale=" + precision + ']'
+                        );
+                        try (TableRecordMetadata metadata = engine.getSequencerMetadata(token)) {
+                            Assert.assertEquals(-1, metadata.getColumnIndexQuiet(column));
+                        }
+                        state.clear();
+                    }
+
+                    prepareDecimalBlock(state, "dec_add", column, typeCode, 2, 2, ts++);
+                    state.processPreparedMessage();
+                    state.commit();
+                    Assert.assertTrue(state.getErrorText(), state.isOk());
+                    state.clear();
+
+                    // the column exists now: the value does not fit its scale
+                    prepareDecimalBlock(state, "dec_add", column, typeCode, 2, precision + 1, ts++);
+                    state.processPreparedMessage();
+                    Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                    TestUtils.assertContains(
+                            state.getErrorText(),
+                            "decimal value causes precision loss converting to DECIMAL(" + precision + ",2) [column=" + column
+                    );
+                    state.clear();
+
+                    prepareDecimalBlock(state, "dec_add", column, typeCode, 2, 2, ts++);
+                    state.processPreparedMessage();
+                    state.commit();
+                    Assert.assertTrue(state.getErrorText(), state.isOk());
+                    state.clear();
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT d18, d38, d76 FROM dec_add ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d18\td38\td76
+                            1.23\t\t
+                            1.23\t\t
+                            \t1.23\t
+                            \t1.23\t
+                            \t\t1.23
+                            \t\t1.23
+                            """);
+            try (TableReader reader = engine.getReader(token)) {
+                for (int precision : DECIMAL_PRECISIONS) {
+                    Assert.assertEquals(
+                            "DECIMAL(" + precision + ",2)",
+                            ColumnType.nameOf(reader.getMetadata().getColumnType(reader.getMetadata().getColumnIndex("d" + precision)))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalScaleAbovePrecisionRejectedOnTableCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            long ts = 1_000_000L;
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int t = 0; t < DECIMAL_TYPE_CODES.length; t++) {
+                    final byte typeCode = DECIMAL_TYPE_CODES[t];
+                    final int precision = DECIMAL_PRECISIONS[t];
+                    final String table = "dec_create_" + precision;
+                    for (int wireScale : new int[]{precision + 1, 127, 128, 255}) {
+                        prepareDecimalBlock(state, table, "d", typeCode, 2, wireScale, ts++);
+                        state.processPreparedMessage();
+                        Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                        TestUtils.assertContains(
+                                state.getErrorText(),
+                                "decimal scale exceeds " + QwpConstants.getTypeName(typeCode)
+                                        + " precision [column=d, scale=" + wireScale + ", maxScale=" + precision + ']'
+                        );
+                        Assert.assertNull(engine.getTableTokenIfExists(table));
+                        state.clear();
+                    }
+
+                    // the largest scale the type holds creates the table
+                    prepareDecimalBlock(state, table, "d", typeCode, precision, precision, ts++);
+                    state.processPreparedMessage();
+                    state.commit();
+                    Assert.assertTrue(state.getErrorText(), state.isOk());
+                    state.clear();
+                }
+            }
+            drainWalQueue();
+            for (int precision : DECIMAL_PRECISIONS) {
+                // 123 at scale p is 0.00...0123 with p fractional digits
+                assertQuery("SELECT d FROM dec_create_" + precision)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("d\n0." + "0".repeat(precision - 3) + "123\n");
+                try (TableReader reader = engine.getReader("dec_create_" + precision)) {
+                    Assert.assertEquals(
+                            "DECIMAL(" + precision + "," + precision + ")",
+                            ColumnType.nameOf(reader.getMetadata().getColumnType(reader.getMetadata().getColumnIndex("d")))
+                    );
+                }
+            }
         });
     }
 
@@ -7898,6 +8033,37 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             table.nextRow();
             int length = encoder.encode(table);
             long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
+    private static void prepareDecimalBlock(
+            QwpIngressProcessorState state,
+            String tableName,
+            String columnName,
+            byte typeCode,
+            int scale,
+            int wireScale,
+            long timestampMicros
+    ) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(timestampMicros);
+            final QwpTableBuffer.ColumnBuffer column = table.getOrCreateColumn(columnName, typeCode, false);
+            switch (typeCode) {
+                case QwpConstants.TYPE_DECIMAL64 -> column.addDecimal64(Decimal64.fromLong(123, scale));
+                case QwpConstants.TYPE_DECIMAL128 -> column.addDecimal128(Decimal128.fromLong(123, scale));
+                default -> column.addDecimal256(Decimal256.fromLong(123, scale));
+            }
+            table.nextRow();
+            int length = encoder.encode(table);
+            long address = encoder.getBuffer().getBufferPtr();
+            // the decimal column comes last: [scale][value]
+            long scaleAddress = address + length - QwpConstants.getFixedTypeSize(typeCode) - 1;
+            Assert.assertEquals(scale, Unsafe.getByte(scaleAddress));
+            Unsafe.putByte(scaleAddress, (byte) wireScale);
             state.addData(address, address + length);
         }
         state.prepareMessage();

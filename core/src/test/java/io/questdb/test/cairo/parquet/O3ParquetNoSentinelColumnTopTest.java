@@ -37,6 +37,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -60,6 +61,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.isDeadBytesRewriteExpected;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCompressedSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetUnusedBytes;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
 
 /**
  * An O3 commit into a parquet partition keeps the column top of a BOOLEAN, BYTE, SHORT or CHAR
@@ -783,7 +790,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)");
             changeControlColumnType();
-            assertMergeDecodedColumns(hasNoSentinelType() ? 18 : 9, newRow(tsOf(7)));
+            assertMergeDecodedColumns(18, newRow(tsOf(7)));
             assertReaders(topRows(8, 2, 7, null, true));
         });
     }
@@ -881,8 +888,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // so the commit runs in SKIP mode: the merge loop leaves the earlier row group as stored, without the
         // key-only merge prepare whose dedup would drop the replay, and merges the last one from what the check
         // decoded. The 9 columns of each decode once, and only the last row group is written. With top 2 the earlier
-        // row group, rows 9..16, holds no NULL; with top 6 it is row group 0, which holds the top rows. CHAR: the
-        // check does not run, the merge decodes and writes both row groups
+        // row group, rows 9..16, holds no NULL; with top 6 it is row group 0, which holds the top rows
         Assume.assumeTrue(isWal);
         setInPlaceProperties(8);
         // the top, the row count and the replayed row of the earlier row group
@@ -894,7 +900,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 createShapeTables(" DEDUP UPSERT KEYS(ts)", top, rowCount, -1);
                 assertDecodedColumnsAndWrittenRows(
                         18,
-                        hasNoSentinelType() ? 2 : 10,
+                        2,
                         storedRow(shape[2], top),
                         storedRow(rowCount, top),
                         newRow("2024-01-01T23:00:00.000000Z")
@@ -1036,8 +1042,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // 9 rows in row groups of 8 and 1, top 2: one MERGE of the small last row group takes the replay of row 9
         // and the row at 23:00, past the partition max. The replay passes the identity check, but the MERGE writes
         // the row past the max, so the merge loop merges it: the commit appends and keeps the top. The merge loop
-        // merges row group 1 from what the check decoded: its 9 columns decode once. CHAR: the check does not run,
-        // the merge decodes them
+        // merges row group 1 from what the check decoded: its 9 columns decode once
         Assume.assumeTrue(isWal);
         setInPlaceProperties(8);
         assertMemoryLeak(() -> {
@@ -1057,14 +1062,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // the commit of testDedupUpsertIdenticalInSmallLastRowGroupThenAppendKeepsTop after ci changed type: the
         // rewrite opens at the merge of row group 1 and first copies row group 0 through the materializer, which
         // decodes into the buffers of the columns past the keys, so the merge loop takes nothing that the check
-        // decoded of row group 1 and decodes its 9 columns again. CHAR: the check does not run
+        // decoded of row group 1 and decodes its 9 columns again
         Assume.assumeTrue(isWal);
         setInPlaceProperties(8);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 9, -1);
             changeControlColumnType();
             assertDecodedColumnsAndWrittenRows(
-                    hasNoSentinelType() ? 18 : 9,
+                    18,
                     10,
                     storedRow(9, 2),
                     newRow("2024-01-01T23:00:00.000000Z")
@@ -1078,15 +1083,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // the replays of row 2 (row group 0) and row 6 (row group 1): two merges, both identical, and the row at
         // 23:00 in a row group of its own. Both row groups hold top rows, NULLs of c1..c3, which the SKIP commit
         // keeps: the merge loop leaves them as stored without the key-only merge prepare whose dedup would drop
-        // every O3 row, so the 9 columns of each decode once, in the check, and only the new row is written.
-        // CHAR: the check does not run, the merge decodes and writes both row groups
+        // every O3 row, so the 9 columns of each decode once, in the check, and only the new row is written
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
             assertDecodedColumnsAndWrittenRows(
                     18,
-                    hasNoSentinelType() ? 1 : 9,
+                    1,
                     storedRow(2, 6),
                     storedRow(6, 6),
                     newRow("2024-01-01T23:00:00.000000Z")
@@ -1173,7 +1177,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // top 2, 12 rows in row groups of 4: the replay of row 6 alone passes the identity check of row group 1,
         // which holds no NULL in c1..c3, so the merge loop leaves row group 1 as stored without the key-only merge
         // prepare that a dedup that drops every O3 row takes: its 9 columns decode once, in the check, and the
-        // partition stays as it is. CHAR: the check does not run, the merge decodes and writes row group 1
+        // partition stays as it is
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
@@ -1181,11 +1185,9 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             final TableToken tableToken = engine.verifyTableName("pt");
             final String partitions = readTxnToString(tableToken, false, true, true, true);
             final Set<String> partitionDirs = listPartitionDirs(tableToken);
-            assertDecodedColumnsAndWrittenRows(9, hasNoSentinelType() ? 0 : 4, storedRow(6, 2));
-            if (hasNoSentinelType()) {
-                Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
-                Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
-            }
+            assertDecodedColumnsAndWrittenRows(9, 0, storedRow(6, 2));
+            Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+            Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
             assertChunkNullCounts("c2", "2,0,0");
             assertReaders(topRows(12, 2, -1, null, true));
         });
@@ -1475,7 +1477,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 rows[v - 5] = rowOf(v, tsOf(v), extremeLiteral(v - 5), Integer.toString(v), "'" + v + "'", "#s", v % 10 + ".5m");
             }
             rows[4] = newRow(tsOf(11));
-            assertDecodedColumnsAndWrittenRows(18, hasNoSentinelType() ? 4 : 8, rows);
+            assertDecodedColumnsAndWrittenRows(18, 4, rows);
             final StringSink expected = new StringSink();
             expected.put("v\tc1\n");
             for (int v = 5; v <= 8; v++) {
@@ -1516,17 +1518,17 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // 2) and row 6 (row group 1) pass the identity check, the change of row 11 fails the check of row group 2. The
         // top ends inside the prefix of rows 1..3 and stays: the NULLs of c1..c3 in row group 0 are its rows, which a
         // merge writes as NULLs, so the update leaves row groups 0 and 1 in place, and merges row group 2 from what
-        // the check decoded: 3 x 9 columns in the check, none in the merge. CHAR: the check does not run, the merge
-        // decodes and writes the three row groups. testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup erases the
-        // top that the file records, as the O3 merge of QuestDB 10.0.1 and older did, and the merge rewrites row group 0
+        // the check decoded: 3 x 9 columns in the check, none in the merge. CHAR, whose NULL a merge keeps, leaves row
+        // groups 0 and 1 in place without asking the partition updater. testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup
+        // erases the top that the file records, as the O3 merge of QuestDB 10.0.1 and older did, and the merge rewrites
+        // row group 0
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
-            final boolean isChecked = hasNoSentinelType();
             assertDecodedColumnsAndWrittenRows(
                     27,
-                    isChecked ? 4 : 12,
+                    4,
                     storedRow(4, 2),
                     storedRow(6, 2),
                     newRow(tsOf(11))
@@ -1549,10 +1551,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
             eraseFileColumnTops();
-            final boolean isChecked = hasNoSentinelType();
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the merge loop leaves it in place too, and
+            // takes over what the check decoded of row group 2
+            final boolean isNullMerged = hasNoSentinelType();
             assertDecodedColumnsAndWrittenRows(
-                    isChecked ? 45 : 27,
-                    isChecked ? 8 : 12,
+                    isNullMerged ? 45 : 27,
+                    isNullMerged ? 8 : 4,
                     storedRow(4, 2),
                     storedRow(6, 2),
                     newRow(tsOf(11))
@@ -1566,13 +1570,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     public void testDedupUpsertIdenticalKeptTopFirstMergeTwiceLeavesRowGroupUnchanged() throws Exception {
         // top 2 that the parquet file records, 12 rows: two commits replay row 4 in row group 0, whose NULLs are the
         // rows of the kept top, and change row 11. The update leaves row group 0 in place, so the NULLs stay for the second commit, and merges
-        // row group 2 from what the check decoded: 2 x 9 columns in the check of each commit, none in the merge.
-        // CHAR: the check does not run, the merge decodes and writes both row groups
+        // row group 2 from what the check decoded: 2 x 9 columns in the check of each commit, none in the merge
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
-            final long writtenRows = hasNoSentinelType() ? 4 : 8;
+            final long writtenRows = 4;
             assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(4, 2), newRow(tsOf(11)));
             assertChunkNullCounts("c2", "2,0,0");
             assertDecodedColumnsAndWrittenRows(
@@ -1602,7 +1605,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             if (hasNoSentinelType()) {
                 assertChunkNullCounts("c2", "4,2,0");
             }
-            assertDecodedColumnsAndWrittenRows(18, hasNoSentinelType() ? 4 : 8, storedRow(8, 6), newRow(tsOf(11)));
+            assertDecodedColumnsAndWrittenRows(18, 4, storedRow(8, 6), newRow(tsOf(11)));
             if (hasNoSentinelType()) {
                 assertChunkNullCounts("c2", "4,2,0");
             }
@@ -1622,8 +1625,11 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 16);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-            assertDecodedColumnsAndWrittenRows(hasNoSentinelType() ? 36 : 18, 16, storedRow(4, 2), newRow(tsOf(15)));
-            assertChunkNullCounts("c2", "2,0,0,0");
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the merge loop leaves it in place and merges
+            // row group 1 from what the check decoded
+            final boolean isNullMerged = hasNoSentinelType();
+            assertDecodedColumnsAndWrittenRows(isNullMerged ? 36 : 18, isNullMerged ? 16 : 8, storedRow(4, 2), newRow(tsOf(15)));
+            assertChunkNullCounts("c2", isNullMerged ? "2,0,0,0" : "2,0,0");
             assertReaders(topRows(16, 2, 15, null, true));
         });
     }
@@ -1638,7 +1644,36 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
             changeControlColumnType();
-            assertDecodedColumnsAndWrittenRows(hasNoSentinelType() ? 36 : 18, 12, storedRow(4, 2), newRow(tsOf(11)));
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the rewrite copies it through the
+            // materializer, and the merge loop decodes row group 2 again: 2 x 9 columns in the check, 9 in the merge
+            assertDecodedColumnsAndWrittenRows(hasNoSentinelType() ? 36 : 27, 12, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopNotCountedByRewriteGate() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopFirstMergeLeavesRowGroupUnchanged under a dead-bytes gate that
+        // row group 2, which the commit merges, stays under, and row groups 0 and 2 together pass. Row group 0 is the
+        // first MERGE, whose NULLs the partition updater tells apart only once the output opens, see
+        // isKeptTopMergeUnchanged(): the gate decides as the output opens and counts row group 2 alone, so the commit
+        // updates the partition in place, as with the gate off
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            setRewriteRatioUnderFirstRowGroup();
+            final long nameTxn = partitionNameTxn(engine, "pt", 0);
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            assertDecodedColumnsAndWrittenRows(
+                    27,
+                    4,
+                    storedRow(4, 2),
+                    storedRow(6, 2),
+                    newRow(tsOf(11))
+            );
+            assertUpdatedInPlace(nameTxn, paths);
             assertChunkNullCounts("c2", "2,0,0");
             assertReaders(topRows(12, 2, 11, null, true));
         });
@@ -1690,12 +1725,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
             assertChunkNullCounts("c2", "?,?,?");
-            final boolean isChecked = hasNoSentinelType();
-            assertDecodedColumnsAndWrittenRows(isChecked ? 36 : 18, 8, storedRow(4, 2), newRow(tsOf(11)));
-            assertChunkNullCounts("c2", "2,?,0");
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the merge loop leaves it in place in both
+            // commits, and its chunks keep no null count
+            final boolean isNullMerged = hasNoSentinelType();
+            assertDecodedColumnsAndWrittenRows(isNullMerged ? 36 : 18, isNullMerged ? 8 : 4, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", isNullMerged ? "2,?,0" : "?,?,0");
             assertDecodedColumnsAndWrittenRows(
                     18,
-                    isChecked ? 4 : 8,
+                    4,
                     storedRow(4, 2),
                     rowOf(51, tsOf(11), o3Literal(), "51", "'51'", "#s", "5.5m")
             );
@@ -1709,14 +1746,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     public void testDedupUpsertIdenticalKeptTopThenGapRowLeavesRowGroupUnchanged() throws Exception {
         // top 2 that the parquet file records, 12 rows: the replay of row 4 in row group 0, whose NULLs are the rows of
         // the kept top, and the new row at 07:30, which goes into a row group of its own before row group 2 and stops the check. Row group 0 stays in
-        // place, the merge decodes nothing. CHAR: the check does not run, the merge decodes and writes row group 0
+        // place, the merge decodes nothing
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
             assertDecodedColumnsAndWrittenRows(
                     9,
-                    hasNoSentinelType() ? 1 : 5,
+                    1,
                     storedRow(4, 2),
                     newRow("2024-01-01T07:30:00.000000Z")
             );
@@ -1736,7 +1773,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
             assertDecodedColumnsAndWrittenRows(
                     18,
-                    hasNoSentinelType() ? 5 : 9,
+                    5,
                     storedRow(4, 2),
                     newRow("2024-01-01T09:30:00.000000Z")
             );
@@ -1754,18 +1791,20 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 4, 12, -1);
-            final boolean isChecked = hasNoSentinelType();
-            if (isChecked) {
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the merge loop leaves it in place too, and
+            // takes over what the check decoded of row group 2
+            final boolean isNullMerged = hasNoSentinelType();
+            if (isNullMerged) {
                 assertChunkNullCounts("c2", "4,0,0");
             }
             assertDecodedColumnsAndWrittenRows(
-                    isChecked ? 45 : 27,
-                    isChecked ? 8 : 12,
+                    isNullMerged ? 45 : 27,
+                    isNullMerged ? 8 : 4,
                     storedRow(2, 4),
                     storedRow(6, 4),
                     newRow(tsOf(11))
             );
-            if (isChecked) {
+            if (isNullMerged) {
                 assertChunkNullCounts("c2", "0,0,0");
             }
             assertReaders(topRows(12, 4, 11, null, false));
@@ -1824,14 +1863,13 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // top 2, 12 rows in row groups of 4: the replay of row 6 passes the identity check of row group 1, which
         // holds no NULL in c1..c3, the change of row 11 fails the check of row group 2. The update leaves row group
         // 1 in place, as stored, and merges row group 2 from what the check decoded: each column of each row group
-        // decodes once. The top ends inside the prefix of rows 1..5 and stays, as native keeps it. CHAR: the check
-        // does not run, the merge decodes and writes row groups 1 and 2
+        // decodes once. The top ends inside the prefix of rows 1..5 and stays, as native keeps it
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
             assertChunkNullCounts("c2", "2,0,0");
-            assertDecodedColumnsAndWrittenRows(18, hasNoSentinelType() ? 4 : 8, storedRow(6, 2), newRow(tsOf(11)));
+            assertDecodedColumnsAndWrittenRows(18, 4, storedRow(6, 2), newRow(tsOf(11)));
             assertChunkNullCounts("c2", "2,0,0");
             assertReaders(topRows(12, 2, 11, null, true));
         });
@@ -1848,7 +1886,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
             changeControlColumnType();
-            assertDecodedColumnsAndWrittenRows(hasNoSentinelType() ? 27 : 18, 12, storedRow(6, 2), newRow(tsOf(11)));
+            assertDecodedColumnsAndWrittenRows(27, 12, storedRow(6, 2), newRow(tsOf(11)));
             assertReaders(topRows(12, 2, 11, null, true));
         });
     }
@@ -1881,10 +1919,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 6, 12, -1);
             assertChunkNullCounts("c2", "?,?,?");
-            final boolean isChecked = hasNoSentinelType();
+            // CHAR: a merge writes the NULLs as NULLs, so the merge loop leaves row groups 0 and 1 in place, and takes
+            // over what the check decoded of row group 2
+            final boolean isNullMerged = hasNoSentinelType();
             assertDecodedColumnsAndWrittenRows(
-                    isChecked ? 54 : 27,
-                    12,
+                    isNullMerged ? 54 : 27,
+                    isNullMerged ? 12 : 4,
                     storedRow(2, 6),
                     storedRow(6, 6),
                     newRow(tsOf(11))
@@ -1933,12 +1973,11 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             drainWalQueue();
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02', '2024-01-03'");
             drainWalQueue();
-            final boolean isChecked = hasNoSentinelType();
             // 2024-01-01 and 2024-01-03: 9 + 9 columns in the check, the merge of row group 2 takes them over;
             // 2024-01-02: 9 columns in the merge of row group 1
             assertDecodedColumnsAndWrittenRows(
                     45,
-                    isChecked ? 18 : 34,
+                    18,
                     storedRow(10, 2),
                     newRow(tsOf(23)),
                     newRow("2024-01-02T23:00:00.000000Z"),
@@ -1966,7 +2005,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
             assertDecodedColumnsAndWrittenRows(
                     9,
-                    hasNoSentinelType() ? 1 : 5,
+                    1,
                     storedRow(6, 2),
                     newRow("2024-01-01T07:30:00.000000Z")
             );
@@ -1985,7 +2024,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
             assertDecodedColumnsAndWrittenRows(
                     18,
-                    hasNoSentinelType() ? 5 : 9,
+                    5,
                     storedRow(6, 2),
                     newRow("2024-01-01T09:30:00.000000Z")
             );
@@ -2002,18 +2041,20 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 5, 12, -1);
-            final boolean isChecked = hasNoSentinelType();
-            if (isChecked) {
+            // CHAR: a merge writes the NULLs as NULLs, so the merge loop leaves row groups 0 and 1 in place, and takes
+            // over what the check decoded of row group 2
+            final boolean isNullMerged = hasNoSentinelType();
+            if (isNullMerged) {
                 assertChunkNullCounts("c2", "4,1,0");
             }
             assertDecodedColumnsAndWrittenRows(
-                    isChecked ? 54 : 27,
-                    12,
+                    isNullMerged ? 54 : 27,
+                    isNullMerged ? 12 : 4,
                     storedRow(2, 5),
                     storedRow(6, 5),
                     newRow(tsOf(11))
             );
-            if (isChecked) {
+            if (isNullMerged) {
                 assertChunkNullCounts("c2", "0,0,0");
             }
             assertReaders(topRows(12, 5, 11, null, false));
@@ -2139,8 +2180,8 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
-            assertFloatReplayThenChanged("NULL", "1.0", "NaN", "1.0", hasNoSentinelType() ? 4 : 8, "null\t1.0");
-            assertFloatReplayThenChanged("1.0", "NULL", "1.0", "NaN", hasNoSentinelType() ? 4 : 8, "1.0\tnull");
+            assertFloatReplayThenChanged("NULL", "1.0", "NaN", "1.0", 4, "null\t1.0");
+            assertFloatReplayThenChanged("1.0", "NULL", "1.0", "NaN", 4, "1.0\tnull");
         });
     }
 
@@ -2168,7 +2209,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 16, -1);
             assertDecodedColumnsAndWrittenRows(
                     27,
-                    hasNoSentinelType() ? 4 : 12,
+                    4,
                     storedRow(6, 2),
                     storedRow(10, 2),
                     newRow(tsOf(15))
@@ -2244,25 +2285,24 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     @Test
     public void testDedupUpsertIdentityCheckDecodedColumns() throws Exception {
         // the columns that the identity check of an UPSERT commit decodes, per commit, out of the 9 columns
-        // of the parquet file. CHAR has no column without NULL in the table, the check does not run
+        // of the parquet file
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
-            final boolean isChecked = hasNoSentinelType();
             // a pure append: the check does not run
             assertIdentityCheckDecodedColumns(0, newRow("2024-01-01T23:00:00.000000Z"));
             // a new row in row group 1: the key stage decodes ts and finds no duplicate
-            assertIdentityCheckDecodedColumns(isChecked ? 1 : 0, newRow("2024-01-01T05:30:00.000000Z"));
+            assertIdentityCheckDecodedColumns(1, newRow("2024-01-01T05:30:00.000000Z"));
             // a new row in a row group of its own: the check stops before it decodes
             assertIdentityCheckDecodedColumns(0, newRow("2024-01-01T03:30:00.000000Z"));
             // a value update of row 7: the key stage passes, the value stage decodes the other 8 columns
             assertIdentityCheckDecodedColumns(
-                    isChecked ? 9 : 0,
+                    9,
                     rowOf(7, tsOf(7), literalOf(7), "70", "'7'", "#s", "7.5m")
             );
             // the replay of row 2 in row group 0
-            assertIdentityCheckDecodedColumns(isChecked ? 9 : 0, storedRow(2, 6));
+            assertIdentityCheckDecodedColumns(9, storedRow(2, 6));
         });
     }
 
@@ -2299,6 +2339,37 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 assertMergeDecodedColumns((long) c[0], (String[]) c[1]);
                 dropTables();
             }
+        });
+    }
+
+    @Test
+    public void testDedupUpsertMergedKeptTopNotCountedByRewriteGate() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup under the dead-bytes gate of
+        // testDedupUpsertIdenticalKeptTopNotCountedByRewriteGate. The file records no top, so the partition updater
+        // answers, once the output opens, that the merge of row group 0 writes its NULLs as 0/false, and the merge
+        // loop merges row group 0 too. The gate decided before, on row group 2 alone: its count of the bytes that the
+        // update leaves dead is a lower bound, and the commit updates the partition in place
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
+            eraseFileColumnTops();
+            setRewriteRatioUnderFirstRowGroup();
+            final long nameTxn = partitionNameTxn(engine, "pt", 0);
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the merge loop leaves it in place, and takes
+            // over what the check decoded of row group 2
+            final boolean isNullMerged = hasNoSentinelType();
+            assertDecodedColumnsAndWrittenRows(
+                    isNullMerged ? 45 : 27,
+                    isNullMerged ? 8 : 4,
+                    storedRow(4, 2),
+                    storedRow(6, 2),
+                    newRow(tsOf(11))
+            );
+            assertUpdatedInPlace(nameTxn, paths);
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
         });
     }
 
@@ -2777,6 +2848,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    // asserts that the one commit into the parquet partitions of pt since the counts and the name txn of 2024-01-01 were
+    // taken updated 2024-01-01 in place
+    private static void assertUpdatedInPlace(long nameTxn, O3ParquetPathCounts paths) {
+        Assert.assertEquals("in-place updates", 1, paths.getInPlace());
+        Assert.assertEquals("rewrites", 0, paths.getRewrite());
+        Assert.assertEquals("name txn", nameTxn, partitionNameTxn(engine, "pt", 0));
+    }
+
     // the rows of the query, with NULL and 0 or false as one value in NO_SENTINEL_COLUMNS
     private static String normalizedRows(String sql) throws Exception {
         sink.clear();
@@ -2886,6 +2965,21 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    // Sets the ratio of the dead-bytes rewrite gate halfway between the share of the parquet file of 2024-01-01 of pt
+    // that the bytes it holds unused and row group 2 make, and that share with row group 0 as well: by the formula of
+    // the gate, a commit that re-encodes row group 2 updates the partition in place, one that also counts row group 0
+    // rewrites it
+    private static void setRewriteRatioUnderFirstRowGroup() {
+        final long unusedBytes = parquetUnusedBytes(engine, "pt", 0);
+        final long parquetFileSize = parquetFileSize(engine, "pt", 0);
+        final long rowGroup0Size = parquetRowGroupCompressedSize(engine, "pt", 0, 0);
+        final long rowGroup2Size = parquetRowGroupCompressedSize(engine, "pt", 0, 2);
+        final double ratio = (unusedBytes + rowGroup2Size + rowGroup0Size / 2.0) / parquetFileSize;
+        Assert.assertFalse(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup2Size, ratio, Long.MAX_VALUE));
+        Assert.assertTrue(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup0Size + rowGroup2Size, ratio, Long.MAX_VALUE));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, Double.toString(ratio));
     }
 
     private static String tsOf(int v) {
@@ -3120,7 +3214,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
-            final long writtenRows = hasNoSentinelType() ? 4 : 8;
+            final long writtenRows = 4;
             assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(6, 2), newRow(tsOf(11)));
             if (isReopen) {
                 assertPtMatchesTw();
@@ -3254,7 +3348,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
 
     // inserts the rows into pt and tw, then asserts that the commit left the parquet partition of pt as it was,
     // as the native noop leaves tw: the row count, name txn, parquet size and column versions, the partition
-    // directories, and no row written. With CHAR the identity check does not run and the merge writes the partition
+    // directories, and no row written
     private void assertUpsertLeavesPartitionUnchanged(String... rows) throws Exception {
         final TableToken tableToken = engine.verifyTableName("pt");
         final String partitions = readTxnToString(tableToken, false, true, true, true);
@@ -3262,13 +3356,9 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         final long writtenRows = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
         insertUpsertRows(rows);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-        if (hasNoSentinelType()) {
-            Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
-            Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
-            Assert.assertEquals(writtenRows, engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
-        } else {
-            Assert.assertNotEquals(partitions, readTxnToString(tableToken, false, true, true, true));
-        }
+        Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+        Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
+        Assert.assertEquals(writtenRows, engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
     }
 
     private void assertEveryTypeNullCounts(long nullCount, long notNullCount) throws Exception {

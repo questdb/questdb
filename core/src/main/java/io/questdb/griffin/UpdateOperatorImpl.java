@@ -594,7 +594,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstFixMem,
                     dstVarMem,
                     columnType,
-                    shl
+                    shl,
+                    0
             );
         }
 
@@ -607,7 +608,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         srcVarMem, dstFixMem,
                         dstVarMem,
                         columnType,
-                        shl
+                        shl,
+                        oldColumnTop - newColumnTop
                 );
             } else {
                 // prevRow < oldColumnTop
@@ -642,7 +644,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             dstFixMem,
                             dstVarMem,
                             columnType,
-                            shl
+                            shl,
+                            oldColumnTop - newColumnTop
                     );
                 }
             }
@@ -688,7 +691,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             MemoryCMARW dstFixMem,
             MemoryCMARW dstDataMem,
             int columnType,
-            int shl
+            int shl,
+            long dstRowShift
     ) {
         if (ColumnType.isVarSize(columnType)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -697,9 +701,11 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             long srcDataAddr = srcDataMem.addressOf(dataOffsetLo);
             long copyToOffset = dstDataMem.getAppendOffset();
             dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
-            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
+            // The destination file starts at the new column top, the source file at the old one,
+            // so the same partition row sits dstRowShift rows further into the destination.
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi + dstRowShift));
             long dstAddrLimit = dstFixMem.getAppendAddress();
-            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorOffset(rowLo));
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorOffset(rowLo + dstRowShift));
             long dstAddr = dstFixMem.getAppendAddress();
             long dstAddrSize = dstAddrLimit - dstAddr;
 
@@ -711,7 +717,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstAddr,
                     dstAddrSize
             );
-            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi + dstRowShift));
         } else {
             dstFixMem.putBlockOfBytes(
                     srcFixMem.addressOf(rowLo << shl),
