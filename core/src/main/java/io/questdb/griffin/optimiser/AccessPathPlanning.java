@@ -751,8 +751,12 @@ final class AccessPathPlanning {
         planScanSubqueries(aggregate.getChild(), PlanToFactoryRules.postingDistinctScan(aggregate));
     }
 
+    /**
+     * Plans the slaves of the HORIZON JOIN before its master: whether the join reads its master's page frames in
+     * parallel, which a sort of the master reads while it is planned, see {@link OperatorPlanning#planOperators},
+     * depends on the time frames its slaves serve.
+     */
     private void walkHorizon(HorizonJoinPlan horizon, boolean isTimestampRequired) throws SqlException {
-        walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isTimestampRequired));
         for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
             final LogicalPlan slave = horizon.getSlaves().getQuick(i).getInput();
             final FilterPlan filter = PlanToFactoryRules.temporalStolenFilter(slave);
@@ -764,6 +768,7 @@ final class AccessPathPlanning {
                 horizonSlaveScan = previous;
             }
         }
+        walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isTimestampRequired));
     }
 
     private void walkJoin(JoinPlan join, boolean isTimestampRequired) throws SqlException {

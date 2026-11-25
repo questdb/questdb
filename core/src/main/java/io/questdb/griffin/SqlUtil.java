@@ -1831,6 +1831,17 @@ public class SqlUtil {
     }
 
     /**
+     * Whether an aggregate function of that name reads a value other than NULL over no rows, see
+     * {@link io.questdb.griffin.engine.functions.GroupByFunction#hasNonNullEmptyValue()}: the counts read zero,
+     * haversine_dist_deg() reads 0.0 and isOrdered() reads true.
+     */
+    public static boolean hasNonNullEmptyValue(CharSequence name) {
+        return isZeroOnEmptyAggregate(name)
+                || Chars.equalsIgnoreCase(name, "haversine_dist_deg")
+                || Chars.equalsIgnoreCase(name, "isOrdered");
+    }
+
+    /**
      * Whether the aggregate function of that name reads zero over no rows rather than NULL: the counts.
      */
     public static boolean isZeroOnEmptyAggregate(CharSequence name) {

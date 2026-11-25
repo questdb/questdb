@@ -514,11 +514,21 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * True when the HORIZON JOIN reads the page frames of its master, or the frames under a filter it steals from the
-     * master, in parallel once the master offers them, see {@link #horizonAlgorithm}.
+     * master, in parallel once the master offers them, see {@link #horizonAlgorithm}: its slaves serve the concurrent
+     * time frames its workers read.
      */
     private boolean isParallelHorizon(HorizonJoinPlan horizon, boolean hasParallelFunctions, boolean isRandomAccessMaster) {
-        return context.getExecutionContext().isParallelHorizonJoinEnabled() && hasParallelFunctions
-                && (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE || !isRandomAccessMaster || PlanToFactoryRules.isHorizonWithinSlotCap(horizon));
+        if (!context.getExecutionContext().isParallelHorizonJoinEnabled() || !hasParallelFunctions
+                || horizon.getConsumer() != HorizonJoinPlan.Consumer.AGGREGATE && isRandomAccessMaster && !PlanToFactoryRules.isHorizonWithinSlotCap(horizon)) {
+            return false;
+        }
+        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            if (!isKnownYes(PhysicalProperties.supportsHorizonSlaveConcurrentTimeFrameCursor(slaves.getQuick(i).getInput()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean isRandomAccess(LogicalPlan plan) {
@@ -1679,10 +1689,10 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * True when the window join step runs in parallel once it reads the master's page frames: its aggregate functions
-     * support parallelism and its slave serves time frames.
+     * support parallelism and its slave serves concurrent time frames.
      */
     static boolean isParallelWindowJoinStep(WindowJoinStep step) {
-        return !hasNoParallelism(step.getAggregates()) && isKnownYes(PhysicalProperties.supportsTimeFrameCursor(step.getSlave()));
+        return !hasNoParallelism(step.getAggregates()) && isKnownYes(PhysicalProperties.supportsConcurrentTimeFrameCursor(step.getSlave()));
     }
 
     /**

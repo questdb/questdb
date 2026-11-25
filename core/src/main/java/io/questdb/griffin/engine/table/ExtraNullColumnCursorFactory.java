@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
@@ -49,6 +50,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
@@ -56,16 +59,41 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     private final RecordCursorFactory base;
     private final int columnSplit;
     private final ExtraNullColumnRecordCursor cursor;
+    // Per spliced column, the type tag of its empty value (ColumnType.UNDEFINED for NULL), parallel to emptyValues.
+    // Null exactly when emptyValues is null.
+    @Nullable
+    private final IntList emptyValueTypes;
+    // Per spliced column, the raw bits of the empty value that getBool(), getDouble() or getLong() reports; null means
+    // every spliced column is NULL. Both lists are immutable after construction, so every record, cursor and worker
+    // shares them read-only.
+    @Nullable
+    private final LongList emptyValues;
     private ExtraNullColumnPageFrameCursor pageFrameCursor;
     private ExtraNullColumnTablePageFrameCursor tablePageFrameCursor;
     private ExtraNullColumnTimeFrameCursor timeFrameCursor;
 
     public ExtraNullColumnCursorFactory(RecordMetadata metadata, int columnSplit, RecordCursorFactory base) {
+        this(metadata, columnSplit, base, null, null);
+    }
+
+    public ExtraNullColumnCursorFactory(
+            RecordMetadata metadata,
+            int columnSplit,
+            RecordCursorFactory base,
+            @Nullable LongList emptyValues,
+            @Nullable IntList emptyValueTypes
+    ) {
         super(metadata);
+        assert (emptyValues == null) == (emptyValueTypes == null);
+        assert emptyValues == null || (emptyValues.size() == metadata.getColumnCount() - columnSplit
+                && emptyValueTypes.size() == emptyValues.size());
+        assert emptyValueTypes == null || hasEmptyValueTypesOfMetadata(metadata, columnSplit, emptyValueTypes);
         this.base = base;
         this.columnSplit = columnSplit;
+        this.emptyValues = emptyValues;
+        this.emptyValueTypes = emptyValueTypes;
         try {
-            this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess(), null, null);
+            this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess(), emptyValues, emptyValueTypes);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -101,6 +129,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        // Page frames can only report NULL for the spliced columns, see supportsPageFrameCursor().
+        assert emptyValues == null;
         final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
         try {
             // Claim only what the base provides: a table base keeps the TablePageFrameCursor
@@ -133,7 +163,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (timeFrameCursor == null) {
-            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex());
+            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex(),
+                    emptyValues, emptyValueTypes);
         }
         return timeFrameCursor.of(baseCursor);
     }
@@ -150,10 +181,12 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     /**
      * The base's cursor: a parallel join reads the time frames from this factory's page frames, which already carry
-     * the null columns, at the timestamp index of the layout it reads them in.
+     * the null columns, at the timestamp index of the layout it reads them in. Empty values exist only in the records,
+     * so a factory that reports them serves no concurrent time frames, see {@link #supportsConcurrentTimeFrameCursor}.
      */
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        assert emptyValues == null;
         return base.newTimeFrameCursor();
     }
 
@@ -168,8 +201,15 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return emptyValues == null && base.supportsConcurrentTimeFrameCursor();
+    }
+
+    @Override
     public boolean supportsPageFrameCursor() {
-        return base.supportsPageFrameCursor();
+        // Page frames carry no memory for the spliced columns, so they can only report NULL. The empty values exist
+        // only in the records.
+        return emptyValues == null && base.supportsPageFrameCursor();
     }
 
     @Override
@@ -184,7 +224,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("ExtraNullColumnRecord");
+        sink.type(emptyValues != null ? "ExtraEmptyValueColumnRecord" : "ExtraNullColumnRecord");
         sink.child(base);
     }
 
@@ -201,6 +241,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     @Override
     protected void _close() {
         base.close();
+    }
+
+    private static boolean hasEmptyValueTypesOfMetadata(RecordMetadata metadata, int columnSplit, IntList emptyValueTypes) {
+        for (int k = 0, n = emptyValueTypes.size(); k < n; k++) {
+            final int typeTag = emptyValueTypes.getQuick(k);
+            if (typeTag != ColumnType.UNDEFINED && typeTag != ColumnType.tagOf(metadata.getColumnType(columnSplit + k))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static class ExtraNullColumnPageFrame implements PageFrame {
@@ -540,11 +590,17 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         private final int selectedTimestampIndex;
         private TimeFrameCursor baseCursor;
 
-        public ExtraNullColumnTimeFrameCursor(int columnSplit, boolean supportsRandomAccess, int selectedTimestampIndex) {
+        public ExtraNullColumnTimeFrameCursor(
+                int columnSplit,
+                boolean supportsRandomAccess,
+                int selectedTimestampIndex,
+                @Nullable LongList emptyValues,
+                @Nullable IntList emptyValueTypes
+        ) {
             this.selectedTimestampIndex = selectedTimestampIndex;
-            this.recordA = new ExtraNullColumnRecord(columnSplit);
+            this.recordA = ExtraNullColumnRecordCursor.newRecord(columnSplit, emptyValues, emptyValueTypes);
             if (supportsRandomAccess) {
-                this.recordB = new ExtraNullColumnRecord(columnSplit);
+                this.recordB = ExtraNullColumnRecordCursor.newRecord(columnSplit, emptyValues, emptyValueTypes);
             } else {
                 this.recordB = null;
             }

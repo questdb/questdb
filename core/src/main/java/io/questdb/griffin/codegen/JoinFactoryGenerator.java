@@ -63,6 +63,7 @@ import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunction
 import io.questdb.griffin.engine.functions.cast.CastVarcharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
@@ -77,7 +78,6 @@ import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.EmptyWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -137,6 +137,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -2091,23 +2092,36 @@ final class JoinFactoryGenerator {
                 }
                 if (nullExtension != WindowJoinStep.NullExtension.NONE) {
                     isTransferred = true;
-                    final boolean isNullPadding = nullExtension == WindowJoinStep.NullExtension.NULL_PADDING;
-                    Throwable failure = Misc.freeBestEffort(null, slave);
+                    // An empty window reports a value other than NULL for some aggregates, e.g. count() is 0, isOrdered()
+                    // is true and haversine_dist_deg() is 0.0: the value each one reads over a group of no rows, which
+                    // spliced column k reads from groupByFunctions[k].
+                    final IntList emptyValueTypes = new IntList();
+                    LongList emptyValues = null;
+                    Throwable failure = null;
+                    try {
+                        emptyValues = GroupByUtils.computeNonNullEmptyValues(groupByFunctions, valueTypes.getColumnCount(), emptyValueTypes);
+                    } catch (Throwable th) {
+                        failure = th;
+                    }
+                    if (failure == null && (emptyValues == null) != (nullExtension == WindowJoinStep.NullExtension.NULL_PADDING)
+                            && (ParanoiaState.PLAN_PARANOIA_MODE || emptyValues != null)) {
+                        // A NULL-padding step would report NULL for a non-NULL empty value; an empty-values step whose
+                        // aggregates all read NULL only gives up page frames it could have passed through.
+                        failure = new AssertionError("window join step null extension differs from its aggregates' empty values");
+                    }
+                    failure = Misc.freeBestEffort(failure, slave);
                     failure = Misc.freeBestEffort(failure, joinMetadata);
                     failure = Misc.freeBestEffort(failure, joinFilter);
                     failure = Misc.freeBestEffort(failure, windowLoFunc);
                     failure = Misc.freeBestEffort(failure, windowHiFunc);
-                    if (isNullPadding || failure != null) {
-                        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
-                    }
+                    failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
                     if (failure != null) {
                         Misc.free(master, failure);
                         CairoException.rethrowCleanupFailure(failure);
                     }
                     final GenericRecordMetadata extensionMetadata = columnIndex == null ? outerMetadata : innerMetadata;
-                    final RecordCursorFactory extension = isNullPadding
-                            ? new ExtraNullColumnCursorFactory(extensionMetadata, splitIndex, master)
-                            : new EmptyWindowJoinRecordCursorFactory(extensionMetadata, splitIndex, master, groupByFunctions, valueTypes.getColumnCount());
+                    final RecordCursorFactory extension = new ExtraNullColumnCursorFactory(extensionMetadata, splitIndex, master,
+                            emptyValues, emptyValues != null ? emptyValueTypes : null);
                     return columnIndex == null ? extension : new SelectedRecordCursorFactory(outerMetadata, columnIndex, extension);
                 }
                 if (joinFilter.isConstant()) {

@@ -195,12 +195,22 @@ public final class PhysicalProperties {
     }
 
     /**
+     * Whether the factory a parallel HORIZON JOIN matches the rows of its slave in serves the concurrent time frames it
+     * reads, see {@link #supportsConcurrentTimeFrameCursor}: the factory under the filter the join steals from the
+     * slave, see {@link PlanToFactoryRules#horizonStolenFilter}, else the slave's.
+     */
+    public static Capability supportsHorizonSlaveConcurrentTimeFrameCursor(LogicalPlan slave) {
+        final FilterPlan filter = PlanToFactoryRules.horizonStolenFilter(slave);
+        return filter != null ? supportsLeafTimeFrameCursor(filter) : supportsTimeFrameCursor(slave, null, true);
+    }
+
+    /**
      * Whether the factory a HORIZON JOIN matches the rows of its slave in serves time-frame cursors: the factory under
      * the filter the join steals from the slave, see {@link PlanToFactoryRules#horizonStolenFilter}, else the slave's.
      */
     public static Capability supportsHorizonSlaveTimeFrameCursor(LogicalPlan slave) {
         final FilterPlan filter = PlanToFactoryRules.horizonStolenFilter(slave);
-        return filter != null ? supportsLeafTimeFrameCursor(filter) : supportsTimeFrameCursor(slave, null);
+        return filter != null ? supportsLeafTimeFrameCursor(filter) : supportsTimeFrameCursor(slave, null, false);
     }
 
     /**
@@ -211,7 +221,7 @@ public final class PhysicalProperties {
     public static Capability supportsLeafTimeFrameCursor(FilterPlan filter) {
         final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
         if (scan == null) {
-            return supportsTimeFrameCursor(filter.getChild(), null);
+            return supportsTimeFrameCursor(filter.getChild(), null, false);
         }
         return switch (scan.getAccessPath()) {
             case PAGE_FRAMES -> supportsPageFrameTimeFrameCursor(scan, scan.isRandomAccess());
@@ -266,8 +276,17 @@ public final class PhysicalProperties {
      * Whether the factory serves time-frame cursors: a forward table scan over page frames with random access, a
      * designated timestamp and no filter, or a factory that passes such a scan through.
      */
+    /**
+     * Whether the factory of the plan serves the time frames that parallel WINDOW and HORIZON JOINs read from its page
+     * frames, see {@link RecordCursorFactory#supportsConcurrentTimeFrameCursor()}: its time frames, unless a window join
+     * pads them with empty values, which only its records hold.
+     */
+    public static Capability supportsConcurrentTimeFrameCursor(LogicalPlan plan) {
+        return supportsTimeFrameCursor(plan, null, true);
+    }
+
     public static Capability supportsTimeFrameCursor(LogicalPlan plan) {
-        return supportsTimeFrameCursor(plan, null);
+        return supportsTimeFrameCursor(plan, null, false);
     }
 
     /**
@@ -1132,31 +1151,31 @@ public final class PhysicalProperties {
         };
     }
 
-    private static Capability supportsTimeFrameCursor(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
+    private static Capability supportsTimeFrameCursor(LogicalPlan plan, @Nullable LimitPlan sortedLimit, boolean isConcurrent) {
         return switch (plan) {
             case ScanPlan scan -> scanTimeFrame(scan);
             case FilterPlan filter ->
                     PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
-                            : wrapped(filter.getAlgorithm(), supportsTimeFrameCursor(filter.getChild(), null));
+                            : wrapped(filter.getAlgorithm(), supportsTimeFrameCursor(filter.getChild(), null, isConcurrent));
             case ProjectPlan project -> switch (PlanToFactoryRules.projectionFactory(project)) {
                 case WINDOW, VIRTUAL -> Capability.NO;
-                case WINDOW_JOIN -> windowJoinTimeFrame((WindowJoinPlan) project.getChild());
-                case SELECTION -> supportsTimeFrameCursor(project.getChild(), sortedLimit);
+                case WINDOW_JOIN -> windowJoinTimeFrame((WindowJoinPlan) project.getChild(), isConcurrent);
+                case SELECTION -> supportsTimeFrameCursor(project.getChild(), sortedLimit, isConcurrent);
             };
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
-                yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(sort.getChild(), null) : isPassedThrough;
+                yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(sort.getChild(), null, isConcurrent) : isPassedThrough;
             }
             case LimitPlan limit -> {
                 if (LogicalPlans.hasSortUnderStableProjects(limit.getChild())) {
-                    yield supportsTimeFrameCursor(limit.getChild(), limit);
+                    yield supportsTimeFrameCursor(limit.getChild(), limit, isConcurrent);
                 }
                 final Capability isPassedThrough = isLimitPassedThrough(limit);
-                yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(limit.getChild(), null) : isPassedThrough;
+                yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(limit.getChild(), null, isConcurrent) : isPassedThrough;
             }
             case JoinPlan join -> join.getOrderedInputs().size() == 1
-                    ? supportsTimeFrameCursor(join.getOrderedInputs().getQuick(0).getInput(), null) : Capability.NO;
-            case WindowJoinPlan windowJoin -> windowJoinTimeFrame(windowJoin);
+                    ? supportsTimeFrameCursor(join.getOrderedInputs().getQuick(0).getInput(), null, isConcurrent) : Capability.NO;
+            case WindowJoinPlan windowJoin -> windowJoinTimeFrame(windowJoin, isConcurrent);
             default -> Capability.NO;
         };
     }
@@ -1306,11 +1325,14 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether the window join pads its master with NULL through every step, passing the master's time frames through.
+     * Whether the window join null-extends its master through every step, passing the master's time frames through
+     * with the padded columns in its records; their concurrent form reads the page frames, which only NULL padding
+     * passes through.
      */
-    private static Capability windowJoinTimeFrame(WindowJoinPlan windowJoin) {
-        return windowJoin.getNullExtension() == WindowJoinStep.NullExtension.NULL_PADDING
-                ? supportsTimeFrameCursor(windowJoin.getMaster(), null) : Capability.NO;
+    private static Capability windowJoinTimeFrame(WindowJoinPlan windowJoin, boolean isConcurrent) {
+        final WindowJoinStep.NullExtension nullExtension = windowJoin.getNullExtension();
+        return nullExtension == WindowJoinStep.NullExtension.NULL_PADDING || !isConcurrent && nullExtension == WindowJoinStep.NullExtension.EMPTY_VALUES
+                ? supportsTimeFrameCursor(windowJoin.getMaster(), null, isConcurrent) : Capability.NO;
     }
 
     /**

@@ -76,6 +76,13 @@ final class OrderRequirement implements Mutable {
         orderedPlan = null;
     }
 
+    // A selection or a computing projection reads its input's records by the row ids it hands out, unlike the window
+    // and window join factories, which build their own cursors.
+    private static boolean isRandomAccessPassedThrough(ProjectPlan project) {
+        final PlanToFactoryRules.ProjectionFactory factory = PlanToFactoryRules.projectionFactory(project);
+        return factory == PlanToFactoryRules.ProjectionFactory.SELECTION || factory == PlanToFactoryRules.ProjectionFactory.VIRTUAL;
+    }
+
     /**
      * The direction the rows are to be ordered by {@link #getOrderColumnId()} in, or null.
      */
@@ -263,12 +270,14 @@ final class OrderRequirement implements Mutable {
 
     /**
      * Narrows where the plan sits to what reaches the plan and its inputs: the random access of a join step passes
-     * through projections, filters, limits, sorts and an EXCEPT or INTERSECT, which reads its first branch by row id,
+     * through projections that compute over their input's records, filters, limits, sorts and an EXCEPT or INTERSECT,
+     * which reads its first branch by row id; a window or a window join builds its own cursor,
      * the frame reader through selections and sorts, a filter becoming the frame reader of its input, and the single
      * group of an aggregate without keys through projections and filters to a scan.
      */
     void passTo(LogicalPlan plan) {
-        isRandomAccessRequired &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan
+        isRandomAccessRequired &= plan instanceof ProjectPlan project && isRandomAccessPassedThrough(project)
+                || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan
                 || plan instanceof SetOperationPlan operation && !operation.getOperation().isUnion();
         frameReader = !isRandomAccessRequired ? null : switch (plan) {
             case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> filter;

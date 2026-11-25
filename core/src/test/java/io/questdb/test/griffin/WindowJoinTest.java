@@ -683,7 +683,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
                         .noLeakCheck()
                         .withPlan("""
-                                Empty Window Join
+                                ExtraEmptyValueColumnRecord
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cz_trades
@@ -699,7 +699,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 GroupBy vectorized: false
                                   values: [sum(c),sum(cd),sum(acd),count(s)]
                                     SelectedRecord
-                                        Empty Window Join
+                                        ExtraEmptyValueColumnRecord
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: cz_trades
@@ -720,7 +720,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                   symbol: t.sym=sym
                                   window lo: 60000000 preceding (include prevailing)
                                   window hi: current row
-                                    Empty Window Join
+                                    ExtraEmptyValueColumnRecord
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cz_trades
@@ -744,7 +744,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort light lo: 2
                               keys: [ts desc]
-                                Empty Window Join
+                                ExtraEmptyValueColumnRecord
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cz_trades
@@ -760,7 +760,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "WINDOW JOIN cz_prices p2 ON (t.sym = p2.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " +
                     "WINDOW JOIN cz_prices p ON (1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
                     .noLeakCheck()
-                    .withPlanContaining("Empty Window Join")
+                    .withPlanContaining("ExtraEmptyValueColumnRecord")
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
@@ -1004,11 +1004,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 .supportsRandomAccess(true)
                                 .expectSize()
                                 .withPlan("""
-                                        SelectedRecord
-                                            ExtraEmptyValueColumnRecord
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: cz_trades
+                                        ExtraEmptyValueColumnRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: cz_trades
                                         """)
                                 .returns(replaceTimestampSuffix("""
                                         ts\tc\tcp\ts
@@ -1541,11 +1540,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                         plan = """
                                 Encode sort light
                                   keys: [sym desc, c, ts]
-                                    SelectedRecord
-                                        ExtraEmptyValueColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cz_trades
+                                    ExtraEmptyValueColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
                                 """;
                     }
                     assertQuery("SELECT * FROM (SELECT t.ts, t.sym, count() c, sum(p.price) s FROM cz_trades t " +
@@ -1709,7 +1707,8 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testConstantFalseJoinFilterKeepsNullAggregatesAsParallelTimeFrameSlave() throws Exception {
         // A constant-false WINDOW JOIN whose aggregates are all NULL over an empty window, read as the right
-        // side of a parallel WINDOW or HORIZON JOIN. Every q row exists, and its c and s2 hold NULL.
+        // side of a parallel WINDOW or HORIZON JOIN, which reads its NULL-padded page frames. Every q row exists,
+        // and its c and s2 hold NULL.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             final String[] conditions = {
@@ -1738,8 +1737,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 .timestamp("ts")
                                 .noRandomAccess()
                                 .sizeMayVary()
-                                .withPlanContaining("Window Fast Join", "ExtraNullColumnRecord")
-                                .withPlanNotContaining("Async")
+                                .withPlanContaining("Async Window Fast Join", "ExtraNullColumnRecord")
                                 .returns(replaceTimestampSuffix("""
                                         ts\tn\tsc\tss
                                         2024-01-01T09:00:00.000000Z\t0\tnull\tnull
@@ -1753,8 +1751,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .noRandomAccess()
                                 .sizeMayVary()
-                                .withPlanContaining("Horizon Join", "ExtraNullColumnRecord")
-                                .withPlanNotContaining("Async")
+                                .withPlanContaining("Async Horizon Join", "ExtraNullColumnRecord")
                                 .returns("""
                                         n\tsc\tss
                                         0\tnull\tnull
@@ -1766,152 +1763,45 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantFalseJoinFilterKeepsNullCountNextToFoldedAggregate() throws Exception {
-        // bool_or() and bit_or() over a constant fold to a plain constant rather than a group-by
-        // function, so group-by functions and aggregate columns no longer line up one-to-one. The
-        // correct count() here is 0, but the constant-false WINDOW JOIN then keeps its NULL mode and
-        // reports every aggregate column as NULL (false for BOOLEAN), count() included. This test
-        // pins that fallback and its plan node, not the desired value; change it when the fix for
-        // #8124, the folded-aggregate defect, lands. The regular path fails on these projections,
-        // which is that same defect. The first two queries keep every master column in table
-        // order, the next two reorder the columns and report the same values, the next two sort
-        // the rows with a LIMIT, and the last WINDOW JOIN is not the last one.
+    public void testConstantFalseJoinFilterReadsEmptyValuesNextToConstantAggregates() throws Exception {
+        // bool_or() and bit_or() over a constant stay group-by functions, so each aggregate column reads the value its
+        // function reports over an empty window, as on the regular path, where a per-row false filter leaves every
+        // window empty: count() reads 0, bool_or(false) false and bit_or(5) NULL. Master folds those aggregates to
+        // constants and keeps every aggregate column NULL instead (#8124). The queries keep the master columns in
+        // table order, reorder them, sort the rows with a LIMIT, and put the WINDOW JOIN before another one.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             final String leftType = leftTableTimestampType.getTypeName();
             final String range = " RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
-            final String expectedTemplate = """
-                    sym\tk\tts2\tts\t%s
-                    a\t1\t2024-01-08T10:00:00.000000Z\t%s\t%s
-                    a\t2\t2024-01-08T10:00:00.000000Z\t%s\t%s
-                    b\t3\t2024-01-08T10:00:00.000000Z\t%s\t%s
-                    """;
-            final String row0Ts = replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType);
-            final String row1Ts = replaceTimestampSuffix("2024-01-01T09:01:00.000000Z", leftType);
-            final String row2Ts = replaceTimestampSuffix("2024-01-01T09:02:00.000000Z", leftType);
+            final String regular = " FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym AND t.k < 0)" + range;
+            final String[] queries = {
+                    "SELECT t.sym, t.k, t.ts2, t.ts, bool_or(false) b, count() c%s",
+                    "SELECT t.sym, t.k, t.ts2, t.ts, count() c, bit_or(5) b%s",
+                    "SELECT t.ts, bool_or(false) b, count() c, t.sym%s",
+                    "SELECT t.ts, count() c, bit_or(5) b, t.k%s",
+                    "SELECT t.sym, t.k, t.ts2, t.ts, bool_or(false) b%s ORDER BY b, ts DESC LIMIT 2",
+                    "SELECT t.ts, bool_or(false) b, t.sym%s ORDER BY b, ts DESC LIMIT 2",
+                    "SELECT t.ts, bool_or(false) b, count() c, sum(p1.price) s1%s WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range
+            };
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
                 for (String condition : new String[]{"t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'", "t.sym = p.sym AND 1 = 0"}) {
                     final String windowJoin = " FROM cz_trades t WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
-                    assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, bool_or(false) b, count() c" + windowJoin)
+                    assertQuery("SELECT t.ts, bool_or(false) b, count() c, bit_or(5) bo, t.sym" + windowJoin)
                             .noLeakCheck()
                             .timestamp("ts")
                             .supportsRandomAccess(true)
                             .expectSize()
-                            .withPlan("""
-                                    ExtraNullColumnRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cz_trades
-                                    """)
-                            .returns(expectedTemplate.formatted("b\tc", row0Ts, "false\tnull", row1Ts, "false\tnull", row2Ts, "false\tnull"));
-
-                    assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, count() c, bit_or(5) b" + windowJoin)
-                            .noLeakCheck()
-                            .timestamp("ts")
-                            .supportsRandomAccess(true)
-                            .expectSize()
-                            .withPlan("""
-                                    ExtraNullColumnRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cz_trades
-                                    """)
-                            .returns(expectedTemplate.formatted("c\tb", row0Ts, "null\tnull", row1Ts, "null\tnull", row2Ts, "null\tnull"));
-
-                    // A reordering projection puts a SelectedRecord over the splice.
-                    assertQuery("SELECT t.ts, bool_or(false) b, count() c, t.sym" + windowJoin)
-                            .noLeakCheck()
-                            .timestamp("ts")
-                            .supportsRandomAccess(true)
-                            .expectSize()
-                            .withPlan("""
-                                    SelectedRecord
-                                        ExtraNullColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cz_trades
-                                    """)
+                            .withPlanContaining("ExtraEmptyValueColumnRecord")
                             .returns(replaceTimestampSuffix("""
-                                    ts\tb\tc\tsym
-                                    2024-01-01T09:00:00.000000Z\tfalse\tnull\ta
-                                    2024-01-01T09:01:00.000000Z\tfalse\tnull\ta
-                                    2024-01-01T09:02:00.000000Z\tfalse\tnull\tb
+                                    ts\tb\tc\tbo\tsym
+                                    2024-01-01T09:00:00.000000Z\tfalse\t0\tnull\ta
+                                    2024-01-01T09:01:00.000000Z\tfalse\t0\tnull\ta
+                                    2024-01-01T09:02:00.000000Z\tfalse\t0\tnull\tb
                                     """, leftType));
-
-                    assertQuery("SELECT t.ts, count() c, bit_or(5) b, t.k" + windowJoin)
-                            .noLeakCheck()
-                            .timestamp("ts")
-                            .supportsRandomAccess(true)
-                            .expectSize()
-                            .withPlan("""
-                                    SelectedRecord
-                                        ExtraNullColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cz_trades
-                                    """)
-                            .returns(replaceTimestampSuffix("""
-                                    ts\tc\tb\tk
-                                    2024-01-01T09:00:00.000000Z\tnull\tnull\t1
-                                    2024-01-01T09:01:00.000000Z\tnull\tnull\t2
-                                    2024-01-01T09:02:00.000000Z\tnull\tnull\t3
-                                    """, leftType));
-
-                    // With no count(), the splice offers page frames, so ORDER BY ... LIMIT runs a
-                    // parallel Top K over them, with and without a SelectedRecord above it.
-                    assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, bool_or(false) b" + windowJoin + " ORDER BY b, ts DESC LIMIT 2")
-                            .noLeakCheck()
-                            .supportsRandomAccess(true)
-                            .sizeMayVary()
-                            .withPlan("""
-                                    Async Top K lo: 2 workers: 1
-                                      filter: null
-                                      keys: [b, ts desc]
-                                        ExtraNullColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cz_trades
-                                    """)
-                            .returns("""
-                                    sym\tk\tts2\tts\tb
-                                    b\t3\t2024-01-08T10:00:00.000000Z\t%s\tfalse
-                                    a\t2\t2024-01-08T10:00:00.000000Z\t%s\tfalse
-                                    """.formatted(row2Ts, row1Ts));
-
-                    assertQuery("SELECT t.ts, bool_or(false) b, t.sym" + windowJoin + " ORDER BY b, ts DESC LIMIT 2")
-                            .noLeakCheck()
-                            .supportsRandomAccess(true)
-                            .sizeMayVary()
-                            .withPlan("""
-                                    SelectedRecord
-                                        Async Top K lo: 2 workers: 1
-                                          filter: null
-                                          keys: [b, ts desc]
-                                            ExtraNullColumnRecord
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: cz_trades
-                                    """)
-                            .returns(replaceTimestampSuffix("""
-                                    ts\tb\tsym
-                                    2024-01-01T09:02:00.000000Z\tfalse\tb
-                                    2024-01-01T09:01:00.000000Z\tfalse\ta
-                                    """, leftType));
-
-                    assertQuery("SELECT t.ts, bool_or(false) b, count() c, sum(p1.price) s1" + windowJoin +
-                            " WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range)
-                            .noLeakCheck()
-                            .timestamp("ts")
-                            .noRandomAccess()
-                            .sizeMayVary()
-                            .withPlanContaining("ExtraNullColumnRecord")
-                            .returns(replaceTimestampSuffix("""
-                                    ts\tb\tc\ts1
-                                    2024-01-01T09:00:00.000000Z\tfalse\tnull\t1.0
-                                    2024-01-01T09:01:00.000000Z\tfalse\tnull\t2.0
-                                    2024-01-01T09:02:00.000000Z\tfalse\tnull\t3.0
-                                    """, leftType));
+                    for (String query : queries) {
+                        assertSqlCursors(query.formatted(regular), query.formatted(windowJoin));
+                    }
                 }
             }
         });
@@ -1920,7 +1810,8 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testConstantFalseJoinFilterKeepsNullEmptyValuesNextToCount() throws Exception {
         // count() reports 0 over an empty window, while DECIMAL, STRING, VARCHAR and LONG256
-        // aggregates stay NULL in the same query. The per-row false filter runs the regular path.
+        // aggregates stay NULL in the same query; first() over LONG256 is a LONG256, whose NULL prints
+        // empty. The per-row false filter runs the regular path.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             executeWithRewriteTimestamp(
@@ -1949,9 +1840,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord" : null)
                             .returns(replaceTimestampSuffix("""
                                     ts\tc\tfd\tsd\tfs\tls\tfv\tfl
-                                    2024-01-01T09:00:00.000000Z\t0\t\t\t\t-1\t\tnull
-                                    2024-01-01T09:01:00.000000Z\t0\t\t\t\t-1\t\tnull
-                                    2024-01-01T09:02:00.000000Z\t0\t\t\t\t-1\t\tnull
+                                    2024-01-01T09:00:00.000000Z\t0\t\t\t\t-1\t\t
+                                    2024-01-01T09:01:00.000000Z\t0\t\t\t\t-1\t\t
+                                    2024-01-01T09:02:00.000000Z\t0\t\t\t\t-1\t\t
                                     """, leftType));
 
                     assertQuery("SELECT ts, c FROM (" + windowJoin + ") " +
@@ -1972,39 +1863,33 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantFalseJoinFilterKeepsNullModeForNonNullEmptyValuesNextToFoldedAggregate() throws Exception {
-        // bool_or(false) folds to a constant, so group-by functions and aggregate columns no longer line
-        // up and the constant-false WINDOW JOIN keeps its NULL mode: isOrdered() reports false and
-        // haversine_dist_deg() reports NULL, although their empty-window values are true and 0.0. This
-        // pins the same fallback as testConstantFalseJoinFilterKeepsNullCountNextToFoldedAggregate();
-        // change it when the fix for #8124 lands.
+    public void testConstantFalseJoinFilterReadsNonNullEmptyValuesNextToConstantAggregate() throws Exception {
+        // bool_or(false) stays a group-by function next to isOrdered() and haversine_dist_deg(), so each column reads
+        // the value its function reports over an empty window, as on the regular path: isOrdered() reads true and
+        // haversine_dist_deg() 0.0. Master folds bool_or(false) to a constant and keeps every aggregate column NULL
+        // instead (#8124).
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             createNonNullEmptyValueTable();
             final String leftType = leftTableTimestampType.getTypeName();
+            final String projection = "SELECT t.ts, bool_or(false) b, isOrdered(p.l) ol, haversine_dist_deg(p.lat, p.lon, p.ts) hd, t.sym " +
+                    "FROM cz_trades t WINDOW JOIN czo_prices p ON (%s) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
                 for (String condition : new String[]{"t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'", "t.sym = p.sym AND 1 = 0"}) {
-                    assertQuery("SELECT t.ts, bool_or(false) b, isOrdered(p.l) ol, haversine_dist_deg(p.lat, p.lon, p.ts) hd, t.sym " +
-                            "FROM cz_trades t WINDOW JOIN czo_prices p ON (" + condition + ") " +
-                            "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
+                    assertQuery(projection.formatted(condition))
                             .noLeakCheck()
                             .timestamp("ts")
                             .supportsRandomAccess(true)
                             .expectSize()
-                            .withPlan("""
-                                    SelectedRecord
-                                        ExtraNullColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cz_trades
-                                    """)
+                            .withPlanContaining("ExtraEmptyValueColumnRecord")
                             .returns(replaceTimestampSuffix("""
                                     ts\tb\tol\thd\tsym
-                                    2024-01-01T09:00:00.000000Z\tfalse\tfalse\tnull\ta
-                                    2024-01-01T09:01:00.000000Z\tfalse\tfalse\tnull\ta
-                                    2024-01-01T09:02:00.000000Z\tfalse\tfalse\tnull\tb
+                                    2024-01-01T09:00:00.000000Z\tfalse\ttrue\t0.0\ta
+                                    2024-01-01T09:01:00.000000Z\tfalse\ttrue\t0.0\ta
+                                    2024-01-01T09:02:00.000000Z\tfalse\ttrue\t0.0\tb
                                     """, leftType));
+                    assertSqlCursors(projection.formatted("t.sym = p.sym AND t.k < 0"), projection.formatted(condition));
                 }
             }
         });
@@ -2389,14 +2274,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
-                                    SelectedRecord
-                                        Async Top K lo: 2 workers: 1
-                                          filter: null
-                                          keys: [k desc, ts]
-                                            ExtraNullColumnRecord
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: cz_trades
+                                    Async Top K lo: 2 workers: 1
+                                      filter: null
+                                      keys: [kk desc, ts]
+                                        ExtraNullColumnRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: cz_trades
                                     """
                                     : null)
                             .returns(replaceTimestampSuffix("""
@@ -2411,10 +2295,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
-                                    SelectedRecord
-                                        Async Top K lo: 2 workers: 1
-                                          filter: null
-                                          keys: [f, ts desc]
+                                    Async Top K lo: 2 workers: 1
+                                      filter: null
+                                      keys: [f, ts desc]
+                                        SelectedRecord
                                             ExtraNullColumnRecord
                                                 PageFrame
                                                     Row forward scan
@@ -2435,10 +2319,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
-                                    SelectedRecord
-                                        Async Top K lo: 2 workers: 1
-                                          filter: null
-                                          keys: [sym, ts desc]
+                                    Async Top K lo: 2 workers: 1
+                                      filter: null
+                                      keys: [sym, ts desc]
+                                        SelectedRecord
                                             ExtraNullColumnRecord
                                                 PageFrame
                                                     Row forward scan
@@ -2722,11 +2606,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .sizeMayVary(!isConstantFalse)
                             .withPlan(isConstantFalse
                                     ? """
-                                    SelectedRecord
-                                        ExtraEmptyValueColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cz_trades
+                                    ExtraEmptyValueColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
                                     """
                                     : null)
                             .returns(replaceTimestampSuffix("""
@@ -2798,11 +2681,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .sizeMayVary(!isConstantFalse)
                             .withPlan(isConstantFalse
                                     ? """
-                                    SelectedRecord
-                                        ExtraNullColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: czs_trades
+                                    ExtraNullColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: czs_trades
                                     """
                                     : null)
                             .withPlanNotContaining("sym_2")
@@ -2823,11 +2705,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .sizeMayVary(!isConstantFalse)
                             .withPlan(isConstantFalse
                                     ? """
-                                    SelectedRecord
-                                        ExtraEmptyValueColumnRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: czs_trades
+                                    ExtraEmptyValueColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: czs_trades
                                     """
                                     : null)
                             .withPlanNotContaining("sym_2")
@@ -6196,7 +6077,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") ORDER BY ts) w SPLICE JOIN quotes q")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Sort\n", "keys: [ts]", "UnionSymbolCast", "Union All Merge")
+                    .withPlanContaining("Sort\n", "keys: [ts]", "UnionSymbolCast", "Union All\n")
                     .withPlanNotContaining("Encode sort")
                     .returns(queryResult("SELECT * FROM u_ref w SPLICE JOIN quotes q"));
         });
@@ -7765,12 +7646,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     2024-01-01T09:02:00.000000Z\t1\t1\t3.0
                                     """, leftType));
 
+                    // The WHERE folds to the constant false, so the plan reads no row.
                     assertQuery("SELECT t.ts, count() c, count(p.price) cp, sum(p.price) s " +
                             "FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym)" + range +
                             " WHERE t.ts2 IN '2024-01-06#workday'")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .noRandomAccess()
                             .sizeMayVary()
                             .returns("ts\tc\tcp\ts\n");
                 }
@@ -8313,13 +8194,13 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM " + union + " w SPLICE JOIN quotes q")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "UnionSymbolCast", "Union All Merge")
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "UnionSymbolCast", "Union All\n")
                     .returns(unionSpliceRows);
             // the same over two table branches
             assertQuery("SELECT * FROM " + tableUnion + " w SPLICE JOIN quotes q")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "Union All Merge")
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "Union All\n")
                     .returns(unionSpliceRows);
             // The trades of B count twice.
             sqlExecutionContext.setParallelHorizonJoinEnabled(false);
@@ -8340,7 +8221,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                 assertQuery("SELECT * FROM " + operand + " w SPLICE JOIN quotes q")
                         .noLeakCheck()
                         .noRandomAccess()
-                        .withPlanContaining("Splice Join", "Except\n", "Encode sort\n", "keys: [ts]", "Union All Merge")
+                        .withPlanContaining("Splice Join", "Except\n", "Encode sort\n", "keys: [ts]", "Union All\n")
                         .returns(queryResult("SELECT * FROM e_ref w SPLICE JOIN quotes q"));
             }
             assertQuery(horizonOverMaster(exceptOverUnion))
@@ -11237,9 +11118,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                     {"SELECT * FROM (SELECT sym, ap, ts, first_value(ap) OVER (PARTITION BY sym ORDER BY ts " +
                             "ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) s FROM " + SORTED_WINDOW_JOIN + ") w " +
                             "SPLICE JOIN quotes q", "SPLICE", spliceRejection},
-                    // UNION and UNION ALL offer no random access
+                    // UNION and UNION ALL offer no random access, and under a join that reads them by row id they merge
+                    // no ordered branches, so they offer no timestamp either
                     {"SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
-                    {"SELECT * FROM (" + sortedUnion + " UNION ALL " + laterTradesOfB + ") w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    {"SELECT * FROM (" + sortedUnion + " UNION ALL " + laterTradesOfB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
                     {horizonOverMaster("(" + sortedUnion + " UNION ALL " + laterTradesOfB + ")"), "HORIZON", noTimestamp},
                     {"SELECT * FROM ((" + SORTED_WINDOW_JOIN + " EXCEPT " + symbolB + ") UNION ALL " + laterTradesOfB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
                     {"SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION " + symbolB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
@@ -11254,15 +11136,17 @@ public class WindowJoinTest extends AbstractCairoTest {
                     {horizonOverMaster("((" + ROW_ID_JOIN_WINDOW_JOIN + ") TIMESTAMP(ts))"), "HORIZON", horizonRejection},
                     // a descending order
                     {"SELECT * FROM (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts DESC) w SPLICE JOIN quotes q", "SPLICE", descending},
-                    {horizonOverMaster("(" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts DESC)"), "HORIZON", descending},
+                    // HORIZON JOIN re-sorts no order of its master, so a descending one goes, and the WINDOW JOIN
+                    // rows that arrive without random access are what it rejects
+                    {horizonOverMaster("(" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts DESC)"), "HORIZON", horizonRejection},
                     {"SELECT * FROM (SELECT * FROM '*!*ti' ORDER BY ts DESC) w SPLICE JOIN quotes q", "SPLICE", descending},
                     // the right-hand side of HORIZON JOIN
                     {"SELECT h.offset, count() c, avg(w.ap) aap FROM quotes q HORIZON JOIN " + SORTED_WINDOW_JOIN + " w ON (q.sym = w.sym) " +
                             "LIST (0s, 1s) AS h ORDER BY 1", "HORIZON", "right-hand side of HORIZON JOIN can only be a table with an optional filter"},
-                    // a right-hand side of HORIZON JOIN that nests a SPLICE JOIN
+                    // a right-hand side of HORIZON JOIN that nests a SPLICE JOIN, whose rows designate no timestamp
                     {"SELECT h.offset, count() c, avg(q.bid) ab FROM trades t HORIZON JOIN (SELECT * FROM (SELECT ts, sym, bid FROM quotes " +
                             "WHERE bid > 0 ORDER BY ts) a SPLICE JOIN quotes b ON (a.sym = b.sym)) q ON (t.sym = q.sym) LIST (0s) AS h ORDER BY 1",
-                            "(SELECT", "TIMESTAMP column is required but not provided"}
+                            "HORIZON", "right side of time series join has no timestamp"}
             };
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
