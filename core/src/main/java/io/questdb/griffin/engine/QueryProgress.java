@@ -398,6 +398,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }
