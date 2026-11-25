@@ -37,6 +37,19 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface ViewStateStore extends Mutable {
 
+    /**
+     * Tells whether a view compile run was running at the first of two reads of
+     * {@link #getCompileRunActivity()}, or started between the two reads. A borrow of a table that
+     * a run made between the reads shows up in one of the two ways.
+     */
+    static boolean hasCompileRunOverlapped(long activityBefore, long activityAfter) {
+        return isCompileRunRunning(activityBefore) || (activityBefore >>> 32) != (activityAfter >>> 32);
+    }
+
+    static boolean isCompileRunRunning(long activity) {
+        return (int) activity != 0;
+    }
+
     default void createViewState(ViewDefinition viewDefinition) {
         createViewState(viewDefinition, null);
     }
@@ -45,10 +58,63 @@ public interface ViewStateStore extends Mutable {
 
     void enqueueCompile(@NotNull TableToken viewToken);
 
+    /**
+     * Queues a compile of each view whose busy retry, see {@link #scheduleCompileBusyRetry}, is due,
+     * with the update timestamp of the retry, and forgets the retry. The view compiler calls it
+     * before it takes the first task of a drain, so a drain never runs a retry that it scheduled.
+     */
+    void enqueueDueCompileBusyRetries();
+
+    /**
+     * Ends the view compile run that {@link #startCompileRun()} started on the calling thread, and
+     * forgets the thread.
+     */
+    void finishCompileRun();
+
+    /**
+     * Returns the view compile activity in one read: the high 32 bits count the compile runs
+     * started so far, the low 32 bits count the runs still running.
+     */
+    long getCompileRunActivity();
+
+    /**
+     * Returns the number of the view compile run that the thread runs, or 0 when it runs none, see
+     * {@link #startCompileRun()}.
+     */
+    long getCompileRunOfThread(long threadId);
+
     @Nullable
     ViewState getViewState(TableToken viewToken);
 
     void removeViewState(TableToken viewToken);
+
+    /**
+     * Keeps one pending compile of the view, after its compile met the lock of a table it reads and
+     * left its state as it was. The retry is due once the busy retry timeout passes after it was
+     * scheduled, see {@link io.questdb.cairo.CairoConfiguration#getViewCompileBusyRetryTimeout()}.
+     * When the view already has a pending retry, the retry keeps its due time and takes the newer of
+     * the two update timestamps: it compiles after both requests were made. A view with no state,
+     * such as a dropped one, gets no retry.
+     *
+     * @return the due time of the view's pending retry, or {@link io.questdb.std.Numbers#LONG_NULL}
+     * when the view has no state
+     */
+    long scheduleCompileBusyRetry(@NotNull TableToken viewToken, long updateTimestamp);
+
+    /**
+     * Starts a view compile run on the calling thread: a drain of the compile queue, or the startup
+     * compile of all views. The run gets a number of its own, never 0, and the store knows the
+     * thread as the run's until {@link #finishCompileRun()}. Both change the record of the thread
+     * and {@link #getCompileRunActivity()} together, so a reader that reads the same activity
+     * before and after a lookup of the record knows the record did not change in between.
+     * <p>
+     * A run borrows the readers and the metadata of the tables its views read, on the thread that
+     * runs it. A DROP, RENAME or TRUNCATE of a non-WAL table that fails to lock the table tells the
+     * runs that hold the table from its other holders by the thread that holds each pooled reader
+     * or metadata of the table. When only runs hold the table, the DDL waits until these runs have
+     * ended, so it never locks the table in the middle of such a run.
+     */
+    void startCompileRun();
 
     boolean tryDequeueCompilerTask(ViewCompilerTask task);
 }

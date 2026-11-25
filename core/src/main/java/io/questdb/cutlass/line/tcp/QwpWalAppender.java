@@ -318,23 +318,36 @@ public class QwpWalAppender implements QuietCloseable {
      * @param tableBlock table block cursor positioned on the column
      * @param colIndex   column index
      * @return QuestDB column type, or {@link ColumnType#UNDEFINED} if cursor metadata is out of range
+     * or a decimal column has no value in this block to take its scale from
+     * @throws CairoException a schema mismatch, if a decimal block's scale exceeds the precision of its type
      */
     public static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
         switch (qwpType) {
-            case TYPE_DECIMAL64 -> {
-                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
-                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64);
-                return ColumnType.getDecimalType(ColumnType.DECIMAL64, precision, scale);
-            }
-            case TYPE_DECIMAL128 -> {
-                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
-                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128);
-                return ColumnType.getDecimalType(ColumnType.DECIMAL128, precision, scale);
-            }
-            case TYPE_DECIMAL256 -> {
-                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
-                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
-                return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
+            case TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> {
+                QwpDecimalColumnCursor decimalCursor = tableBlock.getDecimalColumn(colIndex);
+                // Clients send a placeholder scale while a column holds only
+                // NULLs, so only a block with a value can set the column's scale.
+                if (!decimalCursor.hasValues()) {
+                    return ColumnType.UNDEFINED;
+                }
+                int tag = mapQwpTypeToQuestDB(qwpType);
+                int precision = Decimals.getDecimalTagPrecision(tag);
+                int scale = decimalCursor.getScale() & 0xFF;
+                // The scale counts fractional digits, so it cannot exceed the
+                // digits the type holds. SQL rejects such a column type too.
+                if (scale > precision) {
+                    throw CairoException.schemaMismatch()
+                            .put("decimal scale exceeds ")
+                            .put(QwpConstants.getTypeName((byte) qwpType))
+                            .put(" precision [column=")
+                            .put(tableBlock.getColumnDef(colIndex).getName())
+                            .put(", scale=")
+                            .put(scale)
+                            .put(", maxScale=")
+                            .put(precision)
+                            .put(']');
+                }
+                return ColumnType.getDecimalType(tag, precision, scale);
             }
             case TYPE_GEOHASH -> {
                 int bits = tableBlock.getGeoHashColumn(colIndex).getPrecision();
@@ -349,10 +362,13 @@ public class QwpWalAppender implements QuietCloseable {
         }
     }
 
-    private static boolean shouldDeferMissingArrayColumnCreation(byte qwpType, int columnType) {
-        return qwpType == TYPE_DOUBLE_ARRAY
-                && ColumnType.isArray(columnType)
-                && ColumnType.decodeWeakArrayDimensionality(columnType) == -1;
+    private static boolean shouldDeferMissingColumnCreation(byte qwpType, int columnType) {
+        return switch (qwpType) {
+            case TYPE_DOUBLE_ARRAY -> ColumnType.decodeWeakArrayDimensionality(columnType) == -1;
+            // mapQwpTypeToQuestDB() leaves an all-NULL decimal column undefined
+            case TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> columnType == ColumnType.UNDEFINED;
+            default -> false;
+        };
     }
 
     /**
@@ -1031,7 +1047,7 @@ public class QwpWalAppender implements QuietCloseable {
                         } else {
                             newColumnType = mapQwpTypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
                         }
-                        if (shouldDeferMissingArrayColumnCreation(colType, newColumnType)) {
+                        if (shouldDeferMissingColumnCreation(colType, newColumnType)) {
                             columnWriterIndex = -1;
                         } else {
                             try {

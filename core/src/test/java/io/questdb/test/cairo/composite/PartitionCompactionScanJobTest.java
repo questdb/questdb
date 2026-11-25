@@ -2171,6 +2171,70 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScanRewritesAMakePlainShapedFrontWithNoGenerationLeft() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE x AS (SELECT x::INT i," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
+                    " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            buildMoveTailWaste();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+
+            final TableToken token = engine.verifyTableName("x");
+            final long day = MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z");
+            try (TableReader pinned = engine.getReader(token)) {
+                Assert.assertNotNull(pinned);
+                for (int i = 0; i < 6; i++) {
+                    execute("INSERT INTO x SELECT x::INT + 800_000 + " + (i * 10) + " i," +
+                            " timestamp_sequence('2024-03-0" + (1 + i) + "', 60_000_000L) ts FROM long_sequence(2)");
+                    drainWalQueue();
+                }
+            }
+            final long nameTxnBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("front must be composite", tx.isPartitionComposite(0));
+                Assert.assertEquals("front must be one piece", 1, reader.getGeometry().getPieceCount(0));
+                Assert.assertEquals("front's piece must start at row 0", 0, reader.getGeometry().getPieceRowOffset(0, 0));
+                Assert.assertTrue("front must hold dead rows", reader.getGeometry().getE(0) > tx.getPartitionSize(0));
+                Assert.assertEquals("MOVE-TAIL must leave a sibling split", day, tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(1)));
+                nameTxnBefore = tx.getPartitionNameTxn(0);
+            }
+            engine.releaseAllReaders();
+            NearFullGeometryFixture.plantCommittedRecord(engine, "x", day, NearFullGeometryFixture.LAST_GENERATION);
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "10000h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-04-01T00:00:00.000000Z"));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("the sweep left the front composite", tx.isPartitionComposite(0));
+                Assert.assertNotEquals("the sweep made the front plain in place", nameTxnBefore, tx.getPartitionNameTxn(0));
+            }
+            assertQuery("SELECT count() c FROM x WHERE ts IN '2024-01-01'").noRandomAccess().expectSize().returns("c\n21000\n");
+            assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns("c\n21012\n");
+        });
+    }
+
+    @Test
     public void testScanLeavesASoftLinkedParquetPartitionAlone() throws Exception {
         // Windows: ff.isSoftLink() is always false, so ATTACH does not mark a soft-linked partition READ ONLY.
         Assume.assumeFalse(Os.isWindows());

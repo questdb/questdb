@@ -43,10 +43,14 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * (table aliases are mandatory when columns collide, and our factory
  * always produces a shared {@code sym} and {@code ts}). Projection is a
  * mix of left-side and right-side expressions so the join path is
- * exercised beyond a single "ts+sym" shape.
+ * exercised beyond a single "ts+sym" shape. SPLICE JOIN reads its sides by
+ * row id, so either of its sides may be a WINDOW JOIN sub-query of the table
+ * instead (see {@link FuzzSource#rowIdJoinSide}); ASOF and LT JOIN read the
+ * tables.
  * <p>
  * The ON clause is optional on all three temporal joins. When present it
- * carries one or two equality key pairs drawn from join-eligible columns
+ * carries one or two equality key pairs (one at most over a WINDOW JOIN side)
+ * drawn from join-eligible columns
  * (anything {@link ColumnKind#isJoinKey()} accepts, not just symbols),
  * excluding the designated timestamp since the temporal join already
  * matches on it implicitly. A pair is emitted only when the two column
@@ -66,11 +70,13 @@ public final class TemporalJoinClause {
     private TemporalJoinClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc, BindContext ctx, boolean injectFaultFn) {
-        FuzzTable left = leftSrc.getTable();
-        FuzzTable right = rightSrc.getTable();
+    public static GeneratedQuery generate(Rnd rnd, FuzzTable leftTable, FuzzTable rightTable, BindContext ctx, boolean injectFaultFn) {
         String joinKind = JOIN_KINDS[rnd.nextInt(JOIN_KINDS.length)];
         boolean splice = "SPLICE JOIN".equals(joinKind);
+        FuzzSource leftSrc = splice ? FuzzSource.rowIdJoinSide(rnd, leftTable, rightTable) : FuzzSource.direct(leftTable);
+        FuzzSource rightSrc = splice ? FuzzSource.rowIdJoinSide(rnd, rightTable, leftTable) : FuzzSource.direct(rightTable);
+        FuzzTable left = leftSrc.getTable();
+        FuzzTable right = rightSrc.getTable();
 
         String leftAlias = "a";
         String rightAlias = "b";
@@ -97,7 +103,12 @@ public final class TemporalJoinClause {
 
         // ON is optional on all temporal joins; when present it carries one
         // or two equality key pairs over join-eligible columns of any type.
-        appendOnClause(sql, rnd, left, right, leftAlias, rightAlias);
+        // A WINDOW JOIN side, the only sub-query side, takes one pair at most.
+        // ASOF and LT JOIN fail to resolve two pairs that name one right-hand
+        // column over that sub-query, so the generator keeps the sub-query away
+        // from them and from two-pair keys altogether.
+        int maxKeyPairs = leftSrc.isBareIdentifier() && rightSrc.isBareIdentifier() ? 2 : 1;
+        appendOnClause(sql, rnd, left, right, leftAlias, rightAlias, maxKeyPairs);
 
         // TOLERANCE applies to ASOF/LT only.
         if (!splice && rnd.nextInt(3) == 0) {
@@ -156,10 +167,11 @@ public final class TemporalJoinClause {
             FuzzTable left,
             FuzzTable right,
             String leftAlias,
-            String rightAlias
+            String rightAlias,
+            int maxKeyPairs
     ) {
         // 0 -> no ON clause, 1 -> one key pair, 2 -> two key pairs.
-        int arity = rnd.nextInt(3);
+        int arity = rnd.nextInt(maxKeyPairs + 1);
         if (arity == 0) {
             return;
         }

@@ -545,6 +545,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
+    private boolean isO3ColumnTopsUpdated;
     // False until the constructor's try block completes. The constructor's failure path calls doClose() with the
     // columns, symbol maps and indexers only partly populated, so every optional close-time action that walks
     // them checks this first.
@@ -1430,7 +1431,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         Throwable commandFailure = null;
         try {
-            return command.apply(this, contextAllowsAnyStructureChanges);
+            final long rowsAffected = command.apply(this, contextAllowsAnyStructureChanges);
+            if (command.shouldCompileDependentViews()) {
+                // ApplyWal2TableJob queues the recompile for a change the WAL applies. Without it, the views
+                // that read this table keep their old columns, and stay valid after a change that breaks them.
+                engine.enqueueCompileView(tableToken);
+            }
+            return rowsAffected;
         } catch (Throwable th) {
             commandFailure = th;
             // A command run outside the WAL reports to a statement or, from the command queue, only a message to
@@ -7152,6 +7159,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        assert !isLastPartitionReadOnly() : "LAG applied to a read-only partition";
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -8796,7 +8804,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         final long e = geometry.getE(partitionIndex);
-        LOG.info().$("compacting composite partition, REWRITE [table=").$(tableToken)
+        LOG.info().$("compacting partition, REWRITE [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
                 .$(", pieces=").$(pieceCount)
                 .$(", liveRows=").$(liveRows)
@@ -11216,7 +11224,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3FinishInFlight = true;
         try {
             if (!o3InError) {
-                updateO3ColumnTops();
+                if (!isO3ColumnTopsUpdated) {
+                    updateO3ColumnTops();
+                }
                 try {
                     sealPostingIndexesForO3Partitions();
                 } catch (Throwable e) {
@@ -11409,6 +11419,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int newPieceCount = pieceCount - bestLen + 1;
         // No longer composite only when folding collapsed every piece into one tiling [0, E) with no hole.
         final boolean stillComposite = newPieceCount > 1 || survivorRowOffset != 0 || rowCount != e;
+        if (stillComposite && !geometry.hasGenerationForNextPublish(partitionIndex, newPieceCount)) {
+            return false;
+        }
 
         LOG.info().$("compacting composite partition, JOIN: folding adjacent pieces [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, nameTxn))
@@ -12938,6 +12951,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean isSquashTargetOutOfGenerations(int partitionIndex) {
+        final PartitionGeometry geometry = getGeometry();
+        return geometry.isComposite(partitionIndex)
+                && !geometry.hasGenerationForNextPublish(partitionIndex, geometry.getPieceCount(partitionIndex) + 1);
+    }
+
     /**
      * Whether the durable-epoch pin recorded by the table's tracker falls in {@code [fromTxn, toTxn)}.
      * The synchronous purge gates consult the tracker as well as the pooled scoreboard so a scoreboard
@@ -13022,7 +13041,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * partition, so the cached value goes stale the moment the freeze lands.
      */
     private boolean isLastPartitionReadOnly() {
-        int partitionCount = txWriter.getPartitionCount();
+        final int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionReadOnly(partitionCount - 1);
     }
 
@@ -14695,7 +14714,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        isO3ColumnTopsUpdated = partitionsRemoved;
         if (partitionsRemoved) {
+            // Split removal copies rows this commit wrote, so it has to read them with this commit's column tops
+            updateO3ColumnTops();
             o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
 
             // Replace commit removed some of the partitions
@@ -14856,6 +14878,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in this case we can remove the current partition fully
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                     removeAttachedPartitionsTracked(partitionTimestamp);
+                } else if ((txWriter.isPartitionComposite(i - 1) || isMergeAppendTable())
+                        && !getGeometry().hasGenerationForNextPublish(i - 1, getGeometry().getPieceCount(i - 1))) {
+                    rewriteSplitParent(i - 1);
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                    removeAttachedPartitionsTracked(partitionTimestamp);
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
@@ -14874,7 +14901,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // This logging should be quite rare, we can afford info level.
                         LOG.info().$("splitting last line of the partition [table=").$(tableToken)
-                                .$(", partition=").$ts(prevPartitionTimestamp)
+                                .$(", partition=").$ts(timestampDriver, prevPartitionTimestamp)
                                 .$(", oldSize=").$(prevPartitionSize)
                                 .$(", newSize=").$(newPrevPartitionSize)
                                 .$(", splitPartition=").$ts(timestampDriver, newSplitPartitionTimestamp)
@@ -14886,6 +14913,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // the branches below remove or resize it. A composite parent addresses the tail through
                         // its pieces and its files reach E, so the source frame has to span E, not the live rows.
                         final boolean prevPartitionComposite = txWriter.isPartitionComposite(i - 1);
+                        final boolean isPrevPartitionReadOnly = txWriter.isPartitionReadOnly(i - 1);
                         final long sourceFrameRows;
                         splitTailFileRanges.clear();
                         if (prevPartitionComposite) {
@@ -14909,17 +14937,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 insertPartitionIndex = removeAttachedPartitionsTracked(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
-                                if (prevPartitionComposite) {
-                                    // A composite directory counts its live rows in the geometry, not in _txn.
-                                    // Without this the pieces go on claiming the rows that just moved out and a
-                                    // reader returns them twice, once here and once in the new split.
-                                    trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
-                                } else if (isMergeAppendTable()) {
-                                    publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
-                                }
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
+                            txWriter.setPartitionReadOnly(insertPartitionIndex, isPrevPartitionReadOnly);
+                            if (newPrevPartitionSize == 0) {
+                                txWriter.setPartitionSeqTxn(insertPartitionIndex, getCompositePartitionSeqTxn());
+                            }
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
                             // Self-tracking (no external ColumnTopSink): safe here the same way
@@ -14978,6 +15002,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.critical().$("split partition removal succeeded but posting-index reseal failed `").$(th).$('`').$();
                             distressed = true;
                             throw th;
+                        }
+
+                        // Published last, so that a failure above leaves no geometry record behind.
+                        if (newPrevPartitionSize > 0) {
+                            if (prevPartitionComposite) {
+                                // A composite directory counts its live rows in the geometry, not in _txn.
+                                // Without this the pieces go on claiming the rows that just moved out and a
+                                // reader returns them twice, once here and once in the new split.
+                                trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
+                            } else if (isMergeAppendTable()) {
+                                publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
+                            }
                         }
                     } finally {
                         path.trimTo(pathSize);
@@ -15904,6 +15940,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
         final long maxTimestamp = txWriter.getMaxTimestamp();
+        final long initialMinTimestamp = txWriter.getMinTimestamp();
         final long transientRowCount = txWriter.transientRowCount;
 
         o3DoneLatch.reset();
@@ -15914,9 +15951,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int pCount = 0;
         int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
         long replaceMaxTimestamp = Long.MIN_VALUE;
-        // Highest sorted row handed to a writable partition. Rows above it were dropped by the
-        // read-only skip.
-        long o3WrittenRowHi = rowLo - 1;
+        boolean isBatchHeadDropped = false;
+        boolean isBatchTailDropped = false;
         long partitionTimestamp = o3TimestampMin;
         final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
         long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
@@ -16097,9 +16133,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
+                        isBatchHeadDropped |= srcOooLo == rowLo;
+                        isBatchTailDropped = srcOooHi == srcOooMax - 1;
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
                         continue;
                     }
-                    o3WrittenRowHi = srcOooHi;
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.checkCapacity(configuration, columnCount, indexCount);
                     AtomicInteger columnCounter = o3ColumnCounters.next();
@@ -16308,18 +16347,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // at this point we should know the last partition row count
             if (!isCommitReplaceMode()) {
-                long o3WrittenTimestampMax = o3TimestampMax;
-                if (o3WrittenRowHi < srcOooMax - 1) {
-                    // The read-only skip dropped the batch's top rows. They are not in the table, so
-                    // they must not raise the max timestamp or the active partition's bounds.
-                    o3WrittenTimestampMax = o3WrittenRowHi < rowLo
-                            ? Long.MIN_VALUE
-                            : getTimestampIndexValue(sortedTimestampsAddr, o3WrittenRowHi);
-                }
-                if (o3WrittenTimestampMax != Long.MIN_VALUE) {
-                    partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3WrittenTimestampMax));
-                }
-                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3WrittenTimestampMax);
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+                // The rows written before a dropped tail precede its partition, so they cannot raise the max
+                long committedMaxTimestamp = isBatchTailDropped
+                        ? txWriter.getMaxTimestamp()
+                        : Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
                 // Committed data left on disk outside the O3 batch may have a higher timestamp than the
                 // O3 batch commit boundary; keep the writer's maxTimestamp consistent with what is on disk.
                 committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
@@ -16357,6 +16389,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                 }
                 o3ConsumePartitionUpdateSink();
+                if (isBatchHeadDropped && !isCommitReplaceMode()) {
+                    // The partition tasks report the batch min, here a dropped row's. The rows they wrote follow
+                    // that row's partition, so they cannot lower the min.
+                    txWriter.setMinTimestamp(initialMinTimestamp);
+                }
             }
             o3DoneLatch.await(latchCount);
 
@@ -16564,12 +16601,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // unaffected: those partitions accept LAG normally.
                 boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
                         && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-                // A sealed active partition is frozen. The LAG area IS the last partition's column
-                // files (cthAppendWalColumnToLastPartition writes straight into them), so stashing
-                // rows there mutates a partition a storage policy has already declared read-only and
-                // possibly uploaded. Deny LAG and send the rows down the O3 path, which is the single
-                // place that decides what happens to a write aimed at a frozen partition.
-                boolean lastPartitionIsReadOnly = isLastPartitionReadOnly();
                 // Merge-append tables take no LAG at all: a commit that turns the last partition COMPOSITE relocates a
                 // piece onto exactly the file rows the LAG is parked in, so the row count would adopt somebody else's.
                 // isMergeAppendTable() narrows this to PARTITIONED tables, which costs nothing: SqlParser and
@@ -16577,8 +16608,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // and processWalCommit only ever runs on a WAL table. See MergeAppendLagGuardTest.
                 boolean noLag = lastPartitionBlocksAppend
                         || isParquetTableEmptyPlaceholder
-                        || lastPartitionIsReadOnly
                         || isMergeAppendTable()
+                        // LAG is written into the last partition's files, O3 drops or rejects such rows
+                        || isLastPartitionReadOnly()
                         || timestampRangeOverlapsDeltaActivePartition(o3TimestampMin, o3TimestampMax);
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition, parquet table, or a sealed last partition)
@@ -16835,10 +16867,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // maxTimestamp = Long.MIN_VALUE, and the "outside the range" clauses degenerate once the
             // range spans the whole timeline - which is what [Long.MIN_VALUE, +inf) is, the range a
             // live view declared START FROM BEGINNING emits for a pure-delete full rebuild.
-            // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
-            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
-            // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
-            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+            // Min timestamp is either outside of replace range, or equals to the min timestamp of the transaction,
+            // or lies in a read-only partition, which the replace leaves as it was
+            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs
+                    || txWriter.isPartitionReadOnly(0);
+            // Max timestamp is either outside of replace range, or equals to the max timestamp of the transaction,
+            // or lies in a read-only partition
+            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs
+                    || txWriter.isPartitionReadOnly(txWriter.getPartitionCount() - 1);
 
             return true;
         } else {
@@ -20834,6 +20870,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void rewriteSplitParent(int partitionIndex) {
+        LOG.info().$("no free geometry generation to carve the partition, rewriting it [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                .I$();
+        assert partitionIndex < txWriter.getPartitionCount() - 1 : "split parent rewritten as the last partition";
+        final boolean isRewritten = compactPartition0(partitionIndex);
+        assert isRewritten : "split parent has no rows to rewrite";
+        // REWRITE keeps the entry's seqTxn, but the removed split changed the logical partition
+        txWriter.setPartitionSeqTxn(partitionIndex, getCompositePartitionSeqTxn());
+    }
+
     /**
      * Restores the _cv state that the committed _txn references. A transaction that fails between the
      * _cv commit and the _txn commit leaves _cv one version ahead; its previous version is still in
@@ -21960,7 +22007,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Forced squash always requires a plain target. Ordinary squash cleans a cold, small target once,
         // then appends sources' live ranges directly; a hot or large accumulator keeps the append-only path.
-        if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)) {
+        if (force
+                || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)
+                || isSquashTargetOutOfGenerations(targetPartitionIndex)) {
             final long targetSeqTxn = nativePartitionSeqTxn(targetPartitionIndex);
             compactPartitionToPlain(targetPartitionIndex, "squash");
             // Maintenance must not make an old accumulator look like it took the last data commit.
