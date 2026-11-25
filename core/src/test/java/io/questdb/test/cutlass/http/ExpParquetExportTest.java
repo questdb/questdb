@@ -1055,11 +1055,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     // The decoded row groups count against the query memory limit. 2 MiB holds the decoded
                     // frames whose rows wait for the next output row group plus the frame the export reads,
-                    // not the 32 of the partition. A buffer the export releases goes to a pool that the next
-                    // frame takes it from, so the export allocates as many decode buffers as it holds at
-                    // most: the frames whose rows the writer still holds, and the frame it reads. In row
-                    // groups of 1000 rows, each frame's write writes all of its rows, so the next frame
-                    // decodes into its buffer.
+                    // not the 32 of the partition. The export frees the decoded rows of a buffer it releases
+                    // and keeps the buffer in a pool that the next frame takes it from, so it allocates as
+                    // many decode buffers as it holds at most: the frames whose rows the writer still holds,
+                    // and the frame it reads. In row groups of 1000 rows, each frame's write writes all of its
+                    // rows, so the next frame decodes into its buffer.
                     final long exportMemoryLimit = 2L * Numbers.SIZE_1MB;
                     final String parquetQuery = "SELECT a * 2 a2, s, ts FROM tp";
                     Assert.assertEquals(
@@ -1144,6 +1144,71 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     ParquetExportMode.PAGE_FRAME_BACKED,
                                     3000,
                                     "slow_parquet_3000_limited"
+                            )
+                    );
+
+                    // tv has 10 days of hourly Parquet partitions of one row group each: hours 0 and 1 of a day
+                    // hold 990 rows, the other hours 10. In row groups of 10_000 rows, the export holds at most
+                    // 11_000 decoded rows, whatever frames their buffers decoded before: the limit of an output
+                    // row group plus two of the largest frames, (10_000 + 2 * 990) * 228 = 2_731_440 bytes, holds
+                    // it. It allocates as many decode buffers as it holds frames at most, 120.
+                    engine.execute("CREATE TABLE tv (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
+                    // 1000 slots an hour, 3.6 seconds apart: hours 0 and 1 of a day keep 990 of them, the other
+                    // hours 10.
+                    engine.execute(
+                            """
+                                    INSERT INTO tv SELECT x::INT, rpad(x::VARCHAR, 200, 'v'), '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000
+                                    FROM long_sequence(240_000)
+                                    WHERE (x - 1) % 1000 < CASE WHEN (x - 1) / 1000 % 24 < 2 THEN 990 ELSE 10 END""",
+                            sqlExecutionContext
+                    );
+                    engine.execute("INSERT INTO tv VALUES (0, 'z', '2024-01-11T01:00:00.000000Z')", sqlExecutionContext);
+                    engine.execute("ALTER TABLE tv CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-11'", sqlExecutionContext);
+                    Assert.assertEquals(
+                            120,
+                            assertSlowClientExport(
+                                    engine,
+                                    sqlExecutionContext,
+                                    nf,
+                                    queryMemoryLimit,
+                                    (10_000 + 2 * 990) * 228L,
+                                    "SELECT a * 2 a2, s, ts FROM tv",
+                                    ParquetExportMode.PAGE_FRAME_BACKED,
+                                    10_000,
+                                    "slow_parquet_varying"
+                            )
+                    );
+
+                    // tw has three times an hourly Parquet partition of 1000 rows, then ten of 100 rows. In row
+                    // groups of 1000 rows, the write of a 1000-row frame writes all of its rows, and the ten
+                    // 100-row frames after it wait in the writer until the write of the tenth flushes them. The
+                    // next frame takes the buffer of a written frame without the rows it decoded: the export
+                    // holds at most 1000 decoded rows, 228_000 bytes, which 320 KiB holds, and allocates ten
+                    // decode buffers.
+                    engine.execute("CREATE TABLE tw (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
+                    // 1000 slots an hour, 3.6 seconds apart: hours 0, 11 and 22 keep all of them, the other hours
+                    // 100.
+                    engine.execute(
+                            """
+                                    INSERT INTO tw SELECT x::INT, rpad(x::VARCHAR, 200, 'v'), '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000
+                                    FROM long_sequence(33_000)
+                                    WHERE (x - 1) / 1000 % 11 = 0 OR (x - 1) % 1000 < 100""",
+                            sqlExecutionContext
+                    );
+                    engine.execute("INSERT INTO tw VALUES (0, 'z', '2024-01-02T10:00:00.000000Z')", sqlExecutionContext);
+                    engine.execute("ALTER TABLE tw CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02T09:00'", sqlExecutionContext);
+                    Assert.assertEquals(
+                            10,
+                            assertSlowClientExport(
+                                    engine,
+                                    sqlExecutionContext,
+                                    nf,
+                                    queryMemoryLimit,
+                                    320 * 1024L,
+                                    "SELECT a * 2 a2, s, ts FROM tw",
+                                    ParquetExportMode.PAGE_FRAME_BACKED,
+                                    1000,
+                                    "slow_parquet_written"
                             )
                     );
 

@@ -561,6 +561,53 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecodedFramesOfVaryingSizesHoldOnlyTheirRows() throws Exception {
+        // 30 days of hourly Parquet partitions of one row group each: hours 0 and 1 of a day hold 990 rows,
+        // the other hours 10. In row groups of 10_000 rows, the export holds the decoded frames whose rows
+        // wait for the next output row group plus the frame it reads, at most 11_000 rows, whatever frames
+        // their buffers decoded before. A decoded row of this table takes 4 + 16 + 200 + 8 = 228 bytes in
+        // the native layout (INT, VARCHAR aux and data, TIMESTAMP), charged to the query memory limit: the
+        // limit of an output row group plus two of the largest frames, (10_000 + 2 * 990) * 228 = 2_731_440
+        // bytes, holds the export however many days it reads, and that of an output row group,
+        // 10_000 * 228 = 2_280_000 bytes, does not. The export allocates as many decode buffers as it holds
+        // frames at most, 120, and reuses them for later frames.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tv (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            // 1000 slots an hour, 3.6 seconds apart: hours 0 and 1 of a day keep 990 of them, the other hours 10.
+            execute("""
+                    INSERT INTO tv SELECT x::INT, rpad(x::VARCHAR, 200, 'v'), '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000
+                    FROM long_sequence(720_000)
+                    WHERE (x - 1) % 1000 < CASE WHEN (x - 1) / 1000 % 24 < 2 THEN 990 ELSE 10 END""");
+            execute("INSERT INTO tv VALUES (0, 'z', '2024-01-31T01:00:00.000000Z')");
+            execute("ALTER TABLE tv CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-31'");
+            drainWalQueue();
+            assertQuery("SELECT numRows, count() FROM table_partitions('tv') WHERE isParquet GROUP BY numRows ORDER BY numRows")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("numRows\tcount\n10\t660\n990\t60\n");
+            final String query = "SELECT a * 2 a2, s, ts FROM tv";
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 10_000 * 228L);
+                runCopy(job, query, PAGE_FRAME_BACKED, "varying_breached", " ROW_GROUP_SIZE 10000");
+                // Every partition is a single row group.
+                assertQuery("SELECT status, message ~ 'in row group 0: query memory limit exceeded' is_decode_limit FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\tis_decode_limit\nfailed\ttrue\n");
+                Assert.assertFalse(exportFileExists("varying_breached"));
+
+                // The same job exports the table under the limit of an output row group plus two frames.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, (10_000 + 2 * 990) * 228L);
+                Assert.assertEquals(120, runCopyCountingDecodeBuffers(job, query, "varying", " ROW_GROUP_SIZE 10000"));
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("varying"));
+            }
+        });
+    }
+
+    @Test
     public void testDecodedFramesReleasedAtDefaultRowGroupSizes() throws Exception {
         // At the server defaults, a Parquet partition holds row groups of 100_000 rows and the export
         // writes row groups of 100_000 rows. Days 1 and 2 hold 150_000 rows each, which the export reads
@@ -595,8 +642,9 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         // partition has, and allocates no more decode buffers than that. A decoded 1000-row group of
         // this table takes 1000 * (4 + 16 + 200 + 8) = 228_000 bytes in the native layout (INT, VARCHAR
         // aux and data, TIMESTAMP), charged to the query memory limit: 320 KiB holds one frame, not two,
-        // and 800 KiB holds three frames, not four. Only the count of allocated buffers tells reuse from
-        // freeing a buffer and allocating a new one, which holds as little memory.
+        // and 800 KiB holds three frames, not four. The export frees the rows of a buffer it releases and
+        // reuses the buffer for a later frame, so the count of allocated buffers is the most frames it
+        // holds at once.
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
             execute("CREATE TABLE tg (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1308,6 +1356,41 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                     string_5\tvalue_5\t6
                     string_6\tvalue_6\t7
                     """);
+        });
+    }
+
+    @Test
+    public void testWrittenDecodedFrameFreedForNextFrame() throws Exception {
+        // Three times, an hour of 1000 rows, then ten hours of 100 rows, each hour a Parquet partition of one
+        // row group. In row groups of 1000 rows, the write of a 1000-row frame writes all of its rows, and the
+        // ten 100-row frames after it wait in the writer until the write of the tenth flushes them: the export
+        // holds at most 1000 decoded rows, 1000 * (4 + 16 + 200 + 8) = 228_000 bytes in the native layout
+        // (INT, VARCHAR aux and data, TIMESTAMP). The next frame takes the buffers of a written frame without
+        // the rows they decoded, so 320 KiB holds the export, which allocates as many decode buffers as it
+        // holds frames at most, ten.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tw (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            // 1000 slots an hour, 3.6 seconds apart: hours 0, 11 and 22 keep all of them, the other hours 100.
+            execute("""
+                    INSERT INTO tw SELECT x::INT, rpad(x::VARCHAR, 200, 'v'), '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000
+                    FROM long_sequence(33_000)
+                    WHERE (x - 1) / 1000 % 11 = 0 OR (x - 1) % 1000 < 100""");
+            execute("INSERT INTO tw VALUES (0, 'z', '2024-01-02T10:00:00.000000Z')");
+            execute("ALTER TABLE tw CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02T09:00'");
+            drainWalQueue();
+            assertQuery("SELECT numRows, count() FROM table_partitions('tw') WHERE isParquet GROUP BY numRows ORDER BY numRows")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("numRows\tcount\n100\t30\n1000\t3\n");
+            final String query = "SELECT a * 2 a2, s, ts FROM tw";
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 320 * 1024L);
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertEquals(10, runCopyCountingDecodeBuffers(job, query, "written_frames", " ROW_GROUP_SIZE 1000"));
+            }
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("written_frames"));
+            }
         });
     }
 

@@ -87,9 +87,10 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
     // Test-only observability for the reuse of decode buffers: decodeParquetFrame() counts the
-    // RowGroupBuffers it allocates when decodeBufferPool has none to reuse. Freeing a released
-    // buffer and allocating a new one holds as little memory as reusing it, so only this count
-    // tells them apart. Tests read it on the thread that ran the export and assert on deltas.
+    // RowGroupBuffers it allocates when decodeBufferPool has none to reuse. The export frees the
+    // native memory of every buffer it releases and reuses the objects, so the count is the most
+    // decoded frames an export holds at once. Tests read it on the thread that ran the export and
+    // assert on deltas.
     private static long decodeBufferAllocationCount;
 
     /**
@@ -163,7 +164,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final IntList computedSourceTypes = new IntList();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
-    // Reuse pool for RowGroupBuffers released by releasePinnedBuffers() and releaseFrameBuffers()
+    // Reuse pool for RowGroupBuffers released by releasePinnedBuffers() and releaseFrameBuffers(),
+    // which free their native memory: decodeParquetFrame() reopens a pooled buffer for the next frame
     private final ObjList<RowGroupBuffers> decodeBufferPool = new ObjList<>();
     // Per Parquet frame: the [parquetIdx, columnType] pairs of the base columns the file holds
     private final DirectIntList decodeColumns = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
@@ -355,13 +357,13 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     /**
-     * Returns the current frame's buffers for the next frame to reuse: the decoded row group to the
-     * pool, and the computed values, truncated in place. Call it once the writer holds none of the
-     * frame's rows.
+     * Returns the current frame's buffers for the next frame to reuse: the decoded row group, freed,
+     * to the pool, and the computed values, truncated in place. Call it once the writer holds none of
+     * the frame's rows.
      */
     public void releaseFrameBuffers() {
         if (decodeBuffers != null) {
-            decodeBufferPool.add(decodeBuffers);
+            releaseDecodeBuffers(decodeBuffers);
             decodeBuffers = null;
         }
         truncateComputedBuffers();
@@ -376,7 +378,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             bufferPool.add(pinnedDataBuffers.getQuick(i));
         }
         pinnedDataBuffers.clear();
-        decodeBufferPool.addAll(pinnedDecodeBuffers);
+        for (int i = 0, n = pinnedDecodeBuffers.size(); i < n; i++) {
+            releaseDecodeBuffers(pinnedDecodeBuffers.getQuick(i));
+        }
         pinnedDecodeBuffers.clear();
         for (int i = 0, n = pinnedAuxBuffers.size(); i < n; i++) {
             MemoryCARWImpl buf = pinnedAuxBuffers.getQuick(i);
@@ -682,6 +686,14 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             pinnedDecodeBuffers.add(decodeBuffers);
             decodeBuffers = null;
         }
+    }
+
+    // Frees the native memory of a decoded row group that the writer no longer reads, and pools the
+    // object for a later frame. A buffer would otherwise keep the capacity of the largest row group
+    // it decoded, charged to the query's memory tracker, whatever frame it holds next.
+    private void releaseDecodeBuffers(RowGroupBuffers buffers) {
+        buffers.close();
+        decodeBufferPool.add(buffers);
     }
 
     private void resetBuffers() {
