@@ -199,6 +199,11 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }
