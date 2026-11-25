@@ -69,7 +69,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     @Test
     public void testContextWithoutVariablesDeclaresNone() {
         // A context that implements the interface without SqlExecutionContextImpl, as other
-        // contexts may, carries no variables: the parser reads none, and the log lines show none.
+        // contexts may, carries no variables: the interface's defaults return none.
         final SqlExecutionContext context = new SqlExecutionContextStub(engine);
         Assert.assertNull(context.getQueryVariables());
         Assert.assertNull(context.getQueryVariablesSqlText());
@@ -294,13 +294,19 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             }
             // These refusals are the parameter's own. Such a block leaves a token that opens no
             // assignment to the statement, reports DECLARE as a second block, and accepts the
-            // OVERRIDABLE and AUDITED markers, which mean nothing for a client's variables.
+            // OVERRIDABLE and AUDITED markers, which mean nothing for a client's variables. A
+            // refused marker is reported where it sits, as a DECLARE block reports AUDITED, also
+            // when the variable it marks is declared again without it.
             final Object[][] refused = {
                     {"1", 0, "unexpected token [1]"},
                     {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
-                    {"OVERRIDABLE @a := 1", 12, "variables cannot be OVERRIDABLE"},
-                    {"@b := 1, OVERRIDABLE @a := 1", 21, "variables cannot be OVERRIDABLE"},
+                    {"OVERRIDABLE @a := 1", 0, "variables cannot be OVERRIDABLE"},
+                    {"@b := 1, OVERRIDABLE @a := 1", 9, "variables cannot be OVERRIDABLE"},
+                    {"/* c */ OVERRIDABLE @a := 1", 8, "variables cannot be OVERRIDABLE"},
+                    {"OVERRIDABLE @a := 1, @a := 2", 0, "variables cannot be OVERRIDABLE"},
+                    {"OVERRIDABLE AUDITED @a := 1", 0, "variables cannot be OVERRIDABLE"},
                     {"AUDITED @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
+                    {"AUDITED OVERRIDABLE @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
             };
             for (Object[] c : refused) {
                 withVariables((String) c[0], sql, () -> assertQuery(sql).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + (int) c[1], (String) c[2]));
@@ -668,10 +674,15 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             execute("INSERT INTO k VALUES (1), (2), (3)");
             execute("CREATE VIEW v_ovl AS (DECLARE OVERRIDABLE @lim := 2 SELECT l FROM k WHERE l <= @lim)");
             execute("CREATE VIEW v_fixed AS (DECLARE @lim := 2 SELECT l FROM k WHERE l <= @lim)");
+            // the body's own block keeps both markers, which the client's block refuses
+            execute("CREATE VIEW v_aud AS (DECLARE AUDITED OVERRIDABLE @lim := 2 SELECT l FROM k WHERE l <= @lim)");
             drainWalAndViewQueues();
             // as with DECLARE @lim := 1 SELECT * FROM v_ovl
             final String overridable = "SELECT * FROM v_ovl";
             withVariables("@lim := 1", overridable, () -> assertQuery(overridable).noLeakCheck().returns("l\n1\n"));
+            final String audited = "SELECT * FROM v_aud";
+            withVariables("@lim := 1", audited, () -> assertQuery(audited).noLeakCheck().returns("l\n1\n"));
+            assertQuery("DECLARE @lim := 1 SELECT * FROM v_aud").noLeakCheck().returns("l\n1\n");
             // "@lim := 1": the error points at ":=", 5 characters into the assignments
             final String fixed = "SELECT * FROM v_fixed";
             withVariables("@lim := 1", fixed, () -> assertQuery(fixed).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + 5, "variable is not overridable: @lim"));
@@ -752,6 +763,9 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     "WITH c AS (SELECT 1),",
                     "WITH c AS (SELECT 1) INSERT INTO t",
                     "WITH c AS (SELECT 1) INSERT INTO t VALUES",
+                    // an unclosed quote after an earlier error: the earlier error is reported
+                    "WITH c AS (SELECT , \"x) SELECT * FROM c",
+                    "WITH c AS (SELECT 1 x), d AS (SELECT , \"y) UPDATE t SET v = d.y FROM d",
             };
             for (String sql : malformed) {
                 assertFailsAsWithoutVariables(sql, "@a := 2");

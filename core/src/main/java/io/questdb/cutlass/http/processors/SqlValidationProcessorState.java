@@ -67,7 +67,9 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     static final int VALIDATION_RESPONSE_BEGIN = 0;
     static final int VALIDATION_SUFFIX = 4;
     private static final byte DEFAULT_API_VERSION = 1;
-    private static final Log LOG = LogFactory.getLog(SqlValidationProcessorState.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(SqlValidationProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -250,6 +252,11 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         this.errorMessage.put(errorMessage);
     }
 
+    public void storeQueryTypeStringConfirmation(String queryTypeString) {
+        this.validationState = VALIDATION_CONFIRMATION;
+        this.queryTypeStringConfirmation = queryTypeString;
+    }
+
     /**
      * Stores an error in the variables parameter itself, at a position in its text.
      */
@@ -259,11 +266,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
-    }
-
-    public void storeQueryTypeStringConfirmation(String queryTypeString) {
-        this.validationState = VALIDATION_CONFIRMATION;
-        this.queryTypeStringConfirmation = queryTypeString;
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {

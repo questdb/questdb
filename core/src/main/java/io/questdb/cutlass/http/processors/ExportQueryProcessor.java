@@ -117,7 +117,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     static final int QUERY_SUFFIX = 7;
     private static final String FILE_EXTENSION_CSV = ".csv";
     private static final String FILE_EXTENSION_PARQUET = ".parquet";
-    private static final Log LOG = LogFactory.getLog(ExportQueryProcessor.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(ExportQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache

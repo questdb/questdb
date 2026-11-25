@@ -26,6 +26,9 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.processors.ExportQueryProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorState;
+import io.questdb.cutlass.http.processors.SqlValidationProcessorState;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -80,6 +83,9 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 final String response = assertSameResponse(url, sql, "@k := 1.0");
                 TestUtils.assertContains(response, "\"error\":\"invalid EXPIRE ROWS policy: Invalid column: @k\"");
             }
+            // The view takes a policy from its WAL, and every read of the view reads the policy.
+            // One the statement stored would read @k, which nothing declares there, and fail the read.
+            drainWalQueue(engine);
             assertGet(
                     "{\"query\":\"SELECT count() FROM mv\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0]],\"count\":1}",
                     "SELECT count() FROM mv",
@@ -448,8 +454,9 @@ public class HttpQueryVariablesTest extends AbstractTest {
     @Test
     public void testLogsShowErrorPositions() throws Exception {
         // The log lines that show the position of an error show the one the response reports: an
-        // error in the variables at its position in them, marked as the response marks it.
-        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        // error in the variables at its position in them, marked as the response marks it. The
+        // loggers of the asserted lines wait for room in a full log ring instead of dropping them.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class, ExportQueryProcessor.class);
         final LogCapture capture = new LogCapture();
         try {
             TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
@@ -500,15 +507,16 @@ public class HttpQueryVariablesTest extends AbstractTest {
             }));
         } finally {
             capture.stop();
-            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+            LogFactory.disableGuaranteedLogging(QueryProgress.class, ExportQueryProcessor.class);
         }
     }
 
     @Test
     public void testLogsShowVariables() throws Exception {
         // The log lines that show a statement's text show the variables it ran with, so the log
-        // tells what ran. A request without variables logs as before.
-        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        // tells what ran. A request without variables logs as before. The loggers of the asserted
+        // lines wait for room in a full log ring instead of dropping them.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class, JsonQueryProcessorState.class, SqlValidationProcessorState.class);
         final LogCapture capture = new LogCapture();
         try {
             TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
@@ -556,7 +564,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
             }));
         } finally {
             capture.stop();
-            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+            LogFactory.disableGuaranteedLogging(QueryProgress.class, JsonQueryProcessorState.class, SqlValidationProcessorState.class);
         }
     }
 

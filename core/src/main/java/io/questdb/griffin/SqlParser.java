@@ -2765,9 +2765,10 @@ public class SqlParser {
      * which reads no query. Reads past the CTEs, skipping their bodies by their brackets, to the
      * statement after them, past the options, the target and the column list of an INSERT to its
      * rows, and leaves the lexer where it found it. A WITH clause of another shape reads them;
-     * parseWithClauses() or parseInsert() reports what is wrong with it.
+     * parseWithClauses() or parseInsert() reports what is wrong with it, an unclosed quote the scan
+     * runs into included, so that the first error in the text is the one reported.
      */
-    private boolean isIgnoringVariablesAfterWith(GenericLexer lexer) throws SqlException {
+    private boolean isIgnoringVariablesAfterWith(GenericLexer lexer) {
         lexer.stash();
         try {
             CharSequence tok;
@@ -2816,6 +2817,10 @@ public class SqlParser {
                     }
                 }
             }
+            return false;
+        } catch (SqlException e) {
+            // An unclosed quote, which the parse reports when it reads the same text, unless it
+            // finds an earlier error.
             return false;
         } finally {
             lexer.unstash();
@@ -5738,8 +5743,19 @@ public class SqlParser {
      *                   variable {@code AUDITED}: a read of an audited view records the variables
      *                   of its body's top-level block and no others, so a marking anywhere else
      *                   would parse and never be recorded.
+     * @param isQueryVariables whether the block holds the variables a client declared outside the
+     *                         statement's text, see {@link #parseQueryVariables}. It refuses the
+     *                         {@code OVERRIDABLE} marker where it reads it: the marker lets a
+     *                         view's caller set the view's variable, and the client's variables are
+     *                         the caller's values, which nothing overrides.
      */
-    private void parseDeclare(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback, boolean isTopLevel) throws SqlException {
+    private void parseDeclare(
+            GenericLexer lexer,
+            IQueryModel model,
+            SqlParserCallback sqlParserCallback,
+            boolean isTopLevel,
+            boolean isQueryVariables
+    ) throws SqlException {
         int contentLength = lexer.getContent().length();
         // Whether a declaration was read last, which only a comma or the query may follow. A comma
         // anywhere else separates nothing.
@@ -5791,6 +5807,9 @@ public class SqlParser {
                 final boolean isAuditedMarker = isAuditedKeyword(tok);
                 if (isAuditedMarker && !isTopLevel) {
                     throw SqlException.$(lexer.lastTokenPosition(), "AUDITED is only allowed in the top-level DECLARE block");
+                }
+                if (!isAuditedMarker && isQueryVariables) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be OVERRIDABLE");
                 }
                 if (isAuditedMarker && isAudited) {
                     throw SqlException.$(lexer.lastTokenPosition(), "duplicate AUDITED");
@@ -6161,7 +6180,7 @@ public class SqlParser {
         // Over the client's variables, the statement's own block reads them as its earlier
         // declarations, and a declaration of the same name replaces one.
         if (isDeclareKeyword(tok)) {
-            parseDeclare(lexer, model, sqlParserCallback, isTopLevel);
+            parseDeclare(lexer, model, sqlParserCallback, isTopLevel, false);
             tok = tok(lexer, "'select', 'with', or table name expected");
         }
 
@@ -8256,8 +8275,9 @@ public class SqlParser {
         final LowerCaseCharSequenceObjHashMap<WithClauseModel> withScopeBefore = withScope;
         withScope = model.getWithClauses();
         try {
-            // not a top-level block: a variable cannot be marked AUDITED
-            parseDeclare(variablesLexer, model, sqlParserCallback, false);
+            // the client's block, not a top-level one: a variable can be marked neither AUDITED
+            // nor OVERRIDABLE
+            parseDeclare(variablesLexer, model, sqlParserCallback, false, true);
         } finally {
             withScope = withScopeBefore;
         }
@@ -8267,18 +8287,8 @@ public class SqlParser {
             throw SqlException.unexpectedToken(variablesLexer.lastTokenPosition(), tok);
         }
 
-        final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
-        final LowerCaseCharSequenceHashSet overridableDecls = model.getOverridableDecls();
-        final ObjList<CharSequence> keys = decls.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            // OVERRIDABLE lets a view's caller set the view's variable; the client's variables
-            // are the caller's values, nothing overrides them
-            if (overridableDecls.contains(keys.getQuick(i))) {
-                throw SqlException.$(decls.get(keys.getQuick(i)).lhs.position, "variables cannot be OVERRIDABLE");
-            }
-        }
         queryVariablesModel = model;
-        return decls;
+        return model.getDecls();
     }
 
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {

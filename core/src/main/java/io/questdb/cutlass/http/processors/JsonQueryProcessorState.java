@@ -98,7 +98,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_INSERT_CONFIRMATION = QUERY_CONFIRMATION + 1; // 15
     static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1; // 16
     private static final byte DEFAULT_API_VERSION = 1;
-    private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
