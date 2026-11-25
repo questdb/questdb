@@ -744,6 +744,50 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddDimensions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray array = new DirectArray(configuration)) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                array.setDimLen(0, 2);
+                array.applyShape();
+                MemoryA memA = array.startMemoryA();
+                memA.putDouble(1.0);
+                memA.putDouble(2.0);
+
+                DerivedArrayView view = new DerivedArrayView();
+                view.of(array);
+                view.prependDimensions(0);
+                view.appendDimensions(0);
+                Assert.assertEquals(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), view.getType());
+                Assert.assertEquals(2, view.getDimLen(0));
+
+                view.prependDimensions(1);
+                view.appendDimensions(1);
+                Assert.assertFalse(view.isNull());
+                Assert.assertEquals(ColumnType.encodeArrayType(ColumnType.DOUBLE, 3), view.getType());
+                Assert.assertEquals(1, view.getDimLen(0));
+                Assert.assertEquals(2, view.getDimLen(1));
+                Assert.assertEquals(1, view.getDimLen(2));
+                sink.clear();
+                ArrayTypeDriver.arrayToJson(view, sink, NoopArrayWriteState.INSTANCE);
+                assertEquals("[[[1.0],[2.0]]]", sink.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testAddDimensionsKeepsNullViewNull() {
+        DerivedArrayView view = new DerivedArrayView();
+        view.ofNull();
+        view.prependDimensions(2);
+        Assert.assertTrue(view.isNull());
+        Assert.assertEquals(ColumnType.NULL, view.getType());
+        view.appendDimensions(3);
+        Assert.assertTrue(view.isNull());
+        Assert.assertEquals(ColumnType.NULL, view.getType());
+    }
+
+    @Test
     public void testArrayAddScalarValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
@@ -4581,6 +4625,112 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubArrayNegativeOutOfBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tango AS (
+                        SELECT ARRAY[[1.0, 2], [3.0, 4]] arr, ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr3
+                        FROM long_sequence(1)
+                    )""");
+
+            assertSubArray("arr[-1]", "[3.0,4.0]");
+            assertSubArray("arr[-2]", "[1.0,2.0]");
+            assertSubArray("arr[-3]", "null");
+            assertSubArray("arr[-100_000]", "null");
+            assertSubArray("arr[-1_000_000]", "null");
+            assertSubArray("arr[-2_147_483_647]", "null");
+            assertSubArray("arr[-2_147_483_648]", "null");
+            assertSubArray("arr[1:2, -2]", "[1.0]");
+            assertSubArray("arr[1:2, -3]", "null");
+            assertSubArray("arr[2:, -3]", "null");
+
+            assertSubArray("arr3[-1, -1]", "[7.0,8.0]");
+            assertSubArray("arr3[-2, -2]", "[1.0,2.0]");
+            assertSubArray("arr3[-3]", "null");
+            assertSubArray("arr3[-3, 1]", "null");
+            assertSubArray("arr3[-1, -3]", "null");
+            assertSubArray("arr3[1, -1_000_000]", "null");
+            assertSubArray("arr3[-1_000_000, -1_000_000]", "null");
+
+            assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]][-3] x FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\nnull\n");
+            assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]][-2] x FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[1.0,2.0]\n");
+
+            execute("CREATE TABLE copied AS (SELECT arr[-3] a, arr3[-1, -3] b, arr[-1] c FROM tango)");
+            assertQuery("SELECT * FROM copied")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            null\tnull\t[3.0,4.0]
+                            """);
+            execute("INSERT INTO copied SELECT arr[-1_000_000], arr3[-1_000_000, 1], arr[-2] FROM tango");
+            assertQuery("SELECT * FROM copied")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            null\tnull\t[3.0,4.0]
+                            null\tnull\t[1.0,2.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testSubArrayNegativeOutOfBoundsNonConstantIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (n INT, l LONG, arr DOUBLE[][])");
+            execute("""
+                    INSERT INTO tango VALUES
+                        (-1, -1, ARRAY[[1.0, 2], [3.0, 4]]),
+                        (-2, -2, ARRAY[[1.0, 2], [3.0, 4]]),
+                        (-3, -3, ARRAY[[1.0, 2], [3.0, 4]]),
+                        (-1_000_000, -1_000_000, ARRAY[[1.0, 2], [3.0, 4]]),
+                        (-2_147_483_647, -2_147_483_648, ARRAY[[1.0, 2], [3.0, 4]]),
+                        (null, null, ARRAY[[1.0, 2], [3.0, 4]]),
+                        (-1, -1, ARRAY[[1.0, 2, 3]]),
+                        (-2, -2, ARRAY[[1.0, 2, 3]])
+                    """);
+            assertQuery("SELECT n, arr[n] x, arr[l] y, arr[1:, n] z FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\ty\tz
+                            -1\t[3.0,4.0]\t[3.0,4.0]\t[2.0,4.0]
+                            -2\t[1.0,2.0]\t[1.0,2.0]\t[1.0,3.0]
+                            -3\tnull\tnull\tnull
+                            -1000000\tnull\tnull\tnull
+                            -2147483647\tnull\tnull\tnull
+                            null\tnull\tnull\tnull
+                            -1\t[1.0,2.0,3.0]\t[1.0,2.0,3.0]\t[3.0]
+                            -2\tnull\tnull\t[2.0]
+                            """);
+
+            bindVariableService.clear();
+            bindVariableService.setInt(0, -3);
+            assertQuery("SELECT arr[$1] x FROM tango LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\nnull\n");
+            bindVariableService.setInt(0, -1);
+            assertQuery("SELECT arr[$1] x FROM tango LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[3.0,4.0]\n");
+            bindVariableService.setInt(0, -1_000_000);
+            assertQuery("SELECT arr[$1] x FROM tango LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\nnull\n");
+        });
+    }
+
+    @Test
     public void testToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -4794,6 +4944,104 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionDifferentDimsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (v DOUBLE[])");
+            execute("INSERT INTO a VALUES (null), (ARRAY[1.0, 2.0])");
+            execute("CREATE TABLE b (v DOUBLE[][])");
+            execute("INSERT INTO b VALUES (ARRAY[[1.0], [2.0]]), (null)");
+            execute("CREATE TABLE c (v DOUBLE[][][])");
+            execute("INSERT INTO c VALUES (null), (ARRAY[[[3.0]]])");
+
+            final String aThenB = """
+                    v
+                    null
+                    [[1.0,2.0]]
+                    [[1.0],[2.0]]
+                    null
+                    """;
+            assertQuery("SELECT v FROM a UNION ALL SELECT v FROM b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(aThenB);
+            assertQuery("SELECT v::varchar v FROM (SELECT v FROM a UNION ALL SELECT v FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+
+                            [[1.0,2.0]]
+                            [[1.0],[2.0]]
+
+                            """);
+            assertQuery("SELECT v FROM b UNION ALL SELECT v FROM a")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            [[1.0],[2.0]]
+                            null
+                            null
+                            [[1.0,2.0]]
+                            """);
+            assertQuery("SELECT v FROM a UNION ALL SELECT v FROM c")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            null
+                            [[[1.0,2.0]]]
+                            null
+                            [[[3.0]]]
+                            """);
+            execute("CREATE TABLE a_null (v DOUBLE[])");
+            execute("INSERT INTO a_null VALUES (null)");
+            execute("CREATE TABLE b_null (v DOUBLE[][])");
+            execute("INSERT INTO b_null VALUES (null)");
+            assertQuery("SELECT v FROM a_null UNION ALL SELECT v FROM b_null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("v\nnull\nnull\n");
+
+            assertQuery("SELECT v FROM a UNION SELECT v FROM b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            null
+                            [[1.0,2.0]]
+                            [[1.0],[2.0]]
+                            """);
+            assertQuery("SELECT v FROM a INTERSECT SELECT v FROM b")
+                    .noLeakCheck()
+                    .returns("v\nnull\n");
+            assertQuery("SELECT v FROM a EXCEPT SELECT v FROM b")
+                    .noLeakCheck()
+                    .returns("v\n[[1.0,2.0]]\n");
+
+            execute("CREATE TABLE u AS (SELECT v FROM a UNION ALL SELECT v FROM b)");
+            assertQuery("u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(aThenB);
+
+            assertQuery("SELECT v::double[][] v FROM a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nnull\n[[1.0,2.0]]\n");
+            assertQuery("SELECT v::double[][][] v FROM a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nnull\n[[[1.0,2.0]]]\n");
+        });
+    }
+
+    @Test
     public void testUnionDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table alpha (arr double[])");
@@ -4913,6 +5161,13 @@ public class ArrayTest extends AbstractCairoTest {
         for (int i : values) {
             list.add(i);
         }
+    }
+
+    private void assertSubArray(String expr, String expected) throws Exception {
+        assertQuery("SELECT " + expr + " x FROM tango")
+                .noLeakCheck()
+                .expectSize()
+                .returns("x\n" + expected + '\n');
     }
 
     private void testLengthOverParquetOneDimension(boolean rawArrayEncoding) throws Exception {

@@ -3563,6 +3563,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void copyTableScan(IQueryModel from, IQueryModel to) {
+        to.setTableNameExpr(from.getTableNameExpr());
+        to.setMetadataVersion(from.getMetadataVersion());
+        to.setModelType(from.getModelType());
+        to.setTimestamp(from.getTimestamp());
+        to.setWhereClause(from.getWhereClause());
+        to.copyColumnsFrom(from, queryColumnPool, expressionNodePool);
+    }
+
     private CharSequence createColumnAlias(CharSequence name, IQueryModel model, boolean nonLiteral) {
         return SqlUtil.createColumnAlias(
                 characterStore,
@@ -9233,11 +9242,7 @@ public class SqlOptimiser implements Mutable {
             if (nested.hasSharedRefs()) {
                 // nested is shared — create new model referencing same table
                 target = queryModelPool.next();
-                target.setTableNameExpr(nested.getTableNameExpr());
-                target.setModelType(nested.getModelType());
-                target.setTimestamp(nested.getTimestamp());
-                target.setWhereClause(nested.getWhereClause());
-                target.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+                copyTableScan(nested, target);
                 for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                     target.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
                 }
@@ -10929,11 +10934,7 @@ public class SqlOptimiser implements Mutable {
                 // nested is shared — create a new model with reversed ORDER BY
                 // referencing the same table, leave nested untouched
                 IQueryModel reversedNested = queryModelPool.next();
-                reversedNested.setTableNameExpr(nested.getTableNameExpr());
-                reversedNested.setModelType(nested.getModelType());
-                reversedNested.setTimestamp(nested.getTimestamp());
-                reversedNested.setWhereClause(nested.getWhereClause());
-                reversedNested.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+                copyTableScan(nested, reversedNested);
 
                 for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                     int orderDirection = nested.getOrderByDirection().get(i) == IQueryModel.ORDER_DIRECTION_DESCENDING
@@ -15011,11 +15012,7 @@ public class SqlOptimiser implements Mutable {
                 if (nested.hasSharedRefs()) {
                     newNested.setNestedModel(nested);
                 } else {
-                    newNested.setTableNameExpr(nested.getTableNameExpr());
-                    newNested.setModelType(nested.getModelType());
-                    newNested.setTimestamp(nested.getTimestamp());
-                    newNested.setWhereClause(nested.getWhereClause());
-                    newNested.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+                    copyTableScan(nested, newNested);
                 }
                 model.setNestedModel(newNested);
             }

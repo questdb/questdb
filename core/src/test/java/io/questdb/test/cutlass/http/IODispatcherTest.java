@@ -142,6 +142,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -161,6 +162,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Pattern;
 
 import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -6785,6 +6787,42 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testStatementTimeoutAppliesAfterRequestWithoutIt() throws Exception {
+        statementTimeoutTestBuilder().run((engine, sqlExecutionContext) -> {
+            engine.execute(QUERY_TIMEOUT_TABLE_DDL, sqlExecutionContext);
+            try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                assertStatementTimeoutQuery(client, null, false);
+                assertStatementTimeoutQuery(client, "1", true);
+            }
+            try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                assertStatementTimeoutQuery(client, "1", true);
+            }
+        });
+    }
+
+    @Test
+    public void testStatementTimeoutDoesNotLeakAcrossRequests() throws Exception {
+        statementTimeoutTestBuilder()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(QUERY_TIMEOUT_TABLE_DDL, sqlExecutionContext);
+                    try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                        assertStatementTimeoutQuery(client, "1", true);
+                        assertStatementTimeoutQuery(client, "1000000000", false);
+                        assertStatementTimeoutQuery(client, null, false);
+                        assertStatementTimeoutQuery(client, "1", true);
+                        assertStatementTimeoutQuery(client, null, false);
+                    }
+                    for (int i = 0; i < 3; i++) {
+                        try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                            assertStatementTimeoutQuery(client, null, false);
+                            assertStatementTimeoutQuery(client, "1", true);
+                            assertStatementTimeoutQuery(client, "1000000000", false);
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testTextQueryCopyFrom() throws Exception {
         String copyInputRoot = TestUtils.getCsvRoot();
         new HttpQueryTestBuilder().withTempFolder(root).withCopyInputRoot(copyInputRoot).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((_, _) -> {
@@ -7822,6 +7860,36 @@ public class IODispatcherTest extends AbstractTest {
         return Services.INSTANCE.createHttpServer(serverConfiguration, cairoEngine, workerPool, workerPool.getWorkerCount());
     }
 
+    private static void assertStatementTimeoutQuery(HttpClient client, @Nullable String statementTimeout, boolean isTimeoutExpected) {
+        HttpClient.Request request = client.newRequest("localhost", 9001);
+        request.GET().url("/exec").query("query", QUERY_TIMEOUT_SELECT);
+        if (statementTimeout != null) {
+            request.header("Statement-Timeout", statementTimeout);
+        }
+        HttpClient.ResponseHeaders headers = request.send();
+        headers.await();
+        final StringSink sink = new StringSink();
+        headers.getResponse().copyTextTo(sink);
+        if (isTimeoutExpected) {
+            TestUtils.assertEquals("400", headers.getStatusCode());
+            Assert.assertTrue(
+                    sink.toString(),
+                    Pattern.matches(
+                            "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=1ms\\]\",\"position\":0\\}",
+                            sink
+                    )
+            );
+        } else {
+            TestUtils.assertEquals("200", headers.getStatusCode());
+            TestUtils.assertEquals(
+                    "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\","
+                            + "\"columns\":[{\"name\":\"i\",\"type\":\"INT\"},{\"name\":\"avg\",\"type\":\"DOUBLE\"},{\"name\":\"max\",\"type\":\"LONG\"}],"
+                            + "\"timestamp\":-1,\"dataset\":[[0,55.0,100],[1,46.0,91],[2,47.0,92]],\"count\":3}",
+                    sink
+            );
+        }
+    }
+
     private static void createTableX(CairoEngine engine, int n) {
         CreateTableTestUtils.createTestTable(engine, n, new Rnd(), new TestRecord.ArrayBinarySequence());
     }
@@ -8207,6 +8275,17 @@ public class IODispatcherTest extends AbstractTest {
             CursorPrinter.printColumn(record, metadata, 2, sink, false);
             sink.put('\n');
         }
+    }
+
+    private HttpQueryTestBuilder statementTimeoutTestBuilder() {
+        final AtomicLong ticks = new AtomicLong();
+        final MillisecondClock clock = () -> ticks.addAndGet(1_000);
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withServerKeepAlive(true))
+                .withCircuitBreakerClock(clock)
+                .withQueryTimeout(1_000_000_000L);
     }
 
     private void testExceptionAfterHeader(int numOfRows, String rows) throws Exception {
