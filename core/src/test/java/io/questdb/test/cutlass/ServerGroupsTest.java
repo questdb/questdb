@@ -191,9 +191,14 @@ public class ServerGroupsTest extends AbstractCairoTest {
                     } finally {
                         close(fds);
                     }
-                    final long launched = pool.getFiberRuntime(0).getLaunchCount(LaunchResult.LAUNCHED)
-                            + pool.getFiberRuntime(1).getLaunchCount(LaunchResult.LAUNCHED);
-                    Assert.assertTrue(launched >= CONNECTIONS);
+                    // a worker counts a launch only after the launched fiber has run, and that
+                    // fiber, or another worker running it from the queue, may already have
+                    // answered the client
+                    TestUtils.assertEventually(() -> {
+                        final long launched = pool.getFiberRuntime(0).getLaunchCount(LaunchResult.LAUNCHED)
+                                + pool.getFiberRuntime(1).getLaunchCount(LaunchResult.LAUNCHED);
+                        Assert.assertTrue("launched=" + launched, launched >= CONNECTIONS);
+                    }, 10);
                 } finally {
                     pool.halt();
                 }
