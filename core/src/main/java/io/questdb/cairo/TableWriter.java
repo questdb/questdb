@@ -16849,6 +16849,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean needsDedup = isDeduplicationEnabled();
             long minTs = segmentCopyInfo.getMinTimestamp();
             long maxTs = segmentCopyInfo.getMaxTimestamp();
+            if (totalRows == 0) {
+                o3Columns = o3MemColumns1;
+                activeColumns = o3MemColumns1;
+                txWriter.setLagMinTimestamp(minTs);
+                txWriter.setLagMaxTimestamp(maxTs);
+                return 0;
+            }
 
             LOG.debug().$("sorting [table=").$(tableToken)
                     .$(", rows=").$(segmentCopyInfo.getTotalRows())

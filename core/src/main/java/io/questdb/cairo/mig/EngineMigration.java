@@ -181,7 +181,20 @@ public class EngineMigration {
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
+                            final long metaFileSize = ff.length(fdMeta);
+                            if (metaFileSize < TableUtils.META_OFFSET_COLUMN_TYPES) {
+                                LOG.error().$("meta file is too short, skipping table [path=").$(path)
+                                        .$(", size=").$(metaFileSize)
+                                        .I$();
+                                return;
+                            }
                             final int storedTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
+                            if (storedTableVersion <= 0) {
+                                LOG.error().$("meta file holds no table version, skipping table [path=").$(path)
+                                        .$(", version=").$(storedTableVersion)
+                                        .I$();
+                                return;
+                            }
                             // A version above latestTableVersion that is a storage marker (a table that currently
                             // holds composite or Delta partitions, or is downgrade-locked, carries one of
                             // ColumnType.storageVersion()) is not a migration-version number: the table is at

@@ -84,6 +84,13 @@ public final class Mig1002 {
             final long metaFileSize = ff.length(path.$());
             try (MemoryCMR metaMem = Vm.getCMRInstance(ff, path.$(), metaFileSize, MemoryTag.NATIVE_MIG_MMAP)) {
                 final int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+                if (columnCount < 0 || columnCount > (metaFileSize - TableUtils.META_OFFSET_COLUMN_TYPES) / TableUtils.META_COLUMN_DATA_SIZE) {
+                    LOG.error().$("meta file is too short for its columns, nothing to migrate [path=").$(path)
+                            .$(", columnCount=").$(columnCount)
+                            .$(", size=").$(metaFileSize)
+                            .I$();
+                    return;
+                }
                 final int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
                 final int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
                 final int timestampType = timestampIndex > -1 && timestampIndex < columnCount
@@ -121,6 +128,14 @@ public final class Mig1002 {
                     final IntList pendingColumns = new IntList();
                     long nameOffset = TableUtils.getColumnNameOffset(columnCount);
                     for (int i = 0; i < columnCount; i++) {
+                        final int nameLength = nameOffset + Integer.BYTES > metaFileSize ? -1 : metaMem.getInt(nameOffset);
+                        if (nameLength < 0 || nameOffset + Vm.getStorageLength(nameLength) > metaFileSize) {
+                            LOG.error().$("meta file is too short for its column names, nothing to migrate [path=").$(path.trimTo(plen).concat(META_FILE_NAME))
+                                    .$(", columnIndex=").$(i)
+                                    .$(", size=").$(metaFileSize)
+                                    .I$();
+                            return;
+                        }
                         final CharSequence columnName = metaMem.getStrA(nameOffset);
                         nameOffset += Vm.getStorageLength(columnName);
                         columnNames.add(Chars.toString(columnName));

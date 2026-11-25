@@ -1654,6 +1654,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalVarSizeColumnsBlockApply() throws Exception {
+        setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, "true");
+        assertRebaseWalVarSizeColumns(false);
+    }
+
+    @Test
     public void testRebaseWalVarSizeColumnsMergeAppend() throws Exception {
         assertRebaseWalVarSizeColumns(true);
     }
