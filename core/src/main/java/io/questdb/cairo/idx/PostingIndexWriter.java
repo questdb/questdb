@@ -1804,7 +1804,7 @@ public class PostingIndexWriter implements IndexWriter {
         // The seal path also emits its own record; this one adds the caller
         // context (a sidecar rebuild, not a bare seal) plus the byte total,
         // which is what turns the elapsed time into a throughput figure.
-        LOG.info().$("posting index sidecars rebuilt [indexName=").$(indexName)
+        LOG.info().$("posting index sidecars rebuilt [indexName=").$safe(indexName)
                 .$(", sealTxn=").$(sealTxn)
                 .$(", path=").$(byCopy ? "copy" : "seal")
                 .$(", covers=").$(coverCountAtEntry)
@@ -2213,7 +2213,7 @@ public class PostingIndexWriter implements IndexWriter {
         // took is what makes that cost attributable without a DEBUG restart.
         // Every field is already-maintained writer state; nothing new is tracked.
         if (isSealed) {
-            LOG.info().$("posting index sealed [indexName=").$(indexName)
+            LOG.info().$("posting index sealed [indexName=").$safe(indexName)
                     .$(", sealTxn=").$(sealTxn)
                     .$(", path=").$(isLastSealIncremental ? "incremental" : "full")
                     .$(", streaming=").$(isLastSealStreaming)
