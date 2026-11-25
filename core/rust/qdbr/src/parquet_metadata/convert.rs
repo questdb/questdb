@@ -378,6 +378,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
@@ -938,6 +939,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "int_val",
@@ -953,6 +955,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "dbl_val",
@@ -968,6 +971,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "bool_val",
@@ -983,6 +987,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
         ];
 
@@ -1088,6 +1093,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "val",
@@ -1103,6 +1109,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
         ];
 
@@ -1310,6 +1317,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
@@ -1369,6 +1377,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: false,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition {
@@ -1613,6 +1622,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             }],
         };
 
@@ -2468,6 +2478,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition {
@@ -2585,6 +2596,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "val",
@@ -2600,6 +2612,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
         ];
         let partition = Partition { table: "test".to_string(), columns: cols };
@@ -2699,6 +2712,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
 
