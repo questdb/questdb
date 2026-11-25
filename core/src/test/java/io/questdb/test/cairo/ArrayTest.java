@@ -4971,10 +4971,10 @@ public class ArrayTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             v
-
+                            
                             [[1.0,2.0]]
                             [[1.0],[2.0]]
-
+                            
                             """);
             assertQuery("SELECT v FROM b UNION ALL SELECT v FROM a")
                     .noLeakCheck()
