@@ -846,8 +846,14 @@ final class SampleByFactoryGenerator {
                     metadata.setTimestampIndex(i);
                 }
                 final String name = Chars.toString(output.getColumnName(i));
-                metadata.add(new TableColumnMetadata(name, type, baseMetadata.getColumnIndexType(index),
-                        baseMetadata.getIndexValueBlockCapacity(index), baseMetadata.isSymbolTableStatic(index), baseMetadata.getMetadata(index)));
+                final TableColumnMetadata keyMetadata = new TableColumnMetadata(name, type, baseMetadata.getColumnIndexType(index),
+                        baseMetadata.getIndexValueBlockCapacity(index), baseMetadata.isSymbolTableStatic(index), baseMetadata.getMetadata(index));
+                // A column key passes its column through, so it keeps the column's PARQUET(...) setting; the bucket
+                // timestamp is computed and keeps the default.
+                if (column.getColumnId() != plan.getTimestampColumnId()) {
+                    keyMetadata.setParquetEncodingConfig(baseMetadata.getColumnMetadata(index).getParquetEncodingConfig());
+                }
+                metadata.add(keyMetadata);
                 firstLastIndexes.add(index);
                 firstLastKinds.add(SampleByFirstLastRecordCursorFactory.KEY);
                 firstLastPositions.add(column.getPosition());

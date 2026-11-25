@@ -1946,8 +1946,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testParquetExportOfRetypedTableKeepsTempTableForOtherPlans() throws Exception {
         // A plan whose timestamp no table scan guarantees keeps the temp table for a retyped column, and so does a plan
-        // with a BINARY column, which the cursor exporter cannot write. The multi-key ORDER BY with a negative LIMIT
-        // reads the frames backward and each frame's index forward, so its scan promises no order.
+        // with a BINARY column, which the cursor exporter cannot write.
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
                     createRetypedTables(engine, sqlExecutionContext);
@@ -1957,7 +1956,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             {"SELECT * FROM r WHERE s = 'a' LATEST ON ts PARTITION BY s", "SELECT * FROM nr WHERE s = 'a' LATEST ON ts PARTITION BY s", "ts"},
                             {"SELECT x, ts, row_number() OVER () rn FROM r", "SELECT x, ts, row_number() OVER () rn FROM nr", "ts"},
                             {"SELECT * FROM r ORDER BY other_ts DESC", "SELECT * FROM nr ORDER BY other_ts DESC", null},
-                            {"SELECT * FROM r WHERE s = 'a' ORDER BY ts, x LIMIT -3", "SELECT * FROM nr WHERE s = 'a' ORDER BY ts, x LIMIT -3", "ts"},
                             {"SELECT * FROM rb", "SELECT * FROM rb", "ts"},
                     };
                     try (
@@ -1998,6 +1996,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             {"SELECT x + 1 AS y, ts FROM r", "SELECT x + 1 AS y, ts FROM nr", "ts"},
                             {"SELECT x + 1 AS y, ts FROM r ORDER BY ts DESC", "SELECT x + 1 AS y, ts FROM nr ORDER BY ts DESC", null},
                             {"SELECT * FROM r LIMIT -3", "SELECT * FROM nr LIMIT -3", "ts"},
+                            // the multi-key ORDER BY with a negative LIMIT reads the frames and each frame's index
+                            // backward, so the sorts order rows that arrive in timestamp order
+                            {"SELECT * FROM r WHERE s = 'a' ORDER BY ts, x LIMIT -3", "SELECT * FROM nr WHERE s = 'a' ORDER BY ts, x LIMIT -3", "ts"},
                             {"SELECT * FROM vr", "SELECT * FROM nr", "ts"},
                             {"SELECT * FROM vr WHERE x > 1 ORDER BY ts DESC", "SELECT * FROM nr WHERE x > 1 ORDER BY ts DESC", null},
                             {"SELECT s, sum(x) sx FROM r ORDER BY s", "SELECT s, sum(x) sx FROM nr ORDER BY s", null},

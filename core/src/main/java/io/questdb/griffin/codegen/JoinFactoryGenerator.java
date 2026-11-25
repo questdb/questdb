@@ -281,8 +281,11 @@ final class JoinFactoryGenerator {
             columnIndex.add(index);
             isIdentity &= index == i;
             final TableColumnMetadata column = innerMetadata.getColumnMetadata(index);
-            outerMetadata.add(new TableColumnMetadata(Chars.toString(projection.getOutput().getColumnName(i)), column.getColumnType(),
-                    column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
+            final TableColumnMetadata projected = new TableColumnMetadata(Chars.toString(projection.getOutput().getColumnName(i)), column.getColumnType(),
+                    column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata());
+            // The projection passes the column through, so it keeps the column's PARQUET(...) setting.
+            projected.setParquetEncodingConfig(column.getParquetEncodingConfig());
+            outerMetadata.add(projected);
         }
         outerMetadata.setTimestampIndex(PlanToFactoryRules.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex()));
         return isIdentity ? null : columnIndex;
@@ -318,8 +321,11 @@ final class JoinFactoryGenerator {
             innerMetadata = new GenericRecordMetadata();
             for (int i = 0; i < splitIndex; i++) {
                 final TableColumnMetadata column = masterMetadata.getColumnMetadata(i);
-                innerMetadata.add(new TableColumnMetadata(Chars.toString(output.getColumnName(i)), column.getColumnType(),
-                        column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
+                final TableColumnMetadata renamed = new TableColumnMetadata(Chars.toString(output.getColumnName(i)), column.getColumnType(),
+                        column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata());
+                // The join passes the master column through, so it keeps the column's PARQUET(...) setting.
+                renamed.setParquetEncodingConfig(column.getParquetEncodingConfig());
+                innerMetadata.add(renamed);
             }
             innerMetadata.setTimestampIndex(masterMetadata.getTimestampIndex());
         } else {

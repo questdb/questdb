@@ -111,8 +111,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
             }
             for (int i = 0; i < outputFunctions.size(); i++) {
                 Function function = outputFunctions.getQuick(i);
-                outputMetadata.add(new TableColumnMetadata(plan.getOutput().getColumnName(i).toString(), function.getType(),
-                        IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata()));
+                final TableColumnMetadata columnMetadata = new TableColumnMetadata(plan.getOutput().getColumnName(i).toString(), function.getType(),
+                        IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata());
+                // A column key passes its column through, so it keeps the column's PARQUET(...) setting.
+                if (i < keys.size() && keys.getQuick(i) instanceof ColumnExpression column) {
+                    columnMetadata.setParquetEncodingConfig(joined.getColumnMetadata(input.getColumnIndexById(column.getColumnId())).getParquetEncodingConfig());
+                }
+                outputMetadata.add(columnMetadata);
             }
             outputOnlyFunctions = GroupByUtils.extractNonGroupByFunctions(outputFunctions);
             workerGroupByFunctions = instantiator.instantiateWorkerAggregates(plan.getAggregates(), input, joined,

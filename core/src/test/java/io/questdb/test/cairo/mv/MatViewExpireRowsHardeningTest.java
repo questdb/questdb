@@ -1213,10 +1213,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 try (TableMetadata metadata = restarted.getTableMetadata(token)) {
                     predicate = metadata.getExpiryPredicate();
                 }
-                // A read of mv parses SELECT * FROM "mv" WHERE NOT (<predicate>), and a read of v the stored
-                // body of the view.
-                final String keepFilterSql = "SELECT * FROM \"mv\" WHERE NOT (" + predicate.trim() + ')';
-                TestUtils.assertException(restarted, restartedContext, "SELECT v FROM mv", overCapError, keepFilterSql.indexOf("'["), sink);
+                // A read of mv binds the policy into its scan and fails at the reference to mv, and a read of v
+                // parses the stored body of the view.
+                final String mvRead = "SELECT v FROM mv";
+                TestUtils.assertException(restarted, restartedContext, mvRead, overCapError, mvRead.indexOf("mv"), sink);
                 TestUtils.assertException(restarted, restartedContext, "SELECT v FROM v", overCapError, viewSql.indexOf("'["), sink);
                 // the cleanup skips a policy that reads the clock, and the cap error does not escape it
                 try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(restarted)) {
@@ -1282,10 +1282,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 try (TableMetadata metadata = restarted.getTableMetadata(token)) {
                     predicate = metadata.getExpiryPredicate();
                 }
-                // A read of mv parses SELECT * FROM "mv" WHERE NOT (<predicate>), and a read of v the stored
-                // body of the view.
-                final String keepFilterSql = "SELECT * FROM \"mv\" WHERE NOT (" + predicate.trim() + ')';
-                TestUtils.assertException(restarted, restartedContext, "SELECT v FROM mv", overCapError, keepFilterSql.indexOf("'["), sink);
+                // A read of mv binds the policy into its scan and fails at the reference to mv, and a read of v
+                // parses the stored body of the view.
+                final String mvRead = "SELECT v FROM mv";
+                TestUtils.assertException(restarted, restartedContext, mvRead, overCapError, mvRead.indexOf("mv"), sink);
                 TestUtils.assertException(restarted, restartedContext, "SELECT v FROM v", overCapError, viewSql.indexOf("'["), sink);
                 // the cleanup skips a policy that reads the clock, and the cap error does not escape it
                 try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(restarted)) {

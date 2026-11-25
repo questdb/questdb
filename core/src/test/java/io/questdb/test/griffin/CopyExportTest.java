@@ -378,20 +378,26 @@ public class CopyExportTest extends AbstractCairoTest {
             createRetypedTables("WAL");
             final FilesFacade ff = configuration.getFilesFacade();
             final String filterQuery = "SELECT * FROM %s WHERE x > 1";
-            final String topKQuery = "SELECT * FROM %s WHERE x > 1 ORDER BY ts DESC, x LIMIT 3";
+            // the scan delivers the timestamp order, so the sort under the LIMIT only orders the rows of each timestamp
+            final String sortedLimitQuery = "SELECT * FROM %s WHERE x > 1 ORDER BY ts DESC, x LIMIT 3";
+            // another first key takes a top K, whose rows keep no designated timestamp
+            final String topKQuery = "SELECT * FROM %s WHERE x > 1 ORDER BY x DESC, ts LIMIT 3";
             final int jitMode = sqlExecutionContext.getJitMode();
             try {
                 assertStreamedExportOfMode(filterQuery, "ts", "jit_filter", "Async JIT Filter");
-                assertStreamedExportOfMode(topKQuery, null, "jit_top_k", "Async JIT Top K");
+                assertStreamedExportOfMode(sortedLimitQuery, null, "jit_sort_limited", "Async JIT Filter");
+                assertStreamedExportWithoutTimestamp(topKQuery, "jit_top_k", "Async JIT Top K");
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                 assertStreamedExportOfMode(filterQuery, "ts", "filter", "Async Filter");
-                assertStreamedExportOfMode(topKQuery, null, "top_k", "Async Top K");
+                assertStreamedExportOfMode(sortedLimitQuery, null, "filter_sort_limited", "Async Filter");
+                assertStreamedExportWithoutTimestamp(topKQuery, "top_k", "Async Top K");
                 sqlExecutionContext.setParallelFilterEnabled(false);
                 sqlExecutionContext.setParallelTopKEnabled(false);
                 assertStreamedExportOfMode(filterQuery, "ts", "serial_filter", "Filter filter: 1<x");
-                assertStreamedExportOfMode(topKQuery, null, "sort_limited", "Encode sort light lo: 3");
+                assertStreamedExportOfMode(sortedLimitQuery, null, "sort_limited", "Encode sort light lo: 3 partiallySorted: true");
+                assertStreamedExportWithoutTimestamp(topKQuery, "serial_top_k", "Encode sort light lo: 3");
                 node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
-                assertStreamedExportOfMode(topKQuery, null, "sort_limited_light", "Sort light lo: 3");
+                assertStreamedExportOfMode(sortedLimitQuery, null, "sort_limited_light", "Sort light lo: 3");
             } finally {
                 sqlExecutionContext.setJitMode(jitMode);
                 sqlExecutionContext.setParallelFilterEnabled(true);
@@ -612,14 +618,14 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyCursorExportKeepsMemoizedSymbolAlias() throws Exception {
         // With function memoization, as in production, the outer projection reads the alias through a memoizer over the
-        // inner projection's column, which passes the table's keys through.
+        // inner projection's column, which passes the table's keys through. The LIMIT keeps the inner projection apart.
         assertMemoryLeak(() -> {
             allowFunctionMemoization();
             createSymbolExportTables("BYPASS WAL");
-            final String query = "SELECT a, a || 'x' c FROM (SELECT sym AS a, v + 1 AS vp FROM sym_src CROSS JOIN long_sequence(1))";
+            final String query = "SELECT a, a || 'x' c, vp FROM (SELECT sym AS a, v + 1 AS vp FROM sym_src CROSS JOIN long_sequence(1) LIMIT 100)";
             assertQuery(query)
                     .noLeakCheck()
-                    .assertsPlanContaining("memoize(a)");
+                    .assertsPlanContaining("memoize(sym_src.sym)");
             assertCursorExportOfSymbols(query, "memoized", new int[]{0}, new int[]{});
         });
     }
@@ -2437,7 +2443,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         "SELECT * FROM rb",
                         "SELECT b, x, ts FROM rb",
                         "SELECT x, ts, b FROM rb",
-                        "SELECT x, ts, 'x'::BINARY c FROM rb",
+                        "SELECT x, ts, NULL::BINARY c FROM rb",
                 };
                 for (int i = 0; i < binaryQueries.length; i++) {
                     final String fileName = "binary_" + i;
@@ -2582,7 +2588,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("metric\tc\ttotal\tts\n");
-            final String emptyBinaryQuery = "SELECT *, 'x'::BINARY bin FROM converted_v WHERE ts < '2000-01-01'";
+            final String emptyBinaryQuery = "SELECT *, NULL::BINARY bin FROM converted_v WHERE ts < '2000-01-01'";
             assertCopyMaterializesRows(emptyBinaryQuery, "empty_binary");
             assertQuery("SELECT * FROM read_parquet('" + parquetPath("empty_binary") + "')")
                     .noLeakCheck()
@@ -2762,11 +2768,11 @@ public class CopyExportTest extends AbstractCairoTest {
             assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM (SELECT * FROM converted_v)", " PARTITION_BY YEAR", "subquery", true);
             assertCopyThroughTempTableEncodesFirstColumn("WITH w AS (SELECT * FROM converted_v) SELECT * FROM w", " PARTITION_BY YEAR", "cte", true);
             assertCopyThroughTempTableEncodesFirstColumn("SELECT converted_v.* FROM converted_v CROSS JOIN long_sequence(1)", " PARTITION_BY YEAR", "cross_join", true);
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT *, 'x'::BINARY bin FROM converted_v ORDER BY ts DESC LIMIT 5", "", "order_by_desc_limit", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT *, NULL::BINARY bin FROM converted_v ORDER BY ts DESC LIMIT 5", "", "order_by_desc_limit", true);
             assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v LIMIT -3", " PARTITION_BY YEAR", "negative_limit", true);
             assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v WHERE ts >= $1", " PARTITION_BY YEAR", "bind_variable", true);
             // A GROUP BY or SAMPLE BY key keeps the setting of its column, and an aggregate takes its type's default.
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric, count() c, 'x'::BINARY bin FROM converted_v ORDER BY metric", "", "group_by", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric, count() c, NULL::BINARY bin FROM converted_v ORDER BY metric", "", "group_by", true);
             // count() has no setting, so it takes the LONG default, PLAIN
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("group_by"), configuration.getFilesFacade(), 1);
             ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath("group_by"), configuration.getFilesFacade(), ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 1);
@@ -2784,7 +2790,7 @@ public class CopyExportTest extends AbstractCairoTest {
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("sample_by_key"), ff, 1);
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("sample_by_key_streamed"), ff, 1);
             // LATEST ON over the view keeps no designated timestamp, so it streams, and a BINARY column routes it here
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT *, 'x'::BINARY bin FROM converted_v LATEST ON ts PARTITION BY metric", "", "latest_on", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT *, NULL::BINARY bin FROM converted_v LATEST ON ts PARTITION BY metric", "", "latest_on", true);
             assertParquetSettingsKept(parquetPath("latest_on"));
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, total, ts, row_number() OVER (PARTITION BY metric ORDER BY ts) rn FROM %s", "", "window");
             assertCopyThroughTempTableEncodesLikeStreaming(
@@ -7642,19 +7648,10 @@ public class CopyExportTest extends AbstractCairoTest {
                         new RetypedExportShape("SELECT * FROM (SELECT x, other_ts, ts FROM %s WHERE other_ts IS NOT NULL ORDER BY other_ts) timestamp(other_ts)", "other_ts"),
                         new RetypedExportShape("SELECT * FROM %s WHERE s IN (SELECT s FROM k) ORDER BY ts DESC", null),
                         new RetypedExportShape("SELECT a.ts, a.s, first(b.y) fy FROM %s a WINDOW JOIN d b RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", "ts"),
-                        // the multi-key ORDER BY with a negative LIMIT reads the frames backward and each frame's index
-                        // forward, so the scan promises no order of its own
-                        new RetypedExportShape("SELECT * FROM %s WHERE s = 'a' ORDER BY ts, x LIMIT -3", "ts"),
                         new RetypedExportShape("SELECT * FROM vrl", "SELECT * FROM nr LATEST ON ts PARTITION BY s", "ts", true),
                         // the rows of these come in no order the query fixes
                         new RetypedExportShape("SELECT ts, s, sum(x) sx FROM r SAMPLE BY 1d", "SELECT ts, s, sum(x) sx FROM nr SAMPLE BY 1d", null, false),
                         new RetypedExportShape("SELECT * FROM r LATEST ON ts PARTITION BY s", "SELECT * FROM nr LATEST ON ts PARTITION BY s", null, false),
-                        new RetypedExportShape(
-                                "SELECT s, x, other_ts, avg(x) OVER (PARTITION BY s) a FROM r timestamp(other_ts) WHERE s IN ('a', 'b')",
-                                "SELECT s, x, other_ts, avg(x) OVER (PARTITION BY s) a FROM nr timestamp(other_ts) WHERE s IN ('a', 'b')",
-                                null,
-                                false
-                        ),
                 };
                 for (int i = 0; i < shapes.length; i++) {
                     final RetypedExportShape shape = shapes[i];
@@ -7670,24 +7667,18 @@ public class CopyExportTest extends AbstractCairoTest {
                         throw new AssertionError(walMode + ": " + shape.query(), e);
                     }
                 }
-                // the last three rows of s = 'a' by ts and x
-                assertParquetRows("temp_table_shape_7", "ts", """
-                        s\ts2\tx\tother_ts\tts
-                        a\tp\t5\t2023-06-09T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z
-                        a\tq\t7\t2023-06-07T00:00:00.000000Z\t2024-01-02T02:00:00.000000Z
-                        a\tp\t9\t2023-06-10T00:00:00.000000Z\t2024-01-03T00:00:00.000000Z
-                        """);
                 // the temp table keeps the NULLs of other_ts as NULLs
-                for (String fileName : new String[]{"temp_table_shape_3", "temp_table_shape_11"}) {
-                    assertQuery("SELECT count() FROM read_parquet('" + parquetPath(fileName) + "') WHERE other_ts IS NULL")
-                            .noLeakCheck()
-                            .noRandomAccess()
-                            .expectSize()
-                            .returns("count\n2\n");
-                }
+                assertQuery("SELECT count() FROM read_parquet('" + parquetPath("temp_table_shape_3") + "') WHERE other_ts IS NULL")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n2\n");
                 // A TIMESTAMP(col) claim of another column on the scan itself: the temp table rejects its NULLs, as it
-                // did before.
+                // did before. The index scan of an IN list reads the table in order, so a window over it keeps the
+                // claim, and its temp table rejects them as well.
                 assertExportMode("SELECT * FROM r timestamp(other_ts)", ParquetExportMode.TEMP_TABLE);
+                assertExportMode("SELECT s, x, other_ts, avg(x) OVER (PARTITION BY s) a FROM r timestamp(other_ts) WHERE s IN ('a', 'b')",
+                        ParquetExportMode.TEMP_TABLE);
                 execute("DROP TABLE d");
                 dropRetypedTables();
             }
@@ -7733,6 +7724,9 @@ public class CopyExportTest extends AbstractCairoTest {
                         new RetypedExportShape("SELECT * FROM %s WHERE s IN ('a', 'b') ORDER BY ts DESC", null),
                         new RetypedExportShape("SELECT * FROM %s ORDER BY ts, x", "ts"),
                         new RetypedExportShape("SELECT * FROM %s WHERE x > 1 ORDER BY ts DESC, x LIMIT 3", null),
+                        // the multi-key ORDER BY with a negative LIMIT reads the frames and each frame's index backward,
+                        // so the sorts order rows that arrive in timestamp order
+                        new RetypedExportShape("SELECT * FROM %s WHERE s = 'a' ORDER BY ts, x LIMIT -3", "ts"),
                         new RetypedExportShape("SELECT s, sum(x) sx FROM %s ORDER BY s", null),
                         new RetypedExportShape("SELECT x, row_number() OVER () rn FROM %s", null),
                         new RetypedExportShape("SELECT * FROM vr", "SELECT * FROM nr", "ts", true),
@@ -7766,6 +7760,13 @@ public class CopyExportTest extends AbstractCairoTest {
                         throw new AssertionError(walMode + ": " + shape.query(), e);
                     }
                 }
+                // the last three rows of s = 'a' by ts and x
+                assertParquetRows("streamed_shape_17", "ts", """
+                        s\ts2\tx\tother_ts\tts
+                        a\tp\t5\t2023-06-09T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z
+                        a\tq\t7\t2023-06-07T00:00:00.000000Z\t2024-01-02T02:00:00.000000Z
+                        a\tp\t9\t2023-06-10T00:00:00.000000Z\t2024-01-03T00:00:00.000000Z
+                        """);
                 bindVariableService.clear();
                 execute("DROP VIEW vrlx");
                 execute("DROP VIEW vrw");
@@ -8935,6 +8936,18 @@ public class CopyExportTest extends AbstractCairoTest {
                 final int timestampIndex = factory.getMetadata().getColumnIndex("ts");
                 ParquetTestUtils.assertColumnMaxDefLevel(parquetPath(fileName), configuration.getFilesFacade(), timestampIndex, 0);
             }
+        } catch (AssertionError e) {
+            throw new AssertionError(query, e);
+        }
+    }
+
+    // The streamed export of a plan that keeps no designated timestamp writes the rows of the same query over nr.
+    private void assertStreamedExportWithoutTimestamp(String template, String fileName, String planFragment) throws Exception {
+        final String query = template.replace("%s", "r");
+        try {
+            assertQuery(query).noLeakCheck().assertsPlanContaining(planFragment);
+            assertCopyStreamsRows(query, fileName);
+            assertParquetMatchesControl(template.replace("%s", "nr"), fileName, null);
         } catch (AssertionError e) {
             throw new AssertionError(query, e);
         }

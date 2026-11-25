@@ -2486,9 +2486,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .fullFatJoins()
                     .noLeakCheck()
                     .fails(29, "right side column 's' is of unsupported type");
+            // The filled SAMPLE BY offers no random access, so its sort by the timestamp keeps sorting for the ASOF
+            // JOIN, which then reads the STRING column back by row id rather than copying it.
             assertQuery("SELECT m.ts, x.s FROM m ASOF JOIN (SELECT ts, first(s) s FROM a SAMPLE BY 1s FILL(PREV)) x")
                     .noLeakCheck()
-                    .fails(24, "right side column 's' is of unsupported type");
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join", "Encode sort\n", "Sample By Fill")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:01.000000Z\ta0
+                            2024-01-01T00:00:02.000000Z\ta0
+                            2024-01-01T00:00:04.000000Z\ta4
+                            2024-01-01T00:00:05.000000Z\ta4
+                            """);
         });
     }
 

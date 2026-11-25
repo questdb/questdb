@@ -190,9 +190,15 @@ public final class AggregateFactoryGenerator {
             final String name = Chars.toString(output.getColumnName(i));
             if (i < keys.size() && keys.getQuick(i) instanceof ColumnExpression column) {
                 final int index = plan.getChild().getOutput().getColumnIndexById(column.getColumnId());
-                metadata.add(Chars.equals(name, input.getColumnName(index)) ? input.getColumnMetadata(index)
-                        : new TableColumnMetadata(name, output.getColumnType(i), input.getColumnIndexType(index),
-                        input.getIndexValueBlockCapacity(index), input.isSymbolTableStatic(index), input.getMetadata(index)));
+                if (Chars.equals(name, input.getColumnName(index))) {
+                    metadata.add(input.getColumnMetadata(index));
+                } else {
+                    // A column key passes its column through, so it keeps the column's PARQUET(...) setting.
+                    final TableColumnMetadata renamed = new TableColumnMetadata(name, output.getColumnType(i), input.getColumnIndexType(index),
+                            input.getIndexValueBlockCapacity(index), input.isSymbolTableStatic(index), input.getMetadata(index));
+                    renamed.setParquetEncodingConfig(input.getColumnMetadata(index).getParquetEncodingConfig());
+                    metadata.add(renamed);
+                }
             } else {
                 final Function function = functions.getQuick(i);
                 metadata.add(new TableColumnMetadata(name, output.getColumnType(i), IndexType.NONE, 0,
@@ -536,10 +542,18 @@ public final class AggregateFactoryGenerator {
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final OutputSchema output = plan.getOutput();
             for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-                metadata.add(i == 0
-                        ? new TableColumnMetadata(Chars.toString(output.getColumnName(i)), keyType,
-                        IndexType.NONE, 0, base.getMetadata().isSymbolTableStatic(keyIndex), null)
-                        : new TableColumnMetadata(Chars.toString(output.getColumnName(i)), output.getColumnType(i)));
+                if (i == 0) {
+                    final TableColumnMetadata keyMetadata = new TableColumnMetadata(Chars.toString(output.getColumnName(i)), keyType,
+                            IndexType.NONE, 0, base.getMetadata().isSymbolTableStatic(keyIndex), null);
+                    // A column key passes its column through, so it keeps the column's PARQUET(...) setting; an hour or
+                    // day of a timestamp key is computed and keeps the default.
+                    if (keyExpression instanceof ColumnExpression) {
+                        keyMetadata.setParquetEncodingConfig(base.getMetadata().getColumnMetadata(keyIndex).getParquetEncodingConfig());
+                    }
+                    metadata.add(keyMetadata);
+                } else {
+                    metadata.add(new TableColumnMetadata(Chars.toString(output.getColumnName(i)), output.getColumnType(i)));
+                }
             }
             final IntList symbolIndexes = frame.intListA;
             symbolIndexes.clear();
