@@ -214,7 +214,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             long durationNanos =
                     executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
             final CharSequence variables = executionContext.getRequestVariables();
-            log = LOG.errorW();
+            final boolean isInterruption = e instanceof CairoException ce && ce.isInterruption();
+            log = isInterruption && leakedReadersCount == 0 ? LOG.error() : LOG.errorW();
             if (leakedReadersCount > 0) {
                 log.$("brk");
                 executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
@@ -269,6 +270,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$(", jit=").$(jit)
                     .I$();
         }
+    }
+
+    @TestOnly
+    public static Log swapLogForTesting(Log log) {
+        final Log previous = LOG;
+        LOG = log;
+        return previous;
     }
 
     @Override
