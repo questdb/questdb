@@ -5116,6 +5116,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionRejectsArrayOfUnknownDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            assertQuery("SELECT $1 + ARRAY[1.0, 2.0] v FROM long_sequence(1) UNION ALL SELECT ARRAY[[1.0]] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(0, "array bind variables are not supported in UNION queries");
+            bindVariableService.clear();
+            assertQuery("SELECT ARRAY[[1.0]] v FROM long_sequence(1) UNION ALL SELECT $1 + ARRAY[1.0, 2.0] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(0, "array bind variables are not supported in UNION queries");
+        });
+    }
+
+    @Test
     public void testUnsupportedDimensionality() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (a DOUBLE[][][][][][][][][][][][][][][][])");
