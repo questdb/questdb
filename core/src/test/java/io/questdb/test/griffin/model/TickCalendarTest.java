@@ -1460,6 +1460,31 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testCompiledStaticDateOverflowUnitesBeforeTickCalendar() throws SqlException {
+        // A list that parses as its bind variable on each evaluation unites its intervals before the
+        // tick calendar cuts them. At a merge threshold of 8 and a limit of 16, the 24 seconds at the
+        // hours of 2025-01-27 exceed the limit alone. At +08:00, today, Monday 2025-01-27, runs from
+        // 16:00Z on Sunday to 15:59:59.999999Z and holds the seconds, from 16:00:00Z on Sunday to
+        // 15:00:00Z. The 21 seconds to 20:00:00 merge into today, after each 7th, which leaves the
+        // seconds at 21:00:00, 22:00:00 and 23:00:00, that is at 13:00:00, 14:00:00 and 15:00:00Z,
+        // apart from today, and the session of XNYS, from 14:30 to 21:00Z, holds the last of them.
+        // United, they leave the session the end of today, 15:59:59.999999Z, an hour longer; the bind
+        // variable keeps the end of that second instead, see bug-nested-slots-tick-calendar.
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        final String expression = "[$today, 2025-01-27T[00..23]:00:00]@+08:00#XNYS;1h";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            assertCompiledStaticDateParsesFirst(
+                    smallLimits,
+                    driver,
+                    expression,
+                    driver.parseFloorLiteral(MONDAY_NOON),
+                    expectedIntervals(timestampType, "2025-01-27T14:30", "2025-01-27T16:59:59.999999")
+            );
+        }
+    }
+
+    @Test
     public void testCompiledStaticDateOwnExtentsAtTheLimit() throws SqlException {
         // The compiled form counts the own extents of a fixed date alone, as it always has, so at a
         // limit of 16 a fixed date with 16 seconds keeps its IR, and one with 17 parses as its bind
