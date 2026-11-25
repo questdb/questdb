@@ -251,6 +251,14 @@ The fsyncs follow the commit mode: only SYNC and ADAPTIVE, the modes that
 promise to survive a power loss, make them. NOSYNC and ASYNC leave the files
 to the OS, as their commits do (`PostingIndexWriter.syncSealFile`).
 
+Under ADAPTIVE a seal of the commit being applied makes the `.pk` fsync alone
+once the table's next save point covers it
+(`TableWriter.isPostingSealCoveredBySavePoint`): that save point flushes the
+`.pv` and `.pc` files, and after a power loss before it recovery drops the
+entry, which is tagged above the save point's txn, and deletes them. An index
+build (ADD INDEX, a column type change, REINDEX, a restore) and a seal tagged
+with the committed txn keep every fsync.
+
 ### 5.2 Reader
 
 ```

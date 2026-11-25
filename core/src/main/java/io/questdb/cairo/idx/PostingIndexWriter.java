@@ -68,6 +68,7 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
+import java.util.function.BooleanSupplier;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
@@ -165,6 +166,7 @@ public class PostingIndexWriter implements IndexWriter {
     public static final java.util.concurrent.atomic.AtomicLong COVERING_COW_MIGRATE_COUNT = new java.util.concurrent.atomic.AtomicLong();
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
+    private static final BooleanSupplier SEAL_NOT_COVERED = () -> false;
     private final double alignedBitWidthThreshold;
     // v2 chain helper: owns the in-memory mirror of the chain header,
     // exposes append/extend/recovery primitives. Single instance per writer
@@ -279,6 +281,8 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isLastSealStreaming;
     private boolean isLastSidecarInfoHeaderWritten;
     private boolean isPoisoned;
+    // Asked before a seal waits for a value or cover file; see setNextTxnAtSeal(long, BooleanSupplier).
+    private BooleanSupplier isSealCoveredBySavePoint = SEAL_NOT_COVERED;
     private int keyCapacity;
     private int keyCount;
     // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
@@ -689,6 +693,7 @@ public class PostingIndexWriter implements IndexWriter {
                 releasePendingPurges();
                 pendingDiscardOldSealTxn = -1L;
                 pendingTxnAtSeal = -1;
+                isSealCoveredBySavePoint = SEAL_NOT_COVERED;
                 o3CtxUpcomingTxn = -1L;
                 // o3CtxName / o3CtxPartitionPath / o3CtxColumnNameTxn are
                 // intentionally NOT cleared here. of(path, name, txn, isInit)
@@ -727,7 +732,7 @@ public class PostingIndexWriter implements IndexWriter {
             // Skip the seal when the writer is poisoned: seal() would throw
             // via checkNotPoisoned() out of this best-effort cleanup. The
             // finally below still frees every resource either way.
-            this.pendingTxnAtSeal = 0L;
+            setNextTxnAtSeal(0L);
             if (!isPoisoned) {
                 seal();
             }
@@ -2190,7 +2195,13 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void setNextTxnAtSeal(long txnAtSeal) {
+        setNextTxnAtSeal(txnAtSeal, SEAL_NOT_COVERED);
+    }
+
+    @Override
+    public void setNextTxnAtSeal(long txnAtSeal, BooleanSupplier isCoveredBySavePoint) {
         this.pendingTxnAtSeal = txnAtSeal;
+        this.isSealCoveredBySavePoint = isCoveredBySavePoint;
     }
 
     @Override
@@ -6816,9 +6827,11 @@ public class PostingIndexWriter implements IndexWriter {
     // promises to survive a power loss. NOSYNC and ASYNC flush no commit and make no such promise, so a seal leaves
     // its files to the OS as their commits do. ADAPTIVE flushes although its commits do not: its recovery reads each
     // chain from the .pk to cut it back to the save point, and keeps the entries a seal stamps with the committed
-    // txn, so the files must reach the disk before the .pk that names them.
+    // txn, so the files must reach the disk before the .pk that names them. A seal that the owner's save point
+    // covers flushes the .pk alone: recovery drops its chain entry, so it never reads the other files.
     private void syncSealFile(MemoryMARW mem) {
-        if (mem != null && mem.isOpen() && CommitMode.isPowerLossDurable(indexCommitMode)) {
+        if (mem != null && mem.isOpen() && CommitMode.isPowerLossDurable(indexCommitMode)
+                && (mem == keyMem || !isSealCoveredBySavePoint.getAsBoolean())) {
             mem.sync(false);
         }
     }

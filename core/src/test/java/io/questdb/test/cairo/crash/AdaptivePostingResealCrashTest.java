@@ -37,6 +37,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -75,6 +77,8 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
+    // The rows of newAndOlderDaysSql().
+    private static final int NEW_AND_OLDER_DAYS_ROWS = 12;
     private static final int PASSES = 4;
     private static final int ROWS_PER_PASS = 10;
     private static final Pattern SEALED_FILE = Pattern.compile("s\\.(pv|pc\\d+)\\..*");
@@ -105,6 +109,83 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testKillsLeaveOnePostingGeneration() throws Exception {
         assertOnePostingGenerationAfterCrashes(false);
+    }
+
+    // A power loss at every durability operation of the apply of a commit that puts rows before the rows of the three
+    // days, which rewrites their partitions, and opens three more days, and of the save point after it. The save point
+    // before the commit names neither the rewritten directories nor the new ones, and the seals of the commit flush
+    // their key files alone. Recovery and the replay read every row through both indexes, and so does the table after
+    // the next save point.
+    @Test
+    public void testPowerLossAtEveryOpOfNewAndRewrittenPartitions() throws Exception {
+        setUpAdaptive();
+        runWithCrashFacade(() -> {
+            // the save point covers a seal only where it flushes the whole filesystem
+            crashFf.setSyncfsFileSystemWide(true);
+            int swept = 0;
+            for (int op = 1; ; op++) {
+                final String table = "n" + op;
+                final TableToken token = createThreeDayTable(table);
+                final String tableDir = Paths.get(root, token.getDirName()).toString();
+                markDurableBaseline();
+                try (
+                        PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                        O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+                ) {
+                    execute(threeDaySql(table, 1));
+                    drainWalQueue();
+                    runPurgeJobs(job, partitionPurge);
+                    fsyncTableDirs(tableDir);
+                    // the save point right before the swept commit
+                    savePointPass(table, 2);
+                    runPurgeJobs(job, partitionPurge);
+                    fsyncTableDirs(tableDir);
+                }
+                // The commit is in the WAL; the sweep covers the apply that seals and the save point after it.
+                execute(newAndOlderDaysSql(table));
+                final Set<Long> fds = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+                crashFf.armCrashAt(crashFf.durabilityOpCount() + op);
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
+                try {
+                    drainWalQueue();
+                } catch (CrashSimulationError ignore) {
+                    // the power loss
+                } finally {
+                    node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+                }
+                if (crashFf.isCrashArmed()) {
+                    // The apply made fewer operations: every one is swept.
+                    crashFf.armCrashAt(0);
+                    break;
+                }
+                swept++;
+                final String where = "power loss at op " + op;
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseCrashOrphanedWriters();
+                reclaimLingeringNonCacheFds(fds);
+                discardPurgeQueue();
+                recoverAfterCrash(new TableToken[]{token});
+                evictPurgeLogScoreboard();
+                Assert.assertFalse(where + ": recovery suspended the table", anyTableSuspended(token));
+                // The crashed commit is in the WAL, so recovery applies it again.
+                assertNewAndOlderDaysRowsThroughIndex(table, 2, where);
+                savePointPass(table, 3);
+                try (
+                        PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                        O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+                ) {
+                    runPurgeJobs(job, partitionPurge);
+                }
+                assertNewAndOlderDaysRowsThroughIndex(table, 3, where + ", after the next save point");
+                // A smaller database keeps the next power loss quick.
+                execute("DROP TABLE " + table);
+                drainWalQueue();
+                drainPurgeJob();
+            }
+            // the key file of the covering index in each of the six partitions, and the save point
+            Assert.assertTrue("operations swept: " + swept, swept > 6);
+        });
     }
 
     // A power loss at every durability operation of the apply of a pass that reseals two older partitions and the
@@ -193,6 +274,72 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 drainPurgeJob();
             }
             Assert.assertTrue("operations swept: " + swept + ", save point kept: " + savePointKept, swept - savePointKept > 3);
+        });
+    }
+
+    // A commit of a WAL writer that stays open waits for its group flush, and the apply runs ahead of it. The apply
+    // reseals the index of the three partitions in place and leaves the new value and cover files to the next save
+    // point, so the key files on disk name files that a power loss takes. Recovery cuts them back to the save point
+    // only when the WAL on disk holds a transaction after it, so the seals flush the sequencer log before any key
+    // file. After a power loss before the group flush, recovery replays the commit, and the commit after it takes
+    // the txn the power loss took back.
+    @Test
+    public void testPowerLossBeforeGroupFlushOfAppliedCommit() throws Exception {
+        setUpAdaptive();
+        // no group flush before the writer closes
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 600_000_000L);
+        runWithCrashFacade(() -> {
+            // the save point covers a seal only where it flushes the whole filesystem
+            crashFf.setSyncfsFileSystemWide(true);
+            final TableToken token = createThreeDayTable("w");
+            final String tableDir = Paths.get(root, token.getDirName()).toString();
+            try (
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+            ) {
+                execute(threeDaySql("w", 1));
+                drainWalQueue();
+                runPurgeJobs(job, partitionPurge);
+                savePointPass("w", 2);
+                runPurgeJobs(job, partitionPurge);
+                fsyncTableDirs(tableDir);
+            }
+            markDurableBaseline();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final WalWriter walWriter = engine.getWalWriter(token);
+            try {
+                appendThreeDayPass(walWriter, 3);
+                walWriter.commit();
+                Assert.assertTrue("the commit must wait for its group flush", tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
+                final int opsBefore = crashFf.durabilityOpCount();
+                drainWalQueue();
+                final List<String> ops = crashFf.durabilityOpLog().subList(opsBefore, crashFf.durabilityOpCount());
+                Assert.assertTrue("the seals must flush the sequencer log first: " + ops, ops.size() > 3 && ops.get(0).contains("/txn_seq/"));
+                for (int i = 0, n = ops.size(); i < n; i++) {
+                    Assert.assertTrue("the seals must flush the sequencer log and their key files alone: " + ops,
+                            ops.get(i).contains("/txn_seq/") || ops.get(i).endsWith(".pk"));
+                }
+                powerLossDroppingPending(walWriter);
+            } finally {
+                walWriter.close();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseCrashOrphanedWriters();
+            discardPurgeQueue();
+            recoverAfterCrash(new TableToken[]{token});
+            evictPurgeLogScoreboard();
+            Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
+            assertThreeDayRowsThroughIndex("w", 3);
+            savePointPass("w", 4);
+            try (
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+            ) {
+                runPurgeJobs(job, partitionPurge);
+            }
+            assertThreeDayRowsThroughIndex("w", 4);
+            assertOneGenerationPerPartitionAndColumn(tableDir, "power loss");
         });
     }
 
@@ -343,6 +490,18 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    // The rows of threeDaySql(table, pass), through a WAL writer that the caller holds.
+    private static void appendThreeDayPass(WalWriter walWriter, int pass) {
+        for (int i = 0; i < ROWS_PER_PASS; i++) {
+            final long v = (long) pass * ROWS_PER_PASS + i;
+            final TableWriter.Row row = walWriter.newRow(DAY1 + (i % 3) * DAY + 10L * HOUR + pass * 600_000_000L + i * 30_000_000L);
+            row.putSym(1, (char) ('a' + v % SYMBOLS));
+            row.putSym(2, (char) ('p' + v % 3));
+            row.putLong(3, v);
+            row.append();
+        }
+    }
+
     // Every partition directory holds the save point generations of each POSTING column of the three-day table.
     private static void assertOneGenerationPerPartitionAndColumn(String tableDir, String where) {
         final Map<String, List<String>> byPartitionAndColumn = new TreeMap<>();
@@ -464,6 +623,20 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         runPurgeJob(job);
     }
 
+    // One WAL commit of NEW_AND_OLDER_DAYS_ROWS rows over six days, of the values from 1,000: the three days of the
+    // three-day table at 05:00, before every row they hold, and the three days after them.
+    private static String newAndOlderDaysSql(String table) {
+        final StringBuilder sql = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
+        for (int i = 0; i < NEW_AND_OLDER_DAYS_ROWS; i++) {
+            final long v = 1_000 + i;
+            final long ts = DAY1 + (i % 6) * DAY + 5L * HOUR + i * 30_000_000L;
+            sql.append(i == 0 ? "" : ", ").append('(').append(ts).append("::timestamp, '")
+                    .append((char) ('a' + v % SYMBOLS)).append("', '").append((char) ('p' + v % 3)).append("', ")
+                    .append(v).append(')');
+        }
+        return sql.toString();
+    }
+
     // One WAL commit of ROWS_PER_PASS rows in day 1, from 10:00 + 10 minutes per pass, after every earlier row.
     private static String passSql(int pass) {
         final long step = HOUR / 60;
@@ -540,6 +713,32 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     .append(v).append(')');
         }
         return sql.toString();
+    }
+
+    // The count and sum of every symbol of both POSTING columns through their index, against the rows of passes 0 to
+    // lastPass of the three-day table and the rows of newAndOlderDaysSql().
+    private void assertNewAndOlderDaysRowsThroughIndex(String table, int lastPass, String where) throws Exception {
+        final long[] count = new long[SYMBOLS + 3];
+        final long[] sum = new long[SYMBOLS + 3];
+        for (int i = 0, n = (lastPass + 1) * ROWS_PER_PASS + NEW_AND_OLDER_DAYS_ROWS; i < n; i++) {
+            final long v = i < (lastPass + 1) * ROWS_PER_PASS ? i : 1_000 + i - (lastPass + 1) * ROWS_PER_PASS;
+            count[(int) (v % SYMBOLS)]++;
+            sum[(int) (v % SYMBOLS)] += v;
+            count[SYMBOLS + (int) (v % 3)]++;
+            sum[SYMBOLS + (int) (v % 3)] += v;
+        }
+        for (int k = 0; k < SYMBOLS + 3; k++) {
+            final String filter = k < SYMBOLS ? "s = '" + (char) ('a' + k) + "'" : "k = '" + (char) ('p' + k - SYMBOLS) + "'";
+            try {
+                assertQuery("SELECT count(), sum(v) FROM " + table + " WHERE " + filter)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tsum\n" + count[k] + "\t" + sum[k] + "\n");
+            } catch (AssertionError e) {
+                throw new AssertionError(where + ", " + filter + ": " + e.getMessage(), e);
+            }
+        }
     }
 
     // Three crashes, each after passes that reseal two older partitions and the active one in place, for a covering and

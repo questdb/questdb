@@ -167,6 +167,7 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -448,6 +449,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
+    private final BooleanSupplier postingSealSavePointCover = this::isPostingSealCoveredBySavePoint;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final FindVisitor removeSupersededParquetIndexFileRef = this::removeSupersededParquetIndexFile;
     private final Row row = new RowImpl();
@@ -624,6 +626,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long partitionPurgeOwedTxn = -1;
     private long partitionTimestampHi;
     private boolean performRecovery;
+    // The highest seqTxn this writer's own flush of the sequencer log covered, -1 before one; see
+    // isPostingSealCoveredBySavePoint(). Volatile: a seal on an O3 worker thread asks too.
+    private volatile long postingSealDurableSeqTxn = -1;
     private boolean processingQueue;
     // A writer of a WAL table at the database root publishes its committed txn to the table's tracker when it is
     // released; a staging writer under the COPY work directory has a _txn of its own and does not.
@@ -13013,6 +13018,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return !hasO3RowInLogicalPartition(logicalPartitionTimestamp);
     }
 
+    // Whether the next save point covers a POSTING seal of the commit in progress, so that the seal may leave its
+    // value and cover files to it. It does when this table takes save points and holds one, the save point flushes
+    // the whole filesystem, and the WAL on disk holds a transaction after the save point. After a power loss
+    // recovery then cuts every POSTING chain back to the save point and deletes the files of what it cut, also
+    // when the _txn on disk still equals the save point's.
+    private boolean isPostingSealCoveredBySavePoint() {
+        if (!enrolledAdaptive || !ff.isSyncfsFileSystemWide() || getFlushCommitMode() != CommitMode.ADAPTIVE) {
+            return false;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (tracker.getPinnedEpochTxn() < 0) {
+            return false;
+        }
+        final long savePointSeqTxn = tracker.getDurableEpochSeqTxn();
+        if (tracker.getLocalDurableSeqTxn() > savePointSeqTxn || postingSealDurableSeqTxn > savePointSeqTxn) {
+            return true;
+        }
+        if (tracker.getSeqTxn() <= savePointSeqTxn) {
+            return false;
+        }
+        // The transactions after the save point still wait for their group flush. One flush of the sequencer log
+        // stands in for the flushes of every seal until a save point passes what it covered. It leaves alone the
+        // frontier that commits are acknowledged from, and proves nothing once a failed flush has fenced that
+        // frontier: the kernel reports a lost page to one flush only.
+        final long durableSeqTxn = engine.getTableSequencerAPI().fdatasyncTxnLog(tableToken);
+        if (tracker.isDurableFrontierFenced()) {
+            return false;
+        }
+        postingSealDurableSeqTxn = durableSeqTxn;
+        return durableSeqTxn > savePointSeqTxn;
+    }
+
     private void learnWalBlockCopyRatios() {
         walBlockCopyRatioMerge = learnWalBlockCopyRatio(walBlockCopyRatioMerge, o3MergeTouchedRows.sum(), o3MergeCopiedRows.sum());
         walBlockCopyRatioRewrite = learnWalBlockCopyRatio(walBlockCopyRatioRewrite, o3RewriteTouchedRows.sum(), o3RewriteCopiedRows.sum());
@@ -21135,7 +21172,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // footer until rebuildSidecars() supersedes it),
                         // and recoveryDropAbandoned can drop it on a
                         // partial-publish distress.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L, postingSealSavePointCover);
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
                         indexer.mergeTentativeIntoActiveIfAny();
@@ -21191,7 +21228,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // distress. The matching purge is deferred until
                         // after txWriter.commit lands, so the old seal file
                         // remains available to T-pinned readers and recovery.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L, postingSealSavePointCover);
                         indexer.rebuildSidecars();
                     } finally {
                         // Publish staged seal-purge entries even when the reseal
@@ -21225,7 +21262,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the
                         // covering branch above. See comment there.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L, postingSealSavePointCover);
                         indexer.mergeTentativeIntoActiveIfAny();
                         if (canSkipRebuild) {
                             // See pure-append fast-path comment in the covering branch above.
@@ -23904,6 +23941,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     long getPartitionSizeByRawIndex(int index) {
         return txWriter.getPartitionSizeByRawIndex(index);
+    }
+
+    // For a POSTING seal of the commit in progress that another class stamps; see isPostingSealCoveredBySavePoint().
+    BooleanSupplier getPostingSealSavePointCover() {
+        return postingSealSavePointCover;
     }
 
     TxReader getTxReader() {
