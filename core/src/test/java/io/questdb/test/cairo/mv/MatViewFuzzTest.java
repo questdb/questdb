@@ -2650,7 +2650,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(OPS_DAY_COUNT, isPeriodView);
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         createOperationsFuzzBase(timestampType);
-        final ObjList<String> sqlColumns = generator.initView(rnd);
+        // a third of the views take their columns from a column list that differs from the SQL's
+        final ObjList<String> sqlColumns = rnd.nextInt(3) == 0 ? generator.initViewWithColumnList(rnd) : generator.initView(rnd);
         final MatViewFuzzOracle oracle = new MatViewFuzzOracle(OPS_DAY_COUNT, generator.getViewColumns(), isPeriodView);
         // rows in every day, but the gap days of a period view
         for (int day = 0; day < OPS_DAY_COUNT; day++) {
@@ -2659,8 +2660,21 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 LOG.info().$("fuzz: gap day ").$(day).$();
             }
         }
-        LOG.info().$("fuzz: view SQL ").$(MatViewFuzzOpGenerator.viewSql(sqlColumns)).$(" [refresh=").$(viewRefresh).I$();
-        execute("CREATE MATERIALIZED VIEW mv " + (isPeriodView ? "REFRESH " + viewRefresh + " PERIOD (LENGTH 1d) " : "")
+        final StringSink columnList = new StringSink();
+        if (generator.isCreatedWithColumnList()) {
+            final ObjList<String> viewColumns = generator.getViewColumns();
+            final ObjList<String> viewColumnTypes = generator.getViewColumnTypes();
+            columnList.put('(');
+            for (int i = 0, n = viewColumns.size(); i < n; i++) {
+                final String name = viewColumns.getQuick(i);
+                columnList.put(i > 0 ? ", " : "").put(name).put(' ')
+                        .put(MatViewFuzzOpGenerator.TS.equals(name) ? timestampType : viewColumnTypes.getQuick(i));
+            }
+            columnList.put(") ");
+        }
+        LOG.info().$("fuzz: view SQL ").$(MatViewFuzzOpGenerator.viewSql(sqlColumns)).$(" [refresh=").$(viewRefresh)
+                .$(", columns=").$(columnList).I$();
+        execute("CREATE MATERIALIZED VIEW mv " + columnList + (isPeriodView ? "REFRESH " + viewRefresh + " PERIOD (LENGTH 1d) " : "")
                 + "AS (" + MatViewFuzzOpGenerator.viewSql(sqlColumns) + ") PARTITION BY DAY");
         if (isTimerView) {
             // the first EVERY firing builds the view

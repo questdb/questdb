@@ -130,6 +130,76 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     private static final int STEPS_PER_ROUND = 60;
 
     @Test
+    public void testColumnListShapes() {
+        // The column lists of the views that MatViewFuzzTest#testViewAndBaseOperations() creates with one, see
+        // MatViewFuzzOpGenerator.initViewWithColumnList(): a list column the SQL does not produce, a SQL column the list
+        // lacks, the shared columns in another order than the SQL's, a catalogue column of another type than its
+        // aggregate's, and the designated timestamp past the first column. Each list holds ts and sym, which the fuzz
+        // keys the view's rows by, and gives a catalogue column only a type its aggregate converts to.
+        final Rnd rnd = new Rnd(42, 42);
+        int unmapped = 0;
+        int ignored = 0;
+        int reordered = 0;
+        int retyped = 0;
+        int timestampNotFirst = 0;
+        for (int round = 0; round < 200; round++) {
+            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, false);
+            final ObjList<String> sqlColumns = generator.initViewWithColumnList(rnd);
+            Assert.assertTrue(generator.isCreatedWithColumnList());
+            final ObjList<String> viewColumns = generator.getViewColumns();
+            final ObjList<String> viewColumnTypes = generator.getViewColumnTypes();
+            Assert.assertEquals(viewColumns.size(), viewColumnTypes.size());
+            Assert.assertTrue(viewColumns.indexOf(MatViewFuzzOpGenerator.TS) > -1);
+            Assert.assertTrue(viewColumns.indexOf(MatViewFuzzOpGenerator.SYM) > -1);
+            boolean isUnmapped = false;
+            boolean isRetyped = false;
+            final ObjList<String> shared = new ObjList<>();
+            for (int i = 0, n = viewColumns.size(); i < n; i++) {
+                final String name = viewColumns.getQuick(i);
+                final int catalogueIndex = MatViewFuzzOpGenerator.catalogueIndex(name);
+                if (catalogueIndex > -1) {
+                    final String[] types = MatViewFuzzOpGenerator.CATALOGUE_VIEW_TYPES[catalogueIndex];
+                    boolean isConvertible = false;
+                    for (String type : types) {
+                        isConvertible |= type.equals(viewColumnTypes.getQuick(i));
+                    }
+                    Assert.assertTrue(name + ' ' + viewColumnTypes.getQuick(i), isConvertible);
+                    isRetyped |= !types[0].equals(viewColumnTypes.getQuick(i));
+                }
+                if (sqlColumns.indexOf(name) < 0) {
+                    isUnmapped = true;
+                } else {
+                    shared.add(name);
+                }
+            }
+            boolean isIgnored = false;
+            final ObjList<String> sharedInSqlOrder = new ObjList<>();
+            for (int i = 0, n = sqlColumns.size(); i < n; i++) {
+                final String name = sqlColumns.getQuick(i);
+                if (viewColumns.indexOf(name) < 0) {
+                    isIgnored = true;
+                } else {
+                    sharedInSqlOrder.add(name);
+                }
+            }
+            unmapped += isUnmapped ? 1 : 0;
+            ignored += isIgnored ? 1 : 0;
+            retyped += isRetyped ? 1 : 0;
+            reordered += !shared.equals(sharedInSqlOrder) ? 1 : 0;
+            timestampNotFirst += viewColumns.indexOf(MatViewFuzzOpGenerator.TS) > 0 ? 1 : 0;
+        }
+        Assert.assertTrue("unmapped: " + unmapped, unmapped > 0);
+        Assert.assertTrue("ignored: " + ignored, ignored > 0);
+        Assert.assertTrue("reordered: " + reordered, reordered > 0);
+        Assert.assertTrue("retyped: " + retyped, retyped > 0);
+        Assert.assertTrue("timestamp not first: " + timestampNotFirst, timestampNotFirst > 0);
+        // a view that initView() creates takes the SQL's columns
+        final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, false);
+        Assert.assertEquals(generator.initView(rnd), generator.getViewColumns());
+        Assert.assertFalse(generator.isCreatedWithColumnList());
+    }
+
+    @Test
     public void testEveryOperationAndShape() {
         final Rnd rnd = new Rnd(42, 42);
         final int[] kindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];

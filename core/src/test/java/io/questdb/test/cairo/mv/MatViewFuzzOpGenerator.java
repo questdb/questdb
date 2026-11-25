@@ -209,6 +209,8 @@ public final class MatViewFuzzOpGenerator {
     private String expireClause;
     // the bare-name round's view SQL, one of BARE_NAME_SQL_*
     private int bareNameSql = BARE_NAME_SQL_BARE;
+    // the view was created with a column list, see initViewWithColumnList()
+    private boolean isCreatedWithColumnList;
     // the bare-name round's base has the column count, once the WAL applies the changes drawn so far
     private boolean hasBaseCountColumn;
     // the view dropped a column, whose slot the view's table keeps
@@ -485,8 +487,51 @@ public final class MatViewFuzzOpGenerator {
         return sqlColumns;
     }
 
+    // The view's first SQL, as initView() draws it, and the column list CREATE gives the view instead of the SQL's
+    // columns: ts and sym, which the fuzz keys the view's rows by, most of the SQL's catalogue columns, some catalogue
+    // columns the SQL lacks and some extra columns, which stay NULL, each catalogue column with any type its name takes,
+    // all in any order.
+    public ObjList<String> initViewWithColumnList(Rnd rnd) {
+        initView(rnd);
+        viewColumns.clear();
+        viewColumnTypes.clear();
+        viewColumns.add(TS);
+        viewColumnTypes.add("TIMESTAMP");
+        viewColumns.add(SYM);
+        viewColumnTypes.add("SYMBOL");
+        for (int i = 0; i < CATALOGUE_NAMES.length; i++) {
+            final String name = CATALOGUE_NAMES[i];
+            if (sqlColumns.indexOf(name) > -1 ? rnd.nextInt(4) > 0 : rnd.nextInt(3) == 0) {
+                final String[] types = CATALOGUE_VIEW_TYPES[i];
+                viewColumns.add(name);
+                viewColumnTypes.add(types[rnd.nextInt(types.length)]);
+            }
+        }
+        for (int i = 0; i < EXTRA_NAMES.length; i++) {
+            if (rnd.nextInt(3) == 0) {
+                viewColumns.add(EXTRA_NAMES[i]);
+                viewColumnTypes.add(EXTRA_TYPES[i]);
+            }
+        }
+        for (int i = viewColumns.size() - 1; i > 0; i--) {
+            final int j = rnd.nextInt(i + 1);
+            final String name = viewColumns.getQuick(i);
+            viewColumns.setQuick(i, viewColumns.getQuick(j));
+            viewColumns.setQuick(j, name);
+            final String type = viewColumnTypes.getQuick(i);
+            viewColumnTypes.setQuick(i, viewColumnTypes.getQuick(j));
+            viewColumnTypes.setQuick(j, type);
+        }
+        isCreatedWithColumnList = true;
+        return sqlColumns;
+    }
+
     public boolean hasBaseCountColumn() {
         return hasBaseCountColumn;
+    }
+
+    public boolean isCreatedWithColumnList() {
+        return isCreatedWithColumnList;
     }
 
     public boolean isAttachable(int day) {
