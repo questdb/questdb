@@ -13381,6 +13381,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
+                        // the view compiler tells a lock from other errors by the flag
+                        Assert.assertTrue(e.isTableLocked());
+                        Assert.assertFalse(e.isTableBusy());
+                        Assert.assertEquals(0, e.getErrorCode());
                     }
                 } finally {
                     try (Path path = new Path()) {
