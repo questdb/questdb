@@ -55,6 +55,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
+    // IntObjHashMap and LongObjHashMap mark a free slot with -1 and cannot hold it as a key,
+    // so the int, long and timestamp pickers keep the branch for this key outside the map
+    private static final int NO_ENTRY_KEY = -1;
 
     @Override
     public String getSignature() {
@@ -427,9 +430,18 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function noEntryKeyBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final int key = intMethod.getKey(fun, null);
+            if (key == NO_ENTRY_KEY) {
+                if (noEntryKeyBranch != null) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                noEntryKeyBranch = args.getQuick(i + 1);
+                argsToPoke.add(noEntryKeyBranch);
+                continue;
+            }
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -439,12 +451,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
+        final Function noEntryKeyB = noEntryKeyBranch != null ? noEntryKeyBranch : elseB;
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(intMethod.getKey(keyFunction, record));
+            final int key = intMethod.getKey(keyFunction, record);
+            final int index = map.keyIndex(key);
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
-            return elseB;
+            return key == NO_ENTRY_KEY ? noEntryKeyB : elseB;
         };
 
         argsToPoke.add(elseB);
@@ -465,9 +479,18 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function noEntryKeyBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final long key = longMethod.getKey(fun, null);
+            if (key == NO_ENTRY_KEY) {
+                if (noEntryKeyBranch != null) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                noEntryKeyBranch = args.getQuick(i + 1);
+                argsToPoke.add(noEntryKeyBranch);
+                continue;
+            }
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -477,12 +500,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
+        final Function noEntryKeyB = noEntryKeyBranch != null ? noEntryKeyBranch : elseB;
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(longMethod.getKey(keyFunction, record));
+            final long key = longMethod.getKey(keyFunction, record);
+            final int index = map.keyIndex(key);
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
-            return elseB;
+            return key == NO_ENTRY_KEY ? noEntryKeyB : elseB;
         };
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
@@ -579,10 +604,19 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>();
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         long key;
+        Function noEntryKeyBranch = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             int funType = fun.getType();
             key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
+            if (key == NO_ENTRY_KEY) {
+                if (noEntryKeyBranch != null) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                noEntryKeyBranch = args.getQuick(i + 1);
+                argsToPoke.add(noEntryKeyBranch);
+                continue;
+            }
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -592,12 +626,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
+        final Function noEntryKeyB = noEntryKeyBranch != null ? noEntryKeyBranch : elseB;
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(keyFunction.getTimestamp(record));
+            final long timestamp = keyFunction.getTimestamp(record);
+            final int index = map.keyIndex(timestamp);
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
-            return elseB;
+            return timestamp == NO_ENTRY_KEY ? noEntryKeyB : elseB;
         };
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
