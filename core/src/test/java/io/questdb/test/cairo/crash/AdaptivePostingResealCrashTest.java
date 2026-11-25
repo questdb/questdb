@@ -37,8 +37,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -55,12 +57,14 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -77,6 +81,8 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
     private static final String EPOCH_METRIC = "questdb_wal_adaptive_epoch_advances_total";
     private static final long HOUR = 3_600_000_000L;
+    // A file of a POSTING index of a one-letter column: group 1 is its kind, pk, pv, pci or pcN.
+    private static final Pattern INDEX_FILE = Pattern.compile("[a-z]\\.(pk|pv|pci|pc\\d+)(\\..*)?");
     // The rows of newAndOlderDaysSql().
     private static final int NEW_AND_OLDER_DAYS_ROWS = 12;
     private static final int PASSES = 4;
@@ -85,6 +91,54 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // The sealed posting files of the covering column s and the plain column k of the three-day table.
     private static final Pattern SEALED_FILE_S_K = Pattern.compile("[sk]\\.(pv|pc\\d+)\\..*");
     private static final int SYMBOLS = 4;
+
+    // ALTER TABLE SQUASH PARTITIONS after two save points past the split, which pin nothing past it: the squash appends
+    // the split to the first day in the directory the save point names, and seals the index there.
+    @Test
+    public void testAlterSquashInPlacePowerLossAtEveryOp() throws Exception {
+        setUpAdaptive();
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        final long[] nameTxn = new long[1];
+        sweepHousekeepingSeal(
+                (table, rows) -> {
+                    createSplitTable(table, rows);
+                    insertSplitTableRow(table, rows, DAY1 + DAY + HOUR);
+                    applyWithSavePoint();
+                    nameTxn[0] = firstPartitionNameTxn(table);
+                },
+                (table, rows) -> execute("ALTER TABLE " + table + " SQUASH PARTITIONS"),
+                (table, rows) -> {
+                    assertPartitionRows(table, "402\n1\n");
+                    Assert.assertEquals("the squash must append in place", nameTxn[0], firstPartitionNameTxn(table));
+                }
+        );
+    }
+
+    // The squash a commit runs once a day holds more splits than cairo.o3.partition.max.splits, after two save points
+    // past the split: it appends the split to the first day in place.
+    @Test
+    public void testCommitTimeSquashPowerLossAtEveryOp() throws Exception {
+        setUpAdaptive();
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+        // the split stays hot for the commit after it
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 2);
+        final long[] nameTxn = new long[1];
+        sweepHousekeepingSeal(
+                (table, rows) -> {
+                    createSplitTable(table, rows);
+                    insertSplitTableRow(table, rows, DAY1 + DAY + HOUR);
+                    applyWithSavePoint();
+                    assertPartitionRows(table, "400\n2\n1\n");
+                    nameTxn[0] = firstPartitionNameTxn(table);
+                },
+                (table, rows) -> insertSplitTableRow(table, rows, DAY1 + DAY + 2 * HOUR),
+                (table, rows) -> {
+                    assertPartitionRows(table, "402\n2\n");
+                    Assert.assertEquals("the squash must append in place", nameTxn[0], firstPartitionNameTxn(table));
+                }
+        );
+    }
 
     @Test
     public void testCrashAndReopenClosesPurgeLogWriterOpenedByWriterClose() throws Exception {
@@ -144,7 +198,8 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 // The commit is in the WAL; the sweep covers the apply that seals and the save point after it.
                 execute(newAndOlderDaysSql(table));
                 final Set<Long> fds = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
-                crashFf.armCrashAt(crashFf.durabilityOpCount() + op);
+                final int opsBefore = crashFf.durabilityOpCount();
+                crashFf.armCrashAt(opsBefore + op);
                 node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
                 try {
                     drainWalQueue();
@@ -156,6 +211,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 if (crashFf.isCrashArmed()) {
                     // The apply made fewer operations: every one is swept.
                     crashFf.armCrashAt(0);
+                    // The seals of the six partitions flush their key files alone, before the save point flushes the
+                    // open indexers of the last one.
+                    final List<String> ops = crashFf.durabilityOpLog().subList(opsBefore, crashFf.durabilityOpCount());
+                    final List<String> indexFlushes = indexFileFlushes(ops);
+                    Assert.assertEquals("index files flushed: " + ops, Collections.nCopies(6, "pk"), indexFlushes.subList(0, Math.min(6, indexFlushes.size())));
                     break;
                 }
                 swept++;
@@ -432,6 +492,38 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         assertRestartClosesPurgeLogWriter(token -> simulateRestart(new TableToken[]{token}));
     }
 
+    // A replace commit that empties a split cannot drop it while a reader may hold its parent, so it first moves the
+    // parent's last row into a fresh split, and seals the index there.
+    @Test
+    public void testSplitRemovalPowerLossAtEveryOp() throws Exception {
+        setUpAdaptive();
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        sweepHousekeepingSeal(
+                AdaptivePostingResealCrashTest::createSplitTable,
+                (table, rows) -> {
+                    final TableToken token = engine.verifyTableName(table);
+                    final long splitTimestamp;
+                    try (TableReader reader = getReader(token)) {
+                        splitTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+                    }
+                    // replaces every row of the split with one row in the next day
+                    rows.removeIf(row -> row[0] >= splitTimestamp);
+                    final long ts = DAY1 + DAY + HOUR;
+                    final long v = 1_000;
+                    rows.add(new long[]{ts, v});
+                    try (WalWriter walWriter = engine.getWalWriter(token)) {
+                        final TableWriter.Row row = walWriter.newRow(ts);
+                        row.putSym(1, "k" + v % 3);
+                        row.putSym(2, "j" + v % 4);
+                        row.putLong(3, v);
+                        row.append();
+                        walWriter.commitWithParams(splitTimestamp, Long.MAX_VALUE, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+                    }
+                },
+                (table, rows) -> assertPartitionRows(table, "399\n1\n1\n")
+        );
+    }
+
     // An adaptive kill after in-place reseals of both days. The next start runs in NOSYNC: it recovers, opens and closes
     // the writer, and dies before the WAL apply commits anything. One more start follows. Every start reads the
     // save point's rows through the index, and the apply then reads every row.
@@ -502,6 +594,15 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    private static void applyWithSavePoint() {
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
+        try {
+            drainWalQueue();
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+        }
+    }
+
     // Every partition directory holds the save point generations of each POSTING column of the three-day table.
     private static void assertOneGenerationPerPartitionAndColumn(String tableDir, String where) {
         final Map<String, List<String>> byPartitionAndColumn = new TreeMap<>();
@@ -546,6 +647,27 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         Assert.assertTrue(where + ": more than two .pv in " + key + ": " + names, sealTxns.size() <= 2);
         for (String name : names) {
             Assert.assertTrue(where + ": a cover of another generation in " + key + ": " + names, sealTxns.contains(name.substring(name.lastIndexOf('.'))));
+        }
+    }
+
+    // A table with a covering POSTING index on k and a plain one on j, and 400 rows in its first day, one second apart.
+    // The first apply takes a save point. Then a row at 20:00, and one at 19:00 that splits the day, whose apply takes
+    // a save point.
+    private static void createSplitTable(String table, List<long[]> rows) throws Exception {
+        execute("CREATE TABLE " + table + " (ts TIMESTAMP, k SYMBOL INDEX TYPE POSTING INCLUDE (v), j SYMBOL INDEX TYPE POSTING, "
+                + "v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final StringBuilder sql = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
+        for (int i = 1; i <= 400; i++) {
+            sql.append(i == 1 ? "" : ", ").append(splitTableRow(rows, DAY1 + i * 1_000_000L));
+        }
+        execute(sql);
+        drainWalQueue();
+        insertSplitTableRow(table, rows, DAY1 + 20 * HOUR);
+        drainWalQueue();
+        insertSplitTableRow(table, rows, DAY1 + 19 * HOUR);
+        applyWithSavePoint();
+        try (TableReader reader = getReader(engine.verifyTableName(table))) {
+            Assert.assertEquals("the first day must split", 2, reader.getTxFile().getPartitionCount());
         }
     }
 
@@ -596,6 +718,12 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         Assert.assertTrue("the purge queue is full", published > 0);
     }
 
+    private static long firstPartitionNameTxn(String table) {
+        try (TableReader reader = getReader(engine.verifyTableName(table))) {
+            return reader.getTxFile().getPartitionNameTxn(0);
+        }
+    }
+
     // Makes every removal so far durable, as a journal commit before a power loss would.
     private static void fsyncTableDirs(String tableDir) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -615,6 +743,19 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             path.of(engine.getConfiguration().getDbRoot()).concat(token);
             return DurableEpochManifest.exists(engine.getConfiguration().getFilesFacade(), path, path.size());
         }
+    }
+
+    // The kinds of the index files the durability operations flush before they flush the filesystem, in order.
+    private static List<String> indexFileFlushes(List<String> ops) {
+        final List<String> kinds = new ArrayList<>();
+        for (int i = 0, n = ops.size(); i < n && !ops.get(i).contains(" syncfs "); i++) {
+            final String op = ops.get(i);
+            final Matcher m = INDEX_FILE.matcher(op.substring(Math.max(op.lastIndexOf('/'), op.lastIndexOf('\\')) + 1));
+            if (m.matches()) {
+                kinds.add(m.group(1));
+            }
+        }
+        return kinds;
     }
 
     private static void insertAndApply(String table, String values, PostingSealPurgeJob job) throws Exception {
@@ -648,6 +789,10 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     .append((char) ('a' + v % SYMBOLS)).append("', ").append(v).append(')');
         }
         return sql.toString();
+    }
+
+    private static void insertSplitTableRow(String table, List<long[]> rows, long ts) throws Exception {
+        execute("INSERT INTO " + table + " VALUES " + splitTableRow(rows, ts));
     }
 
     // A row of symbol v % SYMBOLS and value v.
@@ -699,6 +844,13 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         // Retry a held purge on every job run, so the job would remove the file as soon as nothing held it.
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
+    }
+
+    // Adds the next row of a split table at `ts` to `rows`: row n holds k = 'k' || n % 3, j = 'j' || n % 4 and v = n.
+    private static String splitTableRow(List<long[]> rows, long ts) {
+        final long v = rows.size() + 1;
+        rows.add(new long[]{ts, v});
+        return "(" + ts + "::TIMESTAMP, 'k" + v % 3 + "', 'j" + v % 4 + "', " + v + ")";
     }
 
     // One WAL commit of ROWS_PER_PASS rows over three days, each after every earlier row of its day: with DEDUP, the two
@@ -855,6 +1007,14 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    private void assertPartitionRows(String table, String expected) throws Exception {
+        assertQuery("SELECT numRows FROM table_partitions('" + table + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("numRows\n" + expected);
+    }
+
     // With the purge queue full, a table writer's close writes its ready purge tasks to sys.posting_seal_purge_log
     // itself, so closing the writers before the rollback opens the log table's writer. The restart must close that
     // writer too, or crash() refuses to roll back under its live mappings.
@@ -922,6 +1082,40 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\tsum\n" + count[k] + "\t" + sum[k] + "\n");
+        }
+    }
+
+    // The count and sum of v of every key of a split table through both indexes, against `rows`, and the rows of every
+    // key through both indexes, the covered ones for k, against a scan.
+    private void assertSplitTableRowsThroughIndex(String table, List<long[]> rows, String where) throws Exception {
+        try {
+            // the keys k0 to k2, then j0 to j3
+            for (int key = 0; key < 7; key++) {
+                final int mod = key < 3 ? 3 : 4;
+                final int value = key < 3 ? key : key - 3;
+                final String filter = (key < 3 ? "k = 'k" : "j = 'j") + value + "'";
+                long count = 0;
+                long sum = 0;
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    if (rows.get(i)[1] % mod == value) {
+                        count++;
+                        sum += rows.get(i)[1];
+                    }
+                }
+                assertQuery("SELECT count(), sum(v) FROM " + table + " WHERE " + filter)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tsum\n" + count + "\t" + (count == 0 ? "null" : sum) + "\n");
+                // k serves ts and v out of its covering index
+                final String columns = key < 3 ? "ts, v" : "*";
+                assertSqlCursors(
+                        "SELECT " + columns + " FROM " + table + " WHERE " + filter.replace(" =", "::STRING ="),
+                        "SELECT " + columns + " FROM " + table + " WHERE " + filter
+                );
+            }
+        } catch (AssertionError | SqlException e) {
+            throw new AssertionError(where + ": " + e.getMessage(), e);
         }
     }
 
@@ -1120,5 +1314,95 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private void setCommitMode(String mode) {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
         Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
+    }
+
+    // A power loss at every durability operation of the apply of the WAL transaction `write` logs, which squashes or
+    // removes a split, and of the save point after it up to its flush of the filesystem, after which every file the
+    // apply wrote is flushed. The seals of the apply flush their key files alone. After recovery and replay, and after
+    // a late row that reseals the recovered index and takes the next save point, every row reads back through both
+    // indexes.
+    private void sweepHousekeepingSeal(SplitTableStep setUp, SplitTableStep write, SplitTableStep done) throws Exception {
+        runWithCrashFacade(() -> {
+            // the save point covers a seal only where it flushes the whole filesystem
+            crashFf.setSyncfsFileSystemWide(true);
+            int op = 1;
+            while (sweepHousekeepingSealAt(setUp, write, done, op)) {
+                op++;
+            }
+            Assert.assertTrue("operations swept: " + op, op > 4);
+        });
+    }
+
+    // The power loss of sweepHousekeepingSeal() at the op-th operation. Returns false when it came at the save point's
+    // flush of the filesystem.
+    private boolean sweepHousekeepingSealAt(SplitTableStep setUp, SplitTableStep write, SplitTableStep done, int op) throws Exception {
+        final String table = "h" + op;
+        final List<long[]> rows = new ArrayList<>();
+        setUp.run(table, rows);
+        final TableToken token = engine.verifyTableName(table);
+        try (
+                PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                O3PartitionPurgeJob partitionPurge = new O3PartitionPurgeJob(engine, 1)
+        ) {
+            runPurgeJobs(job, partitionPurge);
+        }
+        fsyncTableDirs(Paths.get(root, token.getDirName()).toString());
+        markDurableBaseline();
+        // The WAL transaction is in the WAL; the sweep covers its apply and the save point after it.
+        write.run(table, rows);
+        final Set<Long> fds = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+        final int opsBefore = crashFf.durabilityOpCount();
+        int crashOp = opsBefore + op;
+        crashFf.armCrashAt(crashOp);
+        try {
+            drainWalQueue();
+        } catch (CrashSimulationError ignore) {
+            // the power loss
+        }
+        if (crashFf.isCrashArmed()) {
+            // The apply made fewer operations: the power loss comes in the save point.
+            final int applyOps = crashFf.durabilityOpCount() - opsBefore;
+            crashFf.armCrashAt(0);
+            final List<String> ops = crashFf.durabilityOpLog().subList(opsBefore, opsBefore + applyOps);
+            final List<String> indexFlushes = indexFileFlushes(ops);
+            Assert.assertFalse("no index file flushed: " + ops, indexFlushes.isEmpty());
+            Assert.assertEquals("index files flushed: " + ops, Collections.nCopies(indexFlushes.size(), "pk"), indexFlushes);
+            done.run(table, rows);
+            assertQuery("SELECT ts, v FROM " + table + " WHERE k = 'k0'").noLeakCheck().assertsPlanContaining("CoveringIndex on: k");
+            assertQuery("SELECT * FROM " + table + " WHERE j = 'j0'").noLeakCheck().assertsPlanContaining("Index forward scan on: j");
+            insertSplitTableRow(table, rows, DAY1 + DAY + 3 * HOUR);
+            crashOp = crashFf.durabilityOpCount() + op - applyOps;
+            crashFf.armCrashAt(crashOp);
+            try {
+                applyWithSavePoint();
+            } catch (CrashSimulationError ignore) {
+                // the power loss
+            }
+            Assert.assertFalse("the save point did not flush the filesystem", crashFf.isCrashArmed());
+        }
+        final String where = "power loss at " + crashFf.durabilityOpLog().get(crashOp - 1);
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseCrashOrphanedWriters();
+        reclaimLingeringNonCacheFds(fds);
+        discardPurgeQueue();
+        recoverAfterCrash(new TableToken[]{token});
+        evictPurgeLogScoreboard();
+        Assert.assertFalse(where + ": recovery suspended the table", anyTableSuspended(token));
+        assertSplitTableRowsThroughIndex(table, rows, where);
+        insertSplitTableRow(table, rows, DAY1 + 500_000L);
+        applyWithSavePoint();
+        assertSplitTableRowsThroughIndex(table, rows, where + ", after a late row and the next save point");
+        // A smaller database keeps the next power loss quick.
+        execute("DROP TABLE " + table);
+        drainWalQueue();
+        drainPurgeJob();
+        return !where.contains(" syncfs ");
+    }
+
+    @FunctionalInterface
+    private interface SplitTableStep {
+        // `rows` holds {ts, v} of every row of the table
+        void run(String table, List<long[]> rows) throws Exception;
     }
 }
