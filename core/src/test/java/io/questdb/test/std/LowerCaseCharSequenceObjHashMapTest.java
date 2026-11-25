@@ -49,6 +49,13 @@ public class LowerCaseCharSequenceObjHashMapTest {
         final TableToken token = new TableToken("KEY_42", "key_42~1", null, 1, false, false, false);
         Assert.assertEquals(Chars.lowerCaseHashCode("KEY_42"), token.getTableNameLowerCaseHashCode());
         Assert.assertEquals(Integer.valueOf(42), map.valueAt(map.keyIndex(token.getTableName(), token.getTableNameLowerCaseHashCode())));
+        // a name with letters outside ASCII that change case hashes as the name spelled in lower case, which a hash
+        // that folds only ASCII letters gets wrong; U+0130 and U+212A, the dotted capital I and the Kelvin sign, have
+        // the ASCII 'i' and 'k' as their lower case
+        final TableToken nonAsciiToken = new TableToken("ÉŁΩЖ_\u0130\u212A", "éłωж_ik~2", null, 2, false, false, false);
+        Assert.assertEquals(Chars.lowerCaseHashCode("éłωж_ik"), nonAsciiToken.getTableNameLowerCaseHashCode());
+        map.put("éłωж_ik", 100);
+        Assert.assertEquals(Integer.valueOf(100), map.valueAt(map.keyIndex(nonAsciiToken.getTableName(), nonAsciiToken.getTableNameLowerCaseHashCode())));
         // present and absent keys, in any case, land where keyIndex(key) lands
         for (int i = 0; i < 200; i++) {
             for (String key : new String[]{"key_" + i, "KEY_" + i, "Key_" + i}) {
