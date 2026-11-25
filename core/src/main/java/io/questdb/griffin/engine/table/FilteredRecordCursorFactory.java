@@ -115,6 +115,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean supportsFilterStealing() {
         return filterExpr != null;
     }
