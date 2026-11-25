@@ -45,6 +45,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -135,6 +136,21 @@ public class Mig1002Test extends AbstractCairoTest {
     @Test
     public void testEngineMigrationSkipsTableOfNewerRelease() throws Exception {
         assertEngineMigrationOnStorageVersion(ColumnType.MAX_STORAGE_VERSION + 1, false);
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithEmptyColumnVersionFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.COLUMN_VERSION_FILE_NAME, 0);
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithEmptyTxnFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.TXN_FILE_NAME, 0);
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithUnreadableTxnFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.TXN_FILE_NAME, -1);
     }
 
     @Test
@@ -693,6 +709,51 @@ public class Mig1002Test extends AbstractCairoTest {
             // Back to a version this release opens, to read the flag.
             writeStorageVersion(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION);
             Assert.assertEquals(isMigrated, containsSymbolNullValue("t", "s"));
+        });
+    }
+
+    private void assertEngineMigrationSkipsDamagedTable(String fileName, long length) throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithStaleNullFlag();
+            execute("CREATE TABLE damaged (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO damaged VALUES ('2024-01-05T00:00:00Z', 1)");
+            execute("ALTER TABLE damaged ADD COLUMN s SYMBOL");
+            execute("INSERT INTO damaged VALUES ('2024-01-06T00:00:00Z', 2, 'A')");
+            unsetSymbolNullFlag("damaged", "s");
+            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            engine.clear();
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("damaged")).concat(fileName)) {
+                final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                Assert.assertTrue(fd > -1);
+                try {
+                    if (length > -1) {
+                        Assert.assertTrue(ff.truncate(fd, length));
+                    } else {
+                        final long bodyLength = ff.length(fd) - TableUtils.TX_BASE_HEADER_SIZE;
+                        Assert.assertTrue(bodyLength > 0);
+                        final long garbage = Unsafe.malloc(bodyLength, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            Vect.memset(garbage, bodyLength, 0x5A);
+                            Assert.assertEquals(bodyLength, ff.write(fd, garbage, bodyLength, TableUtils.TX_BASE_HEADER_SIZE));
+                        } finally {
+                            Unsafe.free(garbage, bodyLength, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            for (int i = 0; i < 2; i++) {
+                EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+                Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());
+                Assert.assertTrue(containsSymbolNullValue("t", "s"));
+                engine.clear();
+            }
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
         });
     }
 

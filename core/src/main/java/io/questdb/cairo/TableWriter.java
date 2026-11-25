@@ -16403,18 +16403,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
 
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-                    // This will copy data from mmap files to memory.
-                    // Symbols are already mapped to the correct destination.
-                    dispatchColumnTasks(
-                            o3Hi - o3Lo,
-                            IGNORE,
-                            o3Lo,
-                            walLagRowCount,
-                            1,
-                            this.cthAppendWalColumnToLastPartition
-                    );
-                    walLagRowCount += commitRowCount;
-                    addPhysicallyWrittenRows(commitRowCount);
+                    if (commitRowCount > 0) {
+                        // This will copy data from mmap files to memory.
+                        // Symbols are already mapped to the correct destination.
+                        dispatchColumnTasks(
+                                o3Hi - o3Lo,
+                                IGNORE,
+                                o3Lo,
+                                walLagRowCount,
+                                1,
+                                this.cthAppendWalColumnToLastPartition
+                        );
+                        walLagRowCount += commitRowCount;
+                        addPhysicallyWrittenRows(commitRowCount);
+                    }
                     txWriter.setLagRowCount((int) walLagRowCount);
                     txWriter.setLagOrdered(lagOrderedNew);
                     txWriter.setLagMinTimestamp(newMinLagTimestamp);

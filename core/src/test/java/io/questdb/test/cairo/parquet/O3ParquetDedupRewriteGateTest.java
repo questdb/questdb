@@ -225,6 +225,69 @@ public class O3ParquetDedupRewriteGateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpsertOverStoredDuplicatesWritesNewValueOncePerDuplicate() throws Exception {
+        final String[][] types = {
+                {"VARCHAR", "rpad('%1$c', %2$d, '%1$c')::VARCHAR", "length(v)"},
+                {"STRING", "rpad('%1$c', %2$d, '%1$c')::STRING", "length(v)"},
+                {"BINARY", "rnd_bin(%2$d, %2$d, 0)", "length(v)"},
+                {"DOUBLE[]", "array_build(1, %2$d, 1.5)", "dim_length(v, 1)"},
+        };
+        final int[][] shapes = {{200, 1, 100_000}, {200, 100_000, 1}, {2, 1, 10_000}, {1, 1, 100_000}};
+        assertMemoryLeak(() -> {
+            for (String[] type : types) {
+                for (int[] shape : shapes) {
+                    final int duplicates = shape[0];
+                    final int oldLen = shape[1];
+                    final int newLen = shape[2];
+                    execute("CREATE TABLE vals (id INT, v " + type[0] + ")");
+                    execute("INSERT INTO vals SELECT 0, " + String.format(type[1], 'o', oldLen) + " FROM long_sequence(1)");
+                    execute("INSERT INTO vals SELECT 1, " + String.format(type[1], 'n', newLen) + " FROM long_sequence(1)");
+                    for (String table : new String[]{"pq", "n"}) {
+                        execute("CREATE TABLE " + table + " (ts TIMESTAMP, k INT, v " + type[0] + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        execute("INSERT INTO " + table + " SELECT '2024-01-01T00:00:00'::TIMESTAMP, 1, v FROM vals WHERE id = 0");
+                        execute("INSERT INTO " + table + " SELECT '2024-01-01T12:00:00'::TIMESTAMP, 1, v FROM vals CROSS JOIN long_sequence(" + duplicates + ") WHERE id = 0");
+                        execute("INSERT INTO " + table + " SELECT '2024-01-01T12:00:00'::TIMESTAMP, 2, v FROM vals WHERE id = 0");
+                        execute("INSERT INTO " + table + " SELECT '2024-01-02T00:00:00'::TIMESTAMP, 1, v FROM vals WHERE id = 0");
+                        drainWalQueue();
+                    }
+                    execute("CREATE TABLE plain AS (SELECT * FROM n) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    for (String table : new String[]{"pq", "n"}) {
+                        execute("ALTER TABLE " + table + " DEDUP ENABLE UPSERT KEYS(ts, k)");
+                    }
+                    execute("ALTER TABLE plain CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    for (String table : new String[]{"pq", "n", "plain"}) {
+                        execute("INSERT INTO " + table + " SELECT '2024-01-01T12:00:00'::TIMESTAMP, 1, v FROM vals WHERE id = 1");
+                    }
+                    drainWalQueue();
+                    assertQuery("SELECT k, count() c, sum(" + type[2] + ") s FROM plain WHERE ts = '2024-01-01T12:00:00' ORDER BY k")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("k\tc\ts\n1\t" + (duplicates + 1) + "\t" + ((long) duplicates * oldLen + newLen) + "\n2\t1\t" + oldLen + "\n");
+
+                    assertQuery("SELECT name, suspended FROM wal_tables() WHERE name IN ('pq', 'n', 'plain') ORDER BY name")
+                            .noLeakCheck()
+                            .returns("name\tsuspended\nn\tfalse\nplain\tfalse\npq\tfalse\n");
+                    assertQuery("SELECT isParquet FROM table_partitions('pq') WHERE name = '2024-01-01'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("isParquet\ntrue\n");
+                    assertQuery("SELECT k, count() c, sum(" + type[2] + ") s FROM pq WHERE ts = '2024-01-01T12:00:00' ORDER BY k")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("k\tc\ts\n1\t" + duplicates + "\t" + (long) duplicates * newLen + "\n2\t1\t" + oldLen + "\n");
+                    assertSqlCursors("SELECT * FROM n ORDER BY ts, k", "SELECT * FROM pq ORDER BY ts, k");
+                    execute("DROP TABLE vals");
+                    execute("DROP TABLE pq");
+                    execute("DROP TABLE n");
+                    execute("DROP TABLE plain");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUpsertResendWithChangeInLastRowGroupUpdatesInPlace() throws Exception {
         // Five commits, each resends row groups 4..9 with a new v for id 9500, in row group 9: the identity check
         // leaves row groups 4..8 as stored, and the merge of row group 9 writes its 1000 rows. The gate counts row

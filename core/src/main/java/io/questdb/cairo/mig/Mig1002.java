@@ -98,14 +98,23 @@ public final class Mig1002 {
                     LOG.error().$("column version file does not exist, nothing to migrate [path=").$(path).I$();
                     return;
                 }
+                final long cvFileSize = ff.length(path.$());
+                if (cvFileSize < ColumnVersionReader.HEADER_SIZE) {
+                    LOG.error().$("column version file is too short, nothing to migrate [path=").$(path)
+                            .$(", size=").$(cvFileSize)
+                            .I$();
+                    return;
+                }
 
                 try (
-                        TxReader txReader = new TxReader(ff).ofRO(path.trimTo(plen).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
-                        ColumnVersionReader cvReader = new ColumnVersionReader().ofRO(ff, path.trimTo(plen).concat(COLUMN_VERSION_FILE_NAME).$())
+                        TxReader txReader = new TxReader(ff);
+                        ColumnVersionReader cvReader = new ColumnVersionReader()
                 ) {
-                    if (!txReader.unsafeLoadAll()) {
-                        throw CairoException.critical(0).put("migration failed, could not read tx file [path=").put(path).put(']');
+                    if (!loadTxn(txReader, path.trimTo(plen).concat(TXN_FILE_NAME), timestampType, partitionBy)) {
+                        LOG.error().$("could not read tx file, nothing to migrate [path=").$(path).I$();
+                        return;
                     }
+                    cvReader.ofRO(ff, path.trimTo(plen).concat(COLUMN_VERSION_FILE_NAME).$());
                     cvReader.readUnsafe();
 
                     final ObjList<String> columnNames = new ObjList<>(columnCount);
@@ -329,6 +338,19 @@ public final class Mig1002 {
             return Unsafe.getByte(flagMem) == 0;
         } finally {
             ff.close(fd);
+        }
+    }
+
+    private static boolean loadTxn(TxReader txReader, Path txnPath, int timestampType, int partitionBy) {
+        try {
+            txReader.ofRO(txnPath.$(), timestampType, partitionBy);
+            return txReader.unsafeLoadAll();
+        } catch (CairoException e) {
+            LOG.error().$("could not read tx file [path=").$(txnPath)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
+            return false;
         }
     }
 
