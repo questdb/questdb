@@ -34,8 +34,11 @@ package io.questdb.cairo.sql;
 public enum ParquetDecodeHint {
     /**
      * A single forward (or backward) walk: a quarter of the configured budget
-     * and at most 4 buffers cover the live frame plus the records that may
-     * still be bound to recently visited ones.
+     * and at most 4 buffers. The cap sizes the cache only; it does not keep
+     * records safe. A record bound through PageFrameMemoryRecord.init(PageFrameMemory)
+     * does not pin its buffer, so the pool may reuse or free that buffer once the
+     * frame memory moves on. The pool's bind generation, not this cap, makes such
+     * a record rebind before it reads again.
      */
     MONOTONIC(2, 4),
     /**

@@ -60,6 +60,13 @@ public class MapSymbolColumn extends SymbolFunction {
         return rec.getInt(mapColumnIndex);
     }
 
+    /**
+     * The column of the map record this function reads the key from.
+     */
+    public int getMapColumnIndex() {
+        return mapColumnIndex;
+    }
+
     @Override
     public @Nullable StaticSymbolTable getStaticSymbolTable() {
         if (symbolTable instanceof StaticSymbolTable) {

@@ -55,6 +55,11 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         if (srcValue.getBool(valueIndex + 2)) {
             return;

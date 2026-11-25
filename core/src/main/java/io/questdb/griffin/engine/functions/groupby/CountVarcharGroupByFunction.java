@@ -85,4 +85,9 @@ public class CountVarcharGroupByFunction extends AbstractCountGroupByFunction {
     public int getComputeBatchArgType() {
         return ColumnType.VARCHAR;
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

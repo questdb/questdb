@@ -50,6 +50,8 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
     private boolean convertToParquet;
     private Rnd rnd;
 
+    // the right-hand tables' symbol index, see setUp()
+    private String pricesSymIndex;
     @Override
     @Before
     public void setUp() {
@@ -63,6 +65,13 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1 + rnd.nextLong(262_144));
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1 + rnd.nextLong(2_048));
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 1 + rnd.nextLong(16));
+        // An indexed right-hand symbol (see pricesSymIndex) is looked up in the index past this many rows.
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_INDEX_SCAN_ROWS, rnd.nextInt(4) == 0 ? -1 : rnd.nextLong(512));
+        pricesSymIndex = switch (rnd.nextInt(3)) {
+            case 0 -> "";
+            case 1 -> " INDEX";
+            default -> " INDEX TYPE POSTING";
+        };
         if (rnd.nextBoolean()) {
             // Tasks of a HORIZON JOIN without aggregation then match only the first rows of each
             // frame, and the reading thread matches the rest.
@@ -786,14 +795,12 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
 
         execute(
-                """
-                        create table prices (
-                            id int,
-                            sym symbol,
-                        """ + columnsCreation + """
-                            ts timestamp
-                        ) timestamp(ts) partition by day bypass wal;
-                        """
+                "create table prices (\n" +
+                        "    id int,\n" +
+                        "    sym symbol" + pricesSymIndex + ",\n" +
+                        columnsCreation +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by day bypass wal;"
         );
 
         // We fill 2 tables: trades and prices.
@@ -944,7 +951,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             execute(
                     "CREATE TABLE prices" + s + " (\n" +
                             "    id int,\n" +
-                            "    sym symbol,\n" +
+                            "    sym symbol" + pricesSymIndex + ",\n" +
                             columnsCreation +
                             "    ts timestamp\n" +
                             ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;"

@@ -25,7 +25,10 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
@@ -43,25 +46,30 @@ import org.junit.Test;
  * charged to (and therefore capped by) the per-query memory tracker, exactly like the
  * parquet decode path.
  * <p>
- * A low-selectivity {@code sym = 'A'} over many partitions materializes a wide covered
- * VARCHAR for every matched row into per-worker covered decode buffers. Those buffers
- * dwarf the rest of the query's working set, so a per-query limit that comfortably fits
- * the group-by map, address cache and filter scratch must still be breached by the
- * covered decode alone. A narrow {@code sym = 'RARE'} control proves the covered path
- * runs fine under the same limit when its decode footprint is small - i.e. the breach is
- * caused specifically by the covered decode growing past the ceiling, not by unrelated
- * machinery.
+ * A low-selectivity {@code sym = 'A'} materializes a wide covered VARCHAR for every
+ * matched row. The workers of a covered GROUP BY keep every frame they decode until the
+ * query ends, as a record over it is stable and first(), last() and VARCHAR keys keep
+ * pointers into it, so the decoded rows breach a per-query limit that comfortably fits the
+ * group-by map, address cache and filter scratch, whether one frame or many small ones hold
+ * them. A covered Async Filter frees each frame once its cursor has collected it, so many
+ * small frames whose sum is well above the same limit do not breach it. A narrow
+ * {@code sym = 'RARE'} control proves the covered path runs fine under the same limit when
+ * its decode footprint is small - i.e. the breach is caused specifically by the covered
+ * decode growing past the ceiling, not by unrelated machinery.
  */
 public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
 
     private static final long QUERY_MEMORY_LIMIT = 8 * 1024 * 1024L;
+    private static final String RARE_QUERY = "SELECT grp, sum(payload) FROM t WHERE sym = 'RARE' GROUP BY grp ORDER BY grp";
+    // plain Java over the inserted rows: the RARE rows are x = 10,000, 20,000, ... 100,000, in group
+    // x % 7, with a payload of x
+    private static final String RARE_RESULT = rareResult();
 
     @Override
     @Before
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-        // Many small page frames so the covered scan fans out across the worker pool and
-        // every worker's pool retains covered buffers for the whole query.
+        // Many small page frames so the covered scan fans out across the worker pool.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, QUERY_MEMORY_LIMIT);
         super.setUp();
@@ -69,56 +77,32 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
 
     @Test
     public void testCoveredDecodeIsCappedByPerQueryLimit() throws Exception {
+        // Frames as large as the covering scan cuts them, 65,536 rows, which one partition fills:
+        // a single frame's covered VARCHAR, 65,536 x 200 bytes, exceeds the 8 MiB limit.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        engine.execute(
-                                "CREATE TABLE t (" +
-                                        "  ts TIMESTAMP," +
-                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," +
-                                        "  grp VARCHAR," +
-                                        "  payload LONG" +
-                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
-                                sqlExecutionContext
-                        );
-                        // ~100k rows over many day-partitions. Nearly all are sym='A' with a wide
-                        // (200-byte) covered VARCHAR, so decoding the covered 'A' set materializes
-                        // roughly 100k * ~200B ~ 20MB of covered buffers - far above the 8MB limit.
-                        // A sprinkling of sym='RARE' rows gives a tiny covered set for the control.
-                        engine.execute(
-                                "INSERT INTO t SELECT" +
-                                        "  (x * 600000000L)::timestamp," +
-                                        "  CASE WHEN x % 10000 = 0 THEN 'RARE' ELSE 'A' END," +
-                                        "  rpad(('g' || (x % 7))::varchar, 200, 'x')," +
-                                        "  x" +
-                                        " FROM long_sequence(100000)",
-                                sqlExecutionContext
-                        );
-                        engine.releaseAllWriters();
+                        createTable(engine, sqlExecutionContext, "t", true);
+                        // 100k rows, 100 seconds apart in time, so all of them in one partition.
+                        // Nearly all are sym='A' with a wide (200-byte) covered VARCHAR; a
+                        // sprinkling of sym='RARE' rows gives a tiny covered set for the control.
+                        insertRows(engine, sqlExecutionContext, "t", 1_000L);
 
+                        final StringSink sink = new StringSink();
                         // Control: the covered decode path runs fine under the same limit when the
                         // matched (covered) set is tiny. Proves the query is otherwise valid and the
                         // limit is not tripped by unrelated machinery.
-                        final StringSink sink = new StringSink();
-                        TestUtils.printSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT grp, sum(payload) FROM t WHERE sym = 'RARE' GROUP BY grp ORDER BY grp",
-                                sink
-                        );
+                        TestUtils.printSql(engine, sqlExecutionContext, RARE_QUERY, sink);
+                        TestUtils.assertEquals(RARE_RESULT, sink);
 
-                        // Breach: the low-selectivity covered decode must push the per-query tracker
-                        // past its ceiling. Before covered buffers are charged to the tracker this
-                        // query completes on global-only accounting and no breach is raised.
+                        // Breach: decoding one covered frame must push the per-query tracker past
+                        // its ceiling. Were covered buffers not charged to the tracker, this query
+                        // would complete on global-only accounting and no breach would be raised.
                         try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp",
-                                    sink
-                            );
+                            TestUtils.printSql(engine, sqlExecutionContext, "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp", sink);
                             Assert.fail("expected a per-query memory breach from covered decode");
                         } catch (CairoException e) {
                             Assert.assertTrue(
@@ -127,6 +111,87 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
                             );
                             TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                         }
+
+                        // the failed decode left nothing charged and nothing behind: the control
+                        // query runs again under the same limit
+                        TestUtils.printSql(engine, sqlExecutionContext, RARE_QUERY, sink);
+                        TestUtils.assertEquals(RARE_RESULT, sink);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testCoveredFilterLargerThanPerQueryLimitCompletes() throws Exception {
+        // 1,000-row page frames, of which a covered frame holds about 230 KB; the 100k matched rows
+        // decode about 23 MB in all, well above the 8 MiB limit. An Async Filter decodes each frame
+        // into the reduce-queue task that carries it, which frees it, and releases its charge, once
+        // the cursor has collected it, so the query holds a few frames at a time and completes. A
+        // task that kept its frames until the query ended would breach the limit.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTable(engine, sqlExecutionContext, "t", true);
+                        createTable(engine, sqlExecutionContext, "ref", false);
+                        // ~100k rows over many day-partitions, 10 minutes apart in time
+                        insertRows(engine, sqlExecutionContext, "t", 600_000_000L);
+                        insertRows(engine, sqlExecutionContext, "ref", 600_000_000L);
+                        TestUtils.assertSqlCursors(
+                                compiler,
+                                sqlExecutionContext,
+                                "SELECT ts, grp, payload FROM ref WHERE sym = 'A' AND payload > 1",
+                                "SELECT ts, grp, payload FROM t WHERE sym = 'A' AND payload > 1",
+                                LOG
+                        );
+                        // a value-keeping reader over the filter copies the covered VARCHAR, which is
+                        // not stable
+                        TestUtils.assertSqlCursors(
+                                compiler,
+                                sqlExecutionContext,
+                                "SELECT first(grp), last(grp), count() FROM (SELECT ts, grp FROM ref WHERE sym = 'A' AND payload > 1 LIMIT 1_000_000)",
+                                "SELECT first(grp), last(grp), count() FROM (SELECT ts, grp FROM t WHERE sym = 'A' AND payload > 1 LIMIT 1_000_000)",
+                                LOG
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testCoveredGroupByKeepsItsFramesUnderPerQueryLimit() throws Exception {
+        // The same 100k matched rows in 1,000-row frames: a covered GROUP BY keeps every frame its
+        // workers decode until the query ends, so its first() and last() keep pointers into them
+        // rather than copies, and the frames' 23 MB breach the 8 MiB limit, as one large frame does.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTable(engine, sqlExecutionContext, "t", true);
+                        insertRows(engine, sqlExecutionContext, "t", 600_000_000L);
+                        final StringSink sink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, RARE_QUERY, sink);
+                        TestUtils.assertEquals(RARE_RESULT, sink);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, "SELECT grp, sum(payload), first(grp), last(grp) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp", sink);
+                            Assert.fail("expected a per-query memory breach from covered decode");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(
+                                    "expected isOutOfMemory(), got: " + e.getFlyweightMessage(),
+                                    e.isOutOfMemory()
+                            );
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                        // the failed query left nothing charged: the control runs again under the
+                        // same limit
+                        TestUtils.printSql(engine, sqlExecutionContext, RARE_QUERY, sink);
+                        TestUtils.assertEquals(RARE_RESULT, sink);
                     },
                     configuration,
                     LOG
@@ -213,5 +278,42 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    private static String rareResult() {
+        final long[] sums = new long[7];
+        for (long x = 10_000; x <= 100_000; x += 10_000) {
+            sums[(int) (x % 7)] += x;
+        }
+        final StringBuilder sb = new StringBuilder("grp\tsum\n");
+        for (int g = 0; g < 7; g++) {
+            sb.append('g').append(g).append("x".repeat(198)).append('\t').append(sums[g]).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static void createTable(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String name, boolean isCovering) throws SqlException {
+        engine.execute(
+                "CREATE TABLE " + name + " (" +
+                        "  ts TIMESTAMP," +
+                        (isCovering ? "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," : "  sym SYMBOL,") +
+                        "  grp VARCHAR," +
+                        "  payload LONG" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                sqlExecutionContext
+        );
+    }
+
+    private static void insertRows(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String name, long timestampStepMicros) throws SqlException {
+        engine.execute(
+                "INSERT INTO " + name + " SELECT" +
+                        "  (x * " + timestampStepMicros + "L)::timestamp," +
+                        "  CASE WHEN x % 10000 = 0 THEN 'RARE' ELSE 'A' END," +
+                        "  rpad(('g' || (x % 7))::varchar, 200, 'x')," +
+                        "  x" +
+                        " FROM long_sequence(100_000)",
+                sqlExecutionContext
+        );
+        engine.releaseAllWriters();
     }
 }

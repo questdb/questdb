@@ -503,6 +503,77 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCoveredDecodeShellsAreReusedAcrossQueries() throws Exception {
+        // A released covered frame keeps its buffer's address lists and metadata arrays as a shell
+        // (its column buffers are freed), and the next decodes take the shells: of the same layout,
+        // of another layout with other columns, and back. Every value reads as decoded fresh, the
+        // covered byte accounting nets to zero at each release, and close() frees the shells.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sh1 (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (payload), payload VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_sh1 SELECT '2024-01-01'::TIMESTAMP + x * 3_600_000_000L, 'A', 'payload-value-' || x FROM long_sequence(200)");
+            execute("CREATE TABLE t_sh2 (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (v, d), v LONG, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_sh2 SELECT '2024-01-01'::TIMESTAMP + x * 7_200_000_000L, 'A', x, x / 4.0 FROM long_sequence(300)");
+            engine.releaseAllWriters();
+            final String[] queries = {
+                    "SELECT sym, payload FROM t_sh1 WHERE sym = 'A'",
+                    "SELECT v, sym, d FROM t_sh2 WHERE sym = 'A'",
+                    "SELECT sym, payload FROM t_sh1 WHERE sym = 'A'",
+                    "SELECT v, sym, d FROM t_sh2 WHERE sym = 'A'",
+            };
+            try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L)) {
+                pool.setRetainsCoveringShells(true);
+                for (int q = 0; q < queries.length; q++) {
+                    final int shellsBefore = pool.getCoveringShellCount();
+                    try (
+                            RecordCursorFactory factory = select(queries[q]);
+                            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                            PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                            PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
+                    ) {
+                        addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                        int frameCount = 0;
+                        PageFrame f;
+                        while ((f = cursor.next(0)) != null) {
+                            addressCache.add(frameCount++, f);
+                        }
+                        assertTrue(queries[q], frameCount > 4);
+                        pool.of(addressCache);
+                        record.of(cursor);
+                        final StringSink sink = new StringSink();
+                        long expectedRow = 0;
+                        for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                            pool.navigateTo(frameIndex, record);
+                            for (long r = 0, n = addressCache.getFrameSize(frameIndex); r < n; r++) {
+                                record.setRowIndex(r);
+                                expectedRow++;
+                                if (q % 2 == 0) {
+                                    sink.clear();
+                                    sink.put(record.getVarcharA(1));
+                                    assertEquals(queries[q], "payload-value-" + expectedRow, sink.toString());
+                                } else {
+                                    assertEquals(queries[q], expectedRow, record.getLong(0));
+                                    assertEquals(queries[q], expectedRow / 4.0, record.getDouble(2), 0.0);
+                                }
+                            }
+                        }
+                        assertEquals(queries[q], frameCount, pool.getCoveredFrameCount());
+                        if (q > 0) {
+                            // the frames took the previous query's shells
+                            assertTrue(queries[q] + " shells " + shellsBefore, shellsBefore > 0);
+                            assertEquals(queries[q], Math.max(0, shellsBefore - frameCount), pool.getCoveringShellCount());
+                        }
+                        // released at the next of(), as at a query boundary
+                        pool.clear();
+                        assertEquals("covered byte accounting must net to zero after release", 0L, pool.getCoveredCachedBytes());
+                        assertEquals(queries[q], 0, pool.getCoveredFrameCount());
+                        assertTrue(queries[q], pool.getCoveringShellCount() >= Math.min(frameCount, 512));
+                    }
+                }
+            }
+        });
+    }
+
     /**
      * PURPOSE-BUILT PERFORMANCE MEASUREMENT (Task 14) — NOT an assertion test.
      * <p>
@@ -638,17 +709,18 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // Regression GUARD for the worker covered-buffer lifecycle on the async
         // REDUCE path (Task 11). Covered columns are decoded on async workers into
         // per-worker PageFrameMemoryPool.CoveringBuffers, cached per frame in
-        // coveringByFrame and freed only at a query boundary (of/clear/close), NOT
-        // by the per-frame releaseParquetBuffers() -- because a covered frame
-        // reports NATIVE, so a zero-copy first()/last() over a covered varchar
-        // STORES A RAW POINTER into those buffers for the merge phase, and a
-        // per-frame free would dangle it.
+        // coveringByFrame. The pools of an atom keep them until a query boundary
+        // (of/clear/close), NOT just until the per-frame releaseParquetBuffers() --
+        // a record over them is stable, so a zero-copy first()/last() over a
+        // covered varchar STORES A RAW POINTER into those buffers for the merge
+        // phase, and a per-frame free would dangle it.
         //
         // The concern is the SHARED ring-queue reduce-task pools
-        // (PageFrameReduceTask.frameMemoryPool, one per ring slot): on the reduce
-        // path PageFrameReduceTask.collected() frees covered buffers via clear()
-        // only for the last ~frameQueueCapacity frames, and the non-last branch
-        // (releaseFrameMemory -> releaseParquetBuffers) deliberately keeps them.
+        // (PageFrameReduceTask.frameMemoryPool, one per ring slot), which cannot
+        // keep a frame for its query: a later frame of the slot may be another
+        // query's. They free a covered frame once PageFrameReduceTask.collected()
+        // releases it, and a record over it is not stable, so a reader that keeps
+        // a value past the frame copies it.
         // The async FILTER over a covering scan (`SELECT cols ... WHERE key AND
         // residual`, verified via EXPLAIN to be `Async Filter -> CoveringIndex`)
         // is the path that decodes covered frames into those ring-slot pools, so
@@ -662,18 +734,20 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // NATIVE_INDEX_READER (the tag CoveringBuffers allocate under) directly,
         // AFTER each covered query returns but WHILE the engine/bus still lives,
         // and assert it returns to the pre-query baseline. That is the only signal
-        // that observes ring-slot residue, and it locks in the structural reason
-        // there is none: the ring queue has exactly frameQueueCapacity slots, so
-        // the last frameQueueCapacity frames re-occupy every still-active slot and
-        // every slot's final collected task therefore hits the clear() (freeing)
-        // branch -- no slot's covered buffers survive the query.
+        // that observes ring-slot residue. The correctness check that compares the
+        // covered query with its non-indexed twin runs both cursors at once; when
+        // they share a ring, the covered one reduces most of its frames on the
+        // query's thread, which used to leave covered frames in the slots that a
+        // later query on the same ring then freed, below the baseline;
+        // CoveringIndexDecodeLifetimeTest pins that case down on a single ring.
         final int rowsPerPartition = 2000;
         final int partitions = 64; // 128k rows across 64 daily partitions
         final long rows = (long) rowsPerPartition * partitions;
         // 2 symbols => ~64k rows for the hot key S0. With a 200-row frame cap that
         // is ~320 covered frames for S0 -- far more than the default ring-queue
-        // capacity (min(4*queryWorkers, 256)), so the non-last (keep) collect
-        // branch is exercised heavily and any residue would accumulate.
+        // capacity (min(4*queryWorkers, 256)), so the non-last collect branch,
+        // which frees the slot's covered frame, is exercised heavily and any
+        // residue would accumulate.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
 
         assertMemoryLeak(() -> {
@@ -1368,6 +1442,61 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCoveredDecodeReusesDetachedCursors() throws Exception {
+        // the covered decode takes a detached cursor per frame; with the partitions kept open
+        // between runs (the server default), repeated runs reuse the posting readers' pooled
+        // cursors instead of building one per frame
+        // 500 rows of S0 per partition, so 3 covered frames per partition at 200 rows a frame
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10_000);
+        final int partitions = 64;
+        final String covered = "SELECT sum(px), count() FROM %s WHERE sym = 'S0'";
+        final String scan = "SELECT /*+ no_index */ sum(px), count() FROM %s WHERE sym = 'S0'";
+        assertMemoryLeak(() -> {
+            // without workers a run holds one cursor at a time: the warm-up run pools one
+            // cursor per partition and later runs build none
+            TestUtils.execute(
+                    null,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createReuseTable(engine, sqlExecutionContext, "cov_serial", partitions);
+                        final String sql = String.format(covered, "cov_serial");
+                        final String ref = String.format(scan, "cov_serial");
+                        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, ref, sql, LOG);
+                        final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                        for (int i = 0; i < 10; i++) {
+                            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, ref, sql, LOG);
+                        }
+                        assertEquals(news, AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get());
+                    },
+                    configuration,
+                    LOG
+            );
+            // with workers a partition's pool grows to at most one cursor per thread decoding
+            // its frames at once, never one per frame per run
+            final int workers = 4;
+            final WorkerPool pool = new TestWorkerPool(workers, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createReuseTable(engine, sqlExecutionContext, "cov_parallel", partitions);
+                        final String sql = String.format(covered, "cov_parallel");
+                        final String ref = String.format(scan, "cov_parallel");
+                        final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                        final int runs = 10;
+                        for (int i = 0; i < runs; i++) {
+                            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, ref, sql, LOG);
+                        }
+                        // one cursor per frame per run would be 10 x 64 x 3 = 1,920
+                        final long built = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() - news;
+                        assertTrue("detached cursors built: " + built, built <= (long) partitions * (workers + 1));
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelCoveredDecodeSparseMultiGenMatchesReference() throws Exception {
         // C1 regression (review): a single-key covered decode (sym = 'x') is produced metadata-only at
         // frame production and DECODED ON THE ASYNC WORKERS over a SHARED, frozen posting reader. The
@@ -1436,6 +1565,59 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         hasFrozenBaseOrdinal.get()
                 );
             }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testCoveredRunsDoNotContinueAcrossGenerations() throws Exception {
+        // The worker decode copies a key's covered values in runs, a run being postings whose
+        // sidecar ordinals follow each other in one block. In a sparse generation a key's ordinal
+        // base is the prefix sum of the lower keys' counts, so a key's last ordinal in generation k
+        // can equal, plus one, its first in generation k + 1: only the block id tells the two
+        // generations apart. Here 'a' is key 0 and generation k holds A_k rows of 'a' then B_k of
+        // 'b', with A_{k+1} = A_k + B_k, so 'b''s ordinals continue each other at every boundary.
+        assertMemoryLeak(() -> {
+            execute("create table g (ts timestamp, sym symbol, v long, d double, i int) timestamp(ts) partition by day bypass wal");
+            execute("insert into g values (0, 'a', 1, 1.0, 1)");
+            execute("alter table g alter column sym add index type posting include (v, d, i)");
+            long ts = 1_000_000;
+            int a = 0;
+            long val = 100;
+            final int[] bs = {3, 3, 2, 5, 1, 4, 7, 2, 3, 6};
+            for (int b : bs) {
+                final StringBuilder sql = new StringBuilder("insert into g values ");
+                for (int r = 0; r < a; r++) {
+                    sql.append('(').append(ts).append(",'a',").append(-val).append(',').append(-val).append(".25,").append(-val).append("),");
+                    ts += 1_000_000;
+                    val++;
+                }
+                for (int r = 0; r < b; r++) {
+                    sql.append('(').append(ts).append(",'b',").append(val).append(',').append(val).append(".5,").append(val).append("),");
+                    ts += 1_000_000;
+                    val++;
+                }
+                sql.setLength(sql.length() - 1);
+                execute(sql);
+                a += b;
+            }
+            final String[] queries = {
+                    "select count(), sum(v), sum(d), sum(i), min(v), max(v) from g where sym = 'b'",
+                    "select ts, v, d, i from g where sym = 'b'",
+                    "select ts, v, d, i from g where sym = 'b' order by ts desc",
+                    "select ts, v, d from g where sym = 'b' limit -7",
+                    "select ts, v * 2, d from g where sym = 'b'",
+                    "select ts, v, d, i from g where sym = 'b' and i > 0",
+            };
+            final StringSink plan = new StringSink();
+            printSql("explain " + queries[0], plan);
+            assertTrue(plan.toString(), plan.toString().contains("Async") && plan.toString().contains("CoveringIndex"));
+            for (String q : queries) {
+                final StringSink actual = new StringSink();
+                final StringSink expected = new StringSink();
+                printSql(q, actual);
+                printSql(q.replaceFirst("select ", "select /*+ no_index */ "), expected);
+                TestUtils.assertEquals(q, expected, actual);
+            }
         });
     }
 
@@ -1702,7 +1884,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         engine.execute("INSERT INTO ref " + gen, sqlExecutionContext);
                         engine.releaseAllWriters();
 
-                        // Confirm the projection-with-residual runs Async Filter over
+                        // Confirm the projection-with-residual runs Async JIT Filter over
                         // the covering scan (the record fast-path), then equal the
                         // non-indexed twin -- both the projection (record path) and
                         // the aggregate (sum over the same residual).
@@ -1713,8 +1895,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 sink
                         );
                         final String plan = sink.toString();
-                        assertTrue("residual projection must run Async Filter over CoveringIndex; plan=\n" + plan,
-                                plan.contains("Async Filter") && plan.contains("CoveringIndex on: sym"));
+                        assertTrue("residual projection must run Async JIT Filter over CoveringIndex; plan=\n" + plan,
+                                plan.contains("Async JIT Filter") && plan.contains("CoveringIndex on: sym"));
 
                         for (String sym : new String[]{"S0", "S3", "S7"}) {
                             final String proj = "SELECT price FROM %s WHERE sym = '" + sym + "' AND price > 500 ORDER BY price";
@@ -2242,6 +2424,27 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     // isInterruption()/isCancellation() set (here the "cancelled by user" variant; we
     // accept the timeout "query aborted" variant too so the helper is robust to which
     // breaker check fires first).
+    private static void createReuseTable(CairoEngine engine, SqlExecutionContext ctx, String name, int partitions) throws Exception {
+        final int rowsPerPartition = 4000;
+        engine.execute(
+                "CREATE TABLE " + name + " (" +
+                        "  ts TIMESTAMP," +
+                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (px)," +
+                        "  px DOUBLE" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                ctx
+        );
+        engine.execute(
+                "INSERT INTO " + name + " SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x - 1) * " + (86_400_000_000L / rowsPerPartition) + "L)::timestamp ts," +
+                        " ('S' || ((x - 1) % 8))::symbol sym," +
+                        " (x % 997)::double px" +
+                        " FROM long_sequence(" + (long) rowsPerPartition * partitions + ")",
+                ctx
+        );
+        engine.releaseAllWriters();
+    }
+
     private static void assertCoveredQueryCancels(
             SqlCompiler compiler,
             SqlExecutionContext context,

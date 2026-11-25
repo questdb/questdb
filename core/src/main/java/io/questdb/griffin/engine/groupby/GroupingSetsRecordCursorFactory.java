@@ -179,6 +179,14 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // Emits the entries of one map per grouping set, set after set, not the base cursor's rows:
+    // the output is map-ordered by construction, whatever order the base scans in, as with the
+    // keyed group-by (see GroupByRecordCursorFactory).
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     @Override
     public boolean isNonDeterministic() {
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {

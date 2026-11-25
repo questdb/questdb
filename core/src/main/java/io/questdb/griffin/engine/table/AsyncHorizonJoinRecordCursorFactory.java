@@ -214,9 +214,31 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
     }
 
+    // As HorizonJoinRecordCursorFactory, and this is the variant that serves the shape by default:
+    // the keyed horizon join aggregates into a map and then emits that map's entries, so it emits
+    // in map order within a shard - hash-slot order for the fixed-width Unordered{2,4,8,16}Map
+    // keys, key-insertion order for the OrderedMap fallback - and shard order across the per-worker
+    // shards a ShardedMapCursor concatenates. None of that is designated-timestamp order, even when
+    // the group key IS the designated timestamp and every input row was scanned forward. Measured
+    // 172 of 299 adjacent steps descending, and 296 of 300 ASOF invariant violations.
+    //
+    // Do not be talked out of this by a fixture that happens to come out ascending: with
+    // keys:[ts,sym] the map happens to be an OrderedMap whose insertion order tracks the forward
+    // scan, and keys:[ts] emits ascending for as long as the aggregates are still projected - it
+    // turns to 172/299 once projection pushdown prunes them. "Ascending here" is a property of the
+    // fixture, not of the factory.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    public void enableIndexedKeyLookup(CairoEngine engine, int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        frameSequence.getAtom().enableIndexedKeyLookup(engine, masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
     }
 
     @Override
@@ -233,6 +255,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
+        if (frameSequence.getAtom().isIndexedKeyLookup()) {
+            sink.attr("lookup").val("index");
+        }
         sink.child(masterFactory);
         final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
         if (slaveFilter != null) {
@@ -346,7 +371,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final RecordSink groupByMapSink = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
-            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
             final Function filter = filterCtx.getFilter(slotId);
 
             // Apply filter to master rows
@@ -402,6 +427,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonIterator,
                     slaveTimeFrameHelper,
                     baseRowId,
+                    rows,
+                    rows.size(),
                     record,
                     masterKeyRecord,
                     asOfJoinMap,
@@ -449,6 +476,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             AsyncHorizonTimestampIterator horizonIterator,
             HorizonJoinTimeFrameHelper slaveTimeFrameHelper,
             long baseRowId,
+            @Nullable DirectLongList masterRows,
+            long masterRowCount,
             PageFrameMemoryRecord masterRecord,
             Record masterKeyRecord,
             Map asOfJoinMap,
@@ -475,6 +504,36 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         slaveTimeFrameHelper.toTop();
         if (keyedAsOfJoin) {
             asOfJoinMap.clear();
+        }
+        if (keyedAsOfJoin && symbolTranslatingRecord != null && slaveTimeFrameHelper.isIndexedKeyLookup()) {
+            // Every key the walk looks up comes from these rows, so the forward scans may cache theirs alone.
+            slaveTimeFrameHelper.beginKeyTracking();
+            for (long i = 0; i < masterRowCount; i++) {
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(i) : i, i);
+                slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+            }
+            symbolTranslatingRecord.resetNonExistentKeyFlag();
+            if (masterRowCount > 0) {
+                // The slave rows the walk spans: from the ASOF position of its first horizon timestamp
+                // to that of its last, as the master rows are in timestamp order.
+                final int tsIndex = atom.getMasterTimestampColumnIndex();
+                long minOffset = Long.MAX_VALUE;
+                long maxOffset = Long.MIN_VALUE;
+                for (int i = 0, n = (int) atom.getOffsetCount(); i < n; i++) {
+                    minOffset = Math.min(minOffset, atom.getOffset(i));
+                    maxOffset = Math.max(maxOffset, atom.getOffset(i));
+                }
+                final long scale = atom.getMasterTimestampScale();
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(0) : 0, 0);
+                final long tsLo = masterRecord.getTimestamp(tsIndex);
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(masterRowCount - 1) : masterRowCount - 1, masterRowCount - 1);
+                final long tsHi = masterRecord.getTimestamp(tsIndex);
+                final long rowIdLo = slaveTimeFrameHelper.findAsOfRow(scaleTimestamp(HorizonTimestampIterator.addTimestampAndOffset(tsLo, minOffset), scale), circuitBreaker);
+                final long rowIdHi = slaveTimeFrameHelper.findAsOfRow(scaleTimestamp(HorizonTimestampIterator.addTimestampAndOffset(tsHi, maxOffset), scale), circuitBreaker);
+                slaveTimeFrameHelper.decideIndexOnlyWalk(masterRowCount * atom.getOffsetCount(), slaveTimeFrameHelper.countSlaveRows(rowIdLo, rowIdHi));
+                // the estimate moved the helper's bookmarks
+                slaveTimeFrameHelper.toTop();
+            }
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
@@ -587,6 +646,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonIterator,
                     slaveTimeFrameHelper,
                     baseRowId,
+                    null,
+                    frameRowCount,
                     record,
                     masterKeyRecord,
                     asOfJoinMap,

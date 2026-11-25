@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -298,6 +299,25 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    /**
+     * Lets the ASOF lookup of the single SYMBOL join key read the slave's symbol index, see
+     * {@link HorizonJoinTimeFrameHelper#enableIndexedKeyLookup}. Every thread reads it from a table
+     * reader of its own: the owner and each worker slot through its time frame cursor, see
+     * {@link ConcurrentTimeFrameCursor#enableIndexReaders}.
+     */
+    public void enableIndexedKeyLookup(CairoEngine engine, int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        ownerSlaveTimeFrameHelper.enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
+        ownerSlaveTimeFrameCursor.enableIndexReaders(engine);
+        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
+            perWorkerSlaveTimeFrameCursors.getQuick(i).enableIndexReaders(engine);
+        }
+    }
+
+    public boolean isIndexedKeyLookup() {
+        return ownerSlaveTimeFrameHelper.isIndexedKeyLookup();
     }
 
     @Override

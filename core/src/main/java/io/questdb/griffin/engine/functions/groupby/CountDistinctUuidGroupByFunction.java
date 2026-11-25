@@ -137,6 +137,11 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

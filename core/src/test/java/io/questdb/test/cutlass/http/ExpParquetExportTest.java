@@ -29,6 +29,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -46,6 +47,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -85,6 +87,16 @@ import static io.questdb.test.tools.TestUtils.printSqlToString;
 
 public class ExpParquetExportTest extends AbstractBootstrapTest {
 
+    // t from createDescExportSource() ordered by ts DESC
+    private static final String DESC_EXPORT_ROWS = """
+            ts\tx
+            2024-01-03T12:00:00.000000Z\t6
+            2024-01-03T00:00:00.000000Z\t5
+            2024-01-02T12:00:00.000000Z\t4
+            2024-01-02T00:00:00.000000Z\t3
+            2024-01-01T12:00:00.000000Z\t2
+            2024-01-01T00:00:00.000000Z\t1
+            """;
     private static String exportRoot;
     private static TestHttpClient testHttpClient;
     private final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
@@ -1310,6 +1322,64 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportDescTempTableBinary() throws Exception {
+        assertDescTempTableBinaryExport(false);
+    }
+
+    @Test
+    public void testParquetExportDescTempTableBinaryNodelay() throws Exception {
+        assertDescTempTableBinaryExport(true);
+    }
+
+    @Test
+    public void testParquetExportDescTempTableRepeated() throws Exception {
+        // the same descending export twice on one connection returns the same file both times and
+        // leaves no temp table behind
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createDescExportSource(engine, sqlExecutionContext);
+                    final String query = "SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink first = new DirectUtf8Sink(16_384);
+                            DirectUtf8Sink second = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+                        Assert.assertEquals("200", requestParquet(httpClient, first, query, false));
+                        Assert.assertEquals("200", requestParquet(httpClient, second, query, false));
+                        TestUtils.assertEquals(first, second);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, second, query, "desc_repeated.parquet");
+                        assertQuery("SELECT ts, x FROM read_parquet('desc_repeated.parquet')")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(DESC_EXPORT_ROWS);
+                    }
+                    assertEventually(() -> {
+                        ObjHashSet<TableToken> tokens = new ObjHashSet<>();
+                        engine.getTableTokens(tokens, false);
+                        for (int i = 0, n = tokens.size(); i < n; i++) {
+                            Assert.assertFalse(
+                                    "temp table should have been dropped: " + tokens.get(i).getTableName(),
+                                    tokens.get(i).getTableName().contains("copy.")
+                            );
+                        }
+                    });
+                });
+    }
+
+    @Test
+    public void testParquetExportDescTempTableRetypedParquetColumn() throws Exception {
+        assertDescTempTableRetypedExport(false);
+    }
+
+    @Test
+    public void testParquetExportDescTempTableRetypedParquetColumnNodelay() throws Exception {
+        assertDescTempTableRetypedExport(true);
+    }
+
+    @Test
     public void testParquetExportDescendingPreservesDictionaryEncoding() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1810,11 +1880,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
     @Test
     public void testParquetExportPageFrameCircuitBreaker() throws Exception {
+        // A negative export timeout trips the breaker on its first check, whatever the clock says.
+        // A timeout of 1 (the "timeout" parameter is in seconds) made this race the export, which
+        // a fast enough engine wins.
         getExportTester()
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withExportTimeout(-1))
                 .run((engine, sqlExecutionContext) -> {
-                    // ~100 daily partitions with 1000 rows each.  The heavy
-                    // rnd_str() computation per row makes each page frame
-                    // slow enough for the 1ms timeout to trip the breaker.
+                    // ~100 daily partitions with 1000 rows each
                     engine.execute("""
                             CREATE TABLE cb_test AS (
                                 SELECT x,
@@ -1827,8 +1899,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // large strings that dominate per-frame cost.
                     params.put("query", "SELECT x + 1 AS cx, rnd_str(500, 1000, 0) AS big, ts FROM cb_test");
                     params.put("fmt", "parquet");
-                    params.put("timeout", "1");
-                    // With a very short timeout the circuit breaker should trip
+                    // No "timeout" parameter: it would replace the server's
+                    // negative export timeout. The circuit breaker trips
                     // during PAGE_FRAME_BACKED export.  Depending on which code
                     // path checks first, the error is either "timeout, query
                     // aborted" (from the page-frame factory) or "cancelled by
@@ -2550,6 +2622,60 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportUnionAllDisjointAscendingTempTable() throws Exception {
+        // a holds the first day and c the next two, so the concatenation is ascending, yet the union
+        // declares no scan direction. The export cannot tell this from an interleaved union before it
+        // writes the rows, so the file keeps every row in union order and declares no designated
+        // timestamp.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createUnionExportSources(engine, sqlExecutionContext, "2024-01-01", 1, 2, "2024-01-02", 3, 4);
+                    assertTempTableExpExport(
+                            engine,
+                            sqlExecutionContext,
+                            "(SELECT ts, x, b FROM a WHERE x > 0 UNION ALL SELECT ts, x, b FROM c WHERE x > 0) TIMESTAMP(ts)",
+                            false,
+                            "union_disjoint.parquet",
+                            """
+                                    ts\tx
+                                    2024-01-01T00:00:00.000000Z\t1
+                                    2024-01-01T12:00:00.000000Z\t2
+                                    2024-01-02T00:00:00.000000Z\t3
+                                    2024-01-02T12:00:00.000000Z\t4
+                                    2024-01-03T00:00:00.000000Z\t5
+                                    2024-01-03T12:00:00.000000Z\t6
+                                    """
+                    );
+                });
+    }
+
+    @Test
+    public void testParquetExportUnionAllInterleavedTempTable() throws Exception {
+        // a holds the last two days and c the first, so the union steps back in time at the branch
+        // boundary; the file keeps the union order: a's rows, then c's.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createUnionExportSources(engine, sqlExecutionContext, "2024-01-02", 3, 4, "2024-01-01", 1, 2);
+                    assertTempTableExpExport(
+                            engine,
+                            sqlExecutionContext,
+                            "(SELECT ts, x, b FROM a WHERE x > 0 UNION ALL SELECT ts, x, b FROM c WHERE x > 0) TIMESTAMP(ts)",
+                            false,
+                            "union_interleaved.parquet",
+                            """
+                                    ts\tx
+                                    2024-01-02T00:00:00.000000Z\t3
+                                    2024-01-02T12:00:00.000000Z\t4
+                                    2024-01-03T00:00:00.000000Z\t5
+                                    2024-01-03T12:00:00.000000Z\t6
+                                    2024-01-01T00:00:00.000000Z\t1
+                                    2024-01-01T12:00:00.000000Z\t2
+                                    """
+                    );
+                });
+    }
+
+    @Test
     public void testParquetExportWithMultipleDataTypes() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2658,6 +2784,51 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         }
     }
 
+    /**
+     * Creates {@code t (ts, x, b BINARY)} with 6 rows, ts = 2024-01-01 + 12h * (x - 1) and x = 1..6, so
+     * ORDER BY ts DESC returns {@link #DESC_EXPORT_ROWS}.
+     */
+    private static void createDescExportSource(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
+        engine.execute("CREATE TABLE t (ts TIMESTAMP, x LONG, b BINARY) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO t SELECT timestamp_sequence('2024-01-01', 43_200_000_000L), x, rnd_bin(4, 4, 0) FROM long_sequence(6)",
+                sqlExecutionContext
+        );
+    }
+
+    /**
+     * Creates tables {@code a} and {@code c (ts, x, b BINARY)}; each holds its row count at 12h steps from
+     * its start, with x counting up from its first value.
+     */
+    private static void createUnionExportSources(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String aStart,
+            long aFirstX,
+            int aRows,
+            String cStart,
+            long cFirstX,
+            int cRows
+    ) throws Exception {
+        engine.execute("CREATE TABLE a (ts TIMESTAMP, x LONG, b BINARY) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute("CREATE TABLE c (ts TIMESTAMP, x LONG, b BINARY) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute("INSERT INTO a SELECT timestamp_sequence('" + aStart + "', 43_200_000_000L), x + " + (aFirstX - 1)
+                + ", rnd_bin(4, 4, 0) FROM long_sequence(" + aRows + ")", sqlExecutionContext);
+        engine.execute("INSERT INTO c SELECT timestamp_sequence('" + cStart + "', 43_200_000_000L), x + " + (cFirstX - 1)
+                + ", rnd_bin(4, 4, 0) FROM long_sequence(" + cRows + ")", sqlExecutionContext);
+    }
+
+    private static String requestParquet(TestHttpClient httpClient, DirectUtf8Sink sink, String query, boolean isNodelay) {
+        HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+        req.GET().url("/exp");
+        req.query("query", query);
+        req.query("fmt", "parquet");
+        if (isNodelay) {
+            req.query("rmode", "nodelay");
+        }
+        return httpClient.reqToSink(req, sink, null, null, null, null);
+    }
+
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         return new Thread(() -> {
             try {
@@ -2706,6 +2877,74 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    private void assertDescTempTableBinaryExport(boolean isNodelay) throws Exception {
+        // the BINARY column under a filter sends the export through the temp table
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createDescExportSource(engine, sqlExecutionContext);
+                    assertTempTableExpExport(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC",
+                            isNodelay,
+                            "desc_binary.parquet",
+                            DESC_EXPORT_ROWS
+                    );
+                });
+    }
+
+    private void assertDescTempTableRetypedExport(boolean isNodelay) throws Exception {
+        // x went from INT to LONG after its first day became parquet, which sends the export through
+        // the temp table to convert the column
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                    engine.execute(
+                            "INSERT INTO t SELECT timestamp_sequence('2024-01-01', 43_200_000_000L), x::INT FROM long_sequence(6)",
+                            sqlExecutionContext
+                    );
+                    engine.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE t ALTER COLUMN x TYPE LONG", sqlExecutionContext);
+                    assertTempTableExpExport(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT ts, x FROM t ORDER BY ts DESC",
+                            isNodelay,
+                            "desc_retyped.parquet",
+                            DESC_EXPORT_ROWS
+                    );
+                });
+    }
+
+    /**
+     * Exports {@code query} over /exp, then checks the response is a parquet file that matches the query
+     * run directly, BINARY payloads included, holds {@code expectedTsAndX} in file order, and declares no
+     * designated timestamp (no {@code .timestamp()}), since its rows do not ascend.
+     */
+    private void assertTempTableExpExport(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            boolean isNodelay,
+            String fileName,
+            String expectedTsAndX
+    ) throws Exception {
+        try (
+                TestHttpClient httpClient = new TestHttpClient();
+                DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+        ) {
+            httpClient.setKeepConnection(false);
+            Assert.assertEquals("200", requestParquet(httpClient, sink, query, isNodelay));
+            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, fileName);
+            assertQuery("SELECT ts, x FROM read_parquet('" + fileName + "')")
+                    .withEngine(engine)
+                    .withContext(sqlExecutionContext)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedTsAndX);
+        }
     }
 
     private void assertParquetExportDataCorrectness(

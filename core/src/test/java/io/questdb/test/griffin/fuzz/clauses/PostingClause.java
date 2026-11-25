@@ -38,7 +38,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 
 /**
- * Generates the two query shapes that make the planner pick a posting-index
+ * Generates the three query shapes that make the planner pick a posting-index
  * read operator, so those paths get exercised rather than merely built:
  * <ul>
  *   <li><b>distinct key enumeration</b> ({@code PostingIndex}):
@@ -52,6 +52,14 @@ import io.questdb.test.griffin.fuzz.types.SymbolType;
  *       the covered set, and the key predicate must be an equality or IN on the
  *       indexed symbol; anything outside the covered set falls back to a normal
  *       scan.</li>
+ *   <li><b>selective GROUP BY</b> ({@code Index Or Scan} over the index-driven
+ *       parallel GROUP BY): {@code SELECT [<postingSym> | <other col>,]
+ *       count(), min(ts), max(ts)[, min/max/sum(<numeric col>)] FROM t WHERE
+ *       <postingSym> = 'v' | IN (1..8 values, NULL among them at random)
+ *       [AND ts IN '<1-3 periodic windows>']}. Each open estimates the
+ *       selection from a sample of the posting index's per-key counts and
+ *       picks the index or the scan plan; QueryFuzzTest shrinks the sample's
+ *       budget so the small fuzz tables are sampled too.</li>
  * </ul>
  * Both shapes need a direct real table whose schema actually carries a
  * posting-indexed symbol (covering additionally needs a non-empty INCLUDE
@@ -91,6 +99,9 @@ public final class PostingClause {
         }
         if (posting.size() == 0) {
             return null;
+        }
+        if (rnd.nextInt(3) == 0) {
+            return generateGroupBy(rnd, table, posting.getQuick(rnd.nextInt(posting.size())), ctx);
         }
         if (covering.size() > 0 && rnd.nextBoolean()) {
             return generateCovering(rnd, table, covering.getQuick(rnd.nextInt(covering.size())), ctx);
@@ -160,6 +171,77 @@ public final class PostingClause {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(8));
         }
         return new GeneratedQuery(sql.toString(), !hasLimit);
+    }
+
+    private static GeneratedQuery generateGroupBy(Rnd rnd, FuzzTable table, FuzzColumn col, BindContext ctx) {
+        final String ts = table.getTsColumnName();
+        final ObjList<FuzzColumn> columns = table.getColumns();
+        final ObjList<FuzzColumn> keys = new ObjList<>();
+        final ObjList<FuzzColumn> numerics = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final FuzzColumn c = columns.getQuick(i);
+            final ColumnKind kind = c.getType().getKind();
+            if (c != col && kind != ColumnKind.ARRAY && !c.getName().equals(ts)) {
+                keys.add(c);
+            }
+            if (kind == ColumnKind.NUMERIC) {
+                numerics.add(c);
+            }
+        }
+        final StringSink sql = new StringSink();
+        sql.put("SELECT ");
+        // the key: the posting symbol (one group per key), another column, or none
+        switch (rnd.nextInt(3)) {
+            case 0 -> sql.put(col.getName()).put(", ");
+            case 1 -> {
+                if (keys.size() > 0) {
+                    sql.put(keys.getQuick(rnd.nextInt(keys.size())).getName()).put(", ");
+                }
+            }
+            default -> {
+            }
+        }
+        sql.put("count() c, min(").put(ts).put(") mn, max(").put(ts).put(") mx");
+        if (numerics.size() > 0 && rnd.nextBoolean()) {
+            final FuzzColumn v = numerics.getQuick(rnd.nextInt(numerics.size()));
+            sql.put(", min(").put(v.getName()).put(") mnv, max(").put(v.getName()).put(") mxv");
+            final String ddl = v.getType().getDdl();
+            // exact sums only: a floating sum may differ in its last bits between plans
+            if (ddl.equals("INT") || ddl.equals("LONG")) {
+                sql.put(", sum(").put(v.getName()).put(") sv");
+            }
+        }
+        sql.put(" FROM ").put(table.getName()).put(" WHERE ").put(col.getName());
+        if (rnd.nextBoolean()) {
+            sql.put(" = ");
+            appendSymbolValue(sql, rnd, ctx);
+        } else {
+            sql.put(" IN (");
+            final int k = 1 + rnd.nextInt(8);
+            for (int i = 0; i < k; i++) {
+                if (i > 0) {
+                    sql.put(", ");
+                }
+                if (rnd.nextInt(6) == 0) {
+                    sql.put("null");
+                } else {
+                    appendSymbolValue(sql, rnd, ctx);
+                }
+            }
+            sql.put(')');
+        }
+        if (rnd.nextBoolean()) {
+            // 1-3 windows over the tables' 30..75 hours: the frames of an interval scan
+            final int startHour = rnd.nextInt(48);
+            final int duration = 1 + rnd.nextInt(6);
+            final int period = duration + 1 + rnd.nextInt(12);
+            sql.put(" AND ").put(ts).put(" IN '2024-01-0").put(1 + startHour / 24).put('T');
+            if (startHour % 24 < 10) {
+                sql.put('0');
+            }
+            sql.put(startHour % 24).put(":00;").put(duration).put("h;").put(period).put("h;").put(1 + rnd.nextInt(3)).put('\'');
+        }
+        return new GeneratedQuery(sql.toString(), true);
     }
 
     private static GeneratedQuery generateDistinct(Rnd rnd, FuzzTable table, FuzzColumn col) {

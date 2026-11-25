@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoEngine;
+
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
@@ -57,6 +59,7 @@ import org.jetbrains.annotations.Nullable;
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
+    private final boolean ownsMetadata;
     private final SelectedRecordCursor cursor;
     private final boolean needsProjection;
     private SelectedPageFrameCursor pageFrameCursor;
@@ -65,9 +68,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     private SelectedTimeFrameCursor timeFrameCursor;
 
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
+        this(metadata, columnCrossIndex, base, false);
+    }
+
+    /**
+     * @param ownsMetadata whether close() frees {@code metadata}, which must then be Closeable: a
+     *                     join's metadata, when this projection is the factory the join's caller gets
+     */
+    public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base, boolean ownsMetadata) {
         super(metadata);
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
+        this.ownsMetadata = ownsMetadata;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
         // True when the cursor must wrap its base to expose only the projected columns.
         // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
@@ -180,6 +192,17 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             Misc.free(baseCursor);
             throw th;
         }
+    }
+
+    /**
+     * Page-frame transparent: a page-frame consumer asking this wrapper is served the BASE's
+     * frames, so it must be told the base's page-frame direction. Inheriting the default --
+     * which forwards to {@link #getScanDirection()} -- degrades the narrow answer back to the
+     * wide one at the first wrapper, which is exactly what the narrow answer exists to avoid.
+     */
+    @Override
+    public int getPageFrameScanDirection() {
+        return base.getPageFrameScanDirection();
     }
 
     @Override
@@ -311,6 +334,9 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     protected void _close() {
         base.close();
         Misc.clear(sharedCursors);
+        if (ownsMetadata) {
+            Misc.freeIfCloseable(getMetadata());
+        }
     }
 
     // This wrapper handles column remapping for ConcurrentTimeFrameCursor when a
@@ -334,6 +360,23 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         ) {
             this.delegate = delegate;
             this.selectedTimestampIndex = selectedTimestampIndex;
+        }
+
+        // The delegate reads the projection's page frames, whose column mapping includes the
+        // projection: a column of this cursor is the delegate's column of the same index.
+        @Override
+        public void enableIndexReaders(CairoEngine engine) {
+            delegate.enableIndexReaders(engine);
+        }
+
+        @Override
+        public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+            return delegate.getIndexReaderForCurrentFrame(columnIndex, direction);
+        }
+
+        @Override
+        public long getIndexRowLoForCurrentFrame() {
+            return delegate.getIndexRowLoForCurrentFrame();
         }
 
         @Override

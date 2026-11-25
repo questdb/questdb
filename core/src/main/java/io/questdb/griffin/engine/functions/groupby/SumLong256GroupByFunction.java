@@ -168,6 +168,11 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

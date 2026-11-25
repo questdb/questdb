@@ -162,6 +162,16 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

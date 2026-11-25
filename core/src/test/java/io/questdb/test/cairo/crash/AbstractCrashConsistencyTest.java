@@ -90,8 +90,7 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         // A freshly booted engine has no table sequencer open either: one kept open across the rollback would
         // flush or append to its txn log through a handle from before the power loss.
         engine.releaseInactiveTableSequencers();
-        // A writer's close can open another writer: with the posting seal purge queue full, it writes its ready purge
-        // tasks to sys.posting_seal_purge_log itself. The pool walk above does not visit a writer opened during it.
+        // The pool walk above does not visit a writer opened during it, and no writer may outlive the power loss.
         engine.releaseAllWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
     }

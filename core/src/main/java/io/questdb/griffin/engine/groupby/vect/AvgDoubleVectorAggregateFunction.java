@@ -135,6 +135,11 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }

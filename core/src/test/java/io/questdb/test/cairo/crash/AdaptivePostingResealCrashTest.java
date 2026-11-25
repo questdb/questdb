@@ -25,26 +25,20 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.pool.PoolListener;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -58,7 +52,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -82,9 +75,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     private static final Pattern SEALED_FILE_S_K = Pattern.compile("[sk]\\.(pv|pc\\d+)\\..*");
     private static final int SYMBOLS = 4;
 
-    @Test
-    public void testCrashAndReopenClosesPurgeLogWriterOpenedByWriterClose() throws Exception {
-        assertRestartClosesPurgeLogWriter(token -> crashAndReopen());
+    @After
+    public void resetCoveringSealAppend() {
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     @Test
@@ -280,11 +273,6 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
-    @Test
-    public void testSimulateRestartClosesPurgeLogWriterOpenedByWriterClose() throws Exception {
-        assertRestartClosesPurgeLogWriter(token -> simulateRestart(new TableToken[]{token}));
-    }
-
     // An adaptive kill after in-place reseals of both days. The next start runs in NOSYNC: it recovers, opens and closes
     // the writer, and dies before the WAL apply commits anything. One more start follows. Every start reads the
     // save point's rows through the index, and the apply then reads every row.
@@ -392,17 +380,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     // A killed process loses its in-memory purge queue, including what a writer published at close.
     private static void discardPurgeQueue() {
-        final SCSequence subSeq = engine.getMessageBus().getPostingSealPurgeSubSeq();
-        while (true) {
-            final long cursor = subSeq.next();
-            if (cursor == -2) {
-                continue;
-            }
-            if (cursor < 0) {
-                break;
-            }
-            subSeq.done(cursor);
-        }
+        engine.getMessageBus().getPostingSealPurgeQueue().clear();
     }
 
     // A fresh process starts the purge log table with a new scoreboard.
@@ -413,28 +391,6 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             engine.releaseAllWriters();
             engine.getTxnScoreboardPool().remove(logToken);
         }
-    }
-
-    // Fills the posting seal purge queue with tasks for a table that does not exist, as a purge job that does not keep
-    // up would leave it.
-    private static void fillPurgeQueue(TableToken liveToken) {
-        final MPSequence pubSeq = engine.getMessageBus().getPostingSealPurgePubSeq();
-        final RingQueue<PostingSealPurgeTask> queue = engine.getMessageBus().getPostingSealPurgeQueue();
-        final TableToken missingToken = new TableToken("missing", "missing", null, liveToken.getTableId() + 1_000_000, false, false, false);
-        int published = 0;
-        while (true) {
-            final long cursor = pubSeq.next();
-            if (cursor == -2) {
-                continue;
-            }
-            if (cursor < 0) {
-                break;
-            }
-            queue.get(cursor).of(missingToken, "missing", TableUtils.COLUMN_NAME_TXN_NONE, published++, 0L, -1L,
-                    PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO, 0L, 0L);
-            pubSeq.done(cursor);
-        }
-        Assert.assertTrue("the purge queue is full", published > 0);
     }
 
     // Makes every removal so far durable, as a journal commit before a power loss would.
@@ -518,6 +474,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         // with merge-append on (the harness default) the index grows by a generation per commit and supersedes
         // nothing. Pin the production default.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        // The native path does not reseal a pure append either: its covered tail append adds the appended rows as
+        // one more generation. Pin the reseal path; resetCoveringSealAppend() restores the default.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         // No periodic save point inside a test.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
@@ -653,55 +612,6 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                 assertRowsThroughIndex(pass);
                 assertOnePostingGenerationPerPartition(tableDir, "crash " + crash);
             }
-        });
-    }
-
-    // With the purge queue full, a table writer's close writes its ready purge tasks to sys.posting_seal_purge_log
-    // itself, so closing the writers before the rollback opens the log table's writer. The restart must close that
-    // writer too, or crash() refuses to roll back under its live mappings.
-    private void assertRestartClosesPurgeLogWriter(Consumer<TableToken> restart) throws Exception {
-        setUpAdaptive();
-        runWithCrashFacade(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) "
-                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
-            execute("INSERT INTO t VALUES " + row(DAY1 + 10 * HOUR, 0) + ", " + row(DAY1 + DAY + 10 * HOUR, 1));
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("t");
-            // Creates the purge log table, as a server start does.
-            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
-                runPurgeJob(job);
-            }
-            // Only the writer of t is in the pool at the restart.
-            engine.releaseAllWriters();
-            final int[] logWriterOpens = {0};
-            try {
-                fillPurgeQueue(token);
-                // The in-place commit reseals day 1. Its purge task is ready after the commit, finds the queue full
-                // and stays with the writer of t until its close.
-                execute("INSERT INTO t VALUES " + row(DAY1 + 11 * HOUR, 2));
-                drainWalQueue();
-                markDurableBaseline();
-                engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_CREATE
-                            && tableToken != null && tableToken.getTableName().equals("sys.posting_seal_purge_log")) {
-                        logWriterOpens[0]++;
-                    }
-                });
-                try {
-                    restart.accept(token);
-                } finally {
-                    engine.setPoolListener(null);
-                }
-            } finally {
-                discardPurgeQueue();
-            }
-            Assert.assertEquals("the close of t opens the purge log writer", 1, logWriterOpens[0]);
-            new RecoveryCoordinator(engine).recover();
-            engine.notifyWalTxnRepublisher(token);
-            drainWalQueue();
-            evictPurgeLogScoreboard();
-            Assert.assertFalse("recovery suspended the table", anyTableSuspended(token));
-            assertSymbolRowsThroughIndex("t", 3);
         });
     }
 

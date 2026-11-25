@@ -58,7 +58,7 @@ public abstract class SynchronizedJob implements Job {
 
     protected abstract boolean runSerially();
 
-    private boolean tryAcquireRunLock() {
+    protected final boolean tryAcquireRunLock() {
         return Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
     }
 }

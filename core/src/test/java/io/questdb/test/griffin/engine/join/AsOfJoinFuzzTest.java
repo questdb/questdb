@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -44,12 +45,16 @@ import org.junit.Test;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
     private static final int RUN_N_PERMUTATIONS = 100;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
+    // t2's designated timestamps in microseconds, in insertion order
+    private final LongList slaveTimestampsMicros = new LongList();
+    private int masterRowCount;
 
     public AsOfJoinFuzzTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -157,7 +162,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         if (RUN_ALL_PERMUTATIONS) {
             permutations = validPermutations.toArray(new Object[0][]);
         } else {
-            Collections.shuffle(validPermutations);
+            // Collections.shuffle(list) draws from an unseeded Random: shuffle with the seeded rnd,
+            // so the printed seeds reproduce the permutations a failed run picked
+            Collections.shuffle(validPermutations, new Random(rnd.nextLong()));
             int count = Math.min(RUN_N_PERMUTATIONS, validPermutations.size());
             permutations = validPermutations.subList(0, count).toArray(new Object[0][]);
         }
@@ -230,6 +237,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         StringSink filter = new StringSink();
+        // the bounds of the first interval; the plan check reads them only when there is at most one
+        long intervalLoMicros = Long.MIN_VALUE;
+        long intervalHiMicros = Long.MAX_VALUE;
         if (numIntervalsOpt != NumIntervals.ZERO) {
             final int numIntervals = (numIntervalsOpt == NumIntervals.ONE) ? 1 : rnd.nextInt(4) + 2;
             long baseTs = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
@@ -243,6 +253,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 int endDays = startDays + rnd.nextInt(100) + 1;
                 long tsStart = baseTs + Micros.DAY_MICROS * startDays;
                 long tsEnd = baseTs + Micros.DAY_MICROS * endDays;
+                if (i == 0) {
+                    intervalLoMicros = tsStart;
+                    intervalHiMicros = tsEnd;
+                }
                 MicrosFormatUtils.appendDateTimeUSec(filter, tsStart);
                 filter.put("' and '");
                 MicrosFormatUtils.appendDateTimeUSec(filter, tsEnd);
@@ -345,7 +359,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 case INDEX -> "Indexed";
                 case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
                 case DENSE -> "Dense Single Symbol";
-                default -> "Fast";
+                default -> isSmallMasterAutoIndexed(intervalLoMicros, intervalHiMicros)
+                        ? "Indexed Scan"
+                        : "Dense Single Symbol";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo);
         }
@@ -382,6 +398,23 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // With no hint, SqlCodeGenerator joins a master that is small against the slave through the
+    // index on the slave's symbol instead of the Dense scan: when master rows * 10_000 <= slave rows
+    // * cairo.sql.asof.index.max.master.bp (t2.s has a bitmap index). The master is all of t1 - the
+    // outer LIMIT does not size it - and the slave is the t2 rows that the subquery's interval selects.
+    private boolean isSmallMasterAutoIndexed(long intervalLoMicros, long intervalHiMicros) {
+        long slaveRows = 0;
+        for (int i = 0, n = slaveTimestampsMicros.size(); i < n; i++) {
+            final long ts = slaveTimestampsMicros.getQuick(i);
+            if (ts >= intervalLoMicros && ts <= intervalHiMicros) {
+                slaveRows++;
+            }
+        }
+        return configuration.isSqlAsOfAutoAlgoEnabled()
+                && slaveRows > 0
+                && masterRowCount * 10_000L <= slaveRows * configuration.getSqlAsOfIndexMaxMasterBp();
+    }
+
     private void testFuzz(int tsDuplicatePercentage) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, String.valueOf(rnd.nextInt(10) + 1));
@@ -409,6 +442,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
+            slaveTimestampsMicros.clear();
             for (int i = 0; i < table2Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
                     ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
@@ -416,8 +450,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 String symbol = "s_" + rnd.nextInt(10);
                 int val = rnd.nextInt(20);
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
+                slaveTimestampsMicros.add(rightTimestampDriver.toMicros(ts));
             }
 
+            masterRowCount = table1Size;
             assertResultSetsMatch0(rnd);
         });
     }
@@ -447,6 +483,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
+            slaveTimestampsMicros.clear();
             for (int i = 0; i < table2Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
                     ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
@@ -454,8 +491,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 String symbol = "s_" + rnd.nextInt(10);
                 int val = rnd.nextInt(20);
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
+                slaveTimestampsMicros.add(rightTimestampDriver.toMicros(ts));
             }
 
+            masterRowCount = table1Size;
             assertResultSetsMatch0(rnd);
         });
     }

@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,6 +38,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.lt.AbstractScalarCursorFunction;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
@@ -64,6 +70,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ParallelFilterTest extends AbstractCairoTest {
+
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
@@ -261,6 +268,57 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 "SELECT count(*) " +
                         "FROM price " +
                         "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))"
+        );
+    }
+
+    @Test
+    public void testAsyncSubQueryWithLatestOnInWorkerFilterCopies() throws Exception {
+        // rnd_int() is not thread safe, so each worker compiles its own copy of the filter, and
+        // with it of the sub-query: every copy must get back the sub-query's LATEST ON, which
+        // the first compile consumed. The query's rows cannot show it: the copies inherit the
+        // owner's value (offerStateTo) and never run their sub-query. So the test opens each
+        // copy's own sub-query factory, which must return the one latest row.
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE w (ts TIMESTAMP, k SYMBOL, v LONG) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
+                    engine.execute("insert into w select (x * 1_000_000L)::timestamp, 'k' || (x % 5), x from long_sequence(100000)", sqlExecutionContext);
+                    // the latest k1 under 50,000 is 49,996: multiples of 3 below it
+                    final String filter = " WHERE (v % 3 = 0 OR rnd_int(1, 2, 0) = 3)"
+                            + " AND v < (SELECT v FROM w WHERE k = 'k1' AND v < 50000 LATEST ON ts PARTITION BY k)";
+                    assertQuery("SELECT count(*) FROM w" + filter)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n16665\n");
+                    try (RecordCursorFactory factory = compiler.compile("SELECT * FROM w" + filter, sqlExecutionContext).getRecordCursorFactory()) {
+                        // under the query progress wrapper
+                        final RecordCursorFactory base = factory.getBaseFactory();
+                        Assert.assertTrue(String.valueOf(base), base instanceof AsyncFilteredRecordCursorFactory);
+                        final AsyncFilterAtom atom = ((AsyncFilteredRecordCursorFactory) base).getAtom();
+                        final int workerCount = sqlExecutionContext.getSharedQueryWorkerCount();
+                        Assert.assertTrue(workerCount > 0);
+                        // the owner's filter (-1), then each worker's copy
+                        for (int slot = -1; slot < workerCount; slot++) {
+                            final Function copy = atom.getFilter(slot);
+                            Assert.assertTrue("slot " + slot, slot == -1 || copy != atom.getFilter(-1));
+                            final AbstractScalarCursorFunction subQuery = findScalarSubQuery(copy);
+                            Assert.assertNotNull("slot " + slot, subQuery);
+                            final RecordCursorFactory subQueryFactory = subQuery.getRight().getRecordCursorFactory();
+                            Assert.assertNotNull("slot " + slot, subQueryFactory);
+                            try (RecordCursor cursor = subQueryFactory.getCursor(sqlExecutionContext)) {
+                                Assert.assertTrue("slot " + slot, cursor.hasNext());
+                                Assert.assertEquals("slot " + slot, 49_996, cursor.getRecord().getLong(0));
+                                Assert.assertFalse("slot " + slot + ": the copy's sub-query lost its LATEST ON", cursor.hasNext());
+                            }
+                        }
+                    }
+                },
+                configuration,
+                LOG
         );
     }
 
@@ -1492,6 +1550,26 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    private static AbstractScalarCursorFunction findScalarSubQuery(Function function) {
+        if (function instanceof AbstractScalarCursorFunction scalar) {
+            return scalar;
+        }
+        AbstractScalarCursorFunction found = null;
+        if (function instanceof BinaryFunction binary) {
+            found = findScalarSubQuery(binary.getLeft());
+            if (found == null) {
+                found = findScalarSubQuery(binary.getRight());
+            }
+        } else if (function instanceof UnaryFunction unary) {
+            found = findScalarSubQuery(unary.getArg());
+        } else if (function instanceof MultiArgFunction multiArg) {
+            for (int i = 0, n = multiArg.args().size(); i < n && found == null; i++) {
+                found = findScalarSubQuery(multiArg.args().getQuick(i));
+            }
+        }
+        return found;
     }
 
     private static class NpeCountingAtomicBooleanCircuitBreaker extends AtomicBooleanCircuitBreaker {

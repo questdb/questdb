@@ -40,6 +40,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -392,6 +393,26 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
             pass2Ordinal = 0;
             selIdx = 0;
             selected.clear();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(targetArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(targetArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(targetArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(targetArg);
         }
     }
 }

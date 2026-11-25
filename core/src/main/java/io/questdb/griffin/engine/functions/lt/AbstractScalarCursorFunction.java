@@ -54,10 +54,21 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
  * path is unaffected by this sharing.
  */
 public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunction implements BinaryFunction {
+    // the link read the value init() computed for the execution
+    private static final int RUN_BY_LINK_AFTER_OWNER = 2;
+    // the link computed the value, before init(); init() reuses it
+    private static final int RUN_BY_LINK_BEFORE_OWNER = 3;
+    // init() computed the value; the link has not read it yet
+    private static final int RUN_BY_OWNER = 1;
+    // no run that the other side has to account for
+    private static final int RUN_NONE = 0;
     protected final Function leftFunc;
     private final RecordCursorFactory factory;
     private final Function rightFunc;
     private final int rightPos;
+    // which of this function and the compiled filter's link to its value ran the sub-query for the
+    // execution, see initFromLink()
+    private int runState = RUN_NONE;
     private boolean stateInherited = false;
     private boolean stateShared = false;
 
@@ -85,13 +96,69 @@ public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunct
             return;
         }
         this.stateShared = false;
-        try (RecordCursor cursor = factory.getCursor(executionContext)) {
-            if (cursor.hasNext()) {
-                readValue(cursor.getRecord());
-                ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
-            } else {
-                setNullValue();
-            }
+        if (runState == RUN_BY_LINK_BEFORE_OWNER) {
+            // the compiled filter's link ran the sub-query for this execution: both filters compare
+            // that one value
+            runState = RUN_NONE;
+            return;
+        }
+        runSubQuery(executionContext);
+        runState = RUN_BY_OWNER;
+    }
+
+    /**
+     * @return the cached sub-query value, when {@link #getScalarType()} is DOUBLE
+     */
+    public double getScalarDouble() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the cached sub-query value, when {@link #getScalarType()} is INT
+     */
+    public int getScalarInt() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the cached sub-query value, when {@link #getScalarType()} is LONG
+     */
+    public long getScalarLong() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * The type the comparison reads the sub-query value at, its NULL included: DOUBLE (NaN), LONG
+     * ({@code LONG_NULL}) or INT ({@code INT_NULL}).
+     */
+    public abstract int getScalarType();
+
+    /**
+     * Called by the compiled filter's link to this function's value ({@code
+     * CompiledFilterScalarSubQuery}) as it initialises for an execution, before it reads the value.
+     * The consumers of a compiled filter initialise this function (the Java filter) and the link once
+     * per execution each, in an order of their own; whichever of the two comes first runs the
+     * sub-query, and the other reads that value, so the sub-query runs once per execution in either
+     * order and the link never binds the value of an earlier execution:
+     * <ul>
+     *     <li>this function first: {@link #init} runs it, the link reads it;</li>
+     *     <li>the link first: the link runs it, {@link #init} reuses it.</li>
+     * </ul>
+     * A link initialised again within an execution after it read this function's value runs the
+     * sub-query afresh, and leaves the next execution's {@link #init} to run it too.
+     */
+    public void initFromLink(SqlExecutionContext executionContext) throws SqlException {
+        switch (runState) {
+            case RUN_BY_OWNER:
+                runState = RUN_BY_LINK_AFTER_OWNER;
+                break;
+            case RUN_BY_LINK_AFTER_OWNER:
+                runSubQuery(executionContext);
+                break;
+            default:
+                runSubQuery(executionContext);
+                runState = RUN_BY_LINK_BEFORE_OWNER;
+                break;
         }
     }
 
@@ -157,4 +224,15 @@ public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunct
      * null).
      */
     protected abstract void setNullValue();
+
+    private void runSubQuery(SqlExecutionContext executionContext) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            if (cursor.hasNext()) {
+                readValue(cursor.getRecord());
+                ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
+            } else {
+                setNullValue();
+            }
+        }
+    }
 }

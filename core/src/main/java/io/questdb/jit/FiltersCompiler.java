@@ -58,6 +58,13 @@ final class FiltersCompiler {
 
     public static native long freeFunction(long fnAddress);
 
+    /**
+     * The backend capabilities of the loaded native library, a mask of {@code JitUtil.FEATURE_*}
+     * bits. A library that predates this function does not export it, and the call throws
+     * {@link UnsatisfiedLinkError}; see {@link JitUtil#isSymbolInSetSupported()}.
+     */
+    public static native int getFeatures();
+
     static class JitError {
         private final StringSink message = new StringSink();
         private int errorCode = 0;

@@ -167,6 +167,22 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         return masterFactory;
     }
 
+    // The keyed horizon join aggregates into a map and then emits that map's entries, so it emits
+    // in map order - hash-slot order for the fixed-width Unordered{2,4,8,16}Map keys,
+    // key-insertion order for the OrderedMap fallback. Neither is designated-timestamp order, even
+    // when the group key IS the designated timestamp and every input row was scanned forward.
+    // Measured 172 of 299 adjacent steps descending, and 296 of 300 ASOF invariant violations.
+    //
+    // Do not be talked out of this by a fixture that happens to come out ascending: with
+    // keys:[ts,sym] the map happens to be an OrderedMap whose insertion order tracks the forward
+    // scan, and keys:[ts] emits ascending for as long as the aggregates are still projected - it
+    // turns to 172/299 once projection pushdown prunes them. "Ascending here" is a property of the
+    // fixture, not of the factory.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     // getBaseFactory() exposes only the master. The slave is parser-restricted to a plain table
     // today, but propagate both sides explicitly so the external-source guard stays honest if that
     // restriction is ever relaxed. Guards against a null child during teardown.
@@ -204,6 +220,14 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         return true;
     }
 
+    /**
+     * Lets the ASOF lookup of the single SYMBOL join key read the slave's symbol index, see
+     * {@link HorizonJoinTimeFrameHelper#enableIndexedKeyLookup}.
+     */
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        cursor.slaveTimeFrameHelper.enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
@@ -212,6 +236,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", cursor.groupByFunctions);
         sink.setMetadata(null);
+        if (cursor.slaveTimeFrameHelper.isIndexedKeyLookup()) {
+            sink.attr("lookup").val("index");
+        }
         sink.child(masterFactory);
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
@@ -573,6 +600,26 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
+
+            // The walk looks up the join keys of the master rows alone, so the forward scans may
+            // cache the slave rows of those keys alone, see HorizonJoinTimeFrameHelper#beginKeyTracking.
+            if (symbolTranslatingRecord != null && slaveTimeFrameHelper.isIndexedKeyLookup()) {
+                slaveTimeFrameHelper.beginKeyTracking();
+                final Record masterRecord = masterCursor.getRecord();
+                masterCursor.toTop();
+                long masterRowCount = 0;
+                while (masterCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    symbolTranslatingRecord.of(masterRecord);
+                    slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+                    masterRowCount++;
+                }
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+                slaveTimeFrameHelper.decideIndexOnlyWalk(masterRowCount * offsets.length, slaveTimeFrameHelper.countSlaveRows());
+                // the iterator discovered a master row already: start it over
+                masterCursor.toTop();
+                horizonIterator.of(masterCursor, recordBMaster, masterTimestampColumnIndex);
             }
 
             // Initialize functions

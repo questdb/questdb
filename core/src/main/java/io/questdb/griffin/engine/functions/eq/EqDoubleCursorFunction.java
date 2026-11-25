@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -53,6 +54,16 @@ class EqDoubleCursorFunction extends AbstractScalarCursorFunction {
     @Override
     public boolean getBool(Record rec) {
         return negated != Numbers.equals(leftFunc.getDouble(rec), value);
+    }
+
+    @Override
+    public double getScalarDouble() {
+        return value;
+    }
+
+    @Override
+    public int getScalarType() {
+        return ColumnType.DOUBLE;
     }
 
     @Override

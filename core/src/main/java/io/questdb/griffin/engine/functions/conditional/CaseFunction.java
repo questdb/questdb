@@ -27,11 +27,33 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
-public interface CaseFunction extends MultiArgFunction {
+/**
+ * A CASE, searched or switch. Its {@link #args()} are its children in an order each factory
+ * picks, conditions and keys among them; its values, by role, are {@link #branches()}.
+ */
+public interface CaseFunction extends MultiArgFunction, CaseBranches {
+
+    /**
+     * The THEN values and the ELSE this CASE returns, see {@link CaseBranches}.
+     */
+    CaseBranches.Values branches();
+
     @Override
     default int getComplexity() {
         return Function.addComplexity(5, MultiArgFunction.super.getComplexity());
+    }
+
+    @Override
+    default @NotNull Function getElseValue() {
+        return branches().elseValue();
+    }
+
+    @Override
+    default @NotNull ObjList<Function> getThenValues() {
+        return branches().thenValues();
     }
 
     @Override

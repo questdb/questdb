@@ -41,6 +41,12 @@ import org.jetbrains.annotations.TestOnly;
  * {@code [left, right]}. The values must not contain NaN.
  */
 public final class DoubleSort {
+    // radixSelect(): the bits a step counts by, and the range below which quickSelect() finishes
+    private static final int RADIX_SELECT_BITS = 11;
+    private static final long RADIX_SELECT_MIN_RANGE = 1024;
+    // radixSelect(): a range above this size takes its first step by the order keys' highest bits
+    private static final int RADIX_SELECT_WIDE_BITS = 16;
+    private static final long RADIX_SELECT_WIDE_RANGE = 1 << 18;
 
     private static final int INSERTION_SORT_THRESHOLD = 47;
     // Ranges above this size pick the pivot with a Tukey ninther (median of the medians
@@ -98,6 +104,123 @@ public final class DoubleSort {
     }
 
     /**
+     * The k-th smallest (0-based, k in [lo, hi]) of the finite doubles at [lo, hi] (inclusive), by radix
+     * selection: each step counts the range's values by the 11 highest bits their order keys still differ
+     * in (a large range's first step by their 16 highest bits), moves those of the k-th's bucket to the
+     * range's front and narrows to them, until the range is small or its values are equal. The range holds
+     * fewer than 2^31 values. Linear in the range whatever its distribution, many equal values
+     * included. Reorders the elements; unlike {@link #quickSelect} it does not leave the k-th at index k.
+     */
+    public static double radixSelect(long ptr, long lo, long hi, long k) {
+        return radixSelect(ptr, lo, hi, k, null);
+    }
+
+    /**
+     * {@link #radixSelect}, and into {@code next[0]} the (k+1)-th smallest (k in [lo, hi)), found on the way:
+     * the smallest value above the k-th's bucket when the k-th is its bucket's last, else within the
+     * narrowed range.
+     */
+    public static double radixSelect(long ptr, long lo, long hi, long k, double[] next) {
+        long l = lo;
+        long h = hi + 1; // exclusive
+        long kk = k - lo; // the rank within [l, h)
+        // the smallest value above the narrowed range's: the (k+1)-th once the k-th is the range's last
+        double above = Double.POSITIVE_INFINITY;
+        if (h - l <= RADIX_SELECT_MIN_RANGE) {
+            return finishSelect(ptr, l, h, kk, above, next);
+        }
+        // a large range's first step counts by the order keys' 16 highest bits, without first reading the
+        // range for the bits its keys differ in; each later step counts by the 11 highest bits the narrowed
+        // range's keys differ in, found as the previous step moved them
+        final boolean isWide = h - l > RADIX_SELECT_WIDE_RANGE;
+        int bits = isWide ? RADIX_SELECT_WIDE_BITS : RADIX_SELECT_BITS;
+        int shift = 64 - bits;
+        final int[] counts = new int[1 << (isWide ? RADIX_SELECT_WIDE_BITS : RADIX_SELECT_BITS)];
+        if (!isWide) {
+            final long first = orderKey(getDouble(ptr, l));
+            long varying = 0;
+            for (long i = l + 1; i < h; i++) {
+                varying |= orderKey(getDouble(ptr, i)) ^ first;
+            }
+            if (varying == 0) {
+                return equalRange(ptr, l, h, kk, above, next);
+            }
+            shift = Math.max(0, 63 - Long.numberOfLeadingZeros(varying) - (bits - 1));
+        }
+        while (true) {
+            final long mask = (1L << bits) - 1;
+            java.util.Arrays.fill(counts, 0, 1 << bits, 0);
+            for (long i = l; i < h; i++) {
+                counts[(int) ((orderKey(getDouble(ptr, i)) >>> shift) & mask)]++;
+            }
+            int bucket = 0;
+            while (kk >= counts[bucket]) {
+                kk -= counts[bucket++];
+            }
+            final boolean isLast = kk == counts[bucket] - 1;
+            // the bucket's values to the range's front, and the smallest value above the bucket; the bits
+            // the moved keys differ in are those set in some and clear in others
+            long w = l;
+            double minAbove = Double.POSITIVE_INFINITY;
+            long anySet = 0;
+            long allSet = -1;
+            for (long i = l; i < h; i++) {
+                final double v = getDouble(ptr, i);
+                final long key = orderKey(v);
+                final long digit = (key >>> shift) & mask;
+                if (digit == bucket) {
+                    if (i != w) {
+                        putDouble(ptr, i, getDouble(ptr, w));
+                        putDouble(ptr, w, v);
+                    }
+                    w++;
+                    anySet |= key;
+                    allSet &= key;
+                } else if (isLast && digit > bucket && v < minAbove) {
+                    minAbove = v;
+                }
+            }
+            if (isLast) {
+                above = Math.min(above, minAbove);
+            }
+            h = w;
+            final long varying = anySet & ~allSet;
+            if (varying == 0) {
+                return equalRange(ptr, l, h, kk, above, next);
+            }
+            if (h - l <= RADIX_SELECT_MIN_RANGE) {
+                return finishSelect(ptr, l, h, kk, above, next);
+            }
+            bits = RADIX_SELECT_BITS;
+            shift = Math.max(0, 63 - Long.numberOfLeadingZeros(varying) - (bits - 1));
+        }
+    }
+
+    // the k-th (rank kk) of the range [l, h) whose values are all equal
+    private static double equalRange(long ptr, long l, long h, long kk, double above, double[] next) {
+        final double v = getDouble(ptr, l);
+        if (next != null) {
+            next[0] = kk + 1 < h - l ? v : above;
+        }
+        return v;
+    }
+
+    // the k-th (rank kk) of the small range [l, h), by quickSelect
+    private static double finishSelect(long ptr, long l, long h, long kk, double above, double[] next) {
+        quickSelect(ptr, l, h - 1, l + kk);
+        final double kth = getDouble(ptr, l + kk);
+        if (next != null) {
+            // quickSelect leaves the values after the k-th's index at least it
+            double n = above;
+            for (long i = l + kk + 1; i < h; i++) {
+                n = Math.min(n, getDouble(ptr, i));
+            }
+            next[0] = n;
+        }
+        return kth;
+    }
+
+    /**
      * Selects several order statistics at once. Partitions only the ranges that contain
      * a requested index. After this method returns, the elements at all requested
      * indices are in their final sorted positions.
@@ -139,6 +262,12 @@ public final class DoubleSort {
             gt++;
         }
         return gt;
+    }
+
+    // the double's bits as an unsigned order key, -0.0 as 0.0 (they compare equal)
+    private static long orderKey(double v) {
+        final long bits = Double.doubleToRawLongBits(v + 0.0);
+        return bits ^ ((bits >> 63) | Long.MIN_VALUE);
     }
 
     private static double getDouble(long ptr, long index) {

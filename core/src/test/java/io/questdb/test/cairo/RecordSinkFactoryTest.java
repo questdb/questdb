@@ -2157,4 +2157,5 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             recordedTypes.add(SKIP_VAR_SIZE);
         }
     }
+
 }

@@ -141,6 +141,11 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

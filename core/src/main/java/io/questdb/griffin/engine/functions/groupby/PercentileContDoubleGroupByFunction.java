@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -36,44 +35,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
     private final int[] indices = new int[2];
+    // the radix selection's (k+1)-th value
+    private final double[] next = new double[1];
 
     public PercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         super(configuration, arg, percentileFunc, percentilePos);
-    }
-
-    @Override
-    public double getDouble(Record record) {
-        long listPtr = record.getLong(valueIndex);
-        if (listPtr <= 0) {
-            return Double.NaN;
-        }
-        listA.of(listPtr);
-        int size = listA.size();
-        if (size == 0) {
-            return Double.NaN;
-        }
-        double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
-
-        // Calculate the continuous percentile position
-        double position = percentile * (size - 1);
-        int lowerIndex = (int) Math.floor(position);
-        int upperIndex = (int) Math.ceil(position);
-
-        // If the position is exactly at an index, return that value
-        if (lowerIndex == upperIndex) {
-            // Use QuickSelect to find the element - O(n) vs O(n log n)
-            listA.quickSelect(0, size - 1, lowerIndex);
-            return listA.getQuick(lowerIndex);
-        }
-
-        // Need to select both adjacent indices for interpolation
-        // Use quickSelectMultiple for efficiency
-        indices[0] = lowerIndex;
-        indices[1] = upperIndex;
-        listA.quickSelectMultiple(0, size - 1, indices, 0, 2);
-
-        // Perform linear interpolation between the two adjacent values
-        return SqlUtil.interpolatePercentile(listA.getQuick(lowerIndex), listA.getQuick(upperIndex), position - lowerIndex);
     }
 
     @Override
@@ -91,4 +57,35 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         sink.val("percentile_cont(").val(arg).val(',').val(percentileFunc).val(')');
     }
 
+    @Override
+    protected double select(int size, double percentile) {
+        // Calculate the continuous percentile position
+        double position = percentile * (size - 1);
+        int lowerIndex = (int) Math.floor(position);
+        int upperIndex = (int) Math.ceil(position);
+
+        if (size > RADIX_SELECT_MIN_SIZE) {
+            if (lowerIndex == upperIndex) {
+                return listA.radixSelect(0, size - 1, lowerIndex);
+            }
+            final double lower = listA.radixSelect(0, size - 1, lowerIndex, next);
+            return SqlUtil.interpolatePercentile(lower, next[0], position - lowerIndex);
+        }
+
+        // If the position is exactly at an index, return that value
+        if (lowerIndex == upperIndex) {
+            // Use QuickSelect to find the element - O(n) vs O(n log n)
+            listA.quickSelect(0, size - 1, lowerIndex);
+            return listA.getQuick(lowerIndex);
+        }
+
+        // Need to select both adjacent indices for interpolation
+        // Use quickSelectMultiple for efficiency
+        indices[0] = lowerIndex;
+        indices[1] = upperIndex;
+        listA.quickSelectMultiple(0, size - 1, indices, 0, 2);
+
+        // Perform linear interpolation between the two adjacent values
+        return SqlUtil.interpolatePercentile(listA.getQuick(lowerIndex), listA.getQuick(upperIndex), position - lowerIndex);
+    }
 }

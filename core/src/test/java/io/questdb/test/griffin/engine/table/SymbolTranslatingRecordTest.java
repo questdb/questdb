@@ -116,6 +116,9 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
         super.setUp();
         if (isCacheCapped) {
             setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, CAPPED_CACHE_CAPACITY);
+            // Since #7423 a two-symbol ASOF key under asof_dense takes Dense Dual Symbol, which translates
+            // through the short-circuit symbol key caches rather than SymbolTranslatingRecord; cap those too.
+            setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, CAPPED_CACHE_CAPACITY);
         }
     }
 
@@ -290,6 +293,10 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
 
     @Test
     public void testFullFatHashJoinsReleaseCachesOnCursorClose() throws Exception {
+        // #7618 fuses an aggregate over an equi-join into Async Hash Join Group By, which these
+        // count()/sum() queries would take. Switch it off to keep the hash join factories under test;
+        // the next setUp() restores the flag from the configuration.
+        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
         assertMemoryLeak(() -> {
             createTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -307,6 +314,10 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinsReleaseCachesOnCursorClose() throws Exception {
+        // #7618 fuses an aggregate over an equi-join into Async Hash Join Group By, which these
+        // count()/sum() queries would take. Switch it off to keep the hash join factories under test;
+        // the next setUp() restores the flag from the configuration.
+        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
         assertMemoryLeak(() -> {
             createTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -349,7 +360,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 assertCachesReleased(
                         compiler,
                         sqlExecutionContext,
-                        "SELECT count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym, sym2)",
+                        "SELECT /*+ asof_fast(m s) */ count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym, sym2)",
                         """
                                 count\tcount1\tsum
                                 20000\t10000\t4.9995E7

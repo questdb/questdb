@@ -72,6 +72,15 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * Encodes a batch entry from its components. The layout is
      * {@code [isNew:1][rowIndex:24][offset:39]}.
      */
+    /**
+     * The address batch entries' value offsets are relative to, see {@link #encodeBatchEntry}, for a
+     * caller that encodes entries of values it found itself; 0 when this map does not support it.
+     * A value's offset stays valid as the map grows, while the address may change.
+     */
+    default long getBatchBaseAddress() {
+        return 0;
+    }
+
     static long encodeBatchEntry(long rowIndex, long offset, boolean isNew) {
         long encoded = (rowIndex << BATCH_ROW_INDEX_SHIFT) | (offset & BATCH_OFFSET_MASK);
         return isNew ? encoded | Long.MIN_VALUE : encoded;
@@ -175,6 +184,24 @@ public interface Map extends Mutable, Closeable, Reopenable {
             long batchEnd,
             long batchAddr
     );
+
+    /**
+     * {@link #probeBatchFiltered} for rows whose consecutive keys are often equal, such as one
+     * symbol's rows in time order grouped by the symbol and a time bucket: a row whose key equals
+     * the previous row's reuses that row's entry without hashing or probing. The entries written
+     * are the same as {@link #probeBatchFiltered} writes. A map that cannot compare keys cheaply
+     * probes every row.
+     */
+    default long probeBatchFilteredRepeatingKeys(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        return probeBatchFiltered(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+    }
 
     /**
      * Reopens previously closed map with given key capacity and initial heap size.

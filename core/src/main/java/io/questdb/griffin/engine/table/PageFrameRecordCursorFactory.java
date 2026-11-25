@@ -547,6 +547,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return cursor;
     }
 
+    @Override
+    protected boolean isIndexScan() {
+        return rowCursorFactory.isUsingIndex();
+    }
+
     protected void toPlanInner(PlanSink sink) {
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);

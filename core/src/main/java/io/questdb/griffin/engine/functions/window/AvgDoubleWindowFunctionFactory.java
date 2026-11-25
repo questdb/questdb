@@ -51,6 +51,7 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.KeyRunWindowFunction;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -66,6 +67,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
 
 public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -1307,7 +1310,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles avg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction, KeyRunWindowFunction, ReplayableWindowFunction {
+        // A run keeps its frame in a heap ring of bufferSize values; a frame larger than this
+        // stays on the map path.
+        private static final int KEY_RUN_MAX_BUFFER_SIZE = 1 << 16;
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -1342,6 +1348,13 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
         private double avg;
+        // The state of a key run, see KeyRunWindowFunction: the partition's map value and ring,
+        // held here instead. Ring cells are indexed like the map path's native ring.
+        private long keyRunCount;
+        private int keyRunLoIdx;
+        private boolean keyRunOpen;
+        private double[] keyRunRing;
+        private double keyRunSum;
         // The two ring slots of the group's fused map value, or -1 when this function owns its
         // state. Installed by bindWindowStateSlots and cleared the same way.
         private int windowStateRingIndexSlot = -1;
@@ -1582,6 +1595,124 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putLong(3, startOffset);//not necessary because it doesn't change
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
+        }
+
+        @Override
+        public Function getKeyRunArgument() {
+            return arg;
+        }
+
+        @Override
+        public boolean isKeyRunSupported() {
+            return !liveView && bufferSize > 0 && bufferSize <= KEY_RUN_MAX_BUFFER_SIZE;
+        }
+
+        /**
+         * {@link #computeNext(Record)} for the next row of the run's partition, with the map
+         * value's four fields and the native ring held in fields: the same operations on the same
+         * values in the same order, so the same bits.
+         */
+        @Override
+        public void keyRunNext(Record record) {
+            replayNext(arg.getDouble(record));
+        }
+
+        @Override
+        public double getReplayedValue() {
+            return getDouble(null);
+        }
+
+        /**
+         * A replay is a key run (see {@link #keyRunNext}) whose values another thread read: the
+         * same arithmetic in fields, bit for bit {@link #computeNext(Record)}'s and the fused
+         * group's.
+         */
+        @Override
+        public boolean isReplayable() {
+            return isKeyRunSupported();
+        }
+
+        @Override
+        public void replayKeyStart() {
+            keyRunStart();
+        }
+
+        /**
+         * The row went through the map, or the group, which the run's fields do not see: they
+         * take it too. Both leave the same value in {@code avg} and {@code sum}.
+         */
+        @Override
+        public void replayPrefixRow(Record record) {
+            replayNext(arg.getDouble(record));
+        }
+
+        @Override
+        public void replayNext(double d) {
+            final double[] ring = keyRunRing;
+            final int loIdx;
+            if (!keyRunOpen) {
+                // the partition's first row: computeNext's value.isNew() branch
+                keyRunOpen = true;
+                loIdx = 0;
+                Arrays.fill(ring, Double.NaN);
+                if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
+                    keyRunSum = d;
+                    keyRunCount = 1;
+                    avg = d;
+                    this.sum = d;
+                } else {
+                    keyRunSum = 0.0;
+                    keyRunCount = 0;
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+            } else {
+                loIdx = keyRunLoIdx;
+                double sum = keyRunSum;
+                long count = keyRunCount;
+                final double hiValue;
+                if (frameIncludesCurrentValue) {
+                    hiValue = d;
+                } else {
+                    // (loIdx + frameSize - 1) % bufferSize, with both terms below bufferSize
+                    int hiIdx = loIdx + frameSize - 1;
+                    if (hiIdx >= bufferSize) {
+                        hiIdx -= bufferSize;
+                    }
+                    hiValue = ring[hiIdx];
+                }
+                if (Numbers.isFinite(hiValue)) {
+                    count++;
+                    sum += hiValue;
+                }
+                if (count != 0) {
+                    avg = sum / count;
+                    this.sum = sum;
+                } else {
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+                if (frameLoBounded) {
+                    final double loValue = ring[loIdx];
+                    if (Numbers.isFinite(loValue)) {
+                        sum -= loValue;
+                        count--;
+                    }
+                }
+                keyRunSum = sum;
+                keyRunCount = count;
+            }
+            ring[loIdx] = d;
+            final int nextLoIdx = loIdx + 1;
+            keyRunLoIdx = nextLoIdx == bufferSize ? 0 : nextLoIdx;
+        }
+
+        @Override
+        public void keyRunStart() {
+            keyRunOpen = false;
+            if (keyRunRing == null) {
+                keyRunRing = new double[bufferSize];
+            }
         }
 
         @Override
@@ -2074,7 +2205,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Handles avg() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    static class AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction, ReplayableWindowFunction {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -2083,7 +2214,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         protected double externalSum = 0;
         private double avg = 0;
         private long count = 0;
+        // the next row is the first since toTop(), see adoptPartitionedArithmetic()
+        private boolean firstRow = true;
         private int loIdx = 0;
+        // whether a first row sets the sum, as AvgOverPartitionRowsFrameFunction does
+        private boolean partitionedFirstRow;
         private double sum = 0.0;
 
         public AvgOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
@@ -2104,6 +2239,17 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.buffer = memory;
         }
 
+        /**
+         * A partition's first row sets the sum to its value, as
+         * {@link AvgOverPartitionRowsFrameFunction} does, rather than adding it to 0.0: the two
+         * differ for -0.0, which 0.0 + -0.0 turns into 0.0. Every later row is the same arithmetic
+         * in both.
+         */
+        @Override
+        public void adoptPartitionedArithmetic() {
+            partitionedFirstRow = true;
+        }
+
         @Override
         public void close() {
             super.close();
@@ -2112,8 +2258,49 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void computeNext(Record record) {
-            double d = arg.getDouble(record);
+            replayNext(arg.getDouble(record));
+        }
 
+        @Override
+        public double getReplayedValue() {
+            return getDouble(null);
+        }
+
+        @Override
+        public boolean isReplayable() {
+            return true;
+        }
+
+        @Override
+        public void replayKeyStart() {
+            toTop();
+        }
+
+        @Override
+        public void replayPrefixRow(Record record) {
+            // computeNext() replays: the function's state is the replay's
+        }
+
+        @Override
+        public void replayNext(double d) {
+            if (firstRow) {
+                firstRow = false;
+                if (partitionedFirstRow) {
+                    // AvgOverPartitionRowsFrameFunction.computeNext's value.isNew() branch
+                    if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
+                        sum = d;
+                        count = 1;
+                        avg = d;
+                        externalSum = d;
+                    } else {
+                        avg = Double.NaN;
+                        externalSum = Double.NaN;
+                    }
+                    buffer.putDouble((long) loIdx * Double.BYTES, d);
+                    loIdx = (loIdx + 1) % bufferSize;
+                    return;
+                }
+            }
             //compute value using top frame element (that could be current or previous row)
             double hiValue = d;
             if (frameLoBounded && !frameIncludesCurrentValue) {
@@ -2174,6 +2361,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reopen() {
             avg = 0;
             count = 0;
+            firstRow = true;
             loIdx = 0;
             sum = 0.0;
             initBuffer();
@@ -2185,6 +2373,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             buffer.close();
             avg = 0;
             count = 0;
+            firstRow = true;
             loIdx = 0;
             sum = 0.0;
         }
@@ -2214,6 +2403,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.toTop();
             avg = 0;
             count = 0;
+            firstRow = true;
             loIdx = 0;
             sum = 0.0;
             initBuffer();

@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -103,6 +104,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean hasPerCallState() {
+            return true;
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return true;
         }
@@ -120,6 +126,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             next = start;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(longIncrement);
         }
     }
 
@@ -163,6 +174,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean hasPerCallState() {
+            return true;
+        }
+
+        @Override
         public boolean supportsRandomAccess() {
             return false;
         }
@@ -175,6 +191,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             next = 0;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(start, longIncrement);
         }
     }
 }

@@ -121,7 +121,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final int maxNegativeLimit;
         boolean isPerWorkerFiltersOwned = true;
         try {
-            cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+            cursor = new AsyncFilteredRecordCursor(configuration, base.getMetadata(), filter, base.getScanDirection());
             negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
             final int columnCount = base.getMetadata().getColumnCount();
             final IntList columnTypes = new IntList(columnCount);
@@ -231,10 +231,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
+            // the negative LIMIT's cursor reads its rows back through its own records, never the
+            // frames' projected values
+            frameSequence.getAtom().setProjecting(false);
+            frameSequence.getAtom().setGathering(false);
             negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
+        frameSequence.getAtom().setProjecting(true);
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }
@@ -253,6 +258,17 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean isStableWithinExecution() {
         return filter.isStableWithinExecution() && base.isStableWithinExecution();
+    }
+
+    /**
+     * Page-frame transparent: a page-frame consumer asking this wrapper is served the BASE's
+     * frames, so it must be told the base's page-frame direction. Inheriting the default --
+     * which forwards to {@link #getScanDirection()} -- degrades the narrow answer back to the
+     * wide one at the first wrapper, which is exactly what the narrow answer exists to avoid.
+     */
+    @Override
+    public int getPageFrameScanDirection() {
+        return base.getPageFrameScanDirection();
     }
 
     @Override
@@ -301,6 +317,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
+    }
+
+    /**
+     * Takes a projection over this filter whose columns the filtering threads compute, see
+     * {@link FrameProjection}; the atom frees it.
+     */
+    public void setFrameProjection(@NotNull FrameProjection projection) {
+        frameSequence.getAtom().setProjection(projection);
+        cursor.setProjection(projection);
     }
 
     @Override
@@ -369,13 +394,20 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
         final boolean isParquetFrame = task.isParquetFrame();
+        final boolean isSingleKeyCoveredFrame = task.isSingleKeyCoveredFrame();
+        final boolean isLateMaterializationCandidate = isParquetFrame || isSingleKeyCoveredFrame;
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         // The slot is held from here on, so everything below belongs inside the try that releases
         // it: populateFrameMemory() navigates to the frame, which decodes parquet and can breach the
         // per-query memory limit. See PerWorkerLocks.acquireSlot().
         try {
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(
+                    filterId,
+                    isParquetFrame,
+                    isSingleKeyCoveredFrame,
+                    task.isCountOnly()
+            );
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -388,10 +420,24 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             final DirectLongList rows = task.getFilteredRows();
             rows.clear();
 
+            // A single-symbol index scan's parallel plan: the frame's rows of the symbol come from
+            // its posting index, see IndexKeyPageFrameCursor; a frame without one takes the filter.
+            if (!isParquetFrame
+                    && task.getFrameSequence().getPageFrameCursor() instanceof IndexKeyPageFrameCursor indexRows
+                    && indexRows.readRows(task.getFrameIndex(), rows)) {
+                task.setFilteredRowCount(rows.size());
+                if (!task.isCountOnly()) {
+                    atom.project(workerId, owner, task, record, circuitBreaker);
+                }
+                return;
+            }
+
             final Function filter = atom.getFilter(filterId);
+            final boolean isFrameFiltered = filter instanceof FrameRowFilter frameFilter
+                    && frameFilter.filterFrame(frameMemory, frameRowCount, rows);
             if (task.isCountOnly()) {
-                long count = 0;
-                for (long r = 0; r < frameRowCount; r++) {
+                long count = rows.size();
+                for (long r = 0; !isFrameFiltered && r < frameRowCount; r++) {
                     record.setRowIndex(r);
                     if (filter.getBool(record)) {
                         count++;
@@ -399,20 +445,21 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 }
                 task.setFilteredRowCount(count);
             } else { // normal filter task
-                for (long r = 0; r < frameRowCount; r++) {
+                for (long r = 0; !isFrameFiltered && r < frameRowCount; r++) {
                     record.setRowIndex(r);
                     if (filter.getBool(record)) {
                         rows.add(r);
                     }
                 }
 
-                if (isParquetFrame) {
+                if (isLateMaterializationCandidate) {
                     atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
                 task.setFilteredRowCount(rows.size());
+                atom.project(workerId, owner, task, record, circuitBreaker);
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {

@@ -322,6 +322,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 1);
+                int coveredProbes = 0;
                 for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
                     for (boolean isKeyed : new boolean[]{false, true}) {
                         String select = "select " + (isKeyed ? "r.id, " : "") + "sum(r.d), count(*) from r join p on " + key;
@@ -331,12 +332,15 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                             try (RecordCursorFactory baseline = engine.select(sql, context)) {
                                 Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
                             }
-                            assertDifferential(sql, context, false);
+                            if (assertCoveringOnlyProbes(sql, context)) {
+                                coveredProbes++;
+                            }
                         }
                         // Without a predicate on the indexed column, the covered key column is an ordinary input.
                         assertDifferential(select + (isKeyed ? " order by r.id" : ""), context, true);
                     }
                 }
+                Assert.assertTrue(coveredProbes > 0);
             }
         });
     }
@@ -562,7 +566,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                                 99\t9\t63.0
                                 """);
                 assertAgainstBaseline(queries, factories, context);
-                // A predicate on the indexed key selects the covering index and keeps the ordinary plan.
+                // A predicate on the indexed key selects the covering index, which a probe reads fused.
                 for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                     for (String predicate : new String[]{"r.k='k1'", "r.k in ('k1','k9')"}) {
                         String sql = "select sum(r.d), count(*) from r join p on " + key + " where " + predicate;
@@ -570,7 +574,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                         try (RecordCursorFactory baseline = engine.select(sql, context)) {
                             Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
                         }
-                        assertDifferential(sql, context, false);
+                        assertCoveringOnlyProbes(sql, context);
                     }
                     // A predicate on a covered value column does not select the index.
                     assertDifferential("select sum(r.d), count(*) from r join p on " + key + " where r.d > 0", context, true);
@@ -584,6 +588,24 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     static void assertAgainstBaseline(ObjList<String> queries, ObjList<RecordCursorFactory> factories, SqlExecutionContextImpl context) throws Exception {
         for (int i = 0; i < queries.size(); i++) {
             assertAgainstBaseline(queries.getQuick(i), factories.getQuick(i), context);
+        }
+    }
+
+    /**
+     * Compares the query with its unfused plan; a fused plan reads a covering-index scan only as its
+     * probe. Returns whether the plan fused over a covering probe.
+     */
+    static boolean assertCoveringOnlyProbes(String sql, SqlExecutionContextImpl context) throws Exception {
+        context.setParallelHashJoinGroupByEnabled(true);
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            final String actualPlan = plan(factory, context);
+            final boolean isFused = actualPlan.contains("Hash Join Group By");
+            if (isFused) {
+                final int build = actualPlan.indexOf("Build");
+                Assert.assertTrue(sql + "\n" + actualPlan, build > 0 && !actualPlan.substring(build).contains("CoveringIndex"));
+            }
+            assertAgainstBaseline(sql, factory, context);
+            return isFused && actualPlan.contains("CoveringIndex");
         }
     }
 

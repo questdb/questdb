@@ -123,6 +123,11 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

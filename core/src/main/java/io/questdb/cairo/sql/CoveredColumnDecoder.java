@@ -92,9 +92,23 @@ public final class CoveredColumnDecoder {
             int[] columnTypeTags,
             int[] columnTypes
     ) {
+        writeCoveredRow(addrs, varData, count, crc, queryColCount, coveredIncludeIdx, columnTypeTags, columnTypes, null);
+    }
+
+    public static void writeCoveredRow(
+            long[] addrs,
+            VarDataSink varData,
+            int count,
+            CoveringRowCursor crc,
+            int queryColCount,
+            int[] coveredIncludeIdx,
+            int[] columnTypeTags,
+            int[] columnTypes,
+            @Nullable boolean[] selectedColumns
+    ) {
         for (int q = 0; q < queryColCount; q++) {
             final int includeIdx = coveredIncludeIdx[q];
-            if (includeIdx < 0) {
+            if (includeIdx < 0 || selectedColumns != null && !selectedColumns[q]) {
                 continue;
             }
             final long addr = addrs[q];

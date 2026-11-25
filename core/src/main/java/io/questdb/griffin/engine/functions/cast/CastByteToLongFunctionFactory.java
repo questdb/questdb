@@ -25,10 +25,12 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -49,9 +51,19 @@ public class CastByteToLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLongFunction {
+    private static class Func extends AbstractCastToLongFunction implements ColumnwiseFunction {
         public Func(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public int getColumnwiseOp() {
+            return ColumnwiseFunction.OP_CAST;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.BYTE;
         }
 
         @Override

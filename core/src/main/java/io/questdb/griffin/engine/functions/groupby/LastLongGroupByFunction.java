@@ -113,6 +113,16 @@ public class LastLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcRowId = srcValue.getLong(valueIndex);
         final long destRowId = destValue.getLong(valueIndex);

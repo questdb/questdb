@@ -134,6 +134,16 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         char srcVal = srcValue.getChar(valueIndex + 1);
         if (srcVal == CharConstant.ZERO.getChar(null)) {

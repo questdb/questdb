@@ -36,6 +36,7 @@ import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -1041,6 +1042,101 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                     }
                 } finally {
                     Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Detached cursors taken, drained and closed by N threads at once over one frozen forward and
+     * one frozen backward reader reuse the readers' detached pools: every round reads each key's
+     * exact rows, and a pool never holds more cursors than were open at once.
+     */
+    @Test
+    public void testDetachedCursorPoolsUnderConcurrentReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "detached_pool";
+                final int plen = path.size();
+                final int keyCount = 4;
+                final int rows = 400;
+                // three generations; row r holds key r % keyCount
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int g = 0; g < 3; g++) {
+                        for (int r = g * rows / 3, hi = (g + 1) * rows / 3; r < hi; r++) {
+                            writer.add(r % keyCount, r);
+                        }
+                        writer.setMaxValue((g + 1) * rows / 3 - 1);
+                        writer.commit();
+                    }
+                }
+                final LongList[] expectedAsc = new LongList[keyCount];
+                for (int k = 0; k < keyCount; k++) {
+                    expectedAsc[k] = new LongList();
+                    for (int r = k; r < rows; r += keyCount) {
+                        expectedAsc[k].add(r);
+                    }
+                }
+                final int[] keys = {0, 1, 2, 3};
+                final int threads = 4;
+                final int rounds = 200;
+                try (
+                        PostingIndexFwdReader fwd = new PostingIndexFwdReader(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0);
+                        PostingIndexBwdReader bwd = new PostingIndexBwdReader(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)
+                ) {
+                    fwd.warmForKeys(keys, null);
+                    fwd.setFrozen(true);
+                    bwd.warmForKeys(keys, null);
+                    bwd.setFrozen(true);
+                    final CyclicBarrier barrier = new CyclicBarrier(threads);
+                    final AtomicReference<Throwable> error = new AtomicReference<>();
+                    final Thread[] workers = new Thread[threads];
+                    for (int t = 0; t < threads; t++) {
+                        final int id = t;
+                        workers[t] = new Thread(() -> {
+                            final LongList actual = new LongList();
+                            for (int round = 0; round < rounds; round++) {
+                                // a failed round records its error and the thread keeps meeting
+                                // the barrier, so no other thread waits for it in vain
+                                try {
+                                    barrier.await();
+                                    final int key = (id + round) % keyCount;
+                                    try (RowCursor c = fwd.getDetachedCursor(key, 0, Long.MAX_VALUE, null)) {
+                                        actual.clear();
+                                        while (c.hasNext()) {
+                                            actual.add(c.next());
+                                        }
+                                        assertEquals("fwd key " + key, expectedAsc[key].toString(), actual.toString());
+                                    }
+                                    try (RowCursor c = bwd.getDetachedCursor(key, 0, Long.MAX_VALUE, null)) {
+                                        actual.clear();
+                                        while (c.hasNext()) {
+                                            actual.add(c.next());
+                                        }
+                                        actual.reverse();
+                                        assertEquals("bwd key " + key, expectedAsc[key].toString(), actual.toString());
+                                    }
+                                } catch (Throwable th) {
+                                    error.compareAndSet(null, th);
+                                }
+                            }
+                        });
+                        workers[t].start();
+                    }
+                    for (Thread worker : workers) {
+                        worker.join();
+                    }
+                    if (error.get() != null) {
+                        throw new AssertionError("concurrent detached cursor failure", error.get());
+                    }
+                    final int fwdPooled = fwd.getFreeDetachedCursorCount();
+                    final int bwdPooled = bwd.getFreeDetachedCursorCount();
+                    assertTrue("fwd pool " + fwdPooled, fwdPooled >= 1 && fwdPooled <= threads);
+                    assertTrue("bwd pool " + bwdPooled, bwdPooled >= 1 && bwdPooled <= threads);
+                    fwd.setFrozen(false);
+                    bwd.setFrozen(false);
                 }
             }
         });

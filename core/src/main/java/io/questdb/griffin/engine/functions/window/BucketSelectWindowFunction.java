@@ -39,6 +39,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.table.SubsampleAlgorithm;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -680,5 +681,25 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     private boolean isIntegralNull(long value) {
         return (valueTag == ColumnType.LONG && value == Numbers.LONG_NULL)
                 || (valueTag == ColumnType.INT && value == Numbers.INT_NULL);
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return super.hasPerCallState() || FunctionFlags.hasPerCallState(targetArg, tsArg, valueArg);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(targetArg, tsArg, valueArg);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return super.isRandom() || FunctionFlags.isRandom(targetArg, tsArg, valueArg);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(targetArg, tsArg, valueArg);
     }
 }

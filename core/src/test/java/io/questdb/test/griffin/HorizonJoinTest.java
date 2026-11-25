@@ -3318,9 +3318,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
             execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
             for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
-                // alloc() owns native memory. The UNION ALL master rejects random access
-                // after code generation has stolen the slave filters and assembled aggregates.
-                final String query = "SELECT avg(q.price) FROM ((SELECT * FROM trades UNION ALL SELECT * FROM trades) TIMESTAMP(ts)) t "
+                // alloc() owns native memory. The merged UNION ALL master scans its timestamp
+                // ascending but rejects random access after code generation has stolen the slave
+                // filters and assembled aggregates. A plain UNION ALL is rejected earlier, for its order.
+                final String query = "SELECT avg(q.price) FROM ((SELECT * FROM trades UNION ALL SELECT * FROM trades ORDER BY ts) TIMESTAMP(ts)) t "
                         + "HORIZON JOIN quotes q ON (q.price > alloc(32)) "
                         + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE price > alloc(64)) r " : "")
                         + "LIST (0s) AS h";

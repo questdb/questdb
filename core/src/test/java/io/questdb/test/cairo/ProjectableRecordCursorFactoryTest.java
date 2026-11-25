@@ -69,6 +69,11 @@ public class ProjectableRecordCursorFactoryTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_OTHER;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }

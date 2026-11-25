@@ -149,6 +149,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumLong256Merge(pRostiA, pRostiB, valueOffset);
     }

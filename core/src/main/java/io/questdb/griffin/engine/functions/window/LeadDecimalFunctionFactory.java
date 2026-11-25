@@ -41,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -365,6 +366,26 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             }
             memory.truncate();
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(defaultValue);
+        }
     }
 
     static class Decimal16LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
@@ -668,6 +689,26 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                 defaultValue.toTop();
             }
             memory.truncate();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(defaultValue);
         }
     }
 

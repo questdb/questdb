@@ -96,6 +96,21 @@ public interface IODispatcherConfiguration {
 
     NetworkFacade getNetworkFacade();
 
+    /**
+     * The longest, in milliseconds, a worker waits in this dispatcher's poll in place of its nap or
+     * sleep (see {@link io.questdb.mp.IdleParkJob}). A worker that has found nothing to do parks
+     * for up to its sleep timeout and only then sees a request, while one waiting in the poll wakes
+     * when the request arrives. The wait never outlasts the nap or sleep it replaces, so the
+     * worker's other jobs (other dispatchers on a shared pool) wait for it no longer than they
+     * would have. A worker waits here only while every connection of the dispatcher is armed in the
+     * poll and one of them asks for it ({@link IOContext#isIdlePollTarget()}: on HTTP, a QWP
+     * connection), and, in a fiber-hosting pool, while a sibling worker is parked and can take the
+     * wake-ups this one cannot. 0 disables it. Linux only.
+     */
+    default int getPollBlockTimeout() {
+        return 0;
+    }
+
     default boolean getPeerNoLinger() {
         return false;
     }

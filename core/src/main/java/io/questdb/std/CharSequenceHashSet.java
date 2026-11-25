@@ -239,7 +239,11 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         free -= n;
         for (int i = 0; i < n; i++) {
             final CharSequence key = list.getQuick(i);
-            keys[keyIndex(key)] = key;
+            // NULL lives in hasNull and the list, never in the key table, so the rehash must not
+            // hash it: a set holding NULL threw NullPointerException on its first growth.
+            if (key != null) {
+                keys[keyIndex(key)] = key;
+            }
         }
     }
 

@@ -43,6 +43,11 @@ public class TwapGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean requiresAscendingDesignatedTimestamp() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new TwapGroupByFunction(args.getQuick(0), args.getQuick(1));
     }

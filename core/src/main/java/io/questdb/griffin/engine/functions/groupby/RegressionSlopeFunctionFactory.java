@@ -73,5 +73,10 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         public String getName() {
             return "regr_slope";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

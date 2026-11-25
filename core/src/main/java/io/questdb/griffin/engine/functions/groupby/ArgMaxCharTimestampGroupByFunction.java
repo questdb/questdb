@@ -113,6 +113,11 @@ public class ArgMaxCharTimestampGroupByFunction extends CharFunction implements 
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

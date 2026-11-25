@@ -273,6 +273,11 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

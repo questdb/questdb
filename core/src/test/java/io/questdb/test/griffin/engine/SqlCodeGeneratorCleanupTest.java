@@ -445,6 +445,11 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
             }
 
             @Override
+            public int getScanDirection() {
+                return SCAN_DIRECTION_FORWARD;
+            }
+
+            @Override
             public boolean recordCursorSupportsRandomAccess() {
                 return false;
             }
@@ -499,6 +504,11 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
         @Override
         public RecordCursor getCursor(SqlExecutionContext context) throws SqlException {
             return delegate.getCursor(context);
+        }
+
+        @Override
+        public int getScanDirection() {
+            return delegate.getScanDirection();
         }
 
         @Override

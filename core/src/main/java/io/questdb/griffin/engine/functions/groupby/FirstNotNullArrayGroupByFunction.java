@@ -56,6 +56,11 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         if (srcValue.getLong(valueIndex + 1) == 0) {
             return;

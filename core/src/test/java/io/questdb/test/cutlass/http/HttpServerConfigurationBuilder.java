@@ -56,6 +56,7 @@ public class HttpServerConfigurationBuilder {
     private String baseDir;
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
+    private long exportTimeout = 300_000;
     private FactoryProvider factoryProvider;
     private boolean fiberEnabled = TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)) == WorkerPoolMode.FIBER_HOST;
     private int fiberMaxLiveCount;
@@ -85,7 +86,7 @@ public class HttpServerConfigurationBuilder {
 
                 @Override
                 public long getExportTimeout() {
-                    return 300_000;
+                    return exportTimeout;
                 }
 
                 @Override
@@ -324,6 +325,15 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withDumpingTraffic(boolean dumpTraffic) {
         this.dumpTraffic = dumpTraffic;
+        return this;
+    }
+
+    /**
+     * The Parquet export timeout, in milliseconds. A negative one trips the circuit breaker on its
+     * first check.
+     */
+    public HttpServerConfigurationBuilder withExportTimeout(long exportTimeout) {
+        this.exportTimeout = exportTimeout;
         return this;
     }
 

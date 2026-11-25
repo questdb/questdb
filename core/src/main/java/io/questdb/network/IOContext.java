@@ -84,6 +84,15 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         }
     }
 
+    /**
+     * Whether an idle worker may wait in the dispatcher's poll for this connection's next request,
+     * see {@link IODispatcherConfiguration#getPollBlockTimeout()}. False by default: only a
+     * connection whose protocol needs the shortest wake-up opts in.
+     */
+    public boolean isIdlePollTarget() {
+        return false;
+    }
+
     public boolean invalid() {
         return socket.isClosed();
     }

@@ -29,7 +29,6 @@ import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -71,9 +70,9 @@ final class QwpColumnScratch implements QuietCloseable {
     private static final int SHRINK_TRIGGER_FACTOR = 4;
     // Dedup by native symbol-table key -> connection-scoped dict id. Persists across
     // batches on this connection for the lifetime of a single query. Reset via
-    // {@link #resetConnSymbolMap} when a new query begins so that native keys from
+    // {@link #clearConnKeyMap} when a new query begins so that native keys from
     // a different cursor/table don't reuse stale mappings.
-    final IntIntHashMap connKeyToConnId = new IntIntHashMap();
+    final QwpSymbolKeyMap connKeyToConnId;
     final Decimal128 decimal128Sink = new Decimal128();
     final Decimal256 decimal256Sink = new Decimal256();
     long arrayHeapAddr;
@@ -124,6 +123,10 @@ final class QwpColumnScratch implements QuietCloseable {
     long valuesAddr;
     int valuesCapacity;          // bytes
     int valuesPos;               // bytes written
+
+    QwpColumnScratch(int symbolDenseMaxKeys) {
+        this.connKeyToConnId = new QwpSymbolKeyMap(symbolDenseMaxKeys);
+    }
 
     @Override
     public void close() {
@@ -353,12 +356,13 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * BOOLEAN column bulk append: reads {@code n} raw bytes from
-     * {@code srcAddr} (QuestDB native layout: 1 byte per row, 0 or 1) and
+     * {@code srcAddr}, {@code stride} bytes apart (QuestDB native layout: 1 byte per row, 0 or 1) and
      * bit-packs them into {@code valuesAddr} starting at the current
-     * {@code nonNullCount}. BOOLEAN has no null representation so rowCount /
+     * {@code nonNullCount}: a byte of 1 is true, any other false, as the record getters
+     * ({@code getBool()}) read it. BOOLEAN has no null representation so rowCount /
      * nonNullCount advance by {@code n}.
      */
-    void appendColumnBoolean(long srcAddr, int n) {
+    void appendColumnBoolean(long srcAddr, int n, long stride) {
         int startBit = nonNullCount;
         int bytesNeeded = (startBit + n + 7) >>> 3;
         ensureValuesCapacity(bytesNeeded);
@@ -370,7 +374,30 @@ final class QwpColumnScratch implements QuietCloseable {
                 // single-row appendBool convention.
                 Unsafe.putByte(byteAddr, (byte) 0);
             }
-            if (Unsafe.getByte(srcAddr + i) != 0) {
+            if (Unsafe.getByte(srcAddr + i * stride) == 1) {
+                byte cur = Unsafe.getByte(byteAddr);
+                Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
+            }
+        }
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnBoolean} over rows gathered by index: row {@code i}'s byte is at
+     * {@code srcAddr + rowIndex(i) * stride}, {@code rowIndex(i)} the i-th long at {@code rowIndexes}.
+     */
+    void appendColumnBooleanGather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startBit = nonNullCount;
+        int bytesNeeded = (startBit + n + 7) >>> 3;
+        ensureValuesCapacity(bytesNeeded);
+        for (int i = 0; i < n; i++) {
+            int bitIdx = startBit + i;
+            long byteAddr = valuesAddr + (bitIdx >>> 3);
+            if ((bitIdx & 7) == 0) {
+                Unsafe.putByte(byteAddr, (byte) 0);
+            }
+            if (Unsafe.getByte(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride) == 1) {
                 byte cur = Unsafe.getByte(byteAddr);
                 Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
             }
@@ -417,19 +444,44 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * DOUBLE / FLOAT-as-double column bulk append: reads {@code n} 8-byte
-     * values from {@code srcAddr} (QuestDB stores DOUBLE NULL as NaN). Values
+     * values from {@code srcAddr}, {@code stride} bytes apart (QuestDB stores DOUBLE NULL as NaN). Values
      * that are NaN go into the null bitmap; non-null values are packed dense
      * into {@code valuesAddr}. Uses {@code v != v} for the NaN test so every
      * NaN bit-pattern is treated as null (spec 11.5).
      */
-    void appendColumnDouble8(long srcAddr, int n) {
+    void appendColumnDouble8(long srcAddr, int n, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            double v = Unsafe.getDouble(srcAddr + i * 8L);
+            double v = Unsafe.getDouble(srcAddr + i * stride);
+            if (Double.isNaN(v)) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putDouble(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnDouble8} over rows gathered by index, see {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnDouble8Gather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            double v = Unsafe.getDouble(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
             if (Double.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -447,12 +499,48 @@ final class QwpColumnScratch implements QuietCloseable {
     /**
      * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
      * have no sentinel and never contribute to the null bitmap, so we copy
-     * the whole block into {@code valuesAddr} in one {@code memcpy}.
+     * the whole block into {@code valuesAddr}: one {@code memcpy} when the
+     * source values are packed ({@code stride == typeSize}), a gather otherwise.
      */
-    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize) {
+    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize, long stride) {
         int bytes = n * typeSize;
         ensureValuesCapacity(valuesPos + bytes);
-        Vect.memcpy(valuesAddr + valuesPos, srcAddr, bytes);
+        final long dst = valuesAddr + valuesPos;
+        if (stride == typeSize) {
+            Vect.memcpy(dst, srcAddr, bytes);
+        } else if (typeSize == 1) {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putByte(dst + i, Unsafe.getByte(srcAddr + i * stride));
+            }
+        } else {
+            assert typeSize == 2;
+            for (int i = 0; i < n; i++) {
+                Unsafe.putShort(dst + 2L * i, Unsafe.getShort(srcAddr + i * stride));
+            }
+        }
+        valuesPos += bytes;
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnFixedNoNull} over rows gathered by index, see
+     * {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnFixedNoNullGather(long srcAddr, long rowIndexes, int n, int typeSize, long stride) {
+        int bytes = n * typeSize;
+        ensureValuesCapacity(valuesPos + bytes);
+        final long dst = valuesAddr + valuesPos;
+        if (typeSize == 1) {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putByte(dst + i, Unsafe.getByte(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride));
+            }
+        } else {
+            assert typeSize == 2;
+            for (int i = 0; i < n; i++) {
+                Unsafe.putShort(dst + 2L * i, Unsafe.getShort(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride));
+            }
+        }
         valuesPos += bytes;
         nonNullCount += n;
         rowCount += n;
@@ -480,17 +568,42 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * FLOAT column bulk append: reads {@code n} 4-byte floats from
-     * {@code srcAddr}. QuestDB stores FLOAT NULL as NaN. NaN values go into
+     * {@code srcAddr}, {@code stride} bytes apart. QuestDB stores FLOAT NULL as NaN. NaN values go into
      * the null bitmap; non-null values pack dense into {@code valuesAddr}.
      */
-    void appendColumnFloat4(long srcAddr, int n) {
+    void appendColumnFloat4(long srcAddr, int n, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 4);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            float v = Unsafe.getFloat(srcAddr + i * 4L);
+            float v = Unsafe.getFloat(srcAddr + i * stride);
+            if (Float.isNaN(v)) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putFloat(dst, v);
+                dst += 4;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 4;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnFloat4} over rows gathered by index, see {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnFloat4Gather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 4);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            float v = Unsafe.getFloat(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
             if (Float.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -507,18 +620,44 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * INT / IPv4 column bulk append: reads {@code n} 4-byte values from
-     * {@code srcAddr}. Values equal to {@code sentinel} go into the null
+     * {@code srcAddr}, {@code stride} bytes apart. Values equal to {@code sentinel} go into the null
      * bitmap (INT: {@link Numbers#INT_NULL}; IPv4: {@link Numbers#IPv4_NULL},
      * i.e. 0).
      */
-    void appendColumnInt4WithSentinel(long srcAddr, int n, int sentinel) {
+    void appendColumnInt4WithSentinel(long srcAddr, int n, int sentinel, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 4);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            int v = Unsafe.getInt(srcAddr + i * 4L);
+            int v = Unsafe.getInt(srcAddr + i * stride);
+            if (v == sentinel) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putInt(dst, v);
+                dst += 4;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 4;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnInt4WithSentinel} over rows gathered by index, see
+     * {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnInt4WithSentinelGather(long srcAddr, long rowIndexes, int n, int sentinel, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 4);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            int v = Unsafe.getInt(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
             if (v == sentinel) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -539,14 +678,40 @@ final class QwpColumnScratch implements QuietCloseable {
      * as the null sentinel. Dense non-null values land in {@code valuesAddr};
      * null positions are marked in the null bitmap.
      */
-    void appendColumnLong8WithSentinel(long srcAddr, int n) {
+    void appendColumnLong8WithSentinel(long srcAddr, int n, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            long v = Unsafe.getLong(srcAddr + i * 8L);
+            long v = Unsafe.getLong(srcAddr + i * stride);
+            if (v == Numbers.LONG_NULL) {
+                setNullBit(startRow + i);
+                nullCount++;
+            } else {
+                Unsafe.putLong(dst, v);
+                dst += 8;
+                nonNullWritten++;
+            }
+        }
+        valuesPos += nonNullWritten * 8;
+        nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * {@link #appendColumnLong8WithSentinel} over rows gathered by index, see
+     * {@link #appendColumnBooleanGather}.
+     */
+    void appendColumnLong8WithSentinelGather(long srcAddr, long rowIndexes, int n, long stride) {
+        int startRow = rowCount;
+        ensureNullBitmapCapacity(startRow + n);
+        ensureValuesCapacity(valuesPos + n * 8);
+        long dst = valuesAddr + valuesPos;
+        int nonNullWritten = 0;
+        for (int i = 0; i < n; i++) {
+            long v = Unsafe.getLong(srcAddr + Unsafe.getLong(rowIndexes + 8L * i) * stride);
             if (v == Numbers.LONG_NULL) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -581,7 +746,7 @@ final class QwpColumnScratch implements QuietCloseable {
             symbolBytesCumCapacity = newCap;
         }
         int cum = nonNullCount == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
-        IntIntHashMap k2c = connKeyToConnId;
+        final QwpSymbolKeyMap k2c = connKeyToConnId;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
             int key = Unsafe.getInt(srcAddr + i * 4L);
@@ -589,13 +754,10 @@ final class QwpColumnScratch implements QuietCloseable {
                 setNullBit(startRow + i);
                 nullCount++;
             } else {
-                int mapIdx = k2c.keyIndex(key);
-                int connId;
-                if (mapIdx < 0) {
-                    connId = k2c.valueAt(mapIdx);
-                } else {
+                int connId = k2c.get(key);
+                if (connId == QwpSymbolKeyMap.NO_ID) {
                     connId = dict.addEntry(st.valueOf(key));
-                    k2c.putAt(mapIdx, key, connId);
+                    k2c.put(key, connId);
                 }
                 int slot = nonNullCount + nonNullWritten;
                 Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
@@ -812,6 +974,47 @@ final class QwpColumnScratch implements QuietCloseable {
         markNonNullAndAdvanceRow();
     }
 
+    /**
+     * SYMBOL: {@link #appendSymbolConnId} after {@link #reserveSymbolRows} made room, without
+     * the capacity checks.
+     */
+    void appendSymbolConnIdReserved(int connId) {
+        final int slot = nonNullCount;
+        Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
+        final int prevCum = slot == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * slot);
+        Unsafe.putInt(symbolBytesCumAddr + 4L * (slot + 1), prevCum + QwpVarint.encodedLength(connId));
+        nonNullCount = slot + 1;
+        rowCount++;
+    }
+
+    /**
+     * SYMBOL: {@code n} rows from {@code ids}, starting at {@code offset}, after
+     * {@link #reserveSymbolRows} made room: a connection id, as {@link #appendSymbolConnIdReserved}
+     * appends it, or -1, a NULL, as {@link #appendNull} appends it.
+     */
+    void appendSymbolConnIdsReserved(int[] ids, int offset, int n) {
+        ensureNullBitmapCapacity(rowCount + n);
+        int slot = nonNullCount;
+        int row = rowCount;
+        int cum = slot == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * slot);
+        for (int i = offset, hi = offset + n; i < hi; i++) {
+            final int connId = ids[i];
+            if (connId < 0) {
+                final long byteAddr = nullBitmapAddr + (row >>> 3);
+                Unsafe.putByte(byteAddr, (byte) (Unsafe.getByte(byteAddr) | (1 << (row & 7))));
+                nullCount++;
+            } else {
+                Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
+                cum += QwpVarint.encodedLength(connId);
+                Unsafe.putInt(symbolBytesCumAddr + 4L * (slot + 1), cum);
+                slot++;
+            }
+            row++;
+        }
+        nonNullCount = slot;
+        rowCount = row;
+    }
+
     void appendUuid(long lo, long hi) {
         ensureValuesCapacity(valuesPos + 16);
         Unsafe.putLong(valuesAddr + valuesPos, lo);
@@ -913,6 +1116,23 @@ final class QwpColumnScratch implements QuietCloseable {
         Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
     }
 
+    void releaseConnKeyMap() {
+        connKeyToConnId.release();
+    }
+
+    /**
+     * SYMBOL: room for {@code n} more non-null values, for {@link #appendSymbolConnIdReserved}.
+     */
+    void reserveSymbolRows(int n) {
+        ensureSymbolIdsCapacity(4 * (nonNullCount + n));
+        final int cumNeeded = 4 * (nonNullCount + n + 1);
+        if (symbolBytesCumCapacity < cumNeeded) {
+            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, cumNeeded));
+            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumCapacity = newCap;
+        }
+    }
+
     /**
      * Clears the native-key -> connId map so native keys from a new query (which
      * may live in a different symbol-table space) don't reuse stale mappings,
@@ -925,7 +1145,8 @@ final class QwpColumnScratch implements QuietCloseable {
      * drops -- a DoS surface for slow clients or bursty workloads.
      */
     void resetForNewQuery() {
-        clearConnKeyMap();
+        // drops a key -> id array a large symbol key grew, see QwpSymbolKeyMap
+        connKeyToConnId.resetForNewQuery();
         // Roll the final batch of the previous query into the peak counters
         // before we use them to decide whether to shrink.
         updatePeakUsage();
@@ -1017,6 +1238,11 @@ final class QwpColumnScratch implements QuietCloseable {
      * today's per-batch reset.
      */
     void resetPositions() {
+        // Capture the batch that was just shipped before its positions go, as beginBatch does: a
+        // query that ships its rows in one batch resets here and nowhere else before the next
+        // query's resetForNewQuery, which would otherwise see no peak, trim every buffer back to
+        // its initial size, and leave the next run of the same query to grow them again.
+        updatePeakUsage();
         rowCount = 0;
         nonNullCount = 0;
         nullCount = 0;

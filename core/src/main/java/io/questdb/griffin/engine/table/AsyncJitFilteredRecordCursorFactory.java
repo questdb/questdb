@@ -131,7 +131,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final int maxNegativeLimit;
         boolean isPerWorkerFiltersOwned = true;
         try {
-            cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+            cursor = new AsyncFilteredRecordCursor(configuration, base.getMetadata(), filter, base.getScanDirection());
             negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
             bindVarMemory = Vm.getCARWInstance(
                     configuration.getSqlJitBindVarsMemoryPageSize(),
@@ -267,10 +267,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
+            // the negative LIMIT's cursor reads its rows back through its own records, never the
+            // frames' projected values
+            frameSequence.getAtom().setProjecting(false);
+            frameSequence.getAtom().setGathering(false);
             negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
+        frameSequence.getAtom().setProjecting(true);
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }
@@ -289,6 +294,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean isStableWithinExecution() {
         return filter.isStableWithinExecution() && base.isStableWithinExecution();
+    }
+
+    /**
+     * Page-frame transparent: a page-frame consumer asking this wrapper is served the BASE's
+     * frames, so it must be told the base's page-frame direction. Inheriting the default --
+     * which forwards to {@link #getScanDirection()} -- degrades the narrow answer back to the
+     * wide one at the first wrapper, which is exactly what the narrow answer exists to avoid.
+     */
+    @Override
+    public int getPageFrameScanDirection() {
+        return base.getPageFrameScanDirection();
     }
 
     @Override
@@ -332,6 +348,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
+    }
+
+    /**
+     * Takes a projection over this filter whose columns the filtering threads compute, see
+     * {@link FrameProjection}; the atom frees it.
+     */
+    public void setFrameProjection(@NotNull FrameProjection projection) {
+        frameSequence.getAtom().setProjection(projection);
+        cursor.setProjection(projection);
     }
 
     @Override
@@ -394,7 +419,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         try {
             final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+            final boolean isSingleKeyCoveredFrame = task.isSingleKeyCoveredFrame();
+            final boolean isLateMaterializationCandidate = isParquetFrame || isSingleKeyCoveredFrame;
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(
+                    filterId,
+                    isParquetFrame,
+                    isSingleKeyCoveredFrame,
+                    task.isCountOnly()
+            );
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -404,9 +436,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             }
             record.init(frameMemory);
 
-            if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
+            if (atom.compiledFilterSuspended || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter in case of a page frame with column tops
-                // or type-cast columns (fixed→var conversion not supported in JIT).
+                // or type-cast columns (fixed→var conversion not supported in JIT),
+                // or for an execution whose bind variables the compiled filter cannot take.
                 final Function filter = atom.getFilter(filterId);
 
                 if (task.isCountOnly()) {
@@ -426,13 +459,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         }
                     }
 
-                    if (isParquetFrame) {
+                    if (isLateMaterializationCandidate) {
                         atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                     }
                     if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                         record.init(frameMemory);
                     }
                     task.setFilteredRowCount(rows.size());
+                    atom.project(workerId, owner, task, record, circuitBreaker);
                 }
                 return;
             }
@@ -464,7 +498,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 );
 
                 rows.setPos(filteredRowCount);
-                if (isParquetFrame) {
+                if (isLateMaterializationCandidate) {
                     atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
@@ -472,6 +506,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 }
 
                 task.setFilteredRowCount(rows.size());
+                atom.project(workerId, owner, task, record, circuitBreaker);
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
@@ -549,6 +584,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final MemoryCARW bindVarMemory;
         final CompiledCountOnlyFilter compiledCountOnlyFilter;
         final CompiledFilter compiledFilter;
+        // Set per execution by init(): the execution runs the Java filter on every frame.
+        boolean compiledFilterSuspended;
 
         public AsyncJitFilterAtom(
                 CairoConfiguration configuration,
@@ -573,7 +610,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            compiledFilterSuspended = !AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 }

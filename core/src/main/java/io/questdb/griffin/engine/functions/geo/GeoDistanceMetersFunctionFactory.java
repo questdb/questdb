@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -267,6 +268,26 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
             lat2Func.toTop();
             lon2Func.toTop();
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(lat2Func, lon2Func);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(lat2Func, lon2Func);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(lat2Func, lon2Func);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(lat2Func, lon2Func);
+        }
     }
 
     /**
@@ -422,6 +443,26 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
             lon1Func.toTop();
             lat2Func.toTop();
             lon2Func.toTop();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(lat1Func, lat2Func, lon1Func, lon2Func);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(lat1Func, lat2Func, lon1Func, lon2Func);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(lat1Func, lat2Func, lon1Func, lon2Func);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(lat1Func, lat2Func, lon1Func, lon2Func);
         }
     }
 }

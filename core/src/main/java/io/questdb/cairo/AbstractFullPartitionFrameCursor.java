@@ -54,6 +54,16 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         }
     }
 
+    /**
+     * The reader's partition count: a full cursor emits at most one frame per partition, native
+     * or parquet, in either direction. {@link CompositeAwarePartitionFrameCursor} adds the frames
+     * it cuts at composite piece boundaries.
+     */
+    @Override
+    public long getFrameCountUpperBound() {
+        return reader.getPartitionCount();
+    }
+
     @Override
     public SymbolMapReader getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);

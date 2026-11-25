@@ -62,6 +62,8 @@ import io.questdb.std.Uuid;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
 
+import java.util.Arrays;
+
 /**
  * Analyzes sort column types at compile time, produces a byte-comparable
  * key encoder, and serializes sort columns into native memory. Keys of up
@@ -73,6 +75,8 @@ import io.questdb.std.str.Utf8Sequence;
 public class SortKeyEncoder implements QuietCloseable {
     public static final int KEY_PREFIX_BYTES = 16;
     public static final long MAX_ENTRY_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
+    // the keys spreadKeyWords() samples for the core range: its sample array's length
+    public static final int SPREAD_SAMPLE_SIZE = 4096;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
     private final int[] columnTypes;
@@ -259,6 +263,93 @@ public class SortKeyEncoder implements QuietCloseable {
         return true;
     }
 
+
+    /**
+     * Rewrites the key words of {@code count} entries of one key word and a row id (16 bytes
+     * each, from {@code addr}), compared as unsigned words then by row id, into words that sort
+     * the entries in the same order, so that the native radix sort's first pass splits them
+     * evenly. Its parallel path sorts the buckets of the most significant byte that is not the
+     * same in every word, one thread per bucket: keys that cluster in a narrow range (a price, a
+     * timestamp of one day) land almost all in one or two buckets, which one thread sorts while
+     * the others wait (16.8M clustered FLOAT keys: 0.65 s of a 1.1 s query).
+     * <p>
+     * The low bits every key shares are dropped, then a sample of the keys gives a core range,
+     * from its 1st to its 99th percentile. The top byte of a word is 0 below the core, 1 to 128
+     * for the core, split linearly by value, and 129 above it; the bits below hold the key's
+     * offset in its region. When the row ids were appended ascending and the bits leave room,
+     * the entry's ordinal fills the lowest bits: every word is then unique, ties are ordered by
+     * the ordinal as they were by the row id, and the sort never reads the row ids. Keys of more
+     * than 56 significant bits are left as they are. The row ids are not touched; the sorted
+     * entries are read only for them.
+     */
+    public static void spreadKeyWords(long addr, long count, long[] sample) {
+        if (count < 2) {
+            return;
+        }
+        final long end = addr + count * 16;
+        final long first = Unsafe.getLong(addr);
+        long min = first;
+        long max = first;
+        long varying = 0;
+        long prevRowId = Unsafe.getLong(addr + 8);
+        boolean ascending = true;
+        for (long p = addr + 16; p < end; p += 16) {
+            final long k = Unsafe.getLong(p);
+            varying |= k ^ first;
+            if (Long.compareUnsigned(k, min) < 0) {
+                min = k;
+            } else if (Long.compareUnsigned(k, max) > 0) {
+                max = k;
+            }
+            final long rowId = Unsafe.getLong(p + 8);
+            ascending &= rowId > prevRowId;
+            prevRowId = rowId;
+        }
+        if (varying == 0) {
+            // one key: the row ids order the entries
+            return;
+        }
+        final int tz = Long.numberOfTrailingZeros(varying);
+        final long minV = min >>> tz;
+        final long maxV = max >>> tz;
+        if (64 - Long.numberOfLeadingZeros(maxV - minV) > 56) {
+            return;
+        }
+        // the core range, from a sample's 1st to its 99th percentile, as offsets from minV
+        final int sampleSize = (int) Math.min(count, sample.length);
+        final long stride = count / sampleSize;
+        for (int i = 0; i < sampleSize; i++) {
+            sample[i] = (Unsafe.getLong(addr + i * stride * 16) >>> tz) - minV;
+        }
+        Arrays.sort(sample, 0, sampleSize);
+        final long lo = sample[sampleSize / 100];
+        final long hi = sample[sampleSize - 1 - sampleSize / 100];
+        final long top = maxV - minV;
+        final int coreBits = 64 - Long.numberOfLeadingZeros(hi - lo);
+        final int coreShift = Math.max(coreBits - 7, 0);
+        final long coreMask = (1L << coreShift) - 1;
+        final int lowBits = Math.max(
+                64 - Long.numberOfLeadingZeros(lo),
+                Math.max(coreShift, 64 - Long.numberOfLeadingZeros(top - hi))
+        );
+        final int ordinalBits = 64 - Long.numberOfLeadingZeros(count - 1);
+        final int ordinalShift = ascending && lowBits + ordinalBits <= 56 ? ordinalBits : 0;
+        long ordinal = 0;
+        for (long p = addr; p < end; p += 16) {
+            final long v = (Unsafe.getLong(p) >>> tz) - minV;
+            final long word;
+            if (v < lo) {
+                word = v << ordinalShift;
+            } else if (v <= hi) {
+                final long d = v - lo;
+                word = ((1 + (d >>> coreShift)) << 56) | ((d & coreMask) << ordinalShift);
+            } else {
+                word = (129L << 56) | ((v - hi) << ordinalShift);
+            }
+            Unsafe.putLong(p, ordinalShift > 0 ? word | ordinal++ : word);
+        }
+    }
+
     /**
      * Returns how many encoded entries fit the two sort budgets. The settings size
      * the tree chain's separate key and value heaps; the encoded layout splits each
@@ -310,6 +401,61 @@ public class SortKeyEncoder implements QuietCloseable {
         // reverses each word to native order to match the entry comparison.
         encodeGeneric(record, destAddr);
         Unsafe.putLong(destAddr + keyType.rowIdOffset(), rowId);
+    }
+
+    /**
+     * Encodes the keys of {@code n} rows whose key column values lie at {@code colAddr},
+     * {@code colAddr + stride}, ... (a block of a fixed-size record chain), as {@link #encode} would
+     * from their records, the entries' row ids being {@code firstRowId}, {@code firstRowId + stride}, ...
+     * Returns false, writing nothing, for a key {@link #encode} must take record by record: one that
+     * is not a single non-symbol column of one of the types read here.
+     */
+    public boolean encodeFixed8Strided(long colAddr, long stride, int n, long destAddr, long firstRowId) {
+        if (keyShape != KeyShape.FIXED8 || isStaticSymbol[0]) {
+            return false;
+        }
+        final boolean desc = isDesc[0];
+        switch (columnTypes[0]) {
+            case ColumnType.FLOAT:
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, floatKey(Unsafe.getFloat(colAddr + r * stride), desc), firstRowId + r * stride);
+                }
+                return true;
+            case ColumnType.DOUBLE:
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, doubleKey(Unsafe.getDouble(colAddr + r * stride), desc), firstRowId + r * stride);
+                }
+                return true;
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+            case ColumnType.DECIMAL32: {
+                final int xor = desc ? 0x7FFFFFFF : 0x80000000;
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, Integer.toUnsignedLong(Unsafe.getInt(colAddr + r * stride) ^ xor) << 32, firstRowId + r * stride);
+                }
+                return true;
+            }
+            case ColumnType.LONG:
+            case ColumnType.GEOLONG:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DATE:
+            case ColumnType.DECIMAL64: {
+                final long xor = desc ? Long.MAX_VALUE : Long.MIN_VALUE;
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, Unsafe.getLong(colAddr + r * stride) ^ xor, firstRowId + r * stride);
+                }
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * The column the key's first part reads.
+     */
+    public int getFirstKeyColumnIndex() {
+        return columnIndices[0];
     }
 
     /**
@@ -617,7 +763,7 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
-    private static long doubleKey(double value, boolean desc) {
+    static long doubleKey(double value, boolean desc) {
         final long bits = Double.doubleToLongBits(value);
         if (desc) {
             return bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
@@ -728,7 +874,43 @@ public class SortKeyEncoder implements QuietCloseable {
         };
     }
 
-    private static long floatKey(float value, boolean desc) {
+    private static void putEntry(long destAddr, int r, long key, long rowId) {
+        final long entry = destAddr + ((long) r << 4);
+        Unsafe.putLong(entry, key);
+        Unsafe.putLong(entry + 8, rowId);
+    }
+
+    // the value whose doubleKey() the key is
+    static double decodeDoubleKey(long key, boolean desc) {
+        final long bits = desc ? (key >= 0 ? key ^ Long.MAX_VALUE : key) : (key < 0 ? key ^ Long.MIN_VALUE : ~key);
+        return Double.longBitsToDouble(bits);
+    }
+
+    // the value whose floatKey() the key is
+    static float decodeFloatKey(long key, boolean desc) {
+        final int e = (int) (key >>> 32);
+        final int bits = desc ? (e >= 0 ? e ^ Integer.MAX_VALUE : e) : (e < 0 ? e ^ Integer.MIN_VALUE : ~e);
+        return Float.intBitsToFloat(bits);
+    }
+
+    // The column of a single fixed-size key whose value its encoded key word gives back (see the decode*
+    // functions): FLOAT, DOUBLE, INT, LONG, DATE or TIMESTAMP, not a SYMBOL; -1 for any other key.
+    int getDecodableKeyColumn() {
+        if (keyShape != KeyShape.FIXED8 || isStaticSymbol[0] || columnIndices.length != 1) {
+            return -1;
+        }
+        return switch (ColumnType.tagOf(columnTypes[0])) {
+            case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
+                 ColumnType.TIMESTAMP -> columnIndices[0];
+            default -> -1;
+        };
+    }
+
+    boolean isFirstKeyDescending() {
+        return isDesc[0];
+    }
+
+    static long floatKey(float value, boolean desc) {
         int bits = Float.floatToIntBits(value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;

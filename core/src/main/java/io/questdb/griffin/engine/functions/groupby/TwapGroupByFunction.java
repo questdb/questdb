@@ -332,6 +332,11 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         return false;
     }
 
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
     /**
      * Must return false because this function stores a per-worker
      * {@link GroupByAllocator} reference. Returning true would cause the

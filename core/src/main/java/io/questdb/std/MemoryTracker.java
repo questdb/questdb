@@ -56,10 +56,14 @@ public abstract class MemoryTracker implements Closeable {
     private static final int SCOPE_PROCESS = 2;
     private static final int SCOPE_QUERY = 1;
 
-    // Covered-index buffers are released by a reusable reduce-task pool after
-    // the owning query has ended. Their outstanding charge is reconciled at
-    // query close so a pooled tracker cannot be credited by a later owner.
+    // Memory charged to this tracker by holders that may free it after the owning query has ended,
+    // such as the reduce-task pools of the shared queues: covered-index decode buffers and the values
+    // an Async Filter's workers project. A holder that frees such memory while the query lasts
+    // releases the charge and takes it off this ledger; reconcileCovered() releases what is left at
+    // query close, so that a pooled tracker cannot be credited by a later owner.
     private final AtomicLong coveredBytes = new AtomicLong();
+    // The reconciliations of the ledger so far, see getCoveredGeneration()
+    private volatile long coveredGeneration;
     // One Rust QdbAllocator per native memory tag, created lazily and retained
     // for the lifetime of this pooled tracker.
     private final long[] nativeAllocators = new long[MemoryTag.SIZE - MemoryTag.NATIVE_DEFAULT];
@@ -89,6 +93,17 @@ public abstract class MemoryTracker implements Closeable {
         if (RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT.get() != 0) {
             CarrierIdentity.detachMemoryTracker(0, 0);
         }
+    }
+
+    /**
+     * The reconciliations of the covered-bytes ledger so far, see {@link #reconcileCovered()}. A
+     * holder that charged memory to this tracker, and added it to the ledger, when the count was
+     * {@code g} may release the charge through the tracker only while the count is still {@code g}:
+     * a later count means that a reconciliation has released it already, and the free is then
+     * global-only.
+     */
+    public final long getCoveredGeneration() {
+        return coveredGeneration;
     }
 
     public final long getLimit() {
@@ -123,6 +138,9 @@ public abstract class MemoryTracker implements Closeable {
     }
 
     public final void reconcileCovered() {
+        // only the tracker's owner reconciles, at query close and recycle
+        //noinspection NonAtomicOperationOnVolatileField
+        coveredGeneration++;
         final long covered = coveredBytes.getAndSet(0);
         if (covered != 0) {
             release(covered);

@@ -79,6 +79,11 @@ public class TestTableReferenceOutOfDateFunctionFactory implements FunctionFacto
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }

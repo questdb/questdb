@@ -89,5 +89,10 @@ public class KurtosisSampleGroupByFunctionFactory implements FunctionFactory {
         public int getSampleByFlags() {
             return GroupByFunction.SAMPLE_BY_FILL_ALL;
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

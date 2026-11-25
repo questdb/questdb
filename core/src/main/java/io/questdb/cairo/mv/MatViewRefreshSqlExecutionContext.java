@@ -63,6 +63,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
             setParallelGroupByEnabled(false);
             setParallelTopKEnabled(false);
             setParallelWindowJoinEnabled(false);
+            setParallelWindowEnabled(false);
             setParallelReadParquetEnabled(false);
         }
         this.coveringIndexEnabled = engine.getConfiguration().isMatViewCoveringIndexEnabled();

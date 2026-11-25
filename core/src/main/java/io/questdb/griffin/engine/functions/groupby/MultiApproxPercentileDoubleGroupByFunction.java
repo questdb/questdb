@@ -193,6 +193,11 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

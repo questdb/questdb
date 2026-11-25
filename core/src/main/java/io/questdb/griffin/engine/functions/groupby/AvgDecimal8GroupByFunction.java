@@ -122,6 +122,11 @@ class AvgDecimal8GroupByFunction extends Decimal8Function implements GroupByFunc
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

@@ -767,9 +767,10 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                             .timestamp("ts")
                             .returns(truth(key, order));
                 } else {
+                    // ORDER BY ts DESC takes the index's backward scan, which has no size, even over a covering
+                    // index: the covering scan reads forward only, see SqlCodeGenerator
                     assertQuery(sql)
                             .noLeakCheck()
-                            .expectSize(isCovering)
                             .timestampDesc("ts")
                             .returns(truth(key, order));
                 }

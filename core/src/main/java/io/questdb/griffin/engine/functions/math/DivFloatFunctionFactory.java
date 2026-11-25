@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.std.IntList;
@@ -68,13 +69,18 @@ public class DivFloatFunctionFactory implements FunctionFactory {
         return new Func(left, right);
     }
 
-    private static class Func extends FloatFunction implements ArithmeticBinaryFunction {
+    private static class Func extends FloatFunction implements ArithmeticBinaryFunction, ColumnwiseFunction {
         private final Function left;
         private final Function right;
 
         public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getColumnwiseOp() {
+            return ColumnwiseFunction.OP_DIV;
         }
 
         @Override

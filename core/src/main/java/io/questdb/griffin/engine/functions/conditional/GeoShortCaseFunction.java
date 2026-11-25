@@ -32,17 +32,24 @@ import io.questdb.std.ObjList;
 @SuppressWarnings("resource")
 public class GeoShortCaseFunction extends GeoShortFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseBranches.Values branches;
     private final CaseFunctionPicker picker;
 
-    public GeoShortCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args) {
+    public GeoShortCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args, CaseBranches.Values branches) {
         super(type);
         this.picker = picker;
         this.args = args;
+        this.branches = branches;
     }
 
     @Override
     public ObjList<Function> args() {
         return args;
+    }
+
+    @Override
+    public CaseBranches.Values branches() {
+        return branches;
     }
 
     @Override

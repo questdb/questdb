@@ -138,6 +138,11 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumLongLongMerge(pRostiA, pRostiB, valueOffset);
     }

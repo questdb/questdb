@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
@@ -59,6 +61,25 @@ public interface ConcurrentTimeFrameCursor extends TimeFrameCursor {
             final long maxTsHi = i < partitionCount - 1 ? reader.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
             partitionCeilings.add(TimeFrameCursorImpl.estimatePartitionHi(ceilMethod, tsLo, maxTsHi));
         }
+    }
+
+    /**
+     * Lets {@link #getIndexReaderForCurrentFrame} serve symbol index readers from a table reader of the
+     * cursor's own, which the cursor opens from {@code engine} on the first call and checks against the
+     * shared state's reader: the shared reader's index readers are not safe for concurrent use. A cursor
+     * that does not support it keeps returning null, which tells a caller to scan instead.
+     */
+    default void enableIndexReaders(CairoEngine engine) {
+    }
+
+    /**
+     * @return the index reader of the current frame from the cursor's own table reader, see
+     * {@link #enableIndexReaders}, or null when there is none: not enabled, no reader at the shared
+     * reader's version, a lead frame, or a column without an index
+     */
+    @Override
+    default IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+        return null;
     }
 
     ConcurrentTimeFrameCursor of(

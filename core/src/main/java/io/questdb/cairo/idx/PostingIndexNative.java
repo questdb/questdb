@@ -36,6 +36,8 @@ import io.questdb.std.Unsafe;
  */
 public final class PostingIndexNative {
     private static final boolean NATIVE_AVAILABLE;
+    // whether the library has the 32-bit unpacks: a library built before them has not
+    private static final boolean NATIVE_32_AVAILABLE;
 
     private PostingIndexNative() {
     }
@@ -43,6 +45,32 @@ public final class PostingIndexNative {
     public static boolean isNativeAvailable() {
         return NATIVE_AVAILABLE;
     }
+
+    public static boolean isNative32Available() {
+        return NATIVE_32_AVAILABLE;
+    }
+
+    /**
+     * Unpacks values {@code [startIndex, startIndex + valueCount)} of a block of {@code totalCount}
+     * bit-packed values and stores {@code (float) (base + value) * factor * inverseExponent} at
+     * {@code destAddr}, 4 bytes each, in float arithmetic: an ALP-coded FLOAT block's values.
+     */
+    public static void unpackAlpFloatsFrom(long srcAddr, int startIndex, int valueCount, int totalCount, int bitWidth, int base, float factor, float inverseExponent, long destAddr) {
+        unpackAlpFloatsFrom0(srcAddr, startIndex, valueCount, totalCount, bitWidth, base, factor, inverseExponent, destAddr);
+    }
+
+    /**
+     * Unpacks values {@code [startIndex, startIndex + valueCount)} of a block of {@code totalCount}
+     * bit-packed values and stores {@code base + value} (int arithmetic) at {@code destAddr}, 4
+     * bytes each: a FOR-coded INT block's values.
+     */
+    public static void unpackIntsFrom(long srcAddr, int startIndex, int valueCount, int totalCount, int bitWidth, int base, long destAddr) {
+        unpackIntsFrom0(srcAddr, startIndex, valueCount, totalCount, bitWidth, base, destAddr);
+    }
+
+    private static native void unpackAlpFloatsFrom0(long srcAddr, int startIndex, int valueCount, int totalCount, int bitWidth, int base, float factor, float inverseExponent, long destAddr);
+
+    private static native void unpackIntsFrom0(long srcAddr, int startIndex, int valueCount, int totalCount, int bitWidth, int base, long destAddr);
 
     /**
      * Packs values from native memory into bit-packed format.
@@ -211,5 +239,16 @@ public final class PostingIndexNative {
             available = false;
         }
         NATIVE_AVAILABLE = available;
+        boolean available32 = false;
+        if (available) {
+            try {
+                unpackIntsFrom0(0, 0, 0, 0, 1, 0, 0);
+                unpackAlpFloatsFrom0(0, 0, 0, 0, 1, 0, 1f, 1f, 0);
+                available32 = true;
+            } catch (UnsatisfiedLinkError e) {
+                available32 = false;
+            }
+        }
+        NATIVE_32_AVAILABLE = available32;
     }
 }

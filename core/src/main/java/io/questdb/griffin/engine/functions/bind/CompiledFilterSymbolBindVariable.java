@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.Nullable;
 
@@ -112,5 +113,15 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction {
     @Override
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(symbolFunction);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(symbolFunction);
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
@@ -41,6 +42,7 @@ class SelectedRecordCursor implements RecordCursor {
     private final SelectedRecord recordB;
     private RecordCursor baseCursor;
     private IntHashSet baseUsedColumns;
+    private SelectedBlock block;
 
     public SelectedRecordCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
         this.recordA = new SelectedRecord(columnCrossIndex);
@@ -100,6 +102,22 @@ class SelectedRecordCursor implements RecordCursor {
         return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
     }
 
+    /**
+     * The base's block, its columns selected as the record selects them.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        final RecordBlock baseBlock = baseCursor.peekRecordBlock(maxRows);
+        if (baseBlock == null) {
+            return null;
+        }
+        if (block == null) {
+            block = new SelectedBlock();
+        }
+        block.base = baseBlock;
+        return block;
+    }
+
     @Override
     public long preComputedStateSize() {
         return baseCursor.preComputedStateSize();
@@ -143,8 +161,18 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void skipRecordBlock(int rowCount) {
+        baseCursor.skipRecordBlock(rowCount);
+    }
+
+    @Override
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         baseCursor.skipRows(rowCount, maxRowsAfterSkip);
+    }
+
+    @Override
+    public boolean supportsRecordBlocks() {
+        return baseCursor.supportsRecordBlocks();
     }
 
     @Override
@@ -157,6 +185,52 @@ class SelectedRecordCursor implements RecordCursor {
         recordA.of(cursor.getRecord());
         if (recordB != null) {
             recordB.of(cursor.getRecordB());
+        }
+    }
+
+    private class SelectedBlock implements RecordBlock {
+        private RecordBlock base;
+        // selects the columns of a base block record that is not the base cursor's own record
+        private SelectedRecord record;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            return base.getColumnAddress(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public long getColumnRowIndexesAddress(int columnIndex) {
+            return base.getColumnRowIndexesAddress(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return base.getColumnStride(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            final Record baseRecord = base.getRecordAt(row);
+            if (baseRecord == recordA.getBaseRecord()) {
+                return recordA;
+            }
+            if (record == null) {
+                record = new SelectedRecord(columnCrossIndex);
+            }
+            if (record.getBaseRecord() != baseRecord) {
+                record.of(baseRecord);
+            }
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return base.getRowCount();
+        }
+
+        @Override
+        public long getRowIndexesAddress() {
+            return base.getRowIndexesAddress();
         }
     }
 }

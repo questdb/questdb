@@ -3896,6 +3896,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             Count
                                 CoveringIndex on: sym
                                   filter: sym='A'
+                                    Frame forward scan on: t_count
                             """)
                     .returns("""
                             count
@@ -4867,6 +4868,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             Count
                                 CoveringIndex on: sym
                                   filter: sym='A'
+                                    Frame forward scan on: t_cnt
                             """)
                     .returns("""
                             count
@@ -5060,6 +5062,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price, qty
                                   filter: sym='A'
+                                    Frame forward scan on: t_fastlag_acc
                             """);
 
             // 'A' is at even indices (0, 2, 4, ..., 28): 15 rows.
@@ -5259,7 +5262,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                               keys: [sym]
                               values: [sum(price),avg(qty)]
                                 CoveringIndex on: sym with: price, qty
+                                  frames: per-key (unordered)
                                   filter: sym IN ['A','B']
+                                    Frame forward scan on: t_grp
                             """);
 
             // Single-key GROUP BY — covering and non-covering paths must agree
@@ -5326,6 +5331,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                               values: [min(price),max(price)]
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_minmax
                             """)
                     .returns(expected);
             assertQuery("SELECT /*+ no_covering */ sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym")
@@ -5399,6 +5405,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex op: latest on: sym with: price
                                   filter: sym='A'
+                                    Frame backward scan on: t_lat
                             """)
                     .returns("""
                             price
@@ -5889,6 +5896,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                 SelectedRecord
                                     CoveringIndex on: sym with: price
                                       filter: sym='A'
+                                        Frame forward scan on: t_ord
                             """)
                     .returns("""
                             price
@@ -5962,7 +5970,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT price FROM t_o3_parallel WHERE sym = 'A' AND price > 0.6")
                     .noLeakCheck()
-                    .withPlanContaining("Async Filter")
+                    // "Async Filter" or, with the filter JIT-compiled over the covering scan, "Async JIT Filter"
+                    .withPlanContaining("Filter workers")
                     .returns("""
                             price
                             1.0
@@ -6013,7 +6022,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // Regression for the async-filter-over-covering random-access contract.
         //
         // SELECT name, price ... WHERE sym = 'A' AND price > N compiles to
-        // Async Filter -> CoveringIndex. AsyncFilteredRecordCursor services
+        // Async JIT Filter -> CoveringIndex. AsyncJitFilteredRecordCursor services
         // recordAt()/getRecordB() through its own page-frame memory pool, so the
         // factory reports recordCursorSupportsRandomAccess() == true even though
         // the covering base's row cursor does not support random access.
@@ -6055,7 +6064,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 // every matching row via recordAt() across the 6 covering frames.
                 assertQuery("SELECT name, price FROM t_cov_ra WHERE sym = 'A' AND price > 25")
                         .noLeakCheck()
-                        .withPlanContaining("Async Filter", "CoveringIndex on: sym")
+                        .withPlanContaining("Async JIT Filter", "CoveringIndex on: sym")
                         .returns("""
                                 name\tprice
                                 a3\t30.0
@@ -6334,16 +6343,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // Plan: Async Filter wrapping CoveringIndex (parallel filter enabled in tests)
+            // Plan: Async JIT Filter wrapping CoveringIndex (parallel filter enabled in tests)
             // Data correctness: only A rows with price > 15
             assertQuery("SELECT price FROM t_resid WHERE sym = 'A' AND price > 15")
                     .noLeakCheck()
                     .withPlan("""
                             SelectedRecord
-                                Async Filter workers: 1
+                                Async JIT Filter workers: 1
                                   filter: 15<price
                                     CoveringIndex on: sym with: price
                                       filter: sym='A'
+                                        Frame forward scan on: t_resid
                             """)
                     .returns("""
                             price
@@ -6463,6 +6473,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex op: latest on: sym with: price
                                   filter: sym='A'
+                                    Frame backward scan on: t_latest_plan
                             """);
         });
     }
@@ -8128,6 +8139,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_plan
                             """);
         });
     }
@@ -8190,6 +8202,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym IN ['A','B']
+                                    Frame forward scan on: t_in
                             """)
                     .returns("""
                             price
@@ -8425,6 +8438,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .assertsPlan("""
                             CoveringIndex on: sym with: ts, price
                               filter: sym IN ['A','B','XQCE']
+                                Frame forward scan on: t_in_unres
                             """);
             assertQuery("SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')")
                     .inferTimestamp()
@@ -10076,6 +10090,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: label
                                   filter: sym='X'
+                                    Frame forward scan on: t_fsst_string
                             """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_string WHERE sym = 'X'")
@@ -10124,6 +10139,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: event_ts, extra
                                   filter: sym='A'
+                                    Frame forward scan on: t_ts_cover
                             """)
                     .returns("""
                             event_ts\textra
@@ -10246,6 +10262,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: name
                                   filter: sym='K0'
+                                    Frame forward scan on: t_fsst_varchar
                             """);
 
             // Data correctness: covering vs non-covering
@@ -10310,6 +10327,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: name
                                   filter: sym IN ['A','B']
+                                    Frame forward scan on: t_fsst_in
                             """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_in WHERE sym IN ('A', 'B')")
@@ -10348,6 +10366,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: name, price
                                   filter: sym='A'
+                                    Frame forward scan on: t_fsst_mixed
                             """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_mixed WHERE sym = 'A'")
@@ -10383,6 +10402,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: name
                                   filter: sym='A'
+                                    Frame forward scan on: t_fsst_null
                             """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_null WHERE sym = 'A'")
@@ -10545,6 +10565,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlan("""
                             CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
+                                Frame forward scan on: t_cover_ts
                             """)
                     .returns("""
                             ts\tsym
@@ -10582,6 +10603,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlan("""
                             CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
+                                Frame forward scan on: t_cover_ts_wal
                             """)
                     .returns("""
                             ts\tsym
@@ -10636,6 +10658,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlan("""
                             CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
+                                Frame forward scan on: t_cover_tsns
                             """)
                     .returns("""
                             ts\tsym
@@ -10676,6 +10699,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlan("""
                             CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
+                                Frame forward scan on: t_cover_tsns_wal
                             """)
                     .returns("""
                             ts\tsym
@@ -12078,6 +12102,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testEqFilterOnUnknownSymbolWithOrderBy() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // Regression: an ORDER BY on a SYMBOL column wraps the base cursor in
         // EncodedSortRecordCursor, whose init() phase probes baseCursor.getSymbolTable()
         // before iteration to build symbol-rank maps. When the WHERE literal is
@@ -14147,6 +14174,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex op: latest on: sym with: price, qty
                                   filter: sym='A'
+                                    Frame backward scan on: t_latest_filter
                             """)
                     .returns("""
                             price\tqty
@@ -14845,6 +14873,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: name, info
                                   filter: sym='A'
+                                    Frame forward scan on: t_multi_vc
                             """);
 
             assertQuery("SELECT COUNT(*) FROM t_multi_vc WHERE sym = 'A'")
@@ -14915,6 +14944,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_hint
                             """);
 
             // With no_covering hint: no CoveringIndex
@@ -15042,6 +15072,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_noidx
                             """);
 
             // With no_index hint: full table scan, no index at all
@@ -17237,6 +17268,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                         SelectedRecord
                                             CoveringIndex on: sym with: k
                                               filter: sym='a'
+                                                Frame forward scan on: t_bug9
                             """);
             assertQuery(q)
                     .expectSize()
@@ -17264,6 +17296,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                         SelectedRecord
                                             CoveringIndex backup: true on: sym with: k
                                               filter: sym=null
+                                                Frame forward scan on: t_bug9
                             """);
             assertQuery(qNull)
                     .expectSize()
@@ -17900,6 +17933,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // With >1M rows in a single partition, the page frame splits and the
         // second frame has partitionLo>0. The absolute row IDs double-count
         // partitionLo against the already-offset page addresses.
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_split_frame (
@@ -19077,7 +19112,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 return;
             }
             createIndexWithNameTxnZeroTable("t_seal_purge_txn0");
-            execute("INSERT INTO t_seal_purge_txn0 VALUES ('2024-01-01T02:00:00', 3.0, 'A')");
+            // The O3 append into 2024-01-01 has to reseal the partition to supersede a seal. By default it
+            // takes the covered append path, which publishes the row as an incremental covered fragment
+            // of the live seal instead.
+            PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
+            try {
+                execute("INSERT INTO t_seal_purge_txn0 VALUES ('2024-01-01T02:00:00', 3.0, 'A')");
+            } finally {
+                PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
+            }
             execute("INSERT INTO t_seal_purge_txn0 VALUES ('2024-01-03T00:00:00', 5.0, 'A')");
             final String[] before = partitionFileNames("t_seal_purge_txn0", "2024-01-01");
             assertTrue("fixture: sym must have name txn 0: " + Arrays.toString(before), Arrays.asList(before).contains("sym.pk.0"));
@@ -20313,6 +20356,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: name, price
                                   filter: sym='A'
+                                    Frame forward scan on: t_vw_plan
                             """);
         });
     }
@@ -20351,6 +20395,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_vw_agg
                             """)
                     .returns("""
                             count\tmin\tmax
@@ -20489,6 +20534,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: c0, c9
                                   filter: sym='A'
+                                    Frame forward scan on: t_wide10
                             """);
         });
     }
@@ -21161,6 +21207,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price, qty
                                   filter: sym='A'
+                                    Frame forward scan on: t_30col
                             """)
                     .returns("""
                             price\tqty
@@ -21212,6 +21259,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: price, qty
                                   filter: sym='A'
+                                    Frame forward scan on: t_partial
                             """)
                     .returns("""
                             price\tqty
@@ -21820,7 +21868,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("Async Filter")
+                    .withPlanContaining("Async JIT Filter")
                     .returns("""
                             price
                             8.0
@@ -22001,10 +22049,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             9.0
                             10.0
                             """);
-            // Positive limit over multi-key still uses the parallel path.
+            // Positive limit over multi-key still uses the parallel JIT path.
             assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3")
                     .noLeakCheck()
-                    .assertsPlanContaining("Async Filter");
+                    .assertsPlanContaining("Async JIT Filter");
         });
     }
 

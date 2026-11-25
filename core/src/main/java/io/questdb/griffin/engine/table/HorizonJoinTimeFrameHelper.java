@@ -29,21 +29,30 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.BitSet;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.Arrays;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -74,6 +83,14 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Key cache slots per entry that a drop of the key cache clears at most, see dropKeyCache()
     private static final int MAX_CLEARED_SLOTS_PER_KEY = 8;
     private static final long UNRESOLVED_ROW_ID = -1;
+    // backwardScanForKeyMatch() stopped at scanRowBudget without resolving the key
+    private static final long SCAN_BUDGET_EXHAUSTED = -2;
+    // How an indexed keyed lookup finds a key in a frame, see indexLookupMode()
+    private static final int LOOKUP_MODE_INDEX = 1;
+    private static final int LOOKUP_MODE_SCAN = 2;
+    private static final int LOOKUP_MODE_SCAN_THEN_INDEX = 3;
+    // Forward cursors an index-only walk keeps open at most: further keys seek back at every lookup
+    private static final int MAX_MERGE_CURSORS = 1024;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
@@ -82,7 +99,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Whether the switch check also covers runs of gaps below the min gap, whether the lookup
     // restarts a forward scan over a long gap, and whether a new position in backward-only mode
     // may keep key cache entries, see the constructor
-    private final boolean isWindowSwitchEnabled;
+    private boolean isWindowSwitchEnabled;
     // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
     private final @Nullable Map keyMissMap;
     private final long lookahead;
@@ -126,6 +143,43 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
+    // Master column of the single SYMBOL join key whose slave column is indexed, or -1: see enableIndexedKeyLookup()
+    private int indexedMasterKeyColumnIndex = -1;
+    private int indexedSlaveKeyColumnIndex = -1;
+    // Rows a keyed lookup scans back before it reads the index instead, see enableIndexedKeyLookup()
+    private long indexScanRowBudget;
+    // Keyed lookups that read the index since of(), for tests
+    private long indexLookups;
+    // (frame index, slave key) -> LOOKUP_MODE_*, decided once per frame and key since of()
+    private final LongIntHashMap indexLookupModes = new LongIntHashMap();
+    // Rows the current backward scan may still read; Long.MAX_VALUE outside an indexed lookup
+    private long scanRowBudget = Long.MAX_VALUE;
+    // The slave keys the forward scan caches while isKeyTracking, see trackKey(); NULL apart
+    private final BitSet trackedKeys = new BitSet();
+    private boolean isKeyTracking;
+    private boolean isNullKeyTracked;
+    // Whether every lookup of the walk reads the index and none scans, see decideIndexOnlyWalk()
+    private boolean isIndexOnlyWalk;
+    // Per slave key of an index-only walk: a forward cursor over the key's index rows in frame
+    // mergeFrames[key], the latest row at or below the last position (mergeRows), and the cursor's
+    // next row as a local row id (mergeNextRows, -1 when the cursor is done), the last position
+    // (mergePositions) and the local row the cursor's values count from (mergeCursorBases).
+    // See findMergedAsOfMatch().
+    private final ObjList<RowCursor> mergeCursors = new ObjList<>();
+    private int[] mergeFrames = new int[0];
+    private long[] mergeNextRows = new long[0];
+    private long[] mergeRows = new long[0];
+    private long[] mergeCursorBases = new long[0];
+    private long[] mergePositions = new long[0];
+    private int mergeCursorCount;
+    // While isKeyTracking, the forward scans write the rows of the tracked keys here instead of the
+    // key cache map: by slave symbol key, valid where the generation matches fwdKeyGen. A clear of
+    // the key cache moves to the next generation, see clearForwardKeyRows().
+    private long[] fwdKeyRows = new long[0];
+    private int[] fwdKeyGens = new int[0];
+    private int fwdKeyGen = 1;
+    private long fwdNullKeyRow;
+    private int fwdNullKeyGen;
 
     public HorizonJoinTimeFrameHelper(
             CairoConfiguration configuration,
@@ -267,6 +321,24 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             return Long.MIN_VALUE;
         }
 
+        if (isKeyTracking && symbolTranslatingRecord != null) {
+            // The forward scans wrote this key's rows to fwdKeyRows, not to the map; they lie above
+            // the rows of the backward scans, so a valid one answers as the map's entry would.
+            final long fwdRowId = getForwardKeyRow(symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex));
+            if (fwdRowId != Long.MIN_VALUE && isKeyCacheEntryValid(fwdRowId)) {
+                final MapKey targetKey = keyToRowIdMap.withKey();
+                targetKey.put(masterRecord, masterAsOfJoinMapSink);
+                final MapValue targetValue = targetKey.findValue();
+                if (targetValue != null) {
+                    final long mapRowId = targetValue.getLong(0);
+                    if (mapRowId > fwdRowId && isKeyCacheEntryValid(mapRowId)) {
+                        return mapRowId;
+                    }
+                }
+                return fwdRowId;
+            }
+        }
+
         long effectiveStart;
         if (backwardWatermark != Long.MAX_VALUE) {
             // We've done backward scanning before. Check the cache first —
@@ -338,6 +410,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 if (currentRowId <= missRowId) {
                     break;
                 }
+            }
+            if (--scanRowBudget < 0) {
+                // the rows above currentRowId are scanned and cached, the watermark is their lowest
+                return SCAN_BUDGET_EXHAUSTED;
             }
             backwardScanRows++;
 
@@ -421,8 +497,200 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         return Long.MIN_VALUE;
     }
 
+    // How the keyed lookup of slaveKey at asOfRowId finds it: from the key's rows in the frame of
+    // the ASOF position, which the index counts. The lookup reads the index when they lie more than
+    // the budget apart on average or the frame has none, and scans otherwise; a key that no index
+    // reader counts (a bitmap index, or no reader) scans up to the budget and then reads the index.
+    private int indexLookupMode(long asOfRowId, int slaveKey) {
+        if (slaveKey == SymbolTable.VALUE_NOT_FOUND) {
+            return LOOKUP_MODE_SCAN;
+        }
+        final int frameIndex = Rows.toPartitionIndex(asOfRowId);
+        final long modeKey = ((long) frameIndex << 32) | (slaveKey & 0xFFFF_FFFFL);
+        int mode = indexLookupModes.get(modeKey);
+        if (mode != LongIntHashMap.NO_ENTRY_VALUE) {
+            return mode;
+        }
+        mode = LOOKUP_MODE_SCAN_THEN_INDEX;
+        timeFrameCursor.jumpTo(frameIndex);
+        final long frameRows = timeFrameCursor.open();
+        final IndexReader indexReader = frameRows > 0
+                ? timeFrameCursor.getIndexReaderForCurrentFrame(indexedSlaveKeyColumnIndex, IndexReader.DIR_BACKWARD)
+                : null;
+        if (indexReader != null) {
+            final long indexRowLo = timeFrameCursor.getIndexRowLoForCurrentFrame();
+            try (RowCursor rowCursor = indexReader.getCursor(TableUtils.toIndexKey(slaveKey), indexRowLo + timeFrame.getRowLo(), indexRowLo + timeFrame.getRowHi() - 1)) {
+                final long keyRows = rowCursor.size();
+                if (keyRows == 0) {
+                    // a scan of this frame cannot find the key
+                    mode = LOOKUP_MODE_INDEX;
+                } else if (keyRows > 0) {
+                    mode = frameRows / keyRows > indexScanRowBudget ? LOOKUP_MODE_INDEX : LOOKUP_MODE_SCAN;
+                }
+            }
+        }
+        indexLookupModes.put(modeKey, mode);
+        return mode;
+    }
+
+    private void clearForwardKeyRows() {
+        if (++fwdKeyGen == Integer.MAX_VALUE) {
+            Arrays.fill(fwdKeyGens, 0);
+            fwdNullKeyGen = 0;
+            fwdKeyGen = 1;
+        }
+    }
+
+    private long getForwardKeyRow(int slaveKey) {
+        if (slaveKey >= 0) {
+            return slaveKey < fwdKeyGens.length && fwdKeyGens[slaveKey] == fwdKeyGen ? fwdKeyRows[slaveKey] : Long.MIN_VALUE;
+        }
+        return slaveKey == SymbolTable.VALUE_IS_NULL && fwdNullKeyGen == fwdKeyGen ? fwdNullKeyRow : Long.MIN_VALUE;
+    }
+
+    private void putForwardKeyRow(int slaveKey, long rowId) {
+        if (slaveKey >= 0) {
+            // trackKey() sized the arrays for every tracked key
+            if (slaveKey < fwdKeyGens.length && trackedKeys.get(slaveKey)) {
+                fwdKeyRows[slaveKey] = rowId;
+                fwdKeyGens[slaveKey] = fwdKeyGen;
+            }
+        } else if (slaveKey == SymbolTable.VALUE_IS_NULL && isNullKeyTracked) {
+            fwdNullKeyRow = rowId;
+            fwdNullKeyGen = fwdKeyGen;
+        }
+    }
+
+    private void closeMergeCursors() {
+        for (int i = 0, n = mergeCursors.size(); i < n; i++) {
+            final RowCursor cursor = mergeCursors.getQuick(i);
+            if (cursor != null) {
+                cursor.close();
+                mergeCursors.setQuick(i, null);
+            }
+        }
+        mergeCursorCount = 0;
+    }
+
+    // The ASOF match of slaveKey at asOfRowId in an index-only walk, whose positions ascend: a forward
+    // cursor over the key's index rows in the frame of the position moves up to it, so the walk reads
+    // each index row of its keys once instead of seeking back at every lookup. A position in another
+    // frame than the key's cursor, or below its last position, starts the key over with one backward
+    // seek. UNRESOLVED_ROW_ID when a frame has no index reader.
+    private long findMergedAsOfMatch(long asOfRowId, int slaveKey, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (slaveKey == SymbolTable.VALUE_NOT_FOUND) {
+            return Long.MIN_VALUE;
+        }
+        final int indexKey = TableUtils.toIndexKey(slaveKey);
+        final int frameIndex = Rows.toPartitionIndex(asOfRowId);
+        final long localRow = Rows.toLocalRowID(asOfRowId);
+        if (indexKey >= mergeFrames.length) {
+            final int capacity = Math.max(indexKey + 1, mergeFrames.length * 2);
+            mergeFrames = Arrays.copyOf(mergeFrames, capacity);
+            mergeNextRows = Arrays.copyOf(mergeNextRows, capacity);
+            mergeRows = Arrays.copyOf(mergeRows, capacity);
+            mergeCursorBases = Arrays.copyOf(mergeCursorBases, capacity);
+            mergePositions = Arrays.copyOf(mergePositions, capacity);
+        }
+        if (indexKey >= mergeCursors.size()) {
+            mergeCursors.extendAndSet(indexKey, null);
+        }
+        RowCursor cursor = mergeCursors.getQuiet(indexKey);
+        if (cursor != null && mergeFrames[indexKey] == frameIndex && mergePositions[indexKey] <= asOfRowId) {
+            // the same frame, at or above the last position: move the cursor up
+            long nextRow = mergeNextRows[indexKey];
+            long matchRowId = mergeRows[indexKey];
+            while (nextRow != -1 && nextRow <= localRow) {
+                matchRowId = Rows.toRowID(frameIndex, nextRow);
+                nextRow = cursor.hasNext() ? mergeCursorBases[indexKey] + cursor.next() : -1;
+            }
+            mergeRows[indexKey] = matchRowId;
+            mergeNextRows[indexKey] = nextRow;
+            mergePositions[indexKey] = asOfRowId;
+            return matchRowId;
+        }
+        // start the key over: the latest row at or below the position, then a forward cursor above it
+        if (cursor != null) {
+            cursor.close();
+            mergeCursors.setQuick(indexKey, null);
+            mergeCursorCount--;
+        }
+        final long matchRowId = findIndexedAsOfMatch(asOfRowId, slaveKey, circuitBreaker);
+        if (matchRowId == UNRESOLVED_ROW_ID || mergeCursorCount >= MAX_MERGE_CURSORS) {
+            return matchRowId;
+        }
+        timeFrameCursor.jumpTo(frameIndex);
+        timeFrameCursor.open();
+        final IndexReader indexReader = timeFrameCursor.getIndexReaderForCurrentFrame(indexedSlaveKeyColumnIndex, IndexReader.DIR_FORWARD);
+        if (indexReader == null) {
+            return UNRESOLVED_ROW_ID;
+        }
+        final long firstLocalRow = localRow + 1;
+        long nextRow = -1;
+        if (firstLocalRow < timeFrame.getRowHi()) {
+            final long indexRowLo = timeFrameCursor.getIndexRowLoForCurrentFrame();
+            cursor = indexReader.getCursor(indexKey, indexRowLo + firstLocalRow, indexRowLo + timeFrame.getRowHi() - 1);
+            mergeCursors.setQuick(indexKey, cursor);
+            mergeCursorCount++;
+            // the cursor returns rows relative to its minValue
+            mergeCursorBases[indexKey] = firstLocalRow;
+            nextRow = cursor.hasNext() ? firstLocalRow + cursor.next() : -1;
+        } else {
+            // the position is the frame's last row: without a cursor, the key starts over at its next lookup
+            return matchRowId;
+        }
+        mergeFrames[indexKey] = frameIndex;
+        mergeRows[indexKey] = matchRowId;
+        mergeNextRows[indexKey] = nextRow;
+        mergePositions[indexKey] = asOfRowId;
+        return matchRowId;
+    }
+
+    // The latest row of the slave symbol key at or below asOfRowId, from the per-frame symbol indexes,
+    // or Long.MIN_VALUE when there is none. UNRESOLVED_ROW_ID when a frame has no index reader (a lead
+    // frame), so that the caller scans instead.
+    private long findIndexedAsOfMatch(long asOfRowId, int slaveKey, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (slaveKey == SymbolTable.VALUE_NOT_FOUND) {
+            return Long.MIN_VALUE;
+        }
+        final int indexKey = TableUtils.toIndexKey(slaveKey);
+        int frameIndex = Rows.toPartitionIndex(asOfRowId);
+        long rowMax = Rows.toLocalRowID(asOfRowId);
+        timeFrameCursor.jumpTo(frameIndex);
+        timeFrameCursor.open();
+        while (true) {
+            final IndexReader indexReader = timeFrameCursor.getIndexReaderForCurrentFrame(indexedSlaveKeyColumnIndex, IndexReader.DIR_BACKWARD);
+            if (indexReader == null) {
+                return UNRESOLVED_ROW_ID;
+            }
+            // The index numbers the frame's rows from getIndexRowLoForCurrentFrame(), and the cursor
+            // returns them relative to its minValue. Rows below the frame's rowLo are not in the frame
+            // (e.g. outside the slave's intervals), so the cursor starts there.
+            final long frameRowLo = timeFrame.getRowLo();
+            final long indexRowLo = timeFrameCursor.getIndexRowLoForCurrentFrame() + frameRowLo;
+            if (rowMax >= frameRowLo) {
+                try (RowCursor rowCursor = indexReader.getCursor(indexKey, indexRowLo, indexRowLo + rowMax - frameRowLo)) {
+                    if (rowCursor.hasNext()) {
+                        // backward: the first entry is the latest
+                        return Rows.toRowID(frameIndex, frameRowLo + rowCursor.next());
+                    }
+                }
+            }
+            // an empty frame has no rows to bound, so skip it
+            do {
+                if (frameIndex == 0) {
+                    return Long.MIN_VALUE;
+                }
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                timeFrameCursor.jumpTo(--frameIndex);
+            } while (timeFrameCursor.open() == 0);
+            rowMax = timeFrame.getRowHi() - 1;
+        }
+    }
+
     @Override
     public void close() {
+        closeMergeCursors();
         Misc.free(keyMissMap);
         keyMissWatermark = Long.MIN_VALUE;
     }
@@ -690,6 +958,16 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             return Long.MIN_VALUE;
         }
 
+        if (isIndexOnlyWalk && symbolTranslatingRecord != null) {
+            final long matchRowId = findMergedAsOfMatch(asOfRowId, symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex), circuitBreaker);
+            if (matchRowId != UNRESOLVED_ROW_ID) {
+                indexLookups++;
+                return matchRowId;
+            }
+            // No index reader: the scan takes over. No lookup has moved its state since toTop().
+            isIndexOnlyWalk = false;
+        }
+
         if (asOfRowId != prevAsOfRowId) {
             if (isForwardScanMode && filter != null && asOfRowId > prevAsOfRowId
                     && rowGapLowerBound(prevAsOfRowId, asOfRowId) > Math.max(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanMinGap)) {
@@ -733,6 +1011,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                         // without the window switch nor the first lookup since toTop() reaches,
                         // and toTop() resets it.
                         keyToRowIdMap.clear();
+                        clearForwardKeyRows();
                     } else {
                         dropKeyCache(keyToRowIdMap, asOfRowId);
                     }
@@ -755,6 +1034,62 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             prevAsOfRowId = asOfRowId;
         }
 
+        if (indexedSlaveKeyColumnIndex == -1 || symbolTranslatingRecord == null) {
+            return backwardScanForKeyMatch(
+                    asOfRowId,
+                    masterKeyRecord,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
+                    keyToRowIdMap,
+                    symbolTranslatingRecord,
+                    circuitBreaker
+            );
+        }
+        // A key whose rows lie further apart than the budget, on average over the frame of the ASOF
+        // position, is looked up in the index: the scan back costs the rows of every other key in
+        // between, the index one seek per frame. The others keep the cached scan. Where the index
+        // cannot count a key's rows (a bitmap index), the scan stops at the budget instead and the
+        // lookup reads the index; stopping the scan early keeps its state valid, see
+        // backwardScanForKeyMatch().
+        final int slaveKey = symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex);
+        long matchRowId;
+        final int mode = indexLookupMode(asOfRowId, slaveKey);
+        if (mode == LOOKUP_MODE_SCAN) {
+            return backwardScanForKeyMatch(
+                    asOfRowId,
+                    masterKeyRecord,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
+                    keyToRowIdMap,
+                    symbolTranslatingRecord,
+                    circuitBreaker
+            );
+        }
+        if (mode == LOOKUP_MODE_SCAN_THEN_INDEX) {
+            scanRowBudget = indexScanRowBudget;
+            try {
+                matchRowId = backwardScanForKeyMatch(
+                        asOfRowId,
+                        masterKeyRecord,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        keyToRowIdMap,
+                        symbolTranslatingRecord,
+                        circuitBreaker
+                );
+            } finally {
+                scanRowBudget = Long.MAX_VALUE;
+            }
+            if (matchRowId != SCAN_BUDGET_EXHAUSTED) {
+                return matchRowId;
+            }
+        }
+        indexLookups++;
+        matchRowId = findIndexedAsOfMatch(asOfRowId, slaveKey, circuitBreaker);
+        if (matchRowId != UNRESOLVED_ROW_ID) {
+            return matchRowId;
+        }
+        // no index reader: finish the scan
         return backwardScanForKeyMatch(
                 asOfRowId,
                 masterKeyRecord,
@@ -764,6 +1099,139 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 symbolTranslatingRecord,
                 circuitBreaker
         );
+    }
+
+    /**
+     * Lets the keyed lookup of {@link #findKeyedAsOfMatch} read the slave's symbol index when the scan
+     * back from the ASOF position does not reach the key within {@code scanRowBudget} rows: one index
+     * seek per frame from the ASOF position back to the key's latest row, so the cost of a rare key no
+     * longer grows with the rows of other keys in between, while frequent keys keep the cached scan. The join key must be a single SYMBOL pair whose slave column is indexed, the master
+     * key must reach the lookup through a {@link SymbolTranslatingRecord}, and the slave must have no
+     * filter: the index row is the match only when no other condition excludes it.
+     *
+     * @param masterKeyColumnIndex the master column of the join key, as the translating record reads it
+     * @param slaveKeyColumnIndex  the slave column of the join key, as the time frame cursor reads it
+     * @param scanRowBudget        rows a lookup scans back before it reads the index
+     */
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        assert filter == null;
+        this.indexedMasterKeyColumnIndex = masterKeyColumnIndex;
+        this.indexedSlaveKeyColumnIndex = slaveKeyColumnIndex;
+        this.indexScanRowBudget = scanRowBudget;
+        // The lookups of rare keys no longer scan deep, and those deep scans were what switched a
+        // run of closely spaced positions to forward scan mode; the window switch weighs such runs
+        // directly, and it bounds the forward scans over long gaps, where rare keys gain most.
+        this.isWindowSwitchEnabled = true;
+    }
+
+    /**
+     * Starts a walk over horizon timestamps whose master keys are all passed to {@link #trackKey}
+     * before the first lookup. Until the next {@link #of} or beginKeyTracking(), forward scans cache
+     * only the rows of those keys: the other rows cost a symbol read instead of a key cache write. Every key that a lookup
+     * of the walk asks for is tracked from its start, so the cache holds the same rows for it as
+     * without tracking. Only a helper with the indexed key lookup tracks keys, see
+     * {@link #enableIndexedKeyLookup}: it reads them from the slave's join key column. A caller that
+     * tracks keys must begin again for every walk whose key set may differ.
+     */
+    /**
+     * Decides, once the keys of a walk that {@link #beginKeyTracking()} started are tracked, whether
+     * its lookups read the index alone, see {@link #findMergedAsOfMatch}: a scan reads every slave row
+     * the walk spans, whichever key it belongs to, while the index walk reads the index rows of the
+     * walk's keys once, plus a step per lookup. Measured on market data, the index walk wins down to a
+     * few slave rows per lookup, so it is taken whenever the walk spans more slave rows than lookups.
+     *
+     * @param lookupCount   the lookups of the walk: master rows times offsets
+     * @param slaveRowCount the slave rows the walk spans, see {@link #countSlaveRows}
+     */
+    public void decideIndexOnlyWalk(long lookupCount, long slaveRowCount) {
+        isIndexOnlyWalk = isKeyTracking && slaveRowCount > lookupCount;
+    }
+
+    public boolean isIndexOnlyWalk() {
+        return isIndexOnlyWalk;
+    }
+
+    /**
+     * The slave rows from {@code rowIdLo} to {@code rowIdHi}, both inclusive ASOF positions; from
+     * the first row when rowIdLo is Long.MIN_VALUE, none when rowIdHi is. Positions the cursor.
+     */
+    public long countSlaveRows(long rowIdLo, long rowIdHi) {
+        if (rowIdHi == Long.MIN_VALUE) {
+            return 0;
+        }
+        final int frameHi = Rows.toPartitionIndex(rowIdHi);
+        int frameLo = rowIdLo == Long.MIN_VALUE ? 0 : Rows.toPartitionIndex(rowIdLo);
+        long rows = 0;
+        for (int f = frameLo; f <= frameHi; f++) {
+            timeFrameCursor.jumpTo(f);
+            if (timeFrameCursor.open() == 0) {
+                continue;
+            }
+            final long lo = f == frameLo && rowIdLo != Long.MIN_VALUE ? Rows.toLocalRowID(rowIdLo) : timeFrame.getRowLo();
+            final long hi = f == frameHi ? Rows.toLocalRowID(rowIdHi) : timeFrame.getRowHi() - 1;
+            rows += Math.max(0, hi - lo + 1);
+        }
+        return rows;
+    }
+
+    /**
+     * All rows of the slave. Positions the cursor.
+     */
+    public long countSlaveRows() {
+        long rows = 0;
+        timeFrameCursor.toTop();
+        while (timeFrameCursor.next()) {
+            rows += timeFrameCursor.open();
+        }
+        return rows;
+    }
+
+    public void beginKeyTracking() {
+        closeMergeCursors();
+        isIndexOnlyWalk = false;
+        isKeyTracking = indexedSlaveKeyColumnIndex != -1;
+        if (isKeyTracking) {
+            trackedKeys.clear();
+            isNullKeyTracked = false;
+        }
+    }
+
+    public boolean isKeyTracking() {
+        return isKeyTracking;
+    }
+
+    /**
+     * Adds a key of the walk that {@link #beginKeyTracking()} started: the slave symbol key that the
+     * master row's join key translates to, see {@link SymbolTranslatingRecord#getInt}.
+     */
+    public void trackKey(int slaveKey) {
+        if (slaveKey >= 0) {
+            trackedKeys.set(slaveKey);
+            if (slaveKey >= fwdKeyGens.length) {
+                final int capacity = Math.max(slaveKey + 1, fwdKeyGens.length * 2);
+                fwdKeyRows = Arrays.copyOf(fwdKeyRows, capacity);
+                fwdKeyGens = Arrays.copyOf(fwdKeyGens, capacity);
+            }
+        } else if (slaveKey == SymbolTable.VALUE_IS_NULL) {
+            isNullKeyTracked = true;
+        }
+        // VALUE_NOT_FOUND: no slave row has the key
+    }
+
+    /**
+     * {@link #trackKey} of the join key of the master row that {@code masterKeyRecord} is on.
+     */
+    public void trackKeyOf(SymbolTranslatingRecord masterKeyRecord) {
+        trackKey(masterKeyRecord.getInt(indexedMasterKeyColumnIndex));
+    }
+
+    @TestOnly
+    public long getIndexLookupCount() {
+        return indexLookups;
+    }
+
+    public boolean isIndexedKeyLookup() {
+        return indexedSlaveKeyColumnIndex != -1;
     }
 
     public long findNotKeyedAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -867,7 +1335,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             }
             // Position record and cache the key
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
-            if (filter == null || filter.getBool(record)) {
+            if (isKeyTracking) {
+                // no filter: the indexed key lookup excludes one
+                putForwardKeyRow(record.getInt(indexedSlaveKeyColumnIndex), currentRowId);
+            } else if (filter == null || filter.getBool(record)) {
                 MapKey key = keyToRowIdMap.withKey();
                 key.put(record, slaveAsOfJoinMapSink);
                 MapValue value = key.createValue();
@@ -926,6 +1397,12 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     }
 
     public void of(TimeFrameCursor timeFrameCursor, @Nullable MemoryTracker memoryTracker) {
+        indexLookups = 0;
+        isKeyTracking = false;
+        isIndexOnlyWalk = false;
+        closeMergeCursors();
+        clearForwardKeyRows();
+        indexLookupModes.clear();
         if (keyMissMap != null) {
             keyMissMap.close();
             keyMissMap.setMemoryTracker(memoryTracker);
@@ -973,6 +1450,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
      * the jitter caused by out-of-order frame processing.
      */
     public void toTop() {
+        // the callers clear the key cache after toTop()
+        clearForwardKeyRows();
+        // a walk after toTop() may start over at earlier positions
+        closeMergeCursors();
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
@@ -1129,6 +1610,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private void dropKeyCache(Map keyToRowIdMap, long restartRowId) {
         if (keyToRowIdMap.size() * MAX_CLEARED_SLOTS_PER_KEY >= keyToRowIdMap.getKeyCapacity()) {
             keyToRowIdMap.clear();
+            clearForwardKeyRows();
         }
         this.restartRowId = restartRowId;
     }

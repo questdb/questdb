@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.ParquetDecodeHint;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -43,6 +42,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -53,6 +53,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
+    // the LSD sort's scratch, see sortLsd(); null until the first
+    private DirectLongList lsdScratch;
+    private MemoryTracker memoryTracker;
     private final long keyCapBytes;
     private final MemoryCARW keyHeap;
     private final long parallelThreshold;
@@ -61,6 +64,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long count;
+    // the previous execution's entry count, a capacity hint for the next
+    private long lastCount;
+    // the entry count at which this execution grows its entries towards the previous one's, -1
+    // for none
+    private long hintAt = -1;
+    // the sample the key spread reads, see SortKeyEncoder.spreadKeyWords()
+    private long[] spreadSample;
     private long currentAddr;
     private long endAddr;
     private int entrySize;
@@ -115,20 +125,20 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     }
 
     @Override
-    public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
-        long parquetRowCount = 0;
+    public void copyRowFilterableRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
+        long declaredRowCount = 0;
         for (long addr = startAddr; addr < endAddr; addr += entrySize) {
-            if (addressCache.getFrameFormat(Rows.toPartitionIndex(Unsafe.getLong(addr))) == PartitionFormat.PARQUET) {
-                parquetRowCount++;
+            if (addressCache.isFrameRowFilterable(Rows.toPartitionIndex(Unsafe.getLong(addr)))) {
+                declaredRowCount++;
             }
         }
-        if (parquetRowCount == 0) {
+        if (declaredRowCount == 0) {
             return;
         }
-        target.ensureCapacity(parquetRowCount);
+        target.ensureCapacity(declaredRowCount);
         for (long addr = startAddr; addr < endAddr; addr += entrySize) {
             final long rowId = Unsafe.getLong(addr);
-            if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
+            if (addressCache.isFrameRowFilterable(Rows.toPartitionIndex(rowId))) {
                 target.add(rowId);
             }
         }
@@ -183,6 +193,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
         entryMem.setMemoryTracker(executionContext.getMemoryTracker());
+        memoryTracker = executionContext.getMemoryTracker();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
@@ -248,6 +259,14 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             }
             entryMem.setCapacity(estimatedSize * longsPerEntry);
         }
+        // A size the base does not know is guessed from the previous execution's, see
+        // EncodedSortCapacityHint
+        hintAt = -1;
+        if (estimatedSize <= 0 && lastCount > 0 && !isVariable) {
+            final long start = EncodedSortCapacityHint.start(lastCount, maxEntries);
+            entryMem.setCapacity(start * longsPerEntry);
+            hintAt = Math.min(lastCount, maxEntries) > start ? start : -1;
+        }
 
         // Collect (key, rowId) entries
         entryMem.clear();
@@ -284,7 +303,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 long addr = entryMem.getAppendAddress();
                 encoder.encode(baseRecord, addr, baseRecord.getRowId());
                 entryMem.skip(longsPerEntry);
-                count++;
+                if (++count == hintAt) {
+                    applyCapacityHint(maxEntries);
+                }
             }
         }
 
@@ -292,7 +313,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             if (isVariable) {
                 long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
                 Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
-            } else {
+            } else if (keyType.keyLength() != Long.BYTES || count < parallelThreshold || !sortLsd()) {
+                if (keyType.keyLength() == Long.BYTES && count >= parallelThreshold) {
+                    if (spreadSample == null) {
+                        spreadSample = new long[SortKeyEncoder.SPREAD_SAMPLE_SIZE];
+                    }
+                    SortKeyEncoder.spreadKeyWords(entryMem.getAddress(), count, spreadSample);
+                }
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
@@ -301,6 +328,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             // emit reads only rowIds; the key heap is not needed past the sort
             keyHeap.close();
         }
+        lastCount = count;
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
         if (count > 0) {
@@ -311,11 +339,35 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         Misc.free(encoder);
     }
 
+    // The stable parallel LSD sort of the entries, when the base's row ids ascend in scan order, see
+    // Vect.sortEncodedEntriesLsd(); false leaves them to the MSD sort. Its scratch, as many entries
+    // again, is charged to the query and freed once the entries are sorted.
+    private boolean sortLsd() {
+        if (lsdScratch == null) {
+            lsdScratch = new DirectLongList(count * longsPerEntry, MemoryTag.NATIVE_DEFAULT, true);
+        }
+        lsdScratch.setMemoryTracker(memoryTracker);
+        lsdScratch.reopen();
+        try {
+            lsdScratch.ensureCapacity(count * longsPerEntry);
+            return Vect.sortEncodedEntriesLsd(entryMem.getAddress(), count, lsdScratch.getAddress());
+        } finally {
+            lsdScratch.close();
+        }
+    }
+
     private void forceClose() {
+        lsdScratch = Misc.free(lsdScratch);
         Misc.free(entryMem);
         Misc.free(keyHeap);
         Misc.free(encoder);
         baseCursor = Misc.free(baseCursor);
         baseRecord = null;
+    }
+
+    private void applyCapacityHint(long maxEntries) {
+        final long entries = EncodedSortCapacityHint.next(count, lastCount, maxEntries);
+        entryMem.setCapacity(Math.max(entryMem.getCapacity(), entries * longsPerEntry));
+        hintAt = entries < Math.min(lastCount, maxEntries) ? entries : -1;
     }
 }

@@ -127,6 +127,11 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         }
     }
 
+    // The pseudo-partition index of the lead frames, or -1, see addLeadFrames()
+    public int getLeadPartitionIndex() {
+        return leadPartitionIndex;
+    }
+
     public PageFrameAddressCache getAddressCache() {
         return addressCache;
     }

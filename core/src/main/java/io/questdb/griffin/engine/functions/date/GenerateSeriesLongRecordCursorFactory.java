@@ -52,6 +52,11 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
         return cursor;
     }
 
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     private static class GenerateSeriesLongRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesLongRecord recordA = new GenerateSeriesLongRecord();
         private final GenerateSeriesLongRecord recordB = new GenerateSeriesLongRecord();

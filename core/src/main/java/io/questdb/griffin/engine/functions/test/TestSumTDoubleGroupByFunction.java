@@ -103,6 +103,11 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
     }

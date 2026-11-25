@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -335,6 +336,26 @@ public class ConcatFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("concat(").val(functions).val(')');
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(functions);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(functions);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(functions);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(functions);
         }
     }
 

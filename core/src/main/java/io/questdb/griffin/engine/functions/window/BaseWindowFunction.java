@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Misc;
 
@@ -76,6 +77,13 @@ public abstract class BaseWindowFunction implements WindowFunction {
         }
     }
 
+    /**
+     * The function's argument, null for a function without one.
+     */
+    public Function getWindowArgument() {
+        return arg;
+    }
+
     @Override
     public int getColumnIndex() {
         return columnIndex;
@@ -83,6 +91,28 @@ public abstract class BaseWindowFunction implements WindowFunction {
 
     @Override
     public abstract String getName();
+
+    // The argument's properties carry up, as through UnaryFunction: see FunctionFlags. A subclass
+    // holding more functions (a default value, a second argument) adds them.
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(arg);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return FunctionFlags.isNonDeterministic(arg);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(arg);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return FunctionFlags.isStableWithinExecution(arg);
+    }
 
     @Override
     public boolean isSubsampleKeepFlag() {

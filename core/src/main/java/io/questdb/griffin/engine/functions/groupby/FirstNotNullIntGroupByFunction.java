@@ -132,6 +132,16 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcVal = srcValue.getInt(valueIndex + 1);
         if (srcVal == Numbers.INT_NULL) {

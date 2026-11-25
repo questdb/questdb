@@ -558,6 +558,11 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return true;
+        }
+
+        @Override
         public boolean isThreadSafe() {
             return false;
         }
