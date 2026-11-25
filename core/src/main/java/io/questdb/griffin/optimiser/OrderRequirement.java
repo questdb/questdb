@@ -30,8 +30,10 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortKeys;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -49,6 +51,7 @@ final class OrderRequirement implements Mutable {
     static final ObjectFactory<OrderRequirement> FACTORY = OrderRequirement::new;
     private final SortKeys order = new SortKeys();
     private SortDirection direction;
+    private LogicalPlan frameReader;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
     private boolean isRewound;
@@ -62,6 +65,7 @@ final class OrderRequirement implements Mutable {
     public void clear() {
         order.clear();
         direction = null;
+        frameReader = null;
         isJoinSlaveInput = false;
         isRandomAccessRequired = false;
         isRewound = false;
@@ -77,6 +81,16 @@ final class OrderRequirement implements Mutable {
      */
     SortDirection getDirection() {
         return direction;
+    }
+
+    /**
+     * The nearest plan above that may read the page frames of the rows the plan passes on, while a consumer reads
+     * them by row id, see {@link #isRandomAccessRequired}: a filter, which supplies random access when it runs in
+     * parallel, or the HORIZON JOIN, or the aggregate over it, whose master they are; null when none does or a LIMIT
+     * or a computing projection between cuts the page frames off.
+     */
+    LogicalPlan getFrameReader() {
+        return frameReader;
     }
 
     /**
@@ -104,6 +118,7 @@ final class OrderRequirement implements Mutable {
      * Requires nothing of the rows beyond what the consumer's place in the plan implies.
      */
     OrderRequirement inputOf(OrderRequirement consumer) {
+        frameReader = consumer.frameReader;
         isJoinSlaveInput = consumer.isJoinSlaveInput;
         isRandomAccessRequired = consumer.isRandomAccessRequired;
         isRewound = consumer.isRewound;
@@ -141,7 +156,8 @@ final class OrderRequirement implements Mutable {
     }
 
     /**
-     * True when a join step reads the plan by random access through projections, filters, limits and sorts.
+     * True when a consumer reads the plan by row id through projections, filters, limits, sorts and the first branch of
+     * an EXCEPT or INTERSECT.
      */
     boolean isRandomAccessRequired() {
         return isRandomAccessRequired;
@@ -172,6 +188,18 @@ final class OrderRequirement implements Mutable {
     OrderRequirement joinSlave(boolean isRandomAccessRequired) {
         this.isJoinSlaveInput = true;
         this.isRandomAccessRequired = isRandomAccessRequired;
+        this.frameReader = null;
+        return this;
+    }
+
+    /**
+     * Marks the plan as read by row id when {@code isRandomAccessRequired}, through projections, filters, limits, sorts
+     * and the first branch of an EXCEPT or INTERSECT, by a consumer that reads the page frames of the rows in parallel
+     * instead when {@code frameReader} does, see {@link #getFrameReader}.
+     */
+    OrderRequirement randomAccessRequired(boolean isRandomAccessRequired, LogicalPlan frameReader) {
+        this.isRandomAccessRequired = isRandomAccessRequired;
+        this.frameReader = isRandomAccessRequired ? frameReader : null;
         return this;
     }
 
@@ -235,11 +263,19 @@ final class OrderRequirement implements Mutable {
 
     /**
      * Narrows where the plan sits to what reaches the plan and its inputs: the random access of a join step passes
-     * through projections, filters, limits and sorts, and the single group of an aggregate without keys through
-     * projections and filters to a scan.
+     * through projections, filters, limits, sorts and an EXCEPT or INTERSECT, which reads its first branch by row id,
+     * the frame reader through selections and sorts, a filter becoming the frame reader of its input, and the single
+     * group of an aggregate without keys through projections and filters to a scan.
      */
     void passTo(LogicalPlan plan) {
-        isRandomAccessRequired &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan;
+        isRandomAccessRequired &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan
+                || plan instanceof SetOperationPlan operation && !operation.getOperation().isUnion();
+        frameReader = !isRandomAccessRequired ? null : switch (plan) {
+            case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> filter;
+            case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION -> frameReader;
+            case SortPlan _ -> frameReader;
+            default -> null;
+        };
         isSingleGroupInput &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof ScanPlan;
     }
 

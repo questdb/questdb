@@ -227,6 +227,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         LegacyRecordCursorFactory.halfClose(base);
     }
 
+    // The column the metadata marks as the timestamp must pass through the base's own timestamp: a timestamp(col)
+    // claim over another column of the base marks a column that may hold NULL in rows of any order.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return timestampIndex > -1
+                && columnCrossIndex.getQuick(timestampIndex) == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
@@ -266,6 +276,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         // RecordCursorFactory.rewrapOverTopK contract, the caller must not close the orphan;
         // its state has transferred here. Same precedent as the AsOf and LatestBy peels.
         return new SelectedRecordCursorFactory(orderedMetadata, columnCrossIndex, rewrappedBase);
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override

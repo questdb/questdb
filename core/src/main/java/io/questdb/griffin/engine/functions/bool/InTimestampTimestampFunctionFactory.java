@@ -39,13 +39,14 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
@@ -63,13 +64,28 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     private static final FiberLocal<LongList> VETTED_VALUES = new FiberLocal<>(LongList::new);
 
     public static boolean containsDateVariable(CharSequence seq) {
-        return containsDateVariable(seq, 0, seq.length());
+        return DateExpressionEvaluator.containsDateVariable(seq, 0, seq.length());
     }
 
     /**
      * Parses into {@code out}, which it clears first, the intervals a constant text element of a TIMESTAMP IN list
      * spells when it is not a timestamp; false when the text spells no interval free of date variables.
      */
+    /**
+     * True when the constant interval text of an IN over a key of {@code timestampType} holds no instant at that
+     * precision, e.g. '2024-01-06#workday', where the day filter drops the only day, a Saturday: no row matches,
+     * NULL included, and {@link #newInstance} folds the IN to false. A text with a date variable resolves its
+     * instants at execution.
+     */
+    public static boolean holdsNoInstant(int timestampType, CharSequence text, int position, CairoConfiguration configuration) throws SqlException {
+        if (text == null || DateExpressionEvaluator.containsDateVariable(text, 0, text.length())) {
+            return false;
+        }
+        final LongList intervals = new LongList();
+        IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(timestampType), configuration, text, intervals, position, new StringSink());
+        return intervals.size() == 0;
+    }
+
     public static boolean parseIntervalElement(
             TimestampDriver driver,
             CairoConfiguration configuration,
@@ -80,11 +96,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             StringSink sink
     ) {
         out.clear();
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             return false;
         }
         try {
-            IntervalUtils.parseTickExpr(driver, configuration, seq, lo, lim, 0, out, IntervalOperation.INTERSECT, sink);
+            IntervalUtils.parseTickExpr(driver, configuration, seq, lo, lim, 0, out, sink);
             return true;
         } catch (SqlException e) {
             out.clear();
@@ -147,13 +163,28 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
-                if (right != null && containsDateVariable(right)) {
+                if (right != null && DateExpressionEvaluator.containsDateVariable(right, 0, right.length())) {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
                     return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
                 }
-                return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
+                final EqTimestampStrConstantFunction func = new EqTimestampStrConstantFunction(
+                        args.getQuick(0),
+                        timestampType,
+                        right,
+                        argPositions.getQuick(1),
+                        configuration
+                );
+                if (func.intervals.size() == 0) {
+                    // The expression holds no instant, e.g. '2024-01-06#workday', where the day
+                    // filter drops the only day, a Saturday. No row matches, NULL included. A
+                    // constant lets the parser fold the enclosing AND, OR and NOT, and lets the
+                    // code generator skip the scan or the filter.
+                    Misc.free(func);
+                    return BooleanConstant.FALSE;
+                }
+                return func;
             }
             final LongList values = new LongList(args.size() - 1);
             if (parseElements(timestampType, args, argPositions, configuration, values)) {
@@ -210,15 +241,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         if (driver.isExactFrom(value, type)) {
             values.add(driver.ceilFrom(value, type));
         }
-    }
-
-    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isElementEqual(Function func, Record rec, long ts, TimestampDriver driver, int position) {

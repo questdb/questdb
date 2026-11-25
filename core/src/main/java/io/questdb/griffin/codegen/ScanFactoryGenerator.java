@@ -160,7 +160,8 @@ final class ScanFactoryGenerator {
             int indexDirection,
             boolean followsOrderByAdvice,
             IntList columnIndexes,
-            IntList columnSizeShifts
+            IntList columnSizeShifts,
+            boolean isRandomAccess
     ) {
         return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
                 configuration,
@@ -172,7 +173,7 @@ final class ScanFactoryGenerator {
                 followsOrderByAdvice,
                 columnIndexes,
                 columnSizeShifts,
-                true
+                isRandomAccess
         );
     }
 
@@ -915,7 +916,7 @@ final class ScanFactoryGenerator {
             assert filter == null;
             final RecordCursorFactory backup = scan.hasCoveringBackup()
                     ? buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex,
-                    key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts)
+                    key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts, scan.isRandomAccess())
                     : null;
             return new CoveringIndexRecordCursorFactory(metadata, frames, columnIndexes.getQuick(keyIndex),
                     key, columnIndexes, coveringMapping, null, false, null, null,
@@ -923,11 +924,11 @@ final class ScanFactoryGenerator {
         }
         if (filter == null) {
             return buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex,
-                    key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts);
+                    key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts, scan.isRandomAccess());
         }
         return new PageFrameRecordCursorFactory(configuration, metadata, frames,
                 new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection), followsOrderByAdvice,
-                filter, false, columnIndexes, columnSizeShifts, true, false, false);
+                filter, false, columnIndexes, columnSizeShifts, scan.isRandomAccess(), false, false);
     }
 
     /**

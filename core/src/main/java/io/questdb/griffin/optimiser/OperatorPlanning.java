@@ -403,6 +403,22 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * How the generator applies the predicate of a filter that is not fused with its scan, over an input that offers
+     * page frames when {@code isPageFrameInput}: folded or gated when it is constant, by the window's keep flag, else in
+     * parallel over the page frames or serially.
+     */
+    private FilterPlan.Algorithm filterAlgorithm(FilterPlan filter, boolean isPageFrameInput) {
+        final FilterPlan.Algorithm folded = foldedAlgorithm(filter.getPredicate(), true);
+        if (folded != null) {
+            return folded;
+        }
+        if (PlanToFactoryRules.isWindowKeepFlag(filter)) {
+            return FilterPlan.Algorithm.WINDOW_KEEP_FLAG;
+        }
+        return context.getExecutionContext().isParallelFilterEnabled() && isPageFrameInput ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL;
+    }
+
+    /**
      * True when the page frames the plan serves come from a table whose parquet partitions store a column under a
      * converted type.
      */
@@ -423,8 +439,7 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan master = horizon.getMaster();
         final boolean isRandomAccess = isRandomAccess(master);
         HorizonJoinPlan.Algorithm algorithm = HorizonJoinPlan.Algorithm.SERIAL;
-        if (context.getExecutionContext().isParallelHorizonJoinEnabled() && hasParallelFunctions
-                && (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE || !isRandomAccess || PlanToFactoryRules.isHorizonWithinSlotCap(horizon))) {
+        if (isParallelHorizon(horizon, hasParallelFunctions, isRandomAccess)) {
             if (isPageFrameSource(master)) {
                 algorithm = HorizonJoinPlan.Algorithm.PARALLEL;
             } else if (isStolenFilter(master, FilterConsumer.FRAME_REDUCER)) {
@@ -483,8 +498,42 @@ final class OperatorPlanning implements Mutable {
                 PhysicalProperties.masterTimestampIndex(join, inputIndex), timestampIndex(step.getInput()));
     }
 
+    /**
+     * True when the frame reader of a sort, see {@link SortPlan#getRowIdFrameReader}, reads the page frames of rows the
+     * sort passes on without random access in parallel: a filter that runs in parallel over them, which supplies the
+     * random access itself, or a HORIZON JOIN that reads them in parallel.
+     */
+    private boolean isParallelFrameReader(LogicalPlan frameReader) {
+        return switch (frameReader) {
+            case FilterPlan filter -> filterAlgorithm(filter, true) == FilterPlan.Algorithm.PARALLEL;
+            case HorizonJoinPlan horizon -> isParallelHorizon(horizon, true, false);
+            case AggregatePlan aggregate -> isParallelHorizon((HorizonJoinPlan) aggregate.getChild(), hasParallelFunctions(aggregate), false);
+            case null, default -> false;
+        };
+    }
+
+    /**
+     * True when the HORIZON JOIN reads the page frames of its master, or the frames under a filter it steals from the
+     * master, in parallel once the master offers them, see {@link #horizonAlgorithm}.
+     */
+    private boolean isParallelHorizon(HorizonJoinPlan horizon, boolean hasParallelFunctions, boolean isRandomAccessMaster) {
+        return context.getExecutionContext().isParallelHorizonJoinEnabled() && hasParallelFunctions
+                && (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE || !isRandomAccessMaster || PlanToFactoryRules.isHorizonWithinSlotCap(horizon));
+    }
+
     private boolean isRandomAccess(LogicalPlan plan) {
         return PhysicalProperties.supportsRandomAccess(plan) == PhysicalProperties.Capability.YES;
+    }
+
+    /**
+     * True when a consumer reads the rows of the sort back by row id, see {@link SortPlan#isRowIdRead}, its input lacks
+     * the random access the sort gives them, and no frame reader above takes their page frames in parallel instead, see
+     * {@link #isParallelFrameReader}: the sort runs even when the rows already arrive in its order.
+     */
+    private boolean isRowIdSortRequired(SortPlan sort) {
+        final LogicalPlan input = sort.getChild();
+        return sort.isRowIdRead() && !isRandomAccess(input)
+                && !(isPageFrameSource(input) && isParallelFrameReader(sort.getRowIdFrameReader()));
     }
 
     /**
@@ -706,10 +755,7 @@ final class OperatorPlanning implements Mutable {
     private void planFilter(FilterPlan filter) {
         final boolean isParallelEnabled = context.getExecutionContext().isParallelFilterEnabled();
         if (!PlanToFactoryRules.isFusedFilter(filter)) {
-            final FilterPlan.Algorithm folded = foldedAlgorithm(filter.getPredicate(), true);
-            filter.setAlgorithm(folded != null ? folded
-                    : PlanToFactoryRules.isWindowKeepFlag(filter) ? FilterPlan.Algorithm.WINDOW_KEEP_FLAG
-                      : isParallelEnabled && isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getChild())) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
+            filter.setAlgorithm(filterAlgorithm(filter, isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getChild()))));
             return;
         }
         final ScanPlan scan = (ScanPlan) filter.getChild();
@@ -868,8 +914,8 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan input = sort.getChild();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
         final boolean isTimestampOrdered = isTimestampOrdered(sort);
-        final boolean isOrderDelivered = isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input)
-                || sort.getColumnIds().size() == 1 && isTimestampOrdered;
+        final boolean isOrderDelivered = !isRowIdSortRequired(sort)
+                && (isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input) || sort.getColumnIds().size() == 1 && isTimestampOrdered);
         if (isInputLimit(input)) {
             limit.setApplication(LimitPlan.Application.INPUT);
             sort.setAlgorithm(isOrderDelivered ? SortPlan.Algorithm.INPUT_ORDER : sortAlgorithm(input));
@@ -1042,7 +1088,9 @@ final class OperatorPlanning implements Mutable {
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
         readOrder(input, true, keyIndex == timestampIndex);
         final boolean isAdviceFollowed = isAdviceFollowed(input);
-        if (isAdviceFollowed && PlanToFactoryRules.hasAdvisedInput(input)) {
+        if (isRowIdSortRequired(sort)) {
+            sort.setAlgorithm(sortAlgorithm(input));
+        } else if (isAdviceFollowed && PlanToFactoryRules.hasAdvisedInput(input)) {
             sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
         } else if (isAdviceFollowed && sort.isMarkoutHorizon()) {
             final int sortedIndex = sort.getOutput().getTimestampIndex();

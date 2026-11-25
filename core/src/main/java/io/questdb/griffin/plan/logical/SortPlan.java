@@ -37,6 +37,8 @@ public final class SortPlan extends ForwardingPlan {
     private boolean isLimited = true;
     private boolean isMarkoutHorizon;
     private boolean isReversal;
+    private boolean isRowIdRead;
+    private LogicalPlan rowIdFrameReader;
 
     @Override
     public void clear() {
@@ -47,6 +49,8 @@ public final class SortPlan extends ForwardingPlan {
         isLimited = true;
         isMarkoutHorizon = false;
         isReversal = false;
+        isRowIdRead = false;
+        rowIdFrameReader = null;
     }
 
     /**
@@ -98,12 +102,35 @@ public final class SortPlan extends ForwardingPlan {
         return isReversal;
     }
 
+    /**
+     * The plan above the sort that may read the page frames of its rows in parallel instead of reading them back by
+     * row id, see {@link #isRowIdRead}: a filter, or the HORIZON JOIN, or the aggregate over it, whose master the rows
+     * are; null when none does.
+     */
+    public LogicalPlan getRowIdFrameReader() {
+        return rowIdFrameReader;
+    }
+
+    /**
+     * True when a consumer reads the sorted rows back by row id unless a frame reader takes their page frames instead,
+     * see {@link #getRowIdFrameReader}: a SPLICE join, an ASOF or LT join over a slave it cannot copy, or a HORIZON
+     * JOIN, through projections, filters, limits, sorts and the first branch of an EXCEPT or INTERSECT.
+     */
+    public boolean isRowIdRead() {
+        return isRowIdRead;
+    }
+
     public void markMarkoutHorizon() {
         isMarkoutHorizon = true;
     }
 
     public void markReversal() {
         isReversal = true;
+    }
+
+    public void markRowIdRead(LogicalPlan frameReader) {
+        isRowIdRead = true;
+        rowIdFrameReader = frameReader;
     }
 
     public void markUnlimited() {
@@ -127,6 +154,8 @@ public final class SortPlan extends ForwardingPlan {
         visitor.fact("isLimited", isLimited);
         visitor.fact("isMarkoutHorizon", isMarkoutHorizon);
         visitor.fact("isReversal", isReversal);
+        visitor.fact("isRowIdRead", isRowIdRead);
+        visitor.fact("rowIdFrameReader", rowIdFrameReader);
     }
 
     @Override

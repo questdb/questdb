@@ -41,7 +41,6 @@ import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.legacy.griffin.model.AliasTranslator;
 import io.questdb.legacy.griffin.model.ExpressionNode;
@@ -1869,9 +1868,7 @@ public final class WhereClauseParser implements Mutable {
                         inArg.token.length() - 1,
                         inArg.position,
                         tempInIntervals,
-                        IntervalOperation.INTERSECT,
-                        intervalSink,
-                        true
+                        intervalSink
                 );
             } catch (SqlException | CairoException e) {
                 return false;

@@ -65,7 +65,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         this.base = base;
         this.columnSplit = columnSplit;
         try {
-            this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess());
+            this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess(), null, null);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;

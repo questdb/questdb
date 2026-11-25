@@ -119,6 +119,11 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initSharedFrom(GroupByFunction primary) {
         this.valueIndex = primary.getValueIndex();
         this.sets = ((CountDistinctVarcharGroupByFunction) primary).sets;

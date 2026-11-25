@@ -1074,6 +1074,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (SqlKeywords.isInKeyword(operator) && (count > 2 || count == 2 && !isCaseText(args.getQuick(1).getType()))) {
             return canonicalizeTemporalIn(args, positions);
         }
+        if (SqlKeywords.isInKeyword(operator) && count == 2) {
+            return foldEmptyIntervalIn(args, positions);
+        }
         return null;
     }
 
@@ -1525,6 +1528,21 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             Misc.free(argument, th);
             throw th;
         }
+    }
+
+    /**
+     * Folds an interval IN whose constant text holds no instant at the operand's precision to false, as its factory
+     * does, see {@link InTimestampTimestampFunctionFactory#holdsNoInstant}, so that the enclosing AND, OR and NOT fold
+     * with it; returns null for any other IN over text.
+     */
+    private Function foldEmptyIntervalIn(ObjList<Function> args, IntList positions) throws SqlException {
+        final Function operand = args.getQuick(0);
+        final Function text = args.getQuick(1);
+        if (!isTemporalOperand(operand) || !text.isConstant() || !ColumnType.isVarcharOrString(text.getType())) {
+            return null;
+        }
+        return InTimestampTimestampFunctionFactory.holdsNoInstant(ColumnType.getTimestampType(operand.getType()), text.getStrA(null),
+                positions != null ? positions.getQuick(1) : 0, sqlExecutionContext.getCairoEngine().getConfiguration()) ? BooleanConstant.FALSE : null;
     }
 
     private Function foldRoot(Function function, int position) {
@@ -2222,7 +2240,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 final CharSequence seq = intervalSpelling(argument, text);
                 parsedIntervals.clear();
                 IntervalUtils.parseTickExpr(driver, executionContext.getCairoEngine().getConfiguration(), seq, 1, seq.length() - 1,
-                        argument.getPosition(), parsedIntervals, IntervalOperation.INTERSECT, intervalSink);
+                        argument.getPosition(), parsedIntervals, intervalSink);
                 parsedIntervals.clear();
             }
             return;

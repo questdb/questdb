@@ -114,6 +114,11 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return SortedRecordCursorFactory.hasTableScanTimestamp(getMetadata(), sortColumnFilter, base);
+    }
+
+    @Override
     public boolean implementsLimit() {
         return true;
     }

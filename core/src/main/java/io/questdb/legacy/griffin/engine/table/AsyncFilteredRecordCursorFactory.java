@@ -277,6 +277,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return limitLoFunction != null;
     }

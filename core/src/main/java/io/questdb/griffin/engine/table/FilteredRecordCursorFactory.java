@@ -100,6 +100,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

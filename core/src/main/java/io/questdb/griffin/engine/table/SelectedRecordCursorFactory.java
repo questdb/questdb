@@ -193,6 +193,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return timeFrameCursor.of(baseCursor);
     }
 
+    // The column the metadata marks as the timestamp must pass through the base's own timestamp: a timestamp(col)
+    // claim over another column of the base marks a column that may hold NULL in rows of any order.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return timestampIndex > -1
+                && columnCrossIndex.getQuick(timestampIndex) == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
@@ -223,6 +233,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override

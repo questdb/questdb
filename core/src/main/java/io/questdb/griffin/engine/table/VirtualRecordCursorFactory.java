@@ -37,6 +37,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -152,6 +153,20 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    // The timestamp must be a column reference to the base's own timestamp, as translateOrderByColumnToBase() resolves
+    // it; a function of the timestamp computes another value.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final ColumnFunction columnFunction = ColumnFunction.unwrap(functions.getQuick(timestampIndex));
+        return columnFunction != null
+                && priorityMetadata.getBaseColumnIndex(columnFunction.getColumnIndex()) == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
     }
 
     @Override

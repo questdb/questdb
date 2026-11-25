@@ -51,6 +51,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private int error;
     private Throwable factoryFailure;
     private boolean isTableBusy;
+    private boolean isTableLocked;
     private int position;
 
     public static SqlException $(int position, CharSequence message) {
@@ -292,6 +293,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return error == EXCEPTION_TABLE_DOES_NOT_EXIST;
     }
 
+    /**
+     * Identifies a wrapped failure on the lock of a table that another thread holds, or is taking,
+     * without changing the SQL error code.
+     */
+    public boolean isTableLocked() {
+        return isTableLocked;
+    }
+
     public boolean isMaterializationExpiryConflict() {
         return error == EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT;
     }
@@ -360,6 +369,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return this;
     }
 
+    public SqlException setTableLocked(boolean isTableLocked) {
+        this.isTableLocked = isTableLocked;
+        return this;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
@@ -371,6 +385,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         error = 0;
         isTableBusy = false;
         factoryFailure = null;
+        isTableLocked = false;
         return this;
     }
 

@@ -1936,6 +1936,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                     long replacementTimestampLo = Long.MIN_VALUE;
                     long replacementTimestampHi = Long.MIN_VALUE;
+                    // Set once commitMatView() commits the watermark and hands the factory to the view state.
+                    boolean hasCommittedMatView = false;
 
                     while (intervalIterator.next()) {
                         refreshSqlExecutionContext.setRange(
@@ -2035,6 +2037,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             replacementTimestampLo,
                                             replacementTimestampHi
                                     );
+                                    hasCommittedMatView = true;
                                 } else {
                                     final long lo = replacementTimestampLo;
                                     final long hi = replacementTimestampHi;
@@ -2075,10 +2078,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             pendingScanSampleNanos = 0L;
                             pendingScanRangeTsUnits = 0L;
                         }
-                    } else if (replacementTimestampLo == Long.MIN_VALUE) {
-                        // The iterator yielded no intervals, so no commitMatView() call returned the factory
-                        // to the view state. findRefreshIntervals() never hands out such an iterator, but if
-                        // it does, free the factory and commit the watermark as in the no-intervals case.
+                    } else if (!hasCommittedMatView) {
+                        // No commitMatView() call returned the factory to the view state or committed the
+                        // watermark. Either the last step group ended in a batch commit, which is not the
+                        // iterator's last step group when the period cuts off the newest txn interval, or
+                        // the iterator yielded no intervals, which findRefreshIntervals() never hands out.
+                        // Free the factory and commit the watermark as in the no-intervals case.
+                        assert replacementTimestampHi == replacementTimestampLo;
                         hasIntervals = false;
                     }
                     break;

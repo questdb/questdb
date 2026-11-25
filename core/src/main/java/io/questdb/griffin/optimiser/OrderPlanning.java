@@ -476,9 +476,12 @@ final class OrderPlanning implements OptimiserPass {
 
     /**
      * Records what the consumer of {@code plan} requires, see {@link OrderRequirement}, and pushes it on to the inputs.
-     * A join step that reads its slave by random access, see {@link #isSlaveRandomAccessRequired}, needs a slave a merged
-     * UNION ALL does not provide, so a set operation the slave reads through projections, filters, limits and sorts gets
-     * no order request, and the sort over it sorts.
+     * A consumer that reads its input by row id - the slave of a join step that reads it so, see
+     * {@link #isSlaveRandomAccessRequired}, the master of a SPLICE join and the master of a HORIZON JOIN - needs an input
+     * a merged UNION ALL does not provide, so a set operation it reads through projections, filters, limits and sorts
+     * gets no order request, and the sort over it sorts. A sort it reads so records it with the nearest plan above that
+     * may read the page frames of the rows instead, see {@link SortPlan#isRowIdRead}, and sorts rows that arrive in its
+     * order but without random access unless that plan reads their page frames in parallel.
      */
     private void require(LogicalPlan plan, OrderRequirement requirement) {
         final boolean isRandomAccessRequired = requirement.isRandomAccessRequired();
@@ -517,7 +520,8 @@ final class OrderPlanning implements OptimiserPass {
             case HorizonJoinPlan horizon -> {
                 // Expansion counts output rows, not master rows. Neither LIMIT nor a requested
                 // descending output order may cross it; every operand needs temporal row order.
-                for (int i = 0, n = horizon.inputCount(); i < n; i++) {
+                require(horizon.getMaster(), requirements.next().inputOf(requirement).randomAccessRequired(true, horizon).rowOrderRequired(true));
+                for (int i = 1, n = horizon.inputCount(); i < n; i++) {
                     require(horizon.inputAt(i), requirements.next().inputOf(requirement).rowOrderRequired(true));
                 }
             }
@@ -535,7 +539,7 @@ final class OrderPlanning implements OptimiserPass {
      */
     private void requireAggregate(AggregatePlan aggregate, OrderRequirement requirement) {
         if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
-            requireNothing(horizon.getMaster(), requirement);
+            require(horizon.getMaster(), requirements.next().inputOf(requirement).randomAccessRequired(true, aggregate));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
                 requireNothing(horizon.getSlaves().getQuick(i).getInput(), requirement);
             }
@@ -580,6 +584,9 @@ final class OrderPlanning implements OptimiserPass {
         final LimitPlan limit = requirement.getLimit();
         final boolean isOrdered = !requirement.getOrder().isEmpty();
         final OrderRequirement masterRequirement = requirements.next().inputOf(requirement).rewound(rewoundMasterHi > 0);
+        if (ordered.size() > 1 && ordered.getQuick(1).getJoinType() == JoinKind.SPLICE) {
+            masterRequirement.randomAccessRequired(true, null);
+        }
         if (isMasterOrderPreserved && orderColumnId >= 0 && masterOutput.getColumnIndexById(orderColumnId) >= 0) {
             masterRequirement.orderBy(orderColumnId, requirement.getDirection()).order(requirement, masterOutput)
                     .rowOrderRequired(requirement.isRowOrderRequired());
@@ -628,7 +635,7 @@ final class OrderPlanning implements OptimiserPass {
         require(operation.getLeft(), requirements.next().inputOf(requirement)
                 .orderBy(orderIndex < 0 ? -1 : operation.getLeft().getOutput().getColumnId(orderIndex), direction)
                 .rowOrderRequired(requirement.isRowOrderRequired()));
-        require(operation.getRight(), requirements.next().inputOf(requirement)
+        require(operation.getRight(), requirements.next().inputOf(requirement).randomAccessRequired(false, null)
                 .orderBy(orderIndex < 0 ? -1 : operation.getRight().getOutput().getColumnId(orderIndex), direction)
                 .rowOrderRequired(requirement.isRowOrderRequired()));
     }
@@ -637,6 +644,9 @@ final class OrderPlanning implements OptimiserPass {
      * A join slave never scans backward for a sort that it re-sorts anyway, unless the sort reverses a negative LIMIT.
      */
     private void requireSortInput(SortPlan sort, int orderColumnId, SortDirection direction, LimitPlan limit, OrderRequirement requirement) {
+        if (requirement.isRandomAccessRequired()) {
+            sort.markRowIdRead(requirement.getFrameReader());
+        }
         final OrderRequirement input = requirements.next().inputOf(requirement).rowOrderRequired(false);
         if (!requirement.isJoinSlaveInput() || direction != SortDirection.DESCENDING || sort.isReversal()) {
             input.orderBy(orderColumnId, direction).order(sort).limit(limit);

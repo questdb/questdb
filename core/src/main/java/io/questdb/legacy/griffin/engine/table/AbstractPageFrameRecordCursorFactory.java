@@ -172,6 +172,20 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * Returns true when the column that the metadata marks as this factory's timestamp reads the designated timestamp
+     * of the table, rather than another column that a {@code timestamp(col)} clause names.
+     *
+     * @return true if the factory's timestamp is the table's designated timestamp
+     */
+    protected boolean isTimestampTableDesignated() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        // columnIndexes maps the factory's columns to the reader's, and the partition frame factory describes the
+        // reader's table
+        return timestampIndex > -1
+                && columnIndexes.getQuick(timestampIndex) == partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
+    }
+
+    /**
      * Initializes the record cursor from the page frame cursor.
      *
      * @param frameCursor      the page frame cursor

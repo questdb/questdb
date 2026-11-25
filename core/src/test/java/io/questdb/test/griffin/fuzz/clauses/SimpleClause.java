@@ -129,12 +129,22 @@ public final class SimpleClause {
             }
             return;
         }
-        // Fallback: ORDER BY ts, the one guaranteed-sortable column.
+        // Fallback: ORDER BY ts, the one guaranteed-sortable column. A scan already delivers that order, so a
+        // second key now and then makes the planner sort rows that arrive in timestamp order, which keep their
+        // streamed timestamp through the sort.
         if (qualifier != null) {
             sink.put(qualifier).put('.');
         }
         sink.put(FuzzNames.column(rnd, table.getTsColumnName()));
         sink.put(rnd.nextBoolean() ? " ASC" : " DESC");
+        final String secondKey = rnd.nextInt(4) == 0 ? JoinClauseSupport.pickOrderableColumn(rnd, table) : null;
+        if (secondKey != null) {
+            sink.put(", ");
+            if (qualifier != null) {
+                sink.put(qualifier).put('.');
+            }
+            sink.put(FuzzNames.column(rnd, secondKey));
+        }
     }
 
     /**

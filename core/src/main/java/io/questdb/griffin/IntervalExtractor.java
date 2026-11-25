@@ -817,8 +817,7 @@ public final class IntervalExtractor implements Mutable {
             intervalText.clear();
             try {
                 IntervalUtils.parseTickExpr(ColumnType.getTimestampDriver(predicate.argumentAt(0).getDataType()), configuration,
-                        text, 0, text.length(), constant.getPosition(), parsedIntervals,
-                        IntervalOperation.INTERSECT, intervalText);
+                        text, 0, text.length(), constant.getPosition(), parsedIntervals, intervalText);
             } catch (SqlException | CairoException e) {
                 return predicate;
             }

@@ -108,6 +108,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
+    public boolean isForwardScan() {
+        return cursor.getIndexDirection() == IndexReader.DIR_FORWARD;
+    }
+
+    @Override
     public boolean isUsingIndex() {
         return true;
     }

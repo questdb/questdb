@@ -1161,13 +1161,17 @@ public final class PhysicalProperties {
         };
     }
 
+    /**
+     * The index scan: the factory of one key offers random access unless the scan suppresses it, see
+     * {@link ScanPlan#isRandomAccess}, and the factory of several keys always offers it.
+     */
     private static int symbolIndex(ScanPlan scan) {
         final boolean isSingleKey = scan.getIndexKeys().size() == 1;
         final ScanDirection direction = isSingleKey ? ScanDirection.of(scan.getScanDirection()) : keyListDirection(scan);
         if (scan.getIndexRead() == ScanPlan.IndexRead.COVERING) {
             return covering(scan, direction);
         }
-        return properties(Capability.YES, Capability.NO, Capability.NO, Capability.of(scan.isRequestedOrderDelivered()), direction, Capability.NO);
+        return properties(Capability.of(!isSingleKey || scan.isRandomAccess()), Capability.NO, Capability.NO, Capability.of(scan.isRequestedOrderDelivered()), direction, Capability.NO);
     }
 
     /**

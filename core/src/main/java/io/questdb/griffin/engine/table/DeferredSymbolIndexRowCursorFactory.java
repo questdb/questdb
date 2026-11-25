@@ -140,6 +140,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public boolean isForwardScan() {
+        return indexDirection == IndexReader.DIR_FORWARD;
+    }
+
+    @Override
     public boolean isUsingIndex() {
         return true;
     }

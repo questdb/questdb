@@ -115,7 +115,7 @@ public final class PlanTables implements Mutable {
             return metadataVersion == TableUtils.ANY_TABLE_VERSION
                     ? executionContext.getReader(token) : executionContext.getReader(token, metadataVersion);
         } catch (EntryLockedException e) {
-            throw SqlException.position(position).put("table is locked: ").put(token.getTableName());
+            throw SqlException.position(position).put("table is locked: ").put(token.getTableName()).setTableLocked(true);
         } catch (CairoException e) {
             if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                 throw e;
