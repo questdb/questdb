@@ -222,6 +222,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         base.halfClose();
     }
 
+    // The column the metadata marks as the timestamp must pass through the base's own timestamp: a timestamp(col)
+    // claim over another column of the base marks a column that may hold NULL in rows of any order.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return timestampIndex > -1
+                && columnCrossIndex.getQuick(timestampIndex) == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
