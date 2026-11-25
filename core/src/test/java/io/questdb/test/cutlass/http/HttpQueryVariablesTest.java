@@ -42,6 +42,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.regex.Pattern;
+
 /**
  * The {@code variables} parameter of {@code /exec}, {@code /exp} and
  * {@code /api/v1/sql/validate}: variables a client declares outside the query's text, as the
@@ -414,6 +416,65 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 );
             }
         }));
+    }
+
+    @Test
+    public void testLogsShowErrorPositions() throws Exception {
+        // The log lines that show the position of an error show the one the response reports: an
+        // error in the variables at its position in them, marked as the response marks it.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        final LogCapture capture = new LogCapture();
+        try {
+            TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+                capture.start();
+                final String unknownFunction = "unknown function name: nope_fn()";
+                for (String url : new String[]{"/query", "/exp"}) {
+                    // the alias keeps the statements of the two endpoints apart in the log
+                    final String alias = url.equals("/exp") ? "e" : "q";
+                    // query, variables, error, its position in the query or the variables, and
+                    // whether it lies in the variables
+                    final Object[][] cases = {
+                            // after the 6 characters of "@a := "
+                            {"SELECT @a " + alias + 1, "@a := nope_fn()", unknownFunction, 6, true},
+                            // at the first character of the variables
+                            {"SELECT @a " + alias + 2, "a := 1", "unexpected token [a]", 0, true},
+                            // in the query, with and without variables
+                            {"SELECT @a " + alias + "3, nope_fn()", "@a := 1", unknownFunction, 14, false},
+                            {"SELECT nope_fn() " + alias + 4, null, unknownFunction, 7, false},
+                    };
+                    for (Object[] c : cases) {
+                        final String sql = (String) c[0];
+                        final String variables = (String) c[1];
+                        final String error = (String) c[2];
+                        final int position = (int) c[3];
+                        final boolean isInVariables = (boolean) c[4];
+                        final Utf8StringSink sink = new Utf8StringSink();
+                        Assert.assertEquals("400", testHttpClient.get(url, sql, variables, null, sink));
+                        TestUtils.assertEquals(
+                                "{\"query\":\"" + sql + "\",\"error\":\"" + error + "\",\"position\":" + position
+                                        + (isInVariables ? ",\"errorSource\":\"variables\"" : "") + '}',
+                                sink.toString()
+                        );
+                        final String logVariables = variables != null ? ", vars=`" + Pattern.quote(variables) + '`' : "";
+                        final String logPosition = position + (isInVariables ? ", errorSource=variables" : "");
+                        // the compile's error line, on both endpoints
+                        final String errLine = "err \\[id=-1, sql=`" + Pattern.quote(sql) + '`' + logVariables
+                                + ", principal=.*, msg=" + Pattern.quote(error) + ", errno=0, pos=" + logPosition + ']';
+                        capture.waitForRegex(errLine);
+                        capture.assertOnlyOnce(errLine);
+                        if (url.equals("/exp")) {
+                            final String syntaxErrorLine = "syntax-error \\[q=`" + Pattern.quote(sql) + '`' + logVariables
+                                    + ", at=" + logPosition + ", message=`" + Pattern.quote(error) + "`]";
+                            capture.waitForRegex(syntaxErrorLine);
+                            capture.assertOnlyOnce(syntaxErrorLine);
+                        }
+                    }
+                }
+            }));
+        } finally {
+            capture.stop();
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        }
     }
 
     @Test

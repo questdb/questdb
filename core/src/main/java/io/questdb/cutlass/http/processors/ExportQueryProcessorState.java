@@ -48,6 +48,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
+import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.DirectLongList;
@@ -394,6 +395,16 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
      */
     void parseQueryVariables(HttpRequestHeader request) throws SqlException {
         queryVariables.of(request);
+    }
+
+    /**
+     * Adds the variables the client declared and the position of an error in what the query was
+     * compiled from to a log record that shows the query's text. The position is the one the
+     * response reports, see {@link #storeError(int, CharSequence)}.
+     */
+    void putErrorLog(LogRecord log, int errorPosition) {
+        queryVariables.putLog(log);
+        queryVariables.putLogPosition(log, ", at=", errorPosition);
     }
 
     void resumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {

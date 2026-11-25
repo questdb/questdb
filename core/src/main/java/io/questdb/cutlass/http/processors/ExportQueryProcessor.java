@@ -1486,10 +1486,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state).$("syntax-error [q=`").$safe(state.sqlText)
-                .$("`, at=").$(container.getPosition())
-                .$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
-        sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
+        final int position = container.getPosition();
+        final LogRecord log = info(state).$("syntax-error [q=`").$safe(state.sqlText).$('`');
+        // the variables, and the position the response reports, which lies in them for an error in them
+        state.putErrorLog(log, position);
+        log.$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
+        sendException(response, position, container.getFlyweightMessage(), state);
     }
 
     protected void header(

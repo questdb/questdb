@@ -50,6 +50,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -232,8 +233,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
                 final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
                 log.$(", msg=").$safe(message)
-                        .$(", errno=").$(errno)
-                        .$(", pos=").$(pos);
+                        .$(", errno=").$(errno);
+                putPosition(log, pos, variables);
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(", exception=").$(e);
@@ -462,6 +463,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
             log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
+        }
+    }
+
+    // Adds the position of an error as the HTTP endpoints report it. One in the variables the client
+    // sent with the statement lies at or past SqlParser.QUERY_VARIABLES_POSITION, which points into
+    // no text the line shows, so it logs as the position in the variables, marked as lying there.
+    private static void putPosition(LogRecord log, int position, @Nullable CharSequence variables) {
+        if (variables != null && position >= SqlParser.QUERY_VARIABLES_POSITION) {
+            log.$(", pos=").$(position - SqlParser.QUERY_VARIABLES_POSITION).$(", errorSource=variables");
+        } else {
+            log.$(", pos=").$(position);
         }
     }
 

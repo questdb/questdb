@@ -72,7 +72,7 @@ final class QueryVariablesParameter implements Mutable {
      * body of a view the query reads, the fixed one some runtime errors carry, or none.
      */
     int locateError(int position) {
-        isErrorInVariables = text.length() > 0 && position >= SqlParser.QUERY_VARIABLES_POSITION;
+        isErrorInVariables = isInVariables(position);
         return isErrorInVariables ? position - SqlParser.QUERY_VARIABLES_POSITION : position;
     }
 
@@ -113,5 +113,25 @@ final class QueryVariablesParameter implements Mutable {
         if (text.length() > 0) {
             log.$(", vars=`").$safe(text).$('`');
         }
+    }
+
+    /**
+     * Adds {@code key} and the position of an error in what the query was compiled from to a log
+     * record that shows the query's text and the variables, see {@link #putLog(LogRecord)}: the
+     * position the response reports, see {@link #locateError(int)}, followed by
+     * {@code , errorSource=variables} for an error in the variables. Unlike locateError(), it leaves
+     * the error the response reports as it is.
+     */
+    void putLogPosition(LogRecord log, String key, int position) {
+        if (isInVariables(position)) {
+            log.$(key).$(position - SqlParser.QUERY_VARIABLES_POSITION).$(", errorSource=variables");
+        } else {
+            log.$(key).$(position);
+        }
+    }
+
+    // a position at or past SqlParser.QUERY_VARIABLES_POSITION lies in the variables, see locateError()
+    private boolean isInVariables(int position) {
+        return text.length() > 0 && position >= SqlParser.QUERY_VARIABLES_POSITION;
     }
 }

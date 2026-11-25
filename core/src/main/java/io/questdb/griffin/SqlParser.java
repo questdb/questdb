@@ -9061,7 +9061,6 @@ public class SqlParser {
         return list;
     }
 
-    @SuppressWarnings("SameParameterValue")
     @NotNull
     private ExecutionModel parseWith(
             GenericLexer lexer,
