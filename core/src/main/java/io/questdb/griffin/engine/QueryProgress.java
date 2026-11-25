@@ -443,6 +443,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
+    }
+
+    @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
     }
