@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::simd::cmp::{SimdOrd, SimdPartialEq, SimdPartialOrd};
 use std::simd::num::{SimdFloat, SimdInt};
-use std::simd::Simd;
+use std::simd::{Select, Simd};
 
 use crate::parquet_write::util::MaxMin;
 use parquet2::bloom_filter::hash_native;
@@ -55,6 +55,88 @@ const F32_SIGN_MASK: i32 = 0x7FFFFFFF_u32 as i32;
 /// Binary: 0_11111111_00000000000000000000000 (sign=0, exponent=0xFF, mantissa=0)
 /// Any value with (bits & SIGN_MASK) > this is NaN.
 const F32_INFINITY_BITS: i32 = 0x7F800000_u32 as i32;
+
+/// Lane-wise min and max for the float statistics loops.
+///
+/// The statistics only see values that are not null, and a null float is NaN, so no operand
+/// here is NaN. `Simd::simd_min` and `simd_max` must handle NaN: on aarch64 the compiler quiets
+/// each operand with an extra `fminnm` before the one that takes the minimum, three
+/// instructions where one does. For operands that are not NaN a single NEON `fminnm` or
+/// `fmaxnm` is exact. Other targets compare and select, which x86-64 compiles to a bare `minpd`
+/// or `maxpd`.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+mod lanes {
+    use std::arch::aarch64::{
+        float32x4_t, float64x2_t, vmaxnmq_f32, vmaxnmq_f64, vminnmq_f32, vminnmq_f64,
+    };
+    use std::simd::Simd;
+
+    /// Applies a NEON operation to each of the four 128-bit registers of a 512-bit vector.
+    macro_rules! per_register {
+        ($op:ident, $register:ty, $a:expr, $b:expr) => {{
+            // SAFETY: a 512-bit vector holds the same lanes, in the same order, as four 128-bit
+            // registers, and NEON is enabled at compile time.
+            unsafe {
+                let a: [$register; 4] = std::mem::transmute($a);
+                let b: [$register; 4] = std::mem::transmute($b);
+                std::mem::transmute([
+                    $op(a[0], b[0]),
+                    $op(a[1], b[1]),
+                    $op(a[2], b[2]),
+                    $op(a[3], b[3]),
+                ])
+            }
+        }};
+    }
+
+    #[inline(always)]
+    pub(super) fn min_f64x8(a: Simd<f64, 8>, b: Simd<f64, 8>) -> Simd<f64, 8> {
+        per_register!(vminnmq_f64, float64x2_t, a, b)
+    }
+
+    #[inline(always)]
+    pub(super) fn max_f64x8(a: Simd<f64, 8>, b: Simd<f64, 8>) -> Simd<f64, 8> {
+        per_register!(vmaxnmq_f64, float64x2_t, a, b)
+    }
+
+    #[inline(always)]
+    pub(super) fn min_f32x16(a: Simd<f32, 16>, b: Simd<f32, 16>) -> Simd<f32, 16> {
+        per_register!(vminnmq_f32, float32x4_t, a, b)
+    }
+
+    #[inline(always)]
+    pub(super) fn max_f32x16(a: Simd<f32, 16>, b: Simd<f32, 16>) -> Simd<f32, 16> {
+        per_register!(vmaxnmq_f32, float32x4_t, a, b)
+    }
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+mod lanes {
+    use std::simd::cmp::SimdPartialOrd;
+    use std::simd::{Select, Simd};
+
+    #[inline(always)]
+    pub(super) fn min_f64x8(a: Simd<f64, 8>, b: Simd<f64, 8>) -> Simd<f64, 8> {
+        b.simd_lt(a).select(b, a)
+    }
+
+    #[inline(always)]
+    pub(super) fn max_f64x8(a: Simd<f64, 8>, b: Simd<f64, 8>) -> Simd<f64, 8> {
+        b.simd_gt(a).select(b, a)
+    }
+
+    #[inline(always)]
+    pub(super) fn min_f32x16(a: Simd<f32, 16>, b: Simd<f32, 16>) -> Simd<f32, 16> {
+        b.simd_lt(a).select(b, a)
+    }
+
+    #[inline(always)]
+    pub(super) fn max_f32x16(a: Simd<f32, 16>, b: Simd<f32, 16>) -> Simd<f32, 16> {
+        b.simd_gt(a).select(b, a)
+    }
+}
+
+use lanes::{max_f32x16, max_f64x8, min_f32x16, min_f64x8};
 
 /// Helper for writing bitpacked definition levels with partial byte handling.
 /// Tracks accumulated bits when data isn't byte-aligned (e.g., due to column_top).
@@ -951,26 +1033,26 @@ fn scan_f64_verify_all_not_null<W: Write>(
         if let Some(ref mut h) = bloom_hashes {
             for chunk in probe_chunks {
                 let values = Simd::<f64, 8>::from_slice(chunk);
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f64x8(min_vec, values);
+                max_vec = max_f64x8(max_vec, values);
                 for &val in chunk {
                     h.insert(hash_f64(val));
                 }
             }
             for &val in probe_remainder {
-                min_vec = Simd::splat(min_vec.reduce_min().min(val));
-                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                min_vec = min_f64x8(min_vec, Simd::splat(val));
+                max_vec = max_f64x8(max_vec, Simd::splat(val));
                 h.insert(hash_f64(val));
             }
         } else {
             for chunk in probe_chunks {
                 let values = Simd::<f64, 8>::from_slice(chunk);
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f64x8(min_vec, values);
+                max_vec = max_f64x8(max_vec, values);
             }
             for &val in probe_remainder {
-                min_vec = Simd::splat(min_vec.reduce_min().min(val));
-                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                min_vec = min_f64x8(min_vec, Simd::splat(val));
+                max_vec = max_f64x8(max_vec, Simd::splat(val));
             }
         }
     } else if let Some(ref mut h) = bloom_hashes {
@@ -993,8 +1075,8 @@ fn scan_f64_verify_all_not_null<W: Write>(
                 if mask != 0xFF {
                     return Ok(None);
                 }
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f64x8(min_vec, values);
+                max_vec = max_f64x8(max_vec, values);
                 for &val in chunk {
                     h.insert(hash_f64(val));
                 }
@@ -1011,8 +1093,8 @@ fn scan_f64_verify_all_not_null<W: Write>(
                 if mask != 0xFF {
                     return Ok(None);
                 }
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f64x8(min_vec, values);
+                max_vec = max_f64x8(max_vec, values);
             }
         }
     } else if let Some(ref mut h) = bloom_hashes {
@@ -1130,8 +1212,10 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<f64>> {
     let mut data_null_count = 0usize; // Only nulls in slice data, not column_top
-    let mut max_val: Option<f64> = None;
-    let mut min_val: Option<f64> = None;
+
+    // Nulls enter the min as +inf and the max as -inf, which leaves both unchanged.
+    let mut min_vec = Simd::<f64, 8>::splat(f64::INFINITY);
+    let mut max_vec = Simd::<f64, 8>::splat(f64::NEG_INFINITY);
 
     let num_rows = column_top + slice.len();
 
@@ -1166,14 +1250,16 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
         let chunk_nulls = 8 - byte.count_ones() as usize;
         data_null_count += chunk_nulls;
 
+        if compute_stats {
+            let lo = is_not_nan.select(values, Simd::splat(f64::INFINITY));
+            let hi = is_not_nan.select(values, Simd::splat(f64::NEG_INFINITY));
+            min_vec = min_f64x8(min_vec, lo);
+            max_vec = max_f64x8(max_vec, hi);
+        }
         if chunk_nulls < 8 {
-            for &val in chunk {
-                if !val.is_nan() {
-                    if compute_stats {
-                        max_val = Some(max_val.map_or(val, |m| m.max(val)));
-                        min_val = Some(min_val.map_or(val, |m| m.min(val)));
-                    }
-                    if let Some(ref mut h) = bloom_hashes {
+            if let Some(ref mut h) = bloom_hashes {
+                for &val in chunk {
+                    if !val.is_nan() {
                         h.insert(hash_f64(val));
                     }
                 }
@@ -1183,16 +1269,17 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
         bit_writer.write_byte(byte)?;
     }
 
+    let mut min_f = min_vec.reduce_min();
+    let mut max_f = max_vec.reduce_max();
+
     // Handle remainder
     if !remainder.is_empty() {
         let mut rem_byte: u8 = 0;
         for (i, &val) in remainder.iter().enumerate() {
             if !val.is_nan() {
                 rem_byte |= 1 << i;
-                if compute_stats {
-                    max_val = Some(max_val.map_or(val, |m| m.max(val)));
-                    min_val = Some(min_val.map_or(val, |m| m.min(val)));
-                }
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
                 if let Some(ref mut h) = bloom_hashes {
                     h.insert(hash_f64(val));
                 }
@@ -1206,10 +1293,11 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
 
     bit_writer.flush()?;
 
+    let has_stats = compute_stats && data_null_count < slice.len();
     Ok(DefLevelResult {
         null_count: data_null_count,
-        max: max_val,
-        min: min_val,
+        max: has_stats.then_some(max_f),
+        min: has_stats.then_some(min_f),
     })
 }
 
@@ -1341,26 +1429,26 @@ fn scan_f32_verify_all_not_null<W: Write>(
         if let Some(ref mut h) = bloom_hashes {
             for chunk in probe_chunks {
                 let values = Simd::<f32, 16>::from_slice(chunk);
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f32x16(min_vec, values);
+                max_vec = max_f32x16(max_vec, values);
                 for &val in chunk {
                     h.insert(hash_f32(val));
                 }
             }
             for &val in probe_remainder {
-                min_vec = Simd::splat(min_vec.reduce_min().min(val));
-                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                min_vec = min_f32x16(min_vec, Simd::splat(val));
+                max_vec = max_f32x16(max_vec, Simd::splat(val));
                 h.insert(hash_f32(val));
             }
         } else {
             for chunk in probe_chunks {
                 let values = Simd::<f32, 16>::from_slice(chunk);
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f32x16(min_vec, values);
+                max_vec = max_f32x16(max_vec, values);
             }
             for &val in probe_remainder {
-                min_vec = Simd::splat(min_vec.reduce_min().min(val));
-                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                min_vec = min_f32x16(min_vec, Simd::splat(val));
+                max_vec = max_f32x16(max_vec, Simd::splat(val));
             }
         }
     } else if let Some(ref mut h) = bloom_hashes {
@@ -1383,8 +1471,8 @@ fn scan_f32_verify_all_not_null<W: Write>(
                 if mask != 0xFFFF {
                     return Ok(None);
                 }
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f32x16(min_vec, values);
+                max_vec = max_f32x16(max_vec, values);
                 for &val in chunk {
                     h.insert(hash_f32(val));
                 }
@@ -1401,8 +1489,8 @@ fn scan_f32_verify_all_not_null<W: Write>(
                 if mask != 0xFFFF {
                     return Ok(None);
                 }
-                min_vec = min_vec.simd_min(values);
-                max_vec = max_vec.simd_max(values);
+                min_vec = min_f32x16(min_vec, values);
+                max_vec = max_f32x16(max_vec, values);
             }
         }
     } else if let Some(ref mut h) = bloom_hashes {
@@ -1520,8 +1608,10 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<f32>> {
     let mut data_null_count = 0usize; // Only nulls in slice data, not column_top
-    let mut max_val: Option<f32> = None;
-    let mut min_val: Option<f32> = None;
+
+    // Nulls enter the min as +inf and the max as -inf, which leaves both unchanged.
+    let mut min_vec = Simd::<f32, 16>::splat(f32::INFINITY);
+    let mut max_vec = Simd::<f32, 16>::splat(f32::NEG_INFINITY);
 
     let num_rows = column_top + slice.len();
 
@@ -1556,14 +1646,16 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
         let chunk_nulls = 16 - mask16.count_ones() as usize;
         data_null_count += chunk_nulls;
 
+        if compute_stats {
+            let lo = is_not_nan.select(values, Simd::splat(f32::INFINITY));
+            let hi = is_not_nan.select(values, Simd::splat(f32::NEG_INFINITY));
+            min_vec = min_f32x16(min_vec, lo);
+            max_vec = max_f32x16(max_vec, hi);
+        }
         if chunk_nulls < 16 {
-            for &val in chunk {
-                if !val.is_nan() {
-                    if compute_stats {
-                        max_val = Some(max_val.map_or(val, |m| m.max(val)));
-                        min_val = Some(min_val.map_or(val, |m| m.min(val)));
-                    }
-                    if let Some(ref mut h) = bloom_hashes {
+            if let Some(ref mut h) = bloom_hashes {
+                for &val in chunk {
+                    if !val.is_nan() {
                         h.insert(hash_f32(val));
                     }
                 }
@@ -1573,6 +1665,9 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
         bit_writer.write_two_bytes(mask16.to_le_bytes())?;
     }
 
+    let mut min_f = min_vec.reduce_min();
+    let mut max_f = max_vec.reduce_max();
+
     // Handle remainder
     if !remainder.is_empty() {
         let rem_chunks = remainder.chunks(8);
@@ -1581,10 +1676,8 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
             for (i, &val) in rem_chunk.iter().enumerate() {
                 if !val.is_nan() {
                     rem_byte |= 1 << i;
-                    if compute_stats {
-                        max_val = Some(max_val.map_or(val, |m| m.max(val)));
-                        min_val = Some(min_val.map_or(val, |m| m.min(val)));
-                    }
+                    min_f = min_f.min(val);
+                    max_f = max_f.max(val);
                     if let Some(ref mut h) = bloom_hashes {
                         h.insert(hash_f32(val));
                     }
@@ -1599,10 +1692,11 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
 
     bit_writer.flush()?;
 
+    let has_stats = compute_stats && data_null_count < slice.len();
     Ok(DefLevelResult {
         null_count: data_null_count,
-        max: max_val,
-        min: min_val,
+        max: has_stats.then_some(max_f),
+        min: has_stats.then_some(min_f),
     })
 }
 
@@ -1677,6 +1771,8 @@ fn write_rle_value<W: Write>(writer: &mut W, count: usize, value_byte: u8) -> st
 mod tests {
     use super::*;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
 
     /// Helper to decode definition levels from the encoded buffer.
     /// Returns a Vec<bool> where true = present, false = null.
@@ -3802,6 +3898,281 @@ mod tests {
                 "missing value {} after fallback",
                 i
             );
+        }
+    }
+
+    // ==========================================================================
+    // f64/f32 statistics, definition levels and bloom hashes against a reference
+    // ==========================================================================
+
+    /// Min and max of the values that are not NaN, by plain comparison; `None` when every
+    /// value is NaN. A zero's sign is left to the comparison: the writer normalizes it later.
+    fn reference_min_max<T: Copy + PartialOrd>(values: &[T]) -> Option<(T, T)> {
+        #[allow(clippy::eq_op)] // NaN is the one value not equal to itself
+        let present = |v: &T| v == v;
+        values
+            .iter()
+            .copied()
+            .filter(present)
+            .fold(None, |acc, v| match acc {
+                None => Some((v, v)),
+                Some((lo, hi)) => Some((if v < lo { v } else { lo }, if v > hi { v } else { hi })),
+            })
+    }
+
+    /// Encodes `values` behind `column_top` nulls, with statistics on and then off, and checks
+    /// the null count, min, max, definition levels and bloom hashes against the reference.
+    fn check_f64_page(values: &[f64], column_top: usize, with_bloom: bool, context: &str) {
+        for compute_stats in [true, false] {
+            check_f64_page_with(values, column_top, with_bloom, compute_stats, context);
+        }
+    }
+
+    fn check_f64_page_with(
+        values: &[f64],
+        column_top: usize,
+        with_bloom: bool,
+        compute_stats: bool,
+        context: &str,
+    ) {
+        let context = format!("{context}, stats {compute_stats}");
+        let mut buffer = Vec::new();
+        let mut bloom = HashSet::new();
+        let result = encode_f64_def_levels(
+            &mut buffer,
+            values,
+            column_top,
+            compute_stats,
+            with_bloom.then_some(&mut bloom),
+        )
+        .unwrap();
+
+        let nulls = values.iter().filter(|v| v.is_nan()).count();
+        assert_eq!(result.null_count, nulls, "{context}: null count");
+        let expected = reference_min_max(values).filter(|_| compute_stats);
+        assert_eq!(
+            result.min.zip(result.max),
+            expected,
+            "{context}: min and max"
+        );
+        let present: Vec<bool> = std::iter::repeat_n(false, column_top)
+            .chain(values.iter().map(|v| !v.is_nan()))
+            .collect();
+        assert_eq!(
+            decode_def_levels(&buffer, present.len()),
+            present,
+            "{context}: definition levels"
+        );
+        if with_bloom {
+            let expected: HashSet<u64> = values
+                .iter()
+                .filter(|v| !v.is_nan())
+                .map(|&v| hash_f64(v))
+                .collect();
+            assert_eq!(bloom, expected, "{context}: bloom hashes");
+        }
+    }
+
+    fn check_f32_page(values: &[f32], column_top: usize, with_bloom: bool, context: &str) {
+        for compute_stats in [true, false] {
+            check_f32_page_with(values, column_top, with_bloom, compute_stats, context);
+        }
+    }
+
+    fn check_f32_page_with(
+        values: &[f32],
+        column_top: usize,
+        with_bloom: bool,
+        compute_stats: bool,
+        context: &str,
+    ) {
+        let context = format!("{context}, stats {compute_stats}");
+        let mut buffer = Vec::new();
+        let mut bloom = HashSet::new();
+        let result = encode_f32_def_levels(
+            &mut buffer,
+            values,
+            column_top,
+            compute_stats,
+            with_bloom.then_some(&mut bloom),
+        )
+        .unwrap();
+
+        let nulls = values.iter().filter(|v| v.is_nan()).count();
+        assert_eq!(result.null_count, nulls, "{context}: null count");
+        let expected = reference_min_max(values).filter(|_| compute_stats);
+        assert_eq!(
+            result.min.zip(result.max),
+            expected,
+            "{context}: min and max"
+        );
+        let present: Vec<bool> = std::iter::repeat_n(false, column_top)
+            .chain(values.iter().map(|v| !v.is_nan()))
+            .collect();
+        assert_eq!(
+            decode_def_levels(&buffer, present.len()),
+            present,
+            "{context}: definition levels"
+        );
+        if with_bloom {
+            let expected: HashSet<u64> = values
+                .iter()
+                .filter(|v| !v.is_nan())
+                .map(|&v| hash_f32(v))
+                .collect();
+            assert_eq!(bloom, expected, "{context}: bloom hashes");
+        }
+    }
+
+    /// Pages of `len` values where the min and the max sit at each position of interest:
+    /// first and last lane of a chunk, the probe boundary, the remainder. Each page comes
+    /// without nulls (fast path, both the probe and the rest when it is long enough) and with
+    /// every third other value null (bitpacked path).
+    fn pages_by_position(lens: &[usize], lanes: usize, probe: usize) -> Vec<(Vec<f64>, String)> {
+        let mut pages = Vec::new();
+        for &len in lens {
+            let mut positions = vec![
+                0,
+                len / 2,
+                len - 1,
+                lanes.min(len - 1),
+                (lanes - 1).min(len - 1),
+            ];
+            if probe < len {
+                positions.extend([probe - 1, probe]);
+            }
+            for &at in &positions {
+                let other = (at + len / 3 + 1) % len;
+                for with_nulls in [false, true] {
+                    let page: Vec<f64> = (0..len)
+                        .map(|i| match i {
+                            _ if i == at => -1e9,
+                            _ if i == other => 1e9,
+                            _ if with_nulls && i % 3 == 1 => f64::NAN,
+                            _ => (i % 97) as f64 - 48.0,
+                        })
+                        .collect();
+                    pages.push((
+                        page,
+                        format!("len {len}, min at {at}, max at {other}, nulls {with_nulls}"),
+                    ));
+                }
+            }
+        }
+        pages
+    }
+
+    #[test]
+    fn test_f64_stats_by_position() {
+        let lens = [1, 7, 8, 9, 16, 127, 128, 129, 136, 300];
+        for (page, context) in pages_by_position(&lens, 8, PROBE_SIZE_64) {
+            for column_top in [0, 5] {
+                for with_bloom in [false, true] {
+                    let context = format!("{context}, top {column_top}, bloom {with_bloom}");
+                    check_f64_page(&page, column_top, with_bloom, &context);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_f32_stats_by_position() {
+        let lens = [1, 15, 16, 17, 24, 25, 255, 256, 257, 270, 600];
+        for (page, context) in pages_by_position(&lens, 16, PROBE_SIZE_32) {
+            let page: Vec<f32> = page.iter().map(|&v| v as f32).collect();
+            for column_top in [0, 5] {
+                for with_bloom in [false, true] {
+                    let context = format!("{context}, top {column_top}, bloom {with_bloom}");
+                    check_f32_page(&page, column_top, with_bloom, &context);
+                }
+            }
+        }
+    }
+
+    /// NaN bit patterns a column can hold as null: quiet, negative, signaling, with payload.
+    const F64_NULLS: [u64; 4] = [
+        0x7FF8_0000_0000_0000,
+        0xFFF8_0000_0000_0000,
+        0x7FF0_0000_0000_0001,
+        0xFFF8_0000_0000_0042,
+    ];
+    const F32_NULLS: [u32; 4] = [0x7FC0_0000, 0xFFC0_0000, 0x7F80_0001, 0xFFC0_0042];
+
+    const F64_SPECIAL: [f64; 12] = [
+        f64::NEG_INFINITY,
+        f64::MIN,
+        -1.5,
+        -f64::MIN_POSITIVE,
+        -f64::from_bits(1),
+        -0.0,
+        0.0,
+        f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        2.5,
+        f64::MAX,
+        f64::INFINITY,
+    ];
+    const F32_SPECIAL: [f32; 12] = [
+        f32::NEG_INFINITY,
+        f32::MIN,
+        -1.5,
+        -f32::MIN_POSITIVE,
+        -f32::from_bits(1),
+        -0.0,
+        0.0,
+        f32::from_bits(1),
+        f32::MIN_POSITIVE,
+        2.5,
+        f32::MAX,
+        f32::INFINITY,
+    ];
+
+    /// A page of up to 600 values: null density from none to all, a quarter of the values
+    /// special (infinities, extremes, subnormals, both zeros), the rest random.
+    fn random_page_shape(rng: &mut StdRng) -> (usize, u32, usize, bool) {
+        let len = rng.random_range(0..=600);
+        let null_percent = [0, 0, 5, 50, 95, 100][rng.random_range(0..6)];
+        let column_top = [0, 0, 0, 1, 7, 8, 9][rng.random_range(0..7)];
+        (len, null_percent, column_top, rng.random_range(0..2) == 0)
+    }
+
+    #[test]
+    fn test_f64_stats_random_pages() {
+        for seed in 0..2_000u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let (len, null_percent, column_top, with_bloom) = random_page_shape(&mut rng);
+            let page: Vec<f64> = (0..len)
+                .map(|_| {
+                    if rng.random_range(0..100) < null_percent {
+                        f64::from_bits(F64_NULLS[rng.random_range(0..F64_NULLS.len())])
+                    } else if rng.random_range(0..4) == 0 {
+                        F64_SPECIAL[rng.random_range(0..F64_SPECIAL.len())]
+                    } else {
+                        rng.random_range(-1e6..1e6)
+                    }
+                })
+                .collect();
+            check_f64_page(&page, column_top, with_bloom, &format!("seed {seed}"));
+        }
+    }
+
+    #[test]
+    fn test_f32_stats_random_pages() {
+        for seed in 0..2_000u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let (len, null_percent, column_top, with_bloom) = random_page_shape(&mut rng);
+            let page: Vec<f32> = (0..len)
+                .map(|_| {
+                    if rng.random_range(0..100) < null_percent {
+                        f32::from_bits(F32_NULLS[rng.random_range(0..F32_NULLS.len())])
+                    } else if rng.random_range(0..4) == 0 {
+                        F32_SPECIAL[rng.random_range(0..F32_SPECIAL.len())]
+                    } else {
+                        rng.random_range(-1e6..1e6)
+                    }
+                })
+                .collect();
+            check_f32_page(&page, column_top, with_bloom, &format!("seed {seed}"));
         }
     }
 }
