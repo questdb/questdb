@@ -6541,12 +6541,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * inside the corrected key's running sequence. So the count is trusted only where no
      * attached row can sit among the rows the route rewrites: over a base whose truncate
      * version is still zero, which no partition-level change has ever touched, or at and
-     * above the floor of a match this process recorded, with no partition attached to the
+     * above the floor M of a match this process recorded, with no partition attached to the
      * base since; see {@link LiveViewInstance#isBaseMatchedFrom}. A view loaded at startup
      * holds no match until its first seed or whole-range repair, so over a base with a
-     * partition history the first such repair after a restart reads the range whole. An
-     * attach below the match's floor does not matter to the corrected key: its replay reads
-     * the attached rows and emits from the floor up.
+     * partition history the first such repair after a restart reads the range whole.
+     * <p>
+     * The match rules attached rows out at and above M alone, while the count runs from L.
+     * When M sits above L, an attached row in {@code [L, M)} can offset a row removed at or
+     * above R, and the count from L balances over the stale row. The route then counts
+     * again from R, where the match leaves no attached row, so that count balances exactly
+     * when no row the view consumed at or above R is gone. What the two counts leave is a
+     * removal in {@code [L, R)} that an attach there offsets, and that can only leave the
+     * other keys' rows as they stood: the corrected keys' replay reads {@code [L, R)} off
+     * the base and emits from R up, as the whole-range read does. Over a base whose truncate
+     * version is still zero, or with M at or below L, no attached row can sit anywhere in
+     * the count from L, and a second count would only repeat it.
      *
      * @param baseReader  the repair's pinned base reader
      * @param replayLowTs L, the lowest base row the whole-range read of the same repair reads
@@ -6580,14 +6589,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         }
-        return isStoredRangeIntact(
-                instance,
-                baseReader,
-                replayLowTs,
-                outputLowTs,
-                Long.MAX_VALUE,
-                segmentChangeSet.getResidualRowCount()
-        );
+        final long insertedRowDelta = segmentChangeSet.getResidualRowCount();
+        if (!isStoredRangeIntact(instance, baseReader, replayLowTs, outputLowTs, Long.MAX_VALUE, insertedRowDelta)) {
+            return false;
+        }
+        // Every row the correction inserted sits at or above R, so the second count takes the
+        // same delta. The count from L goes first: at an anchor boundary that a partition
+        // boundary shares, it opens no partition.
+        return truncateVersion == 0
+                || instance.getBaseMatchFloorTs() <= replayLowTs
+                || isStoredRangeIntact(instance, baseReader, outputLowTs, outputLowTs, Long.MAX_VALUE, insertedRowDelta);
     }
 
     /**
@@ -6613,10 +6624,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a removal retired, plus the {@code insertedRowDelta} the correction adds and the ones an
      * ATTACH PARTITION brought in. Without an attach the equality below holds exactly when no
      * base row the view consumed in the range is gone. An attach of as many rows as a removal
-     * balances it. The open segment's attach guard rules that out among the rows its upsert
-     * rewrites, see {@link #isOpenSegmentStoredSuffixIntact}; anywhere else in the range, and
-     * in a closed segment, whose merge pairs every stored row of the corrected keys, such a
-     * balance can only leave the other keys' rows as they stood.
+     * balances it. The open segment's attach guard and its second count, from R, rule that
+     * out among the rows its upsert rewrites, see {@link #isOpenSegmentStoredSuffixIntact};
+     * anywhere else in the range, and in a closed segment, whose merge pairs every stored
+     * row of the corrected keys, such a balance can only leave the other keys' rows as they
+     * stood.
      * <p>
      * A mismatch, a bound inside a partition this cannot search, or a count that throws
      * declines the route, and the repair replaces the range whole, which restates such rows.
@@ -6624,7 +6636,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * each, once per repair.
      *
      * @param baseReader       the repair's pinned base reader
-     * @param replayLowTs      L, the lowest base row the whole-range read reads
+     * @param replayLowTs      L, the lowest base row the whole-range read reads, or R for the
+     *                         open segment's second count
      * @param outputLowTs      R, the lowest output row the route emits, for the log
      * @param highTsExclusive  H, where the route's replacement stops, or {@link Long#MAX_VALUE}
      *                         for the open segment's, which runs to the end of the table

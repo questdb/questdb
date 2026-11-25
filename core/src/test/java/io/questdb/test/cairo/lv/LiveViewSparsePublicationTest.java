@@ -1111,6 +1111,123 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAColdKeyedHeadMissOverADropAboveItsMatchFloorThatAnAttachBelowOffsetsReplacesItsRange() throws Exception {
+        // The attach guard trusts the match from 05:00 up, where no attached row can sit, but
+        // the count runs from the day's origin, which takes in the attached acct-2 row at 04:00.
+        // That row offsets the acct-1 row at 10:00 the drop took, so the count balances while
+        // the view keeps the stale 10:00 row, and the cold route would upsert acct-1's
+        // recomputed rows beside it. A second count from the correction at 06:00 up has to
+        // decline the route.
+        armSparseRepair();
+        assertOpenDayCorrectionOverADropAboveAMatchFloorThatAnAttachBelowOffsets("timestamp", 60);
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverADropAboveItsMatchFloorThatAnAttachBelowOffsetsReplacesItsRangeAtServerDefaults() throws Exception {
+        // The case above with every setting at the server default. A denser 03:00 hour is what
+        // makes the read by key price cheaper at the default keyed-scan price, so the cold route
+        // is the one the repair would take.
+        assertOpenDayCorrectionOverADropAboveAMatchFloorThatAnAttachBelowOffsets("timestamp", 180);
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverADropAboveItsMatchFloorThatAnAttachBelowOffsetsLogsItsFloorInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The first case above over a base whose created_at has nanosecond precision: the floor
+        // the decline logs and the floor the matches record are in nanoseconds.
+        armSparseRepair();
+        assertOpenDayCorrectionOverADropAboveAMatchFloorThatAnAttachBelowOffsets("TIMESTAMP_NS", 60);
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissOverADropBelowItsFloorThatAnAttachOffsetsStillPublishesSparsely() throws Exception {
+        // The case above with the drop moved below the correction: it takes acct-2's row at
+        // 02:00, which the attached acct-2 row at 04:00 offsets in the count from the day's
+        // origin. Nothing at or above the correction at 06:00 changed, so the count from there
+        // balances too, and the cold route keeps its keyed read. Both reads give acct-1 the same
+        // rows. acct-2's 13:00 row keeps the 56.0 the repair at 05:00 gave it, which still
+        // counts the dropped 8.0, where a whole read would restate it as 48.0: an attach that
+        // offsets a removal below the floor leaves the other keys' rows as they stood, as it
+        // does in a closed segment.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createBaseWithAnHourTheViewNeverConsumes("timestamp", 60);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                attachBelowAMatchFloor(job, 1);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-05T02'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final int countsBefore = hooks(job).getStoredRowCounts();
+
+                commit(row(5, 6, 0, 0, "acct-1", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                Assert.assertEquals("one count from the origin, one from the floor", 2, hooks(job).getStoredRowCounts() - countsBefore);
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                2026-01-05T06:00:00.000000Z\tacct-1\t101.0
+                                2026-01-05T10:00:00.000000Z\tacct-1\t103.0
+                                2026-01-05T12:00:00.000000Z\tacct-1\t107.0
+                                """,
+                        dumpRowsOf("acct-1")
+                );
+                TestUtils.assertEquals(
+                        """
+                                created_at\taccount_id\tcumulative_sum
+                                2026-01-02T01:10:00.000000Z\tacct-2\t1.0
+                                2026-01-05T02:00:00.000000Z\tacct-2\t8.0
+                                2026-01-05T13:00:00.000000Z\tacct-2\t56.0
+                                """,
+                        dumpRowsOf("acct-2")
+                );
+                assertNoRefreshFaults("lv");
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissAboveAMatchFloorOverAPristineBaseCountsOnce() throws Exception {
+        // A restart leaves the view without a match, so the acct-3 correction at 05:00, which
+        // repairs whole, records one from 05:00, above the day's origin, as in the cases above,
+        // but over a base no partition change ever touched. No attached row can sit anywhere in
+        // the count from the origin, so a second count from the acct-1 correction at 06:00
+        // would only repeat it, and the cold route takes one.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAnOpenDayWithALoneRowAtTen());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(row(5, 14, 0, 0, "acct-2"), job);
+                assertRestoredFromTimeline("lv");
+                commit(row(5, 5, 0, 0, "acct-3"), job);
+                final LiveViewInstance instance = instanceOf("lv");
+                Assert.assertEquals("the base is pristine", 0, instance.getBaseMatchTruncateVersion());
+                Assert.assertEquals(ts("2026-01-05T05:00:00.000000Z"), instance.getBaseMatchFloorTs());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                final int countsBefore = hooks(job).getStoredRowCounts();
+
+                commit(row(5, 6, 0, 0, "acct-1", 100.0), job);
+
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(1, hooks(job).getStoredRowCounts() - countsBefore);
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+            }
+        });
+    }
+
+    @Test
     public void testAColdKeyedHeadMissOverAnAttachTheSeedReadStillPublishesSparsely() throws Exception {
         // The base detached and re-attached hour 10 before the view existed, so its truncate
         // version is off zero, yet the seed read the attached row like any other. The match
@@ -1129,10 +1246,16 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals("the detach and the attach", 2, instance.getBaseMatchTruncateVersion());
                 Assert.assertEquals("from the view's START FROM BEGINNING", Numbers.LONG_NULL, instance.getBaseMatchFloorTs());
                 Assert.assertEquals(1, rowsAt("2026-01-05T10:00:00.000000Z", "acct-1"));
+                final int countsBefore = hooks(job).getStoredRowCounts();
 
                 commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
 
                 Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                Assert.assertEquals(
+                        "a match below the day's origin leaves no attached row in the count from there, so it is the only one",
+                        1,
+                        hooks(job).getStoredRowCounts() - countsBefore
+                );
                 Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
                 Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
                 Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
@@ -3346,6 +3469,27 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Drains the view {@link #createBaseWithAnHourTheViewNeverConsumes} created, attaches the
+     * hour that left the base before it, and commits an acct-3 correction at 05:00. acct-3's
+     * read by key does not price cheaper, so the repair reads the day whole, replaces its rows
+     * from 05:00 up and records a match from there, above the attached row, which the view
+     * still never consumed.
+     *
+     * @param unitsPerMicro the base timestamp's units in a microsecond
+     */
+    private void attachBelowAMatchFloor(LiveViewRefreshJob job, long unitsPerMicro) throws Exception {
+        driveRefreshToQuiescence(job);
+        attachDetached("2026-01-05T04");
+        driveRefreshToQuiescence(job);
+        commit(row(5, 5, 0, 0, "acct-3"), job);
+        Assert.assertEquals("the repair read the day whole", 0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+        final LiveViewInstance instance = instanceOf("lv");
+        Assert.assertEquals("the detach and the attach", 2, instance.getBaseMatchTruncateVersion());
+        Assert.assertEquals(ts("2026-01-05T05:00:00.000000Z") * unitsPerMicro, instance.getBaseMatchFloorTs());
+        Assert.assertEquals("the view never consumed the attached row", 0, rowsAt("2026-01-05T04:00:00.000000Z", "acct-2"));
+    }
+
+    /**
      * Takes back the image of {@code partition} the base detached: renames it to the name
      * ATTACH PARTITION looks for and attaches it, which the base applies as a commit that
      * carries no row. Over a suspended base whose writes are denied, the attach goes past
@@ -3789,6 +3933,99 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * {@link #attachBelowAMatchFloor}'s open day, where DROP PARTITION then takes the acct-1
+     * row at 10:00, which the view keeps, and an acct-1 correction at 06:00 lands between the
+     * match's floor and the dropped row. The attached row below the floor and the dropped row
+     * above it leave the day as many base rows as the view holds, so only a count from the
+     * correction up sees the stale row. The repair has to decline the cold keyed route and
+     * replace its range: the stale row gone, acct-1 restated from the base, and the attached
+     * row, below every row a repair rewrote, still missing.
+     *
+     * @param timestampType the type of the base's created_at
+     * @param denseHourRows the acct-3 rows of the 03:00 hour, see
+     *                      {@link #seedAnOpenDayWithALoneRowAtTen(int)}
+     */
+    private void assertOpenDayCorrectionOverADropAboveAMatchFloorThatAnAttachBelowOffsets(
+            String timestampType,
+            int denseHourRows
+    ) throws Exception {
+        final boolean isNanos = ColumnType.isTimestampNano(ColumnType.typeOf(timestampType));
+        // The view's timestamps print in the base's unit, and its match floor counts in it.
+        final String fraction = isNanos ? ".000000000Z" : ".000000Z";
+        final long unitsPerMicro = isNanos ? 1000 : 1;
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createBaseWithAnHourTheViewNeverConsumes(timestampType, denseHourRows);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    attachBelowAMatchFloor(job, unitsPerMicro);
+                    execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-05T10'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals("the view keeps the row it derived from the dropped hour", 1, rowsAt("2026-01-05T10:00:00.000000Z", "acct-1"));
+                    Assert.assertEquals(
+                            "the attach and the drop leave the day as many base rows as the view holds",
+                            count("select count() from tx where created_at >= '2026-01-05'"),
+                            count("select count() from lv where created_at >= '2026-01-05'")
+                    );
+                    final int countsBefore = hooks(job).getStoredRowCounts();
+
+                    capture.start();
+                    commit(row(5, 6, 0, 0, "acct-1", 100.0), job);
+                    capture.drain();
+                    capture.stop();
+
+                    TestUtils.assertEquals(
+                            """
+                                    created_at\taccount_id\tcumulative_sum
+                                    2026-01-02T01:00:00.000000Z\tacct-1\t1.0
+                                    2026-01-05T01:00:00.000000Z\tacct-1\t1.0
+                                    2026-01-05T06:00:00.000000Z\tacct-1\t101.0
+                                    2026-01-05T12:00:00.000000Z\tacct-1\t105.0
+                                    """.replace(".000000Z", fraction),
+                            dumpRowsOf("acct-1")
+                    );
+                    TestUtils.assertEquals(
+                            """
+                                    created_at\taccount_id\tcumulative_sum
+                                    2026-01-02T01:10:00.000000Z\tacct-2\t1.0
+                                    2026-01-05T02:00:00.000000Z\tacct-2\t8.0
+                                    2026-01-05T13:00:00.000000Z\tacct-2\t56.0
+                                    """.replace(".000000Z", fraction),
+                            dumpRowsOf("acct-2")
+                    );
+                    // Every row but the attached one is what the base makes of it.
+                    assertViewRowsMatchRecompute("lv", "tx", "created_at != '2026-01-05T04:00:00.000000Z'");
+                    assertNoRefreshFaults("lv");
+                    assertColdKeyedRouteDeclined(job);
+                    Assert.assertEquals("the count, not the attach guard, declines it", 0, job.getStatsForTest().get(OPEN_SEGMENT_ATTACH_DECLINE_COUNT));
+                    Assert.assertEquals("one count from the origin, one from the floor", 2, hooks(job).getStoredRowCounts() - countsBefore);
+                    capture.assertNotLogged("not the base rows it consumed [view=lv, replayLowTs=");
+                    // Above 06:00 the base holds the correction, 12:00 and 13:00, and the view the
+                    // stale 10:00, 12:00 and 13:00. Below it the base holds two rows on
+                    // 2026-01-02, then 01:00, 02:00, the 03:00 hour, the attached 04:00 and 05:00;
+                    // the view holds all of them but the attached row.
+                    capture.assertLogged("live view open segment keyed replay declined, stored rows at or above its floor are"
+                            + " not the base rows it consumed [view=lv, outputLowTs=2026-01-05T06:00:00" + fraction
+                            + ", storedRows=" + (denseHourRows + 8) + ", storedRowsBelow=" + (denseHourRows + 5)
+                            + ", baseRows=" + (denseHourRows + 9) + ", baseRowsBelow=" + (denseHourRows + 6)
+                            + ", insertedRowDelta=1]");
+                    final LiveViewInstance instance = instanceOf("lv");
+                    Assert.assertEquals("the replacement matched the view to the base again", 3, instance.getBaseMatchTruncateVersion());
+                    Assert.assertEquals(
+                            "with no attach since the match from 05:00, which still holds",
+                            ts("2026-01-05T05:00:00.000000Z") * unitsPerMicro,
+                            instance.getBaseMatchFloorTs()
+                    );
+                    assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    /**
      * Drives the open day 2026-01-04 in order, one commit per hour so the cadence seals a
      * root inside it, then commits an acct-1 correction at 02:35, above the root at 01:40.
      * The repair resumes from that root. With nothing removed it follows acct-1 alone and
@@ -3829,6 +4066,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                     );
                 }
 
+                final int countsBefore = hooks(job).getStoredRowCounts();
                 if (capture != null) {
                     capture.start();
                 }
@@ -3837,6 +4075,11 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                     capture.drain();
                     capture.stop();
                 }
+                Assert.assertEquals(
+                        "the resume replays and publishes from one floor, so it counts from there once",
+                        1,
+                        hooks(job).getStoredRowCounts() - countsBefore
+                );
 
                 if (removal != null) {
                     Assert.assertEquals(0, rowsAt("2026-01-04T05:10:00.000000Z", "acct-1"));
@@ -3992,6 +4235,16 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * faulted on purpose and so cannot hold to a fault count of zero.
      */
     private void assertViewRowsMatchRecompute(String viewName, String baseName) throws Exception {
+        assertViewRowsMatchRecompute(viewName, baseName, null);
+    }
+
+    /**
+     * As above, holding the view only to the recomputed rows {@code outputFilter} keeps: a
+     * case whose view rightly lacks a row the base makes, such as one derived from an
+     * attached row no repair has reached, names it here. The recompute still reads every
+     * base row, so the running values the excluded rows feed stay in the rows compared.
+     */
+    private void assertViewRowsMatchRecompute(String viewName, String baseName, @Nullable String outputFilter) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
@@ -4000,7 +4253,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + recompute + ") order by 2, 1, 3",
+                outputFilter != null
+                        ? "select * from (" + recompute + ") where " + outputFilter + " order by 2, 1, 3"
+                        : "(" + recompute + ") order by 2, 1, 3",
                 "(" + viewName + ") order by 2, 1, 3",
                 LOG,
                 true
@@ -4059,6 +4314,18 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 + "amount double) timestamp(created_at) partition by hour wal" + dedupClause);
         execute("insert into " + tableName + " values " + seedRows);
         drainWalQueue();
+    }
+
+    /**
+     * The base over {@link #seedAnOpenDayWithALoneRowAtTen(int)} plus an acct-2 row at 04:00,
+     * which the base detaches before the view exists, and the view over it, which never
+     * consumes that row.
+     */
+    private void createBaseWithAnHourTheViewNeverConsumes(String timestampType, int denseHourRows) throws Exception {
+        createBase("tx", seedAnOpenDayWithALoneRowAtTen(denseHourRows) + ", " + row(5, 4, 0, 0, "acct-2", 16.0), "", timestampType);
+        execute("ALTER TABLE tx DETACH PARTITION LIST '2026-01-05T04'");
+        drainWalQueue();
+        createViewOverBase("100ms");
     }
 
     /**
@@ -4360,14 +4627,23 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * its hourly partition, and so does the acct-1 row at 01:00.
      */
     private String seedAnOpenDayWithALoneRowAtTen() {
+        return seedAnOpenDayWithALoneRowAtTen(60);
+    }
+
+    /**
+     * As above, with {@code denseHourRows} acct-3 rows spread evenly over the 03:00 hour, the
+     * first of them 64.0 and every other 1.0. A denser hour lets a read by key price cheaper
+     * than reading the day whole at a larger keyed-scan price.
+     */
+    private String seedAnOpenDayWithALoneRowAtTen(int denseHourRows) {
         final StringBuilder rows = new StringBuilder();
         rows.append(row(2, 1, 0, 0, "acct-1"))
                 .append(", ").append(row(2, 1, 10, 0, "acct-2"))
                 .append(", ").append(row(5, 1, 0, 0, "acct-1", 1.0))
-                .append(", ").append(row(5, 2, 0, 0, "acct-2", 8.0))
-                .append(", ").append(row(5, 3, 0, 0, "acct-3", 64.0));
-        for (int minute = 1; minute < 60; minute++) {
-            rows.append(", ").append(row(5, 3, minute, 0, "acct-3"));
+                .append(", ").append(row(5, 2, 0, 0, "acct-2", 8.0));
+        for (int i = 0; i < denseHourRows; i++) {
+            final int second = i * 3600 / denseHourRows;
+            rows.append(", ").append(row(5, 3, second / 60, second % 60, "acct-3", i == 0 ? 64.0 : 1.0));
         }
         rows.append(", ").append(row(5, 10, 0, 0, "acct-1", 2.0))
                 .append(", ").append(row(5, 12, 0, 0, "acct-1", 4.0))

@@ -72,6 +72,8 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private Runnable resumeFrontierStateFoldStart;
     private Runnable resumeHeadSealStart;
     private Runnable resumeReplayStart;
+    // The stored-row counts the keyed routes took or tried to take: see getStoredRowCounts.
+    private int storedRowCounts;
     private Runnable symbolRewindStart;
 
     /**
@@ -221,6 +223,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     @Override
     public void beforeStoredRowCount() {
+        storedRowCounts++;
         if (isStoredSuffixCountFaultArmed) {
             isStoredSuffixCountFaultArmed = false;
             // No FilesFacade fault reaches this count deterministically: whether it opens a file
@@ -273,6 +276,14 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
      */
     public int getRefreshLatchAttempts() {
         return refreshLatchAttempts.get();
+    }
+
+    /**
+     * The counts of the view's stored rows a keyed route took to compare with the base's,
+     * one per range it counted, the faulted one included. Refresh worker only.
+     */
+    public int getStoredRowCounts() {
+        return storedRowCounts;
     }
 
     public boolean isColdKeyedTimelineFaultArmed() {
