@@ -279,7 +279,8 @@ public class SqlParser {
     private boolean isMatViewQueryEnclosed;
     private int matViewQueryHi;
     private int matViewQueryLo;
-    // Whether parseSelectClause() records where each column's expression ends, see setRecordingColumnExprEnds().
+    // Whether parseSelectClause() records where each column's expression starts and ends, see
+    // setRecordingColumnExprEnds().
     private boolean isRecordingColumnExprEnds;
     private boolean copyMode = false;
     private boolean createTableMode = false;
@@ -1110,6 +1111,22 @@ public class SqlParser {
                 .put(column.getName()).put(" AS your_column_name");
     }
 
+    // The error of a plain column reference that findColumnWithGeneratedName() returns: its generated name is not the
+    // name of the column it references. The message names that column in full, and the hint repeats the select item
+    // as the statement wrote it, at the item's first character, so that following the hint names the same column.
+    private static SqlException matViewReferenceAliasRequired(QueryColumn column, CharSequence statementText) {
+        final ExpressionNode ast = column.getAst();
+        final int exprStart = column.getExprStartPosition();
+        final int exprEnd = column.getExprEndPosition();
+        assert ast.type == ExpressionNode.LITERAL && !ast.isWildcard() && exprStart > -1 && exprEnd > exprStart;
+        final CharSequence token = ast.token;
+        return SqlException
+                .position(exprStart)
+                .put("column '").put(token, Chars.indexOfLastUnquoted(token, '.') + 1, token.length())
+                .put("' requires an explicit alias. Use: ")
+                .put(statementText, exprStart, exprEnd).put(" AS your_column_name");
+    }
+
     /**
      * Returns true when the parsed query names its columns: in every select model of its own text, each column
      * without an explicit alias is a wildcard, or a plain column reference that the parser named after its
@@ -1122,10 +1139,18 @@ public class SqlParser {
      * from a regular view is not part of the text; its columns reach the query as plain columns.
      */
     private static boolean isNamingItsColumns(@Nullable IQueryModel model) {
+        return findColumnWithGeneratedName(model) == null;
+    }
+
+    /**
+     * Returns the first column of the parsed query that has a generated name, see {@link #isNamingItsColumns}, or
+     * null when the query names its columns.
+     */
+    private static @Nullable QueryColumn findColumnWithGeneratedName(@Nullable IQueryModel model) {
         for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
             if (m.getViewNameExpr() != null) {
                 // the regular view's own models sit below this one, as its nested, join and union models
-                return true;
+                return null;
             }
             final ObjList<QueryColumn> columns = m.getBottomUpColumns();
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -1135,24 +1160,28 @@ public class SqlParser {
                 }
                 final ExpressionNode ast = column.getAst();
                 if (ast.type != ExpressionNode.LITERAL) {
-                    return false;
+                    return column;
                 }
                 if (!ast.isWildcard() && !isNamedAfterReferencedColumn(column.getAlias(), ast.token)) {
-                    return false;
+                    return column;
                 }
             }
             final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 final IQueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel != m && !isNamingItsColumns(joinModel)) {
-                    return false;
+                if (joinModel != m) {
+                    final QueryColumn column = findColumnWithGeneratedName(joinModel);
+                    if (column != null) {
+                        return column;
+                    }
                 }
             }
-            if (!isNamingItsColumns(m.getUnionModel())) {
-                return false;
+            final QueryColumn column = findColumnWithGeneratedName(m.getUnionModel());
+            if (column != null) {
+                return column;
             }
         }
-        return true;
+        return null;
     }
 
     private static CreateLiveViewOperationBuilder parseCreateLiveViewExt(
@@ -1209,6 +1238,23 @@ public class SqlParser {
     private static void rejectValueList(ExpressionNode node) throws SqlException {
         if (node != null && node.type == ExpressionNode.VALUE_LIST) {
             throw SqlException.$(node.position, "declared list can only be used on the right-hand side of IN");
+        }
+    }
+
+    // The checks of TIMESTAMP(col) against the columns CREATE TABLE, or the column list of CREATE MATERIALIZED VIEW,
+    // defines.
+    private static void validateCreateTableTimestamp(CreateTableOperationBuilderImpl builder, ExpressionNode timestamp) throws SqlException {
+        final CreateTableColumnModel model = builder.getColumnModel(timestamp.token);
+        if (model == null) {
+            throw SqlException.position(timestamp.position)
+                    .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
+        }
+        if (!ColumnType.isTimestamp(model.getColumnType())) {
+            throw SqlException
+                    .position(timestamp.position)
+                    .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
+                    .put(", columnName=").put(timestamp.token)
+                    .put(']');
         }
     }
 
@@ -4790,7 +4836,13 @@ public class SqlParser {
         final String matViewName = Chars.toString(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()));
         tableOpBuilder.setTableNameExpr(nextLiteral(matViewName, lexer.lastTokenPosition()));
 
-        tok = tok(lexer, "'as' or 'with' or 'refresh'");
+        tok = tok(lexer, "'(' or 'as' or 'with' or 'refresh'");
+        if (Chars.equals(tok, '(')) {
+            // The view's columns, in CREATE TABLE's grammar. Refresh fills them from the query's columns by name.
+            mvOpBuilder.setHasColumnList(true);
+            parseCreateTableColumns(lexer, true);
+            tok = tok(lexer, "'as' or 'with' or 'refresh'");
+        }
         CharSequence baseTableName = null;
         int baseTableNamePos = 0;
         if (isWithKeyword(tok)) {
@@ -4945,7 +4997,16 @@ public class SqlParser {
         if (isAsKeyword(tok)) {
             // Parse SELECT for the sake of basic SQL validation.
             // It'll be compiled and optimized later, at the execution phase.
-            final IQueryModel queryModel = parseMatViewQuery(lexer, executionContext, sqlParserCallback, matViewName);
+            final IQueryModel queryModel;
+            // Only the parse of a materialized view's SQL records the select items, which is a query, not a CREATE.
+            assert !isRecordingColumnExprEnds;
+            // the naming check of a column list quotes the select item a column reference needs an alias for
+            isRecordingColumnExprEnds = mvOpBuilder.hasColumnList();
+            try {
+                queryModel = parseMatViewQuery(lexer, executionContext, sqlParserCallback, matViewName);
+            } finally {
+                isRecordingColumnExprEnds = false;
+            }
             final int startOfQuery = matViewQueryLo;
             final int endOfQuery = matViewQueryHi;
             enclosedInParentheses = isMatViewQueryEnclosed;
@@ -4980,7 +5041,15 @@ public class SqlParser {
                 throw SqlException.position(baseTableNamePos)
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
-            validateMatViewQuery(queryModel, baseTableNameStr, !isMatViewExplicitNamesCheckSkipped);
+            // Refresh fills a column list from the query's columns by name, which a query that relies on generated
+            // column names does not allow: refresh copies such a query by position.
+            validateMatViewQuery(queryModel, baseTableNameStr, mvOpBuilder.hasColumnList() || !isMatViewExplicitNamesCheckSkipped);
+            if (mvOpBuilder.hasColumnList()) {
+                final QueryColumn columnWithGeneratedName = findColumnWithGeneratedName(queryModel);
+                if (columnWithGeneratedName != null) {
+                    throw matViewReferenceAliasRequired(columnWithGeneratedName, lexer.getContent());
+                }
+            }
             collectMatViewColumnPositions(queryModel, mvOpBuilder.getColumnPositions());
 
             mvOpBuilder.setTimeZone(getMatViewSampleBy(queryModel, true));
@@ -5016,7 +5085,8 @@ public class SqlParser {
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
             tok = tok(lexer, "'index'");
             if (isIndexKeyword(tok)) {
-                parseCreateTableIndexDef(lexer, false);
+                // with a column list, the clause names a listed column, as in CREATE TABLE
+                parseCreateTableIndexDef(lexer, mvOpBuilder.hasColumnList());
             } else {
                 throw errUnexpected(lexer, tok);
             }
@@ -5024,6 +5094,9 @@ public class SqlParser {
 
         final ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
+            if (mvOpBuilder.hasColumnList()) {
+                validateCreateTableTimestamp(tableOpBuilder, timestamp);
+            }
             tableOpBuilder.setTimestampExpr(timestamp);
             tok = optTok(lexer);
         }
@@ -5134,7 +5207,7 @@ public class SqlParser {
                 return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
             } else {
                 lexer.unparseLast();
-                parseCreateTableColumns(lexer);
+                parseCreateTableColumns(lexer, false);
             }
         } else if (isAsKeyword(tok)) {
             isDirectCreate = false;
@@ -5171,18 +5244,7 @@ public class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             if (isDirectCreate) {
-                CreateTableColumnModel model = builder.getColumnModel(timestamp.token);
-                if (model == null) {
-                    throw SqlException.position(timestamp.position)
-                            .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
-                }
-                if (!ColumnType.isTimestamp(model.getColumnType())) {
-                    throw SqlException
-                            .position(timestamp.position)
-                            .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
-                            .put(", columnName=").put(timestamp.token)
-                            .put(']');
-                }
+                validateCreateTableTimestamp(builder, timestamp);
             }
             builder.setTimestampExpr(timestamp);
             tok = optTok(lexer);
@@ -5449,13 +5511,17 @@ public class SqlParser {
         expectTok(lexer, ')');
     }
 
-    private void parseCreateTableColumns(GenericLexer lexer) throws SqlException {
+    // Parses the column definitions of CREATE TABLE, or the column list of CREATE MATERIALIZED VIEW, which takes no
+    // PARQUET settings: no view column can carry them.
+    private void parseCreateTableColumns(GenericLexer lexer, boolean isMatViewColumnList) throws SqlException {
         while (true) {
             CharSequence tok = notTermTok(lexer);
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
             final int columnPosition = lexer.lastTokenPosition();
-            final int columnType = toColumnType(lexer, notTermTok(lexer));
+            final CharSequence typeTok = notTermTok(lexer);
+            final int columnTypePosition = lexer.lastTokenPosition();
+            final int columnType = toColumnType(lexer, typeTok);
 
             if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(columnPosition, " new column name contains invalid characters");
@@ -5463,6 +5529,7 @@ public class SqlParser {
 
             CreateTableColumnModel model = newCreateTableColumnModel(columnName, columnPosition);
             model.setColumnType(columnType);
+            model.setColumnTypePos(columnTypePosition);
             model.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
             if (ColumnType.isSymbol(columnType)) {
@@ -5507,6 +5574,9 @@ public class SqlParser {
             }
 
             if (isParquetKeyword(tok)) {
+                if (isMatViewColumnList) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "PARQUET column settings are not supported on materialized views");
+                }
                 tok = parseCreateTableParquetProperties(lexer, model);
             }
 
@@ -8464,6 +8534,7 @@ public class SqlParser {
                 if (isRecordingColumnExprEnds) {
                     // The expression ends before the token that follows it. The select lists of a materialized
                     // view's SQL, the only ones recorded, are followed by FROM or by the ')' of a sub-query.
+                    col.setExprStartPosition(exprLo);
                     col.setExprEndPosition(findTokensEnd(lexer.getContent(), exprLo, colPosition));
                 }
 

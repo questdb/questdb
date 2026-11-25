@@ -186,6 +186,10 @@ public class CreateTableColumnModel implements Mutable {
         this.columnType = columnType;
     }
 
+    public void setColumnTypePos(int columnTypePos) {
+        this.columnTypePos = columnTypePos;
+    }
+
     public void setIndexType(byte indexType, int indexColumnPosition, int indexValueBlockSize) {
         this.indexType = indexType;
         this.indexColumnPos = indexColumnPosition;

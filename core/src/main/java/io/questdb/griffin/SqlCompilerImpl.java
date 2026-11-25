@@ -8302,26 +8302,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
      * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
      * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
-     * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
-     * SELECT output metadata.
+     * CREATE TABLE / CTAS / LIKE at parse time), so {@code viewMetadata} holds the view's columns: the
+     * statement's column list, or the defining SELECT's output columns.
      */
     private ExpiryValidationResult validateCreateExpiryPredicate(
             SqlExecutionContext executionContext,
             CreateTableOperation createTableOp,
-            RecordMetadata selectMetadata
+            RecordMetadata viewMetadata
     ) throws SqlException {
         final String predicate = createTableOp.getExpiryPredicate();
         if (predicate == null) {
             return ExpiryValidationResult.MONOTONIC;
         }
         // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
-        // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
+        // CREATE TABLE / CTAS / LIKE), so viewMetadata always holds the view's columns.
         // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
         // The error caret points at the table name rather than the predicate: the predicate's source
         // position is not threaded through CreateTableOperation, and the message already names the cause.
         try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
             return validationCompiler.validateExpiryPredicateOnMetadata(
-                    executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
+                    executionContext, viewMetadata, predicate, createTableOp.getTableNamePosition());
         }
     }
 
@@ -8354,19 +8354,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.advisory().$("EXPIRE ROWS on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
                     .$safe(createTableOp.getTableName()).I$();
         }
+        // The view's columns: the statement's column list, or the defining SELECT's output columns.
+        final RecordMetadata columnListMetadata = createMatViewOp.getColumnListMetadata();
+        final RecordMetadata viewMetadata = columnListMetadata != null ? columnListMetadata : selectMetadata;
         final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isStructuralPolicy(predicate)) {
-            // The view does not exist yet, so the probe reads its defining SELECT and selects every column.
+            // The view does not exist yet, so the probe reads its defining SELECT and selects every column. With a
+            // column list, it reads the listed columns over the SELECT instead.
+            final String source;
+            if (columnListMetadata != null) {
+                final int queryTimestampIndex = selectMetadata.getColumnIndexQuiet(
+                        columnListMetadata.getColumnName(columnListMetadata.getTimestampIndex())
+                );
+                assert queryTimestampIndex > -1;
+                source = RowExpiryUtil.buildColumnListProbeSource(
+                        columnListMetadata,
+                        selectMetadata.getColumnName(queryTimestampIndex),
+                        createTableOp.getSelectText()
+                );
+            } else {
+                source = "(" + createTableOp.getSelectText() + ")";
+            }
             validationResult = validateStructuralExpiryPolicy(
                     executionContext,
-                    "(" + createTableOp.getSelectText() + ")",
-                    selectMetadata,
+                    source,
+                    viewMetadata,
                     predicate,
                     false,
                     pos
             );
         } else {
-            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
+            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, viewMetadata);
         }
         warnIfExpiryKeepsDisk(validationResult, predicate, createTableOp.getTableName());
     }
@@ -8576,7 +8594,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
      *
      * @param source             what the probe selects from: the view's defining SELECT, parenthesised, at
-     *                           CREATE (the view does not exist yet); the quoted view name at ALTER
+     *                           CREATE (the view does not exist yet), or the listed columns over it, see
+     *                           {@link RowExpiryUtil#buildColumnListProbeSource}; the quoted view name at ALTER
      * @param isNarrowProjection true when the probe selects only the policy's own output instead of every
      *                           column, which ALTER needs; see {@link #probeExpiryPolicyRead}
      */

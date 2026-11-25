@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IQueryModel;
+import org.jetbrains.annotations.Nullable;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
@@ -65,6 +66,14 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     }
 
     CharSequence getBaseTableName();
+
+    /**
+     * Returns the columns the statement lists for the view, in the list's order, with the view's designated
+     * timestamp once {@link #validateAndUpdateMetadataFromSelect} has resolved it, or null when the statement has no
+     * column list and the view takes the query's columns.
+     */
+    @Nullable
+    RecordMetadata getColumnListMetadata();
 
     CreateTableOperation getCreateTableOperation();
 

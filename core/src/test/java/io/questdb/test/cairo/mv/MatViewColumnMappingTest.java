@@ -64,9 +64,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Refresh maps the columns of a materialized view's query to the view's columns by name, with the record copiers'
  * implicit casts. A view whose SQL relies on generated column names copies by position, as before.
  * <p>
- * No SQL statement can make a view's columns differ from its SQL's output yet, so the mapping tests over reordered,
- * missing and extra columns copy into tables whose columns differ from a query's. The integration tests change a
- * view's columns through its WAL writer instead.
+ * The mapping tests over reordered, missing and extra columns copy into tables whose columns differ from a query's.
+ * The integration tests change a view's columns through its WAL writer instead; view ADD and DROP COLUMN and the column
+ * list of CREATE MATERIALIZED VIEW, see MatViewColumnDdlTest and MatViewColumnListTest, do it through SQL.
  */
 public class MatViewColumnMappingTest extends AbstractCairoTest {
     private static final String BASE_ROWS = """

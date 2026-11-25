@@ -64,6 +64,51 @@ public class PGMatViewDdlTest extends BasePGTest {
             """;
 
     @Test
+    public void testCreateWithColumnListExecutedTwice() throws Exception {
+        // the prepared CREATE keeps its column list across executions: a DROP in between creates the same view again,
+        // and IF NOT EXISTS leaves the existing view alone
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createBaseAndView();
+            final String expectedColumns = """
+                    column[VARCHAR],type[VARCHAR],designated[BIT]
+                    sym,SYMBOL,false
+                    total,DOUBLE,false
+                    extra,INT,false
+                    ts,TIMESTAMP,true
+                    """;
+            final String expectedRows = """
+                    sym[VARCHAR],total[DOUBLE],extra[INTEGER],ts[TIMESTAMP]
+                    a,1.0,null,2024-01-01 00:00:00.0
+                    a,2.0,null,2024-01-02 00:00:00.0
+                    a,3.0,null,2024-01-03 00:00:00.0
+                    a,4.0,null,2024-01-04 00:00:00.0
+                    """;
+            final String sql = "CREATE MATERIALIZED VIEW lv (sym SYMBOL, total DOUBLE, extra INT, ts TIMESTAMP) AS ("
+                    + "SELECT ts, sym, sum(price) AS total FROM base SAMPLE BY 1h)";
+            try (PreparedStatement create = connection.prepareStatement(sql)) {
+                create.execute();
+                drainWalAndMatViewQueues();
+                assertQueryResult(connection, "SELECT \"column\", type, designated FROM table_columns('lv')", expectedColumns);
+                assertQueryResult(connection, "SELECT * FROM lv ORDER BY ts", expectedRows);
+                execute("DROP MATERIALIZED VIEW lv");
+                drainWalAndMatViewQueues();
+                create.execute();
+                drainWalAndMatViewQueues();
+                assertQueryResult(connection, "SELECT \"column\", type, designated FROM table_columns('lv')", expectedColumns);
+                assertQueryResult(connection, "SELECT * FROM lv ORDER BY ts", expectedRows);
+            }
+            final String ifNotExists = "CREATE MATERIALIZED VIEW IF NOT EXISTS lv (ts TIMESTAMP, total DOUBLE) AS ("
+                    + "SELECT ts, sum(price) AS total FROM base SAMPLE BY 1h)";
+            try (PreparedStatement create = connection.prepareStatement(ifNotExists)) {
+                create.execute();
+                create.execute();
+            }
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT \"column\", type, designated FROM table_columns('lv')", expectedColumns);
+        });
+    }
+
+    @Test
     public void testAlterAsExecutedTwice() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             createBaseAndView();

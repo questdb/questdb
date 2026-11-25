@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
@@ -40,6 +41,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,6 +78,7 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * Create mat view operation relies on implicit create table as select operation.
  * <p>
  * The supported clauses are the following:
+ * - column list, which defines the view's columns instead of the query
  * - index
  * - timestamp
  * - partition by
@@ -97,6 +100,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     // the names of the query columns that take the base table's designated timestamp as the view's kind requires: as
     // it is, for a passthrough view, or bucketed, for an aggregating view
     private final LowerCaseCharSequenceHashSet baseTimestampColumnNames = new LowerCaseCharSequenceHashSet();
+    // The view's columns the statement lists, or null when the view takes the query's columns. The CREATE TABLE
+    // operation creates them, with the definitions the statement gives, and refresh fills them by name.
+    private final @Nullable GenericRecordMetadata columnListMetadata;
+    // where the first listed column's name starts in the statement
+    private final int columnListPosition;
+    // where each listed column's type starts in the statement
+    private final @Nullable IntList columnListTypePositions;
     // where each named column of the outermost SELECT starts in the statement, as the parser saw it
     private final LowerCaseCharSequenceIntHashMap columnPositions = new LowerCaseCharSequenceIntHashMap();
     private final CairoConfiguration configuration;
@@ -151,9 +161,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             char periodLengthUnit,
             int periodDelay,
             char periodDelayUnit,
-            @NotNull LowerCaseCharSequenceIntHashMap columnPositions
+            @NotNull LowerCaseCharSequenceIntHashMap columnPositions,
+            @Nullable GenericRecordMetadata columnListMetadata,
+            int columnListPosition,
+            @Nullable IntList columnListTypePositions
     ) {
         this.configuration = configuration;
+        this.columnListMetadata = columnListMetadata;
+        this.columnListPosition = columnListPosition;
+        this.columnListTypePositions = columnListTypePositions;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         declaredColumnMetadata.putAll(createTableOperation.getAugmentedColumnMetadata());
@@ -256,6 +272,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public int getColumnCount() {
         return createTableOperation.getColumnCount();
+    }
+
+    @Override
+    public @Nullable RecordMetadata getColumnListMetadata() {
+        return columnListMetadata;
     }
 
     @Override
@@ -493,6 +514,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (timestamp != null) {
             final CreateTableColumnModel timestampModel = createColumnModelMap.get(timestamp);
             if (timestampModel == null) {
+                if (columnListMetadata != null) {
+                    // the parser has checked that the column list has the column
+                    throw SqlException.position(timestampPos)
+                            .put("materialized view query does not produce the designated timestamp column [column=")
+                            .put(timestamp).put(']');
+                }
                 throw SqlException.position(timestampPos)
                         .put("TIMESTAMP column does not exist [name=")
                         .put(timestamp).put(']');
@@ -624,9 +651,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     }
                 }
             }
+            // A column list defines its columns' SYMBOL capacity and index, with CREATE TABLE's defaults.
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
-                if (hasNoAggregates(functionFactoryCache, queryModel, i, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
+                if (columnListMetadata == null && hasNoAggregates(functionFactoryCache, queryModel, i, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
                     final String columnName = SqlUtil.toColumnName(column.getName());
                     final CreateTableColumnModel columnModel = createColumnModelMap.get(columnName);
                     if (columnModel == null) {
@@ -653,8 +681,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
 
-        // Don't forget to reset augmented columns in create table op with what we have scraped.
-        createTableOperation.initColumnMetadata(createColumnModelMap);
+        // Don't forget to reset augmented columns in create table op with what we have scraped. The create table op
+        // keeps the definitions of a column list, which it received when the statement built it.
+        if (columnListMetadata == null) {
+            createTableOperation.initColumnMetadata(createColumnModelMap);
+        }
 
         if (periodLength == -1) {
             // It's PERIOD (SAMPLE BY INTERVAL) which means that we need to align the period to the SAMPLE BY bucket.
@@ -706,7 +737,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         .put("materialized view query is required to have designated timestamp");
             }
         }
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+        if (columnListMetadata == null) {
+            createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+        }
         // Refresh recomputes the base table's intervals of its designated timestamp and replaces them in the view, so
         // the view's designated timestamp must be that timestamp, unchanged for a passthrough view and bucketed for an
         // aggregating view, through aliases and nested selects.
@@ -715,6 +748,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 : selectMetadata.getColumnName(selectMetadata.getTimestampIndex());
         if (!baseTimestampColumnNames.contains(timestampName)) {
             throw SqlException.$(getTimestampPosition(timestampName), passthrough ? PASSTHROUGH_TIMESTAMP_ERROR : AGGREGATING_TIMESTAMP_ERROR);
+        }
+        if (columnListMetadata != null) {
+            validateColumnList(selectMetadata, timestampName);
+            createTableOperation.validateAndUpdateMetadataFromSelect(columnListMetadata, scanDirection);
         }
         if (passthrough) {
             setPassthroughChunkInterval();
@@ -1094,6 +1131,50 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             return columnPositions.valueAt(index);
         }
         return createTableOperation.getSelectTextPosition() + createColumnModelMap.get(timestampName).getColumnNamePos();
+    }
+
+    // The checks refresh makes when it fills the listed columns from the query's columns by name, see
+    // MatViewColumnMapping: the view's designated timestamp is listed, with the query's type, and each listed column
+    // the query produces takes the query column's type through the record copier. A listed column the query does not
+    // produce stays NULL, and a query column the list lacks is ignored. Each error points at the listed column's type.
+    private void validateColumnList(RecordMetadata selectMetadata, CharSequence timestampName) throws SqlException {
+        assert columnListMetadata != null && columnListTypePositions != null;
+        final int listedTimestampIndex = columnListMetadata.getColumnIndexQuiet(timestampName);
+        if (listedTimestampIndex < 0) {
+            // nothing in the list is wrong by itself, so the error points at the list
+            throw SqlException.position(columnListPosition)
+                    .put("column list must include the designated timestamp column [column=")
+                    .put(timestampName).put(']');
+        }
+        final int queryTimestampIndex = selectMetadata.getColumnIndexQuiet(timestampName);
+        assert queryTimestampIndex > -1;
+        final int listedTimestampType = columnListMetadata.getColumnType(listedTimestampIndex);
+        final int queryTimestampType = selectMetadata.getColumnType(queryTimestampIndex);
+        if (listedTimestampType != queryTimestampType) {
+            // the error refresh gives
+            throw SqlException.position(columnListTypePositions.getQuick(listedTimestampIndex))
+                    .put("timestamp type mismatch between materialized view and query [view=")
+                    .put(ColumnType.nameOf(listedTimestampType))
+                    .put(", query=")
+                    .put(ColumnType.nameOf(queryTimestampType))
+                    .put(']');
+        }
+        for (int i = 0, n = columnListMetadata.getColumnCount(); i < n; i++) {
+            final int queryColumnIndex = selectMetadata.getColumnIndexQuiet(columnListMetadata.getColumnName(i));
+            if (queryColumnIndex > -1) {
+                final int queryColumnType = selectMetadata.getColumnType(queryColumnIndex);
+                final int columnType = columnListMetadata.getColumnType(i);
+                if (!RecordToRowCopierUtils.isCopierConvertible(queryColumnType, columnType)) {
+                    // the error refresh gives the same pair, see MatViewColumnMapping
+                    throw SqlException.position(columnListTypePositions.getQuick(i))
+                            .put("inconvertible types: ")
+                            .put(ColumnType.nameOf(queryColumnType)).put(" -> ").put(ColumnType.nameOf(columnType))
+                            .put(" [from=").put(selectMetadata.getColumnName(queryColumnIndex))
+                            .put(", to=").put(columnListMetadata.getColumnName(i)).put(']');
+                }
+            }
+        }
+        columnListMetadata.setTimestampIndex(listedTimestampIndex);
     }
 
     private void setPassthroughChunkInterval() {

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -183,6 +184,82 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testColumnListViewVerdictsMatchAlter() throws Exception {
+        // CREATE with a column list probes the policy over the listed columns, which differ from the query's: a
+        // listed column the query does not produce, of every type a list can declare. ALTER ... SET EXPIRE on the same
+        // view probes the view itself, so both reach the same verdict, with the same message for a refusal.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String[][] listOnly = {
+                    {"x_l128", "LONG128"}, {"x_sym", "SYMBOL"}, {"x_symi", "SYMBOL INDEX"}, {"x_bin", "BINARY"},
+                    {"x_arr2", "DOUBLE[][]"}, {"x_d76", "DECIMAL(76,10)"}, {"x_d4", "DECIMAL(4,2)"},
+                    {"x_g60", "GEOHASH(60b)"}, {"x_g2", "GEOHASH(2c)"}, {"x_u", "UUID"}, {"x_ip", "IPv4"},
+                    {"x_l256", "LONG256"}, {"x_c", "CHAR"}, {"x_s", "STRING"}, {"x_vc", "VARCHAR"}, {"x_by", "BYTE"},
+                    {"x_sh", "SHORT"}, {"x_i", "INT"}, {"x_l", "LONG"}, {"x_f", "FLOAT"}, {"x_d", "DOUBLE"},
+                    {"x_dt", "DATE"}, {"x_t", "TIMESTAMP"}, {"x_tn", "TIMESTAMP_NS"}, {"x_b", "BOOLEAN"},
+            };
+            final StringBuilder list = new StringBuilder("""
+                    (k SYMBOL, sym SYMBOL, v DOUBLE, i INT, l LONG, s STRING, vc VARCHAR, c CHAR,
+                    l256 LONG256, b BOOLEAN, u UUID, dt DATE, "my val" DOUBLE, d DECIMAL(10, 2),
+                    bin BINARY, arr DOUBLE[], "end" SYMBOL, f FLOAT, sh SHORT, by BYTE, ip IPV4,
+                    g GEOHASH(4c), tsn TIMESTAMP_NS, arr2 DOUBLE[][], ts2 TIMESTAMP, ts TIMESTAMP,
+                    x_arr3 DOUBLE[][][]""");
+            final ObjList<String> clauses = new ObjList<>();
+            for (String clause : ANY_VERDICT) {
+                clauses.add(clause);
+            }
+            for (String clause : MUST_REJECT) {
+                clauses.add(clause);
+            }
+            for (String[] column : listOnly) {
+                list.append(", ").append(column[0]).append(' ').append(column[1]);
+                final String c = column[0];
+                clauses.add("KEEP LATEST PARTITION BY " + c);
+                clauses.add("KEEP HIGHEST ON " + c);
+                clauses.add("KEEP 2 HIGHEST ON " + c);
+                clauses.add("KEEP HIGHEST ON v PARTITION BY " + c);
+                clauses.add("WHEN row_number() OVER (PARTITION BY " + c + " ORDER BY ts DESC) > 1");
+                clauses.add("WHEN " + c + " IS NULL");
+            }
+            // x_arr3 is carried but keys no policy: a window keyed by an array of three or more dimensions fails an
+            // assertion of the record sink code generator, on CREATE and ALTER alike, a known gap tracked separately
+            list.append(')');
+            final String create = "CREATE MATERIALIZED VIEW %s " + list + " AS (SELECT * FROM base)";
+            execute(String.format(create, "mv_alter"));
+            drainWalAndMatViewQueues();
+            for (int i = 0, n = clauses.size(); i < n; i++) {
+                final String clause = clauses.getQuick(i);
+                String createRejection = null;
+                try {
+                    execute(String.format(create, "mv_create") + " EXPIRE ROWS " + clause);
+                } catch (Throwable e) {
+                    createRejection = flyweightMessage(e);
+                }
+                drainWalAndMatViewQueues();
+                if (createRejection == null) {
+                    assertReadable("mv_create", "CREATE", clause);
+                    execute("DROP MATERIALIZED VIEW mv_create");
+                    drainWalAndMatViewQueues();
+                }
+
+                String alterRejection = null;
+                try {
+                    execute("ALTER MATERIALIZED VIEW mv_alter SET EXPIRE ROWS " + clause);
+                } catch (Throwable e) {
+                    alterRejection = flyweightMessage(e);
+                }
+                if (alterRejection == null) {
+                    drainWalAndMatViewQueues();
+                    assertReadable("mv_alter", "ALTER", clause);
+                    execute("ALTER MATERIALIZED VIEW mv_alter DROP EXPIRE");
+                    drainWalAndMatViewQueues();
+                }
+                Assert.assertEquals("CREATE and ALTER disagree on: " + clause, alterRejection, createRejection);
+            }
+        });
     }
 
     @Test
@@ -357,6 +434,14 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
         }
         drainWalAndMatViewQueues();
         return null;
+    }
+
+    // the message without the position, which CREATE and ALTER report at different tokens
+    private static String flyweightMessage(Throwable e) {
+        if (e instanceof FlyweightMessageContainer container) {
+            return container.getFlyweightMessage().toString();
+        }
+        return message(e);
     }
 
     private static String message(Throwable e) {

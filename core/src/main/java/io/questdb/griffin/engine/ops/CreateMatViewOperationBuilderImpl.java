@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -34,6 +36,7 @@ import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -49,6 +52,8 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private String baseTableName;
     private int baseTableNamePosition;
     private boolean deferred;
+    // whether the statement lists the view's columns, see SqlParser.parseCreateMatView()
+    private boolean hasColumnList;
     private int periodDelay;
     private char periodDelayUnit;
     private int periodLength;
@@ -63,6 +68,43 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     @Override
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+        // The column list, as the operation keeps it: the parser's column models are pooled.
+        GenericRecordMetadata columnListMetadata = null;
+        int columnListPosition = 0;
+        IntList columnListTypePositions = null;
+        if (hasColumnList) {
+            final int columnCount = createTableOperationBuilder.getColumnCount();
+            columnListMetadata = new GenericRecordMetadata();
+            columnListTypePositions = new IntList(columnCount);
+            final LowerCaseCharSequenceIntHashMap columnIndexes = new LowerCaseCharSequenceIntHashMap();
+            for (int i = 0; i < columnCount; i++) {
+                columnIndexes.put(createTableOperationBuilder.getColumnName(i), i);
+            }
+            for (int i = 0; i < columnCount; i++) {
+                final CharSequence columnName = createTableOperationBuilder.getColumnName(i);
+                final CreateTableColumnModel model = createTableOperationBuilder.getColumnModel(columnName);
+                assert model != null;
+                // INCLUDE names a listed column, with the errors of CREATE TABLE
+                CreateTableOperationImpl.resolveCoveringColumnIndices(i, model, columnIndexes);
+                columnListMetadata.add(new TableColumnMetadata(
+                        Chars.toString(columnName),
+                        model.getColumnType(),
+                        model.getIndexType(),
+                        model.getIndexValueBlockSize(),
+                        true,
+                        null,
+                        -1,
+                        false,
+                        -1,
+                        model.getSymbolCacheFlag(),
+                        model.getSymbolCapacity()
+                ));
+                columnListTypePositions.add(model.getColumnTypePos());
+                if (i == 0) {
+                    columnListPosition = model.getColumnNamePos();
+                }
+            }
+        }
         final CreateTableOperationImpl createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
         return new CreateMatViewOperationImpl(
                 sqlExecutionContext.getCairoEngine().getConfiguration(),
@@ -82,7 +124,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 periodLengthUnit,
                 periodDelay,
                 periodDelayUnit,
-                columnPositions
+                columnPositions,
+                columnListMetadata,
+                columnListPosition,
+                columnListTypePositions
         );
     }
 
@@ -92,6 +137,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         createTableOperationBuilder.clear();
         refreshType = -1;
         deferred = false;
+        hasColumnList = false;
         baseTableName = null;
         baseTableNamePosition = 0;
         timeZone = null;
@@ -124,6 +170,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         return createTableOperationBuilder.getTableName();
     }
 
+    public boolean hasColumnList() {
+        return hasColumnList;
+    }
+
     @Override
     public ExpressionNode getTableNameExpr() {
         return createTableOperationBuilder.getTableNameExpr();
@@ -139,6 +189,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     public void setDeferred(boolean deferred) {
         this.deferred = deferred;
+    }
+
+    public void setHasColumnList(boolean hasColumnList) {
+        this.hasColumnList = hasColumnList;
     }
 
     public void setPeriodLength(int length, char lengthUnit, int delay, char delayUnit) {
@@ -177,6 +231,11 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create materialized view ");
         sink.put(createTableOperationBuilder.getTableName());
+        if (hasColumnList) {
+            sink.putAscii(" (");
+            createTableOperationBuilder.columnsToSink(sink);
+            sink.putAscii(')');
+        }
         if (baseTableName != null) {
             sink.putAscii(" with base ");
             sink.put(baseTableName);
@@ -232,7 +291,9 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             createTableOperationBuilder.getQueryModel().toSink(sink);
         }
         sink.putAscii(')');
-        for (int i = 0, n = createTableOperationBuilder.getColumnCount(); i < n; i++) {
+        // a column list prints its columns' indexes
+        final int indexClauseColumnCount = hasColumnList ? 0 : createTableOperationBuilder.getColumnCount();
+        for (int i = 0; i < indexClauseColumnCount; i++) {
             final CharSequence columnName = createTableOperationBuilder.getColumnName(i);
             final CreateTableColumnModel columnModel = createTableOperationBuilder.getColumnModel(columnName);
             if (columnModel != null && columnModel.isIndexed()) {
