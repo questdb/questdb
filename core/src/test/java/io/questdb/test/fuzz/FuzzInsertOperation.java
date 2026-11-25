@@ -108,9 +108,16 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
     }
 
     public FuzzInsertOperation(FuzzInsertOperation operation) {
+        this(operation, operation.timestamp);
+    }
+
+    /**
+     * The same row values as the operation's, at another timestamp.
+     */
+    public FuzzInsertOperation(FuzzInsertOperation operation, long timestamp) {
         this.s0 = operation.s0;
         this.s1 = operation.s1;
-        this.timestamp = operation.timestamp;
+        this.timestamp = timestamp;
         this.notSet = operation.notSet;
         this.nullSet = operation.nullSet;
         this.cancelRows = operation.cancelRows;
