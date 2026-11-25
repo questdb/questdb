@@ -219,6 +219,22 @@ public class RecoveryCoordinator {
         }
     }
 
+    // Clears the dedup sorted bit of every partition in _txn and makes that durable. Returns false, and the table stays
+    // locked, when _txn has a torn live area: its writer repairs that on open, and the next downgrade start unlocks it.
+    private boolean clearDedupSortedBits(TableToken token, Path txnPath) {
+        try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+            txWriter.ofRW(txnPath.$(), true);
+            if (txWriter.getTornLiveVersion() > -1) {
+                LOG.advisory().$("table stays locked for downgrade, its _txn has a torn live area [table=").$(token).I$();
+                return false;
+            }
+            if (txWriter.clearPartitionsDedupSortedAndCommit()) {
+                LOG.info().$("cleared dedup sorted bits for downgrade [table=").$(token).I$();
+            }
+            return true;
+        }
+    }
+
     private void failIfRecoveryDisabled(TableToken token) {
         if (!configuration.isAdaptiveRecoveryRollForwardEnabled()) {
             // Skipping recovery can expose a lazily materialized, torn table, so turning recovery off refuses
@@ -1007,6 +1023,10 @@ public class RecoveryCoordinator {
         if (!ColumnType.isDowngradeLockedStorageVersion(storageVersion)) {
             return;
         }
+        path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME);
+        if (ff.exists(path.$()) && !clearDedupSortedBits(token, path)) {
+            return;
+        }
         path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
         if (ff.exists(path.$())) {
             clearColumnVersionTrailers(path, tempMem8b);
@@ -1030,12 +1050,13 @@ public class RecoveryCoordinator {
 
     /**
      * The way back to an older release. For every table whose {@code _meta} carries the downgrade lock
-     * ({@link ColumnType#isDowngradeLockedStorageVersion}): clears every {@code _cv} checksum trailer, so an
-     * older binary that rewrites an area in place leaves no magic next to data it never checksummed, then
-     * drops the lock from {@code _meta}, so the older binary opens the table. Trailers first and durable, lock
-     * last: a crash in between leaves the table locked, and the next downgrade start repeats this. Runs before
-     * any writer opens, on a start with {@code cairo.commit.mode.adaptive.downgrade=true} only, which writes no
-     * trailer itself.
+     * ({@link ColumnType#isDowngradeLockedStorageVersion}): clears the dedup sorted bit of every partition in
+     * {@code _txn}, which an older binary keeps when it writes the partition's rows, and every {@code _cv}
+     * checksum trailer, so an older binary that rewrites an area in place leaves no magic next to data it never
+     * checksummed, then drops the lock from {@code _meta}, so the older binary opens the table. Bits and trailers
+     * first and durable, lock last: a crash in between leaves the table locked, and the next downgrade start
+     * repeats this. Runs before any writer opens, on a start with {@code cairo.commit.mode.adaptive.downgrade=true}
+     * only, which sets no bit and writes no trailer itself.
      */
     private void unlockTablesForDowngrade(ObjHashSet<TableToken> tokens, Path path) {
         final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);

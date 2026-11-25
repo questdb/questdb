@@ -128,6 +128,59 @@ public class DowngradeLockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDowngradeStartClearsDedupSortedBits() throws Exception {
+        // An older release does not know the dedup sorted bit of a native partition in _txn: it keeps the bit when
+        // it writes the partition, so after a downgrade and an upgrade the bit could claim an order the rows no
+        // longer have. A downgrade start leaves no partition with the bit, and its own writes set none.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, k long, v long) timestamp(ts) partition by day wal dedup upsert keys(ts, k)");
+            execute("insert into t values ('2024-09-01T00:00:00.000000Z', 2, 1), ('2024-09-01T00:00:00.000000Z', 1, 2), ('2024-09-02T00:00:00.000000Z', 1, 3)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            final TableToken token = engine.verifyTableName("t");
+            assertDedupSortedBits(token, "11");
+
+            try (Path path = new Path()) {
+                tablePath(path, token);
+                downgradeStart(token);
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                assertOlderReleaseOpens(path);
+                assertDedupSortedBits(token, "00");
+
+                // A new partition and an append of a dedup commit set the bit in a normal start.
+                execute("insert into t values ('2024-09-02T00:00:01.000000Z', 1, 4), ('2024-09-03T00:00:00.000000Z', 1, 5)");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                assertDedupSortedBits(token, "000");
+
+                // The way back up: the writes set the bit again.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE, "false");
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                execute("insert into t values ('2024-09-04T00:00:00.000000Z', 1, 6)");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion(path));
+                assertDedupSortedBits(token, "0001");
+                assertQuery("t").timestamp("ts").expectSize().returns("""
+                        ts\tk\tv
+                        2024-09-01T00:00:00.000000Z\t1\t2
+                        2024-09-01T00:00:00.000000Z\t2\t1
+                        2024-09-02T00:00:00.000000Z\t1\t3
+                        2024-09-02T00:00:01.000000Z\t1\t4
+                        2024-09-03T00:00:00.000000Z\t1\t5
+                        2024-09-04T00:00:00.000000Z\t1\t6
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testDowngradeStartFailureLeavesTableLocked() throws Exception {
         final AtomicBoolean isCvReadFailing = new AtomicBoolean();
         final AtomicBoolean isMetaWriteFailing = new AtomicBoolean();
@@ -313,6 +366,61 @@ public class DowngradeLockTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 Assert.assertEquals(ColumnType.COMPOSITE_STORAGE_VERSION, metaStorageVersion(path));
                 assertQuery("select count() from t").noRandomAccess().expectSize().returns("count\n21410\n");
+            }
+        });
+    }
+
+    @Test
+    public void testDowngradeStartKeepsLockOverTornTxn() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, k long, v long) timestamp(ts) partition by day wal dedup upsert keys(ts, k)");
+            execute("insert into t values ('2024-09-01T00:00:00.000000Z', 1, 1)");
+            drainWalQueue();
+            execute("insert into t values ('2024-09-02T00:00:00.000000Z', 1, 2)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            final TableToken token = engine.verifyTableName("t");
+            assertDedupSortedBits(token, "11");
+
+            try (Path path = new Path()) {
+                // Tear the live _txn area: its body checksum no longer matches, the previous area still does.
+                tablePath(path, token).concat(TableUtils.TXN_FILE_NAME);
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+                try {
+                    final long version = TableUtils.readLongOrFail(ff, fd, TableUtils.TX_BASE_OFFSET_VERSION_64, tempMem8b, path.$());
+                    final long areaOffset = TableUtils.readIntOrFail(ff, fd, (version & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32, tempMem8b, path);
+                    final long maxTimestampOffset = areaOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64;
+                    final long maxTimestamp = TableUtils.readLongOrFail(ff, fd, maxTimestampOffset, tempMem8b, path.$());
+                    TableUtils.writeLongOrFail(ff, fd, maxTimestampOffset, maxTimestamp + 1, tempMem8b, path);
+                } finally {
+                    ff.close(fd);
+                    Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                // The start cannot clear the bits of a torn _txn, so it leaves the table locked.
+                tablePath(path, token);
+                downgradeStart(token);
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion(path));
+                assertOlderReleaseRefuses(path);
+
+                // The writer repairs _txn on open, and the next downgrade start unlocks the table.
+                engine.getWriter(token, "test").close();
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                downgradeStart(token);
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                assertOlderReleaseOpens(path);
+                assertDedupSortedBits(token, "00");
+                assertQuery("t").timestamp("ts").expectSize().returns("""
+                        ts\tk\tv
+                        2024-09-01T00:00:00.000000Z\t1\t1
+                        2024-09-02T00:00:00.000000Z\t1\t2
+                        """);
             }
         });
     }
@@ -548,6 +656,16 @@ public class DowngradeLockTest extends AbstractCairoTest {
             }
         } finally {
             tablePath.trimTo(len);
+        }
+    }
+
+    private static void assertDedupSortedBits(TableToken token, String expected) {
+        try (TableReader reader = engine.getReader(token)) {
+            final StringBuilder actual = new StringBuilder();
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                actual.append(reader.getTxFile().isPartitionDedupSorted(i) ? '1' : '0');
+            }
+            Assert.assertEquals(expected, actual.toString());
         }
     }
 

@@ -44,6 +44,10 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final CairoConfiguration configuration;
+    // False on a downgrade start (cairo.commit.mode.adaptive.downgrade=true): the instance sets no dedup sorted
+    // bit, since an older release keeps the bit when it writes the partition's rows. See
+    // clearPartitionsDedupSortedAndCommit().
+    private final boolean isDedupSortedBitAllowed;
     // The partition-table part of the body checksum (TableUtils.combineTxnBodyChecksum), one entry per A/B
     // slot, hashed from the bytes that slot's area holds. The fast path rewrites only header words of the
     // area it republishes, so its checksum needs the header hash plus this entry -- O(1) instead of a pass
@@ -90,6 +94,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         super(ff);
         this.configuration = configuration;
         this.commitMode = configuration.getCommitMode();
+        this.isDedupSortedBitAllowed = !configuration.isCommitModeAdaptiveDowngrade();
     }
 
     /**
@@ -253,8 +258,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * Clears {@link TxReader#PARTITION_DEDUP_SORTED_BIT} on every partition. The bit claims the order of the table's
      * current dedup keys, so every change of the dedup setting - enabling or disabling dedup, new keys, a dropped key
      * or a key column type change - calls this before the commit that publishes the new setting.
+     *
+     * @return true when a partition had the bit
      */
-    public void clearPartitionsDedupSorted() {
+    public boolean clearPartitionsDedupSorted() {
         boolean isChanged = false;
         for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
             // getPartitionOffset3 folds the legacy all-ones word, which has bit 57 set, to 0.
@@ -269,6 +276,25 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // A reader reloads the offset-3 word of the last partition only, unless this version moves.
             partitionTableVersion++;
         }
+        return isChanged;
+    }
+
+    /**
+     * Clears {@link TxReader#PARTITION_DEDUP_SORTED_BIT} on every partition, commits only that as a new record and
+     * makes {@code _txn} durable. A downgrade start only, before any writer opens: an older release keeps the bit
+     * when it writes a partition's rows, so after the next upgrade the bit could claim an order the rows no longer
+     * have. Writes nothing when no partition has the bit.
+     *
+     * @return true when a partition had the bit
+     */
+    public boolean clearPartitionsDedupSortedAndCommit() {
+        if (!clearPartitionsDedupSorted()) {
+            return false;
+        }
+        final int partitionCount = getPartitionCount();
+        commitPartitionRange(CommitMode.NOSYNC, 0, partitionCount, partitionCount);
+        fsync();
+        return true;
     }
 
     @Override
@@ -832,6 +858,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         final long word = getPartitionOffset3(indexRaw);
         // Parquet and composite partitions carry the claim elsewhere, the bit stays clear on them.
         final boolean isSet = isDedupSorted
+                && isDedupSortedBitAllowed
                 && !isPartitionParquetByRawIndex(indexRaw)
                 && (word & PARTITION_COMPOSITE_FLAG) == 0;
         final long updated = isSet ? word | PARTITION_DEDUP_SORTED_BIT : word & ~PARTITION_DEDUP_SORTED_BIT;
