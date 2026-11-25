@@ -27,12 +27,15 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -150,6 +153,27 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyNonWalFailsWhenWriterColumnVersionsAreNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn("t", false);
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            final FuzzTransaction transaction = new FuzzTransaction();
+            // changes the cached records of the writer as a change that commit() does not write would
+            transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+                changeCachedColumnTop(((TableWriter) writer).columnVersionReader().getCachedColumnVersionList());
+                return false;
+            });
+            transactions.add(transaction);
+            try {
+                newRunner().applyNonWal(transactions, "t", new Rnd());
+                Assert.fail("the check must find the writer's records missing from _cv");
+            } catch (AssertionError e) {
+                TestUtils.assertContains(e.getMessage(), "the writer's _cv records are not on disk [table=t, writer=");
+            }
+        });
+    }
+
+    @Test
     public void testApplyNonWalKeepsColumnPurgeOffWhilePlantedFailurePending() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
         final FuzzRunner runner = newRunner();
@@ -224,6 +248,25 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
             // no transactions: applyToWal() draws nothing, so the drains must leave applyRnd at its seeds
             Assert.assertEquals(new Rnd(7, 11).nextLong(), applyRnd.nextLong());
+        });
+    }
+
+    @Test
+    public void testApplyWalFailsWhenPooledWriterColumnVersionsAreNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn("t", true);
+            final FuzzRunner runner = newRunner();
+            // the drain checks the writer the WAL apply leaves in the pool, which agrees with _cv
+            runner.applyWal(new ObjList<>(), "t", 1, new Rnd());
+            try (TableWriter writer = getWriter("t")) {
+                changeCachedColumnTop(writer.columnVersionReader().getCachedColumnVersionList());
+            }
+            try {
+                runner.applyWal(new ObjList<>(), "t", 1, new Rnd());
+                Assert.fail("the check must find the pooled writer's records missing from _cv");
+            } catch (AssertionError e) {
+                TestUtils.assertContains(e.getMessage(), "the writer's _cv records are not on disk [table=t, writer=");
+            }
         });
     }
 
@@ -587,6 +630,13 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         return transaction;
     }
 
+    // moves the column top of the last record, the one ADD COLUMN gave the partition it was added at
+    private static void changeCachedColumnTop(LongList records) {
+        final int columnTopIndex = records.size() - ColumnVersionReader.BLOCK_SIZE + ColumnVersionReader.COLUMN_TOP_OFFSET;
+        Assert.assertNotEquals(ColumnVersionReader.COL_TOP_DEFAULT_PARTITION, records.getQuick(records.size() - ColumnVersionReader.BLOCK_SIZE));
+        records.setQuick(columnTopIndex, records.getQuick(columnTopIndex) + 1);
+    }
+
     // A reader pins the first version of x while UPDATE replaces it, so the writer queues its purge instead of
     // purging it, and no job of the test runs that purge.
     private static File createStaleColumnVersion(String tableName, boolean isWal) throws SqlException {
@@ -606,6 +656,14 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         engine.releaseInactive();
         Assert.assertTrue(staleFile.exists());
         return staleFile;
+    }
+
+    private void createTableWithAddedColumn(String tableName, boolean isWal) throws Exception {
+        execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " VALUES (1, '2024-01-01T00:00:00Z')");
+        // a column top record for 2024-01-01, which holds a row without y
+        execute("ALTER TABLE " + tableName + " ADD COLUMN y INT");
+        drainWalQueue();
     }
 
     private void createWalTable(String tableName) throws Exception {

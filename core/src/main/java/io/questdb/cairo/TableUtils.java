@@ -2685,10 +2685,9 @@ public final class TableUtils {
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
 
                     final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-                    long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
-                    if (columnNameTxn == -1) {
-                        columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
-                    }
+                    final long columnNameTxn = versionRecordIndex > -1
+                            ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex)
+                            : columnVersionReader.getDefaultColumnNameTxn(writerIndex);
                     final long columnTop = columnVersionReader.getColumnTopByIndexOrDefault(versionRecordIndex, partitionTimestamp, writerIndex, -1L);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = tableColumnMetadata.getParquetEncodingConfig();
