@@ -2662,6 +2662,34 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalInOverNullTextOrBindVariableOrExpressionKey() throws Exception {
+        // The binding folds an interval IN to false only for constant text that holds no instant: NULL text matches the
+        // NULL keys, and a bind variable resolves its text at execution, where an interval that holds no instant matches
+        // no row. An interval IN over an expression key runs on the Java filter.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE n (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO n VALUES
+                    (1, '2024-01-05T10:00:00.000000Z', '2024-01-05T10:00:00.000000Z'),
+                    (2, NULL, '2024-01-06T10:00:00.000000Z'),
+                    (3, '2024-01-06T10:00:00.000000Z', '2024-01-06T11:00:00.000000Z')
+                    """);
+            assertQuery("SELECT k FROM n WHERE tm IN NULL::VARCHAR").noLeakCheck().returns("k\n2\n");
+            bindVariableService.clear();
+            bindVariableService.setStr("i", "2024-01-06#workday");
+            assertQuery("SELECT k FROM n WHERE tm IN :i").noLeakCheck().returns("k\n");
+            bindVariableService.setStr("i", "2024-01-05");
+            assertQuery("SELECT k FROM n WHERE tm IN :i").noLeakCheck().returns("k\n1\n");
+            bindVariableService.clear();
+            final String expressionKey = "SELECT k FROM n WHERE dateadd('d', 1, tm) IN '2024-01-06'";
+            assertQuery(expressionKey).noLeakCheck().returns("k\n1\n");
+            try (RecordCursorFactory factory = select(expressionKey)) {
+                Assert.assertFalse(expressionKey, factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testNotInIntervalWithNoIntervals() throws Exception {
         // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval, and neither does
         // '$today#workday' on that day. Subtracting no interval used to leave no row.

@@ -1865,6 +1865,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanContaining("Async Hash Join Group By");
             assertCursorExportEncodesKeys(fusedQuery, "fused", 0);
+            // a key it computes keeps its type's default
+            final String fusedComputedQuery = "SELECT d.gi + 1 g, sum(f.x) s FROM f JOIN d ON f.k = d.k GROUP BY d.gi + 1";
+            assertQuery(fusedComputedQuery)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Hash Join Group By");
+            assertCursorExportEncodesKeys(fusedComputedQuery, "fused_computed");
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("fused_computed"), ff, 0);
             // the master columns of WINDOW JOIN and the keys of HORIZON JOIN
             assertCursorExportEncodesKeys("SELECT t.ts, t.v, first(p.w) fw FROM kt t WINDOW JOIN kt p RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", "window_join", 1);
             assertCursorExportEncodesKeys("SELECT h.offset, t.v, count() c FROM kt t HORIZON JOIN kt p LIST (0s, 1s) AS h", "horizon_join", 1);

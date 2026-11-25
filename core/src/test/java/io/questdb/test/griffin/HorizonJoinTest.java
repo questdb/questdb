@@ -503,6 +503,46 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinRejectsFilterOverSortedRightSide() throws Exception {
+        // A filter over a sorted sub-query is not a table with an optional filter: the factory under it, a sort, serves
+        // no time frames, so the right-hand side is rejected, on one thread and in parallel.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String query = "SELECT h.offset, t.sym, count() c, avg(q.bid) ab FROM trades t HORIZON JOIN " +
+                    "(SELECT * FROM (SELECT ts, sym, bid FROM quotes ORDER BY ts) WHERE bid > 101) q ON (t.sym = q.sym) " +
+                    "LIST (0s, 1s) AS h ORDER BY 1, 2";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertExceptionNoLeakCheck(query, query.indexOf("HORIZON JOIN"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinProjectionOverCoveringIndexMasterKeepsParallelReaders() throws Exception {
+        // A HORIZON JOIN that projects its rows reads, run in parallel, the page frames of a covering-index scan under
+        // the ORDER BY of its master, as one that aggregates does, so the ORDER BY skips its sort. Run on one thread,
+        // it reads the master by row id, which the covering-index scan does not offer, and the sort supplies it.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String horizon = "SELECT h.offset, w.ts, w.sym, w.price, q.bid FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            final String sorted = "(SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts)";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String query = horizon.formatted(sorted.formatted("ci"));
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlanContaining(isParallel ? "Async Horizon Join" : "Encode sort\n", "CoveringIndex");
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlanNotContaining(isParallel ? "keys: [ts]" : "Async Horizon Join");
+                assertSqlCursors(horizon.formatted(sorted.formatted("trades")), query);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinCoveringIndexMasterKeepsParallelReaders() throws Exception {
         // A covering-index scan offers page frames but no random access. A parallel filter above the ORDER BY reads
         // those page frames and supplies the random access, and the parallel HORIZON JOIN reads them itself, taking
