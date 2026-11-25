@@ -118,6 +118,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
+    private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
     // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COL_DESC_COL_TYPE_OFF = 12;
@@ -606,6 +607,22 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return readSeqTxn0(getOrCreateNativeReaderPtr());
     }
 
+    /**
+     * Returns the compressed byte size of the row group's column chunks (pages with
+     * headers), excluding column/offset indexes and bloom filters. O(columnCount).
+     *
+     * @param rowGroupIndex zero-based row group index
+     * @return compressed byte size of the row group's column chunks
+     */
+    public long getRowGroupCompressedSize(int rowGroupIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        long total = 0;
+        for (int c = 0; c < columnCount; c++) {
+            total += Unsafe.getLong(columnChunkAddr(rowGroupIndex, c) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
+        }
+        return total;
+    }
+
     public int getRowGroupCount() {
         return rowGroupCount;
     }
@@ -907,13 +924,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveLastFooter() {
+        return resolveLastFooter(true);
+    }
+
+    /**
+     * Resolves an explicitly selected metadata prefix, with optional CRC verification.
+     */
+    public boolean resolveLastFooter(boolean isVerifyChecksum) {
         final long addr = this.addr;
         final long currentSize = this.fileSize;
         final long currentFooterLength = Integer.toUnsignedLong(
                 Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
         final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
         checkFooterOffset(currentOffset, currentFooterLength, currentSize);
-        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength, isVerifyChecksum);
     }
 
     private static native boolean canSkipRowGroup0(
@@ -990,6 +1014,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * Shared by {@link #resolveFooter(long)} and {@link #resolveLastFooter()}.
      */
     private boolean validateAndCommitFooter(long currentSize, long currentOffset, long currentFooterLength) {
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength, true);
+    }
+
+    private boolean validateAndCommitFooter(long currentSize, long currentOffset, long currentFooterLength, boolean isVerifyChecksum) {
         final long addr = this.addr;
         final long parquetMetaFileSize = this.fileSize;
 
@@ -1001,7 +1029,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         // otherwise it verifies and binds to the dead footer at the tail. The
         // parse is retained as the handle (createNativeReader throws on a
         // mismatch or bad file); callers clear this reader before re-resolving.
-        if (!checksumVerified) {
+        if (isVerifyChecksum && !checksumVerified) {
             assert nativeReaderPtr == 0; // of()/clear() reset the handle with the flag
             nativeReaderPtr = createNativeReader(addr, currentSize, true);
             nativeReaderFileSize = currentSize;

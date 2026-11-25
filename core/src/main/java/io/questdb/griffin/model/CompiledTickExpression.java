@@ -304,8 +304,8 @@ public class CompiledTickExpression extends UntypedFunction {
      *     maps each interval to one.</li>
      *     <li>RANGE: 1 when the range is contiguous, that is, it has no business-day walk, and the
      *     expression has no time override, duration, day filter or named timezone (a numeric offset
-     *     is fine). {@link #emitRange} then emits either one interval or a run of adjacent whole
-     *     days, which the final merge joins into one. Any other range yields a count that follows
+     *     is fine). {@link #emitRange} then emits no interval (bounds reversed by an offset), one
+     *     interval, or a run of adjacent whole days, which the final merge joins into one. Any other range yields a count that follows
      *     the length of the range, the weekends in it or the clock changes of the zone, and gets no
      *     bound.</li>
      * </ul>
@@ -538,7 +538,10 @@ public class CompiledTickExpression extends UntypedFunction {
         boolean hasBothTimeComponents = (start != startDay) && (end != endDay);
 
         if (hasBothTimeComponents) {
-            out.add(start, end);
+            // Runtime offsets can reverse the bounds; such a range is empty.
+            if (start <= end) {
+                out.add(start, end);
+            }
         } else {
             long currentDay = startDay;
             while (currentDay <= endDay) {

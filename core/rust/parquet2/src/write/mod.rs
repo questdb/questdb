@@ -20,6 +20,7 @@ pub use compression::{compress, Compressor};
 
 pub use file::{
     end_file, start_file, write_metadata_sidecar, CopiedColumnIndex, FileWriter, ParquetFile,
+    RowGroupOrigin,
 };
 
 pub use row_group::{write_row_group, ColumnOffsetsMetadata};

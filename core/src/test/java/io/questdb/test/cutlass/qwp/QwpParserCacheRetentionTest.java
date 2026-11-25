@@ -31,6 +31,7 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
@@ -302,8 +303,13 @@ public class QwpParserCacheRetentionTest {
         });
     }
 
+    /**
+     * A wide schema's parse is kept by the schema cache, on the table's entry, never by
+     * the block cursor: parsing it leaves the cursor's retained memory unchanged, and
+     * so does the late failure of the message's next block.
+     */
     @Test
-    public void testSchemaCacheCountedAndReleasedAfterLateTableFailure() throws Exception {
+    public void testSchemaParseKeptByCacheNotByCursorAfterLateTableFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (QwpTableBuffer buffer = new QwpTableBuffer("wide_schema");
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
@@ -318,11 +324,13 @@ public class QwpParserCacheRetentionTest {
                 Unsafe.putShort(address + QwpConstants.HEADER_OFFSET_TABLE_COUNT, (short) 2);
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
+                final QwpSchemaCacheEntry entry = new QwpSchemaCacheEntry();
+                cursor.setSchemaCache(tableName -> entry);
                 cursor.of(address, size, null);
                 final long before = cursor.getRetainedCacheBytes();
                 cursor.nextTable();
-                // The block cursor keeps the schema section for reuse: it is retained memory.
-                Assert.assertTrue(cursor.getRetainedCacheBytes() - before > columns * 27L);
+                Assert.assertEquals("the cursor keeps no schema", before, cursor.getRetainedCacheBytes());
+                Assert.assertTrue("the table's entry keeps it", entry.getRetainedBytes() > columns * 27L);
                 Assert.assertThrows(QwpParseException.class, cursor::nextTable);
                 Assert.assertEquals(before, cursor.getRetainedCacheBytes());
             }
