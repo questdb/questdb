@@ -37,14 +37,17 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
@@ -73,6 +76,7 @@ import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -3109,6 +3113,41 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetIntervalScanOverParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 60_000_000L), x FROM long_sequence(5760)");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-03'");
+            // A fresh reader has no partition open, so the row group flush during the native day
+            // unmaps day 1's _pm before day 3 maps its own _pm, of equal size, at that address.
+            engine.releaseAllReaders();
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT * FROM t WHERE ts BETWEEN '2024-01-01T06:00' AND '2024-01-03T18:00') "
+                            + "TO 'interval_scan' WITH FORMAT PARQUET ROW_GROUP_SIZE 1000",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\nfinished\n");
+                assertQuery("SELECT timestamp_floor('d', ts) d, count() c, min(ts) mn, max(ts) mx FROM read_parquet('"
+                        + exportRoot + File.separator + "interval_scan.parquet') GROUP BY d ORDER BY d")
+                        .noLeakCheck()
+                        .timestamp("d")
+                        .expectSize()
+                        .returns("""
+                                d\tc\tmn\tmx
+                                2024-01-01T00:00:00.000000Z\t1080\t2024-01-01T06:00:00.000000Z\t2024-01-01T23:59:00.000000Z
+                                2024-01-02T00:00:00.000000Z\t1440\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:59:00.000000Z
+                                2024-01-03T00:00:00.000000Z\t1081\t2024-01-03T00:00:00.000000Z\t2024-01-03T18:00:00.000000Z
+                                """);
+            });
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetLargeTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table large_table (id int, value string)");
@@ -4310,6 +4349,23 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithArrayBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, v DOUBLE[])");
+            execute("INSERT INTO t VALUES (1, ARRAY[1.0]), (2, ARRAY[2.0]), (3, NULL)");
+            bindVariableService.define(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), 0);
+            bindVariableService.setStr(0, "{1.0}");
+            testCopyExport(
+                    () -> runAndFetchCopyExportID("COPY (SELECT k, v FROM t WHERE v = $1) TO 'array_bind' WITH FORMAT PARQUET", sqlExecutionContext),
+                    () -> assertEventually(() -> assertQuery("SELECT k, v FROM read_parquet('" + exportRoot + File.separator + "array_bind.parquet')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("k\tv\n1\t[1.0]\n"))
+            );
         });
     }
 
@@ -6104,6 +6160,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             testCopyExport(stmt, test);
         });
+    }
+
+    @Test
+    public void testCopyTableAuthorizesSelectOnAllColumns() throws Exception {
+        assertCopyAuthorizesSelectOnAllColumns("COPY t TO 't' WITH FORMAT PARQUET");
+    }
+
+    @Test
+    public void testCopyTableFunctionSyntaxAuthorizesSelectOnAllColumns() throws Exception {
+        assertCopyAuthorizesSelectOnAllColumns("COPY t() TO 't' WITH FORMAT PARQUET");
     }
 
     @Test
@@ -8189,6 +8255,42 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
+    private void assertCopyAuthorizesSelectOnAllColumns(String copySql) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, y STRING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2023-01-01T10:00:00.000Z', 1, 'a')");
+            final ColumnRecordingSecurityContext securityContext = new ColumnRecordingSecurityContext();
+            try (
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+                            .with(securityContext, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                    RecordCursorFactory factory = select(copySql, context)
+            ) {
+                // COPY authorizes every exported column at compile time
+                Assert.assertEquals("[ts,x,y]", securityContext.selectColumns.toString());
+
+                // and the export job authorizes them again, since a caller can execute the factory long after compilation
+                securityContext.selectColumns.clear();
+                securityContext.isSelectDenied = true;
+                CopyExportRunnable stmt = () -> {
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                };
+                CopyExportRunnable test = () ->
+                        assertEventually(() -> assertQuery("SELECT status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        status\tmessage
+                                        failed\tpermission denied [table=t]
+                                        """));
+                testCopyExport(stmt, test);
+                Assert.assertEquals("[ts,x,y]", securityContext.selectColumns.toString());
+                Assert.assertFalse("a denied export must not write its file", exportFileExists("t"));
+            }
+        });
+    }
+
     // Runs the COPY of t that the test holds to the end of its export and returns the export id.
     private String assertCopyFactoryExports(RecordCursorFactory factory, String expectedRows) throws Exception {
         final String exportId = runCopy(factory);
@@ -9080,6 +9182,21 @@ public class CopyExportTest extends AbstractCairoTest {
     @FunctionalInterface
     public interface CopyExportRunnable {
         void run() throws Exception;
+    }
+
+    private static final class ColumnRecordingSecurityContext extends AllowAllSecurityContext {
+        final ObjList<CharSequence> selectColumns = new ObjList<>();
+        volatile boolean isSelectDenied;
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                selectColumns.add(Chars.toString(columnNames.getQuick(i)));
+            }
+            if (isSelectDenied) {
+                throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
+            }
+        }
     }
 
     static {

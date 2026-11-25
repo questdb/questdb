@@ -64,6 +64,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.NanosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<TableReader> {
@@ -209,7 +210,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // causing log sequence leaks.
             long durationNanos =
                     executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
-            log = LOG.errorW();
+            final boolean isInterruption = e instanceof CairoException ce && ce.isInterruption();
+            log = isInterruption && leakedReadersCount == 0 ? LOG.error() : LOG.errorW();
             if (leakedReadersCount > 0) {
                 log.$("brk");
                 executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
@@ -269,6 +271,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
     }
 
+    @TestOnly
+    public static Log swapLogForTesting(Log log) {
+        final Log previous = LOG;
+        LOG = log;
+        return previous;
+    }
+
     @Override
     public PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return base.execute(executionContext, collectSubSeq, order);
@@ -287,6 +296,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public String getBaseColumnName(int idx) {
         return base.getBaseColumnName(idx);
+    }
+
+    @TestOnly
+    public RecordCursor getBaseCursor() {
+        return cursor.base;
     }
 
     @Override
@@ -591,6 +605,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public boolean hasActivePushdownFilter() {
             return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
         }
 
         @Override

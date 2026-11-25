@@ -253,6 +253,34 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDroppedTablePurgeWaitsForBackgroundWork() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean isReady = new AtomicBoolean();
+            AtomicBoolean isNotified = new AtomicBoolean();
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(temp.newFolder().getAbsolutePath())) {
+                @Override
+                public boolean notifyDroppedTablePurge(TableToken tableToken) {
+                    isNotified.set(true);
+                    return isReady.get();
+                }
+            }; Path path = new Path()) {
+                engine.execute("CREATE TABLE x(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                TableToken token = engine.verifyTableName("x");
+                engine.execute("DROP TABLE x");
+
+                TestUtils.drainWalQueue(engine);
+                Assert.assertTrue(isNotified.get());
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                isReady.set(true);
+                TestUtils.drainWalQueue(engine);
+                Assert.assertFalse(Files.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
     public void testDuplicateTableCreation() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT);

@@ -46,6 +46,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_COMMAND_QUEUE_CAPACITY("cairo.writer.command.queue.capacity"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
+    CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE("cairo.commit.mode.adaptive.downgrade"),
     CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED("cairo.adaptive.epoch.column.sync.batched"),
     CAIRO_WAL_COMMIT_WRITEBACK_DRAIN("cairo.wal.commit.writeback.drain"),
     CAIRO_ADAPTIVE_EPOCH_INTERVAL("cairo.adaptive.epoch.interval"),

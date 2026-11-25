@@ -1,6 +1,9 @@
 # macOS/Windows test pipeline.
 # On demand on a PR via `/azp run macwin`, and automatically in the GitHub merge
-# queue via the CI trigger on the ephemeral merge-queue branches.
+# queue via the CI trigger on the ephemeral merge-queue branches. It also starts the
+# full Enterprise run for the PR (stage TriggerEnterpriseCI), the only Enterprise run
+# OSS starts; that run reports the required enterprise-ci check. For a PR with an open
+# same-named Enterprise PR, that run skips its tests; see templates/trigger-enterprise-job.yml.
 #
 # The macOS legs run on the macOS-15-arm64 image: the plain macOS-14/15/26 Azure
 # images are Intel (x86-64), and x86-64 macOS is no longer a supported platform --
@@ -96,8 +99,7 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  # The full enterprise run (every platform and replication store); test-pipeline.yml triggers
-  # the light, Linux amd64 one on every PR build.
+  # The full enterprise run: every platform and replication store, Windows included.
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
     # An explicit condition drops the implicit succeeded(), so restore it: a queue build
@@ -107,8 +109,6 @@ stages:
       - CheckChanges
     jobs:
       - template: templates/trigger-enterprise-job.yml
-        parameters:
-          flavour: full
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"

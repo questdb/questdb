@@ -38,6 +38,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
@@ -145,58 +146,83 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
-    public void testDetachPartitionAttachedFromSoftLink() throws Exception {
+    public void testConvertToNativeParquetPartitionAttachedFromSoftLinkIsRefused() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (l LONG, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-10-17T00:00:01.000000Z'), (2, '2022-10-17T12:00:00.000000Z'), (3, '2022-10-18T00:00:01.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "SNOW");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.isPartitionParquet(0));
+                Assert.assertTrue(txFile.isPartitionReadOnly(0));
+                Assert.assertFalse(txFile.isPartitionRemote(0));
+            }
+
+            for (String clause : new String[]{"LIST '" + readOnlyPartitionName + "'", "WHERE ts < '" + activePartitionName + "'"}) {
+                try {
+                    execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE " + clause);
+                    Assert.fail("CONVERT TO NATIVE of a read-only parquet partition must be refused: " + clause);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "cannot convert parquet partition to native, partition is read-only [table=" + tableName + ", partition=" + readOnlyPartitionName + "]"
+                    );
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            }
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testDetachPartitionAttachedFromSoftLinkIsRefused() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "SNOW", tableToken -> {
                         try {
-                            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            try {
+                                execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                                Assert.fail("DETACH of a soft-linked partition must be refused");
+                            } catch (SqlException e) {
+                                TestUtils.assertContains(
+                                        e.getFlyweightMessage(),
+                                        "cannot detach partition, partition is read-only [table=" + tableName + ", partition=" + readOnlyPartitionName + "]"
+                                );
+                            }
                             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
                                     .noLeakCheck()
                                     .noRandomAccess()
                                     .expectSize()
-                                    .returns(replaceTimestampSuffix1("""
-                                            min\tmax\tcount
-                                            2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000
-                                            """, timestampTypeName));
+                                    .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
 
-                            // verify cold storage folder exists
+                            // the link and its target are untouched
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
+                            TestUtils.txnPartitionConditionally(path, 2);
+                            Assert.assertTrue(ff.isSoftLink(path.$()));
                             Assert.assertTrue(Files.exists(other.$()));
-                            AtomicInteger fileCount = new AtomicInteger();
-                            ff.walk(other, (_, _) -> fileCount.incrementAndGet());
-                            Assert.assertTrue(fileCount.get() > 0);
-
-                            // verify the link was removed
-                            other.of(configuration.getDbRoot())
-                                    .concat(tableToken)
-                                    .concat(readOnlyPartitionName)
-                                    .put(configuration.getAttachPartitionSuffix())
-                                    .$();
-                            Assert.assertFalse(ff.exists(other.$()));
-
-                            // insert a row at the end of the partition, the only row, which will create the partition
-                            // at this point there is no longer information as to weather it was read-only in the past
-                            execute("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + readOnlyPartitionName + "T23:59:59.500001Z')");
-                            assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
-                                    .noLeakCheck()
-                                    .noRandomAccess()
-                                    .expectSize()
-                                    .returns(replaceTimestampSuffix("""
-                                            min\tmax\tcount
-                                            2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001
-                                            """));
-
-                            // drop the partition
-                            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
-                                    .noLeakCheck()
-                                    .noRandomAccess()
-                                    .expectSize()
-                                    .returns(replaceTimestampSuffix1("""
-                                            min\tmax\tcount
-                                            2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000
-                                            """, timestampTypeName));
                         } catch (Exception ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -1346,6 +1372,70 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     }
             );
         });
+    }
+
+    @Test
+    public void testWalInsertLeavesSoftLinkedLastPartitionUntouched() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            for (int txnCount : new int[]{1, 12}) {
+                for (boolean isOneByOne : new boolean[]{false, true}) {
+                    final String tableName = testName.getMethodName() + txnCount + isOneByOne;
+                    execute("CREATE TABLE " + tableName + " (l LONG, s SYMBOL INDEX, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + tableName + " VALUES (1, 'a', '2022-10-17T00:00:01.000000Z'), (2, 'a', '2022-10-17T12:00:00.000000Z'), (3, 'a', '2022-10-18T00:00:01.000000Z')");
+                    drainWalQueue();
+                    final TableToken tableToken = engine.verifyTableName(tableName);
+                    execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+                    drainWalQueue();
+                    copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "LINKED" + txnCount + isOneByOne);
+                    execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+                    execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + activePartitionName + "'");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    final String linkedContent = linkedPartitionContent(tableToken, readOnlyPartitionName);
+
+                    for (int i = 0; i < txnCount; i++) {
+                        execute("INSERT INTO " + tableName + " VALUES (100, 'a', '2022-10-17T23:00:" + (10 + i) + ".000000Z')");
+                    }
+                    if (isOneByOne) {
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().setMaxBlockRowCount(1);
+                    }
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    Assert.assertEquals("the insert wrote into the linked partition", linkedContent, linkedPartitionContent(tableToken, readOnlyPartitionName));
+                    assertQuery("SELECT l FROM " + tableName).noLeakCheck().expectSize().returns("l\n1\n2\n");
+
+                    // moving on to the next partition closes the files of the linked one
+                    execute("INSERT INTO " + tableName + " VALUES (4, 'a', '2022-10-19T00:00:00.000000Z')");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    Assert.assertEquals("the switch wrote into the linked partition", linkedContent, linkedPartitionContent(tableToken, readOnlyPartitionName));
+                    assertQuery("SELECT l FROM " + tableName).noLeakCheck().expectSize().returns("l\n1\n2\n4\n");
+                }
+            }
+        });
+    }
+
+    private static String linkedPartitionContent(TableToken tableToken, String partitionName) throws IOException {
+        final File[] links = new File(configuration.getDbRoot().toString(), tableToken.getDirName())
+                .listFiles(file -> file.getName().startsWith(partitionName) && java.nio.file.Files.isSymbolicLink(file.toPath()));
+        Assert.assertNotNull(links);
+        Assert.assertEquals(1, links.length);
+        final File[] files = links[0].listFiles(File::isFile);
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        final StringBuilder content = new StringBuilder();
+        for (File file : files) {
+            final byte[] bytes = java.nio.file.Files.readAllBytes(file.toPath());
+            content.append(file.getName()).append(' ').append(bytes.length).append(' ').append(Arrays.hashCode(bytes)).append('\n');
+        }
+        return content.toString();
     }
 
     private static void makeAllPartitionsReadOnly(TableToken tableToken) {

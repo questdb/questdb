@@ -504,6 +504,21 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getDesignatedTimestampPageAddress() {
+            return baseFrame.getDesignatedTimestampPageAddress();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageSize() {
+            return baseFrame.getDesignatedTimestampPageSize();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageTop() {
+            return baseFrame.getDesignatedTimestampPageTop();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }
@@ -534,6 +549,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getPageTop(int columnIndex) {
+            return baseFrame.getPageTop(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
         public ParquetDecoder getParquetDecoder() {
             return baseFrame.getParquetDecoder();
         }
@@ -551,6 +571,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public int getParquetRowGroupLo() {
             return baseFrame.getParquetRowGroupLo();
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return baseFrame.getPartitionFrameState();
         }
 
         @Override
@@ -628,6 +653,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }
@@ -675,6 +705,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             // PageFrameAddressCache assume mapping[i] corresponds to metadata column i.
             final ColumnMapping baseMapping = baseCursor.getColumnMapping();
             columnMapping.clear();
+            // Delta merging needs the designated timestamp even when the projection omits it.
+            columnMapping.setTimestamp(
+                    baseMapping.getTimestampColumnIndex(),
+                    baseMapping.getTimestampWriterIndex(),
+                    baseMapping.getTimestampType()
+            );
             for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
                 final int basePos = columnCrossIndex.getQuick(i);
                 columnMapping.addColumn(
@@ -847,6 +883,15 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((SelectedRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+            return baseCursor.recordAtSourceRow(
+                    ((SelectedRecord) record).getBaseRecord(),
+                    sourceRowRef,
+                    timestamp
+            );
         }
 
         @Override
