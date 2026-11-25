@@ -1411,6 +1411,70 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         });
     }
 
+    @Test
+    public void testWalInsertLeavesSoftLinkedLastPartitionUntouched() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            for (int txnCount : new int[]{1, 12}) {
+                for (boolean isOneByOne : new boolean[]{false, true}) {
+                    final String tableName = testName.getMethodName() + txnCount + isOneByOne;
+                    execute("CREATE TABLE " + tableName + " (l LONG, s SYMBOL INDEX, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + tableName + " VALUES (1, 'a', '2022-10-17T00:00:01.000000Z'), (2, 'a', '2022-10-17T12:00:00.000000Z'), (3, 'a', '2022-10-18T00:00:01.000000Z')");
+                    drainWalQueue();
+                    final TableToken tableToken = engine.verifyTableName(tableName);
+                    execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+                    drainWalQueue();
+                    copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "LINKED" + txnCount + isOneByOne);
+                    execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+                    execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + activePartitionName + "'");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    final String linkedContent = linkedPartitionContent(tableToken, readOnlyPartitionName);
+
+                    for (int i = 0; i < txnCount; i++) {
+                        execute("INSERT INTO " + tableName + " VALUES (100, 'a', '2022-10-17T23:00:" + (10 + i) + ".000000Z')");
+                    }
+                    if (isOneByOne) {
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().setMaxBlockRowCount(1);
+                    }
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    Assert.assertEquals("the insert wrote into the linked partition", linkedContent, linkedPartitionContent(tableToken, readOnlyPartitionName));
+                    assertQuery("SELECT l FROM " + tableName).noLeakCheck().expectSize().returns("l\n1\n2\n");
+
+                    // moving on to the next partition closes the files of the linked one
+                    execute("INSERT INTO " + tableName + " VALUES (4, 'a', '2022-10-19T00:00:00.000000Z')");
+                    drainWalQueue();
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    Assert.assertEquals("the switch wrote into the linked partition", linkedContent, linkedPartitionContent(tableToken, readOnlyPartitionName));
+                    assertQuery("SELECT l FROM " + tableName).noLeakCheck().expectSize().returns("l\n1\n2\n4\n");
+                }
+            }
+        });
+    }
+
+    private static String linkedPartitionContent(TableToken tableToken, String partitionName) throws IOException {
+        final File[] links = new File(configuration.getDbRoot().toString(), tableToken.getDirName())
+                .listFiles(file -> file.getName().startsWith(partitionName) && java.nio.file.Files.isSymbolicLink(file.toPath()));
+        Assert.assertNotNull(links);
+        Assert.assertEquals(1, links.length);
+        final File[] files = links[0].listFiles(File::isFile);
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        final StringBuilder content = new StringBuilder();
+        for (File file : files) {
+            final byte[] bytes = java.nio.file.Files.readAllBytes(file.toPath());
+            content.append(file.getName()).append(' ').append(bytes.length).append(' ').append(Arrays.hashCode(bytes)).append('\n');
+        }
+        return content.toString();
+    }
+
     private static void makeAllPartitionsReadOnly(TableToken tableToken) {
         try (TableWriter writer = getWriter(tableToken)) {
             TxWriter txWriter = writer.getTxWriter();
