@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -55,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -1883,6 +1885,51 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportCutOffFreesDecodedFramesBeforeTrackerRelease() throws Exception {
+        // A client that stops reading parks an export of computed columns while the export holds the decoded row
+        // groups of a Parquet frame, charged to the memory tracker of its query. When the connection drops, the
+        // server frees the parked export, and closing the export's cursor ends the query and returns the tracker
+        // to a pool that queries, WAL apply and materialized view refresh share: the export must free the
+        // decoded frames before that.
+        final TrackerReleaseNetworkFacade nf = new TrackerReleaseNetworkFacade();
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(nf))
+                .withTelemetry(false)
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export")
+                .run(newExportConfiguration(1000, () -> 0L), (engine, sqlExecutionContext) -> {
+                    try {
+                        createTableWithParquetPartition(engine, sqlExecutionContext);
+                        final String query = "SELECT a * 2 a2, ts FROM tp";
+                        assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.PAGE_FRAME_BACKED);
+                        nf.track(engine, query, true);
+                        try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
+                            requestParquetExport(httpClient, sink, query, 1000);
+                            Assert.fail("the server must drop the connection");
+                        } catch (HttpClientException e) {
+                            TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        }
+                        // The server frees the parked export when it drops the connection.
+                        assertEventually(() -> Assert.assertEquals(-1, engine.getCopyExportContext().getActiveExportId()));
+                        nf.awaitRelease();
+                        nf.assertReleasedClean();
+                        assertExportLog(engine, sqlExecutionContext, """
+                                phase\tstatus\tmessage
+                                stream_sending_data\tstarted\t
+                                stream_sending_data\tcancelled\t
+                                """);
+                        try (TestHttpClient httpClient = new TestHttpClient()) {
+                            awaitEndedRequests(httpClient);
+                        }
+                    } finally {
+                        nf.stopTracking(engine);
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportDataPageSizeInvalid() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2020,8 +2067,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         // An export of computed columns decodes the row groups of Parquet frames into buffers charged to the
         // memory tracker of its query. Closing the export's cursor ends the query and returns the tracker to a
         // pool that queries, WAL apply and materialized view refresh share, and a tracker that comes back
-        // holding memory fails the next of them to take it. The server sends the end of the response after the
-        // query has ended, so the facade reads the tracker on the first send after that.
+        // holding memory fails the next of them to take it. The provider's release listener reads the tracker
+        // as it goes back to its pool, before any other workload can take it.
         final AtomicLong queryMemoryLimit = new AtomicLong();
         final TrackerReleaseNetworkFacade nf = new TrackerReleaseNetworkFacade();
         new HttpQueryTestBuilder()
@@ -2032,54 +2079,53 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .withCopyExportRoot(root + "/export")
                 .withCopyInputRoot(root + "/export")
                 .run(newExportConfiguration(1000, queryMemoryLimit::get), (engine, sqlExecutionContext) -> {
-                    // tp has a day partition converted to 4 Parquet row groups of 1000 rows, then a native
-                    // partition.
-                    engine.execute("CREATE TABLE tp (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
-                    engine.execute("INSERT INTO tp SELECT x::INT, timestamp_sequence('2024-01-01', 20_000_000) FROM long_sequence(4_000)", sqlExecutionContext);
-                    engine.execute("INSERT INTO tp VALUES (0, '2024-01-02T00:00:00.000000Z')", sqlExecutionContext);
-                    engine.execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+                    try {
+                        createTableWithParquetPartition(engine, sqlExecutionContext);
 
-                    assertExportReleasesCleanTracker(engine, sqlExecutionContext, nf, "SELECT a * 2 a2, ts FROM tp", "clean_tracker");
-                    assertExportReleasesCleanTracker(
-                            engine,
-                            sqlExecutionContext,
-                            nf,
-                            "SELECT a2 * 2 a4, ts FROM read_parquet('clean_tracker.parquet')",
-                            "clean_tracker_read_parquet"
-                    );
+                        assertExportReleasesCleanTracker(engine, sqlExecutionContext, nf, "SELECT a * 2 a2, ts FROM tp", "clean_tracker");
+                        assertExportReleasesCleanTracker(
+                                engine,
+                                sqlExecutionContext,
+                                nf,
+                                "SELECT a2 * 2 a4, ts FROM read_parquet('clean_tracker.parquet')",
+                                "clean_tracker_read_parquet"
+                        );
 
-                    // A decoded 1000-row frame of a and ts takes 12_000 bytes. 20 KiB holds the first frame, not
-                    // the second. In row groups of 400 rows, the first frame's write sends two row groups and
-                    // leaves 200 of its rows in the writer, which still holds them when the export decodes the
-                    // second frame: the export fails after the first frame has charged the tracker.
-                    final String query = "SELECT a * 2 a2, ts FROM tp";
-                    assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.PAGE_FRAME_BACKED);
-                    nf.track(engine, query);
-                    queryMemoryLimit.set(20 * 1024L);
-                    try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
-                        requestParquetExport(httpClient, sink, query, 400);
-                        Assert.fail("the export must fail at the query memory limit");
-                    } catch (HttpClientException e) {
-                        // The response has started, so the client cannot read the failure as a response.
-                        TestUtils.assertContains(e.getMessage(), "malformed chunk");
+                        // A decoded 1000-row frame of a and ts takes 12_000 bytes. 20 KiB holds the first frame,
+                        // not the second. In row groups of 400 rows, the first frame's write sends two row groups
+                        // and leaves 200 of its rows in the writer, which still holds them when the export decodes
+                        // the second frame: the export fails after the first frame has charged the tracker.
+                        final String query = "SELECT a * 2 a2, ts FROM tp";
+                        assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.PAGE_FRAME_BACKED);
+                        nf.track(engine, query, false);
+                        queryMemoryLimit.set(20 * 1024L);
+                        try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
+                            requestParquetExport(httpClient, sink, query, 400);
+                            Assert.fail("the export must fail at the query memory limit");
+                        } catch (HttpClientException e) {
+                            // The response has started, so the client cannot read the failure as a response.
+                            TestUtils.assertContains(e.getMessage(), "malformed chunk");
+                        } finally {
+                            queryMemoryLimit.set(0);
+                        }
+                        assertEventually(() -> Assert.assertEquals(-1, engine.getCopyExportContext().getActiveExportId()));
+                        try (TestHttpClient httpClient = new TestHttpClient()) {
+                            awaitEndedRequests(httpClient);
+                        }
+                        nf.assertReleasedClean();
+                        assertQuery("SELECT phase, status, message ~ 'in row group 1: query memory limit exceeded' is_row_group_1 FROM sys.copy_export_log LIMIT -2")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        phase\tstatus\tis_row_group_1
+                                        stream_sending_data\tstarted\tfalse
+                                        stream_sending_data\tfailed\ttrue
+                                        """);
                     } finally {
-                        queryMemoryLimit.set(0);
+                        nf.stopTracking(engine);
                     }
-                    assertEventually(() -> Assert.assertEquals(-1, engine.getCopyExportContext().getActiveExportId()));
-                    try (TestHttpClient httpClient = new TestHttpClient()) {
-                        awaitEndedRequests(httpClient);
-                    }
-                    nf.assertReleasedClean();
-                    assertQuery("SELECT phase, status, message ~ 'in row group 1: query memory limit exceeded' is_row_group_1 FROM sys.copy_export_log LIMIT -2")
-                            .withEngine(engine)
-                            .withContext(sqlExecutionContext)
-                            .noLeakCheck()
-                            .expectSize()
-                            .returns("""
-                                    phase\tstatus\tis_row_group_1
-                                    stream_sending_data\tstarted\tfalse
-                                    stream_sending_data\tfailed\ttrue
-                                    """);
                 });
     }
 
@@ -3395,6 +3441,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         );
     }
 
+    // Creates table tp (a INT, ts TIMESTAMP): a day partition converted to 4 Parquet row groups of 1000 rows, then
+    // a native partition of 1 row.
+    private static void createTableWithParquetPartition(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute("CREATE TABLE tp (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute("INSERT INTO tp SELECT x::INT, timestamp_sequence('2024-01-01', 20_000_000) FROM long_sequence(4_000)", sqlExecutionContext);
+        engine.execute("INSERT INTO tp VALUES (0, '2024-01-02T00:00:00.000000Z')", sqlExecutionContext);
+        engine.execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+    }
+
     // The configuration of an export server whose page frames hold at most pageFrameMaxRows rows, whose
     // Parquet partitions have row groups of 1000 rows, and whose query memory limit queryMemoryLimit gives.
     private static DefaultTestCairoConfiguration newExportConfiguration(int pageFrameMaxRows, LongSupplier queryMemoryLimit) {
@@ -3772,7 +3827,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
     // Exports the query through /exp to fileName.parquet in the export root, asserts that the file holds the
     // rows of the query, and asserts that the decoded frames charged the query's memory tracker while the
-    // export ran and that the tracker held no memory once the query ended.
+    // export ran and that the tracker held no memory when it went back to its pool.
     private void assertExportReleasesCleanTracker(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -3781,7 +3836,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             String fileName
     ) throws Exception {
         assertParquetExportMode(engine, sqlExecutionContext, query, ParquetExportMode.PAGE_FRAME_BACKED);
-        nf.track(engine, query);
+        nf.track(engine, query, false);
         try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
             Assert.assertEquals(query, "200", requestParquetExport(httpClient, sink, query, 1000));
             assertEventually(() -> Assert.assertEquals(-1, engine.getCopyExportContext().getActiveExportId()));
@@ -3922,23 +3977,35 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     // The network of a server that watches the memory tracker of one query: at every send while the query
-    // runs, it records the peak of the tracker's usage, and at the first send after the query has ended, when
-    // the tracker is back in its pool, the usage the tracker went back with.
+    // runs, it records the peak of the tracker's usage, and the provider's release listener records the usage
+    // the tracker holds when it goes back to its pool. In cut-off mode, it also parks the query's export and
+    // then drops its connection.
     private static class TrackerReleaseNetworkFacade extends NetworkFacadeImpl {
+        private final AtomicBoolean isCutOff = new AtomicBoolean();
+        private final AtomicBoolean isParked = new AtomicBoolean();
         private final AtomicLong peakUsed = new AtomicLong();
         private final AtomicLong queryId = new AtomicLong(-1);
         private final AtomicReference<MemoryTracker> tracker = new AtomicReference<>();
-        private final AtomicLong usedAfterQuery = new AtomicLong(-1);
+        private final AtomicLong usedAtRelease = new AtomicLong(-1);
         private volatile CairoEngine engine;
 
         @Override
         public int sendRaw(long fd, long buffer, int bufferLen) {
             final MemoryTracker tracker = this.tracker.get();
-            if (tracker != null && usedAfterQuery.get() == -1) {
-                if (engine.getQueryRegistry().getEntry(queryId.get()) != null) {
-                    peakUsed.accumulateAndGet(tracker.getUsed(), Math::max);
-                } else {
-                    usedAfterQuery.set(tracker.getUsed());
+            if (tracker != null && usedAtRelease.get() == -1 && engine.getQueryRegistry().getEntry(queryId.get()) != null) {
+                final long used = tracker.getUsed();
+                peakUsed.accumulateAndGet(used, Math::max);
+                if (isCutOff.get()) {
+                    if (isParked.get()) {
+                        // The send that resumes the parked export finds the peer gone.
+                        isCutOff.set(false);
+                        return -1;
+                    }
+                    if (used > 0) {
+                        // The socket is full: the export parks while it holds decoded frames.
+                        isParked.set(true);
+                        return 0;
+                    }
                 }
             }
             return super.sendRaw(fd, buffer, bufferLen);
@@ -3947,23 +4014,47 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         // Asserts that the query charged its tracker while it ran and that the tracker went back to its pool
         // holding no memory, then stops watching.
         void assertReleasedClean() {
-            engine.getQueryRegistry().setListener(null);
+            stopTracking(engine);
             Assert.assertNotNull("the query must register", tracker.get());
             Assert.assertTrue("the decoded frames must charge the tracker", peakUsed.get() > 0);
-            Assert.assertEquals("memory the tracker held when its query ended", 0, usedAfterQuery.get());
+            Assert.assertNotEquals("the tracker must go back to its pool", -1, usedAtRelease.get());
+            Assert.assertEquals("memory the tracker held when it went back to its pool", 0, usedAtRelease.get());
             tracker.set(null);
         }
 
-        // Watches the tracker of the next query of the given text that the engine registers.
-        void track(CairoEngine engine, String query) {
+        // Waits until the tracker of the watched query goes back to its pool.
+        void awaitRelease() throws Exception {
+            assertEventually(() -> Assert.assertNotEquals("the tracker must go back to its pool", -1, usedAtRelease.get()));
+        }
+
+        // Removes the listeners that track() sets on the engine.
+        void stopTracking(CairoEngine engine) {
+            engine.getQueryRegistry().setListener(null);
+            ((PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider()).setReleaseListener(null);
+        }
+
+        // Watches the tracker of the next query of the given text that the engine registers. With isCutOff, the
+        // first send of the query at which the tracker holds memory finds the socket full, which parks the export
+        // while it holds decoded frames, and the next send finds the peer gone, which makes the server drop the
+        // connection and free the parked export.
+        void track(CairoEngine engine, String query, boolean isCutOff) {
             this.engine = engine;
             peakUsed.set(0);
-            usedAfterQuery.set(-1);
+            usedAtRelease.set(-1);
             tracker.set(null);
+            isParked.set(false);
+            this.isCutOff.set(isCutOff);
             engine.getQueryRegistry().setListener((registeredQuery, registeredQueryId, executionContext) -> {
                 if (Chars.equals(registeredQuery, query) && tracker.get() == null) {
                     queryId.set(registeredQueryId);
                     tracker.set(executionContext.getMemoryTracker());
+                }
+            });
+            // Until it goes back to its pool, the tracker belongs to the query, so the first release of the
+            // tracker after the query has registered is the query's.
+            ((PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider()).setReleaseListener(released -> {
+                if (released == tracker.get()) {
+                    usedAtRelease.compareAndSet(-1, released.getUsed());
                 }
             });
         }

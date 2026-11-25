@@ -30,6 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentPool;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -59,6 +60,7 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
     private final CairoConfiguration configuration;
     private final ConcurrentPool<PerQueryMemoryTracker> pool = new ConcurrentPool<>();
     private volatile boolean closed;
+    private volatile @Nullable ReleaseListener releaseListener;
 
     public PerQueryMemoryTrackerProvider(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -101,6 +103,11 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
         return pool.count();
     }
 
+    @TestOnly
+    public void setReleaseListener(@Nullable ReleaseListener releaseListener) {
+        this.releaseListener = releaseListener;
+    }
+
     private void drainPool() {
         PerQueryMemoryTracker tracker;
         while ((tracker = pool.pop()) != null) {
@@ -121,6 +128,10 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
     }
 
     void release(PerQueryMemoryTracker tracker) {
+        final ReleaseListener releaseListener = this.releaseListener;
+        if (releaseListener != null) {
+            releaseListener.onRelease(tracker);
+        }
         releaseAfterClosedCheck(tracker, closed);
     }
 
@@ -135,5 +146,15 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
                 drainPool();
             }
         }
+    }
+
+    /**
+     * Test hook that sees every tracker the provider releases. The listener runs on the releasing thread,
+     * after {@link PerQueryMemoryTracker#close()} has reconciled the covered-index charge and before the
+     * tracker goes back to the pool, or is destroyed once the provider is closed, so no other workload can
+     * have taken and re-initialized it. It must not throw.
+     */
+    public interface ReleaseListener {
+        void onRelease(MemoryTracker tracker);
     }
 }

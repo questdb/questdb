@@ -28,9 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.ObjList;
 import io.questdb.std.PerQueryMemoryTracker;
 import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Unsafe;
@@ -355,6 +358,43 @@ public class PerQueryMemoryTrackerTest {
                 } finally {
                     t.close();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testReleaseListenerSeesTrackerBeforePool() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
+                final MemoryTracker tracker = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                final long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT, tracker);
+                final ObjList<MemoryTracker> releasedTrackers = new ObjList<>();
+                final LongList usedAtRelease = new LongList();
+                final IntList pooledCountAtRelease = new IntList();
+                provider.setReleaseListener(released -> {
+                    releasedTrackers.add(released);
+                    usedAtRelease.add(released.getUsed());
+                    pooledCountAtRelease.add(provider.getPooledCount());
+                });
+
+                // The tracker goes back to its pool still charged. The listener sees it with its charge, before
+                // the pool holds it, so no other workload can have taken and reset it.
+                tracker.close();
+                Assert.assertEquals(1, releasedTrackers.size());
+                Assert.assertSame(tracker, releasedTrackers.getQuick(0));
+                Assert.assertEquals(256, usedAtRelease.getQuick(0));
+                Assert.assertEquals(0, pooledCountAtRelease.getQuick(0));
+                Assert.assertEquals(1, provider.getPooledCount());
+
+                // Credit the charge through the pooled tracker, so that the provider destroys a clean tracker.
+                Unsafe.free(ptr, 256, MemoryTag.NATIVE_DEFAULT, tracker);
+                Assert.assertEquals(0, tracker.getUsed());
+
+                // A cleared listener sees no further release, and the released tracker still goes back to its pool.
+                provider.setReleaseListener(null);
+                provider.acquire(SEC, 2, MemoryTrackerWorkload.QUERY).close();
+                Assert.assertEquals(1, releasedTrackers.size());
+                Assert.assertEquals(1, provider.getPooledCount());
             }
         });
     }
