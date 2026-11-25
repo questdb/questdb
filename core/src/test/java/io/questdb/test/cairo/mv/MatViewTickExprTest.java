@@ -668,6 +668,46 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticDateTickCalendarDurationInRefresh() throws Exception {
+        // A materialized view filtered by a literal with a fixed date, a date variable, a tick calendar
+        // and a duration refreshes to what the tick calendar keeps of the own extent of the fixed date,
+        // extended by the duration once: the half hours from 14:30 to 21:30 of Friday 2025-01-24, which
+        // XNYS trades on from 14:30 to 21:00Z. A refresh resolves the date variables against the "now"
+        // of its context, the clock or the start of the epoch, see
+        // testRowValueDateVariableResolvesLikeLiteral: $today is Monday 2025-01-27 at the clock, and
+        // $today + 20115d at the start of the epoch, which holds the same half hours of the Monday, so the
+        // view holds the 30 half hours of both days at either "now".
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-27T12:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 1_800_000_000L), 1 FROM long_sequence(192)");
+            drainWalQueue();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (
+                        SELECT ts, count() c FROM base
+                        WHERE ts IN '[$today, 2025-01-24]#XNYS;1h' OR ts IN '[$today + 20115d, 2025-01-24]#XNYS;1h'
+                        SAMPLE BY 30m
+                    )
+                    """);
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count(), min(ts), max(ts), sum(c) FROM mv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tmin\tmax\tsum
+                            30\t2025-01-24T14:30:00.000000Z\t2025-01-27T21:30:00.000000Z\t30
+                            """);
+        });
+    }
+
+    @Test
     public void testStructuralExpiryPolicyFailingCheckBeforeRangeStart() throws Exception {
         // SQL checks a row-expiry policy with a window function as it sets it, by opening the query
         // that a read of the view runs with the policy. At 03:00, when the range from 09:30 to "now"

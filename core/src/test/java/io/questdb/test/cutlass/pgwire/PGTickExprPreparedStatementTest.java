@@ -133,6 +133,52 @@ public class PGTickExprPreparedStatementTest extends BasePGTest {
     }
 
     @Test
+    public void testPreparedStaticDateTickCalendarDurationFollowsNowOfEachRun() throws Exception {
+        // A statement prepared once with a literal with a fixed date, a date variable, a tick calendar
+        // and a duration selects, on the day of each run, the session of the fixed date, Friday
+        // 2025-01-24, and of the day of the run, from 14:30 to 21:00Z each, an hour longer: 900 minutes on
+        // Monday 2025-01-27 and on Tuesday 2025-01-28. A fixed date whose own extents alone exceed the
+        // interval limit, the 1,440 seconds at the minutes of the Monday, parses as its bind variable on
+        // each run: today holds them on the Monday, which selects the 391 minutes from 14:30 to 21:00, and
+        // nothing holds them on the Tuesday, which fails at the literal. Each mode of the server sets the
+        // engine up anew, with the test tick calendars.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            final long monday = MicrosFormatUtils.parseTimestamp("2025-01-27T12:00:00.000000Z");
+            final long tuesday = MicrosFormatUtils.parseTimestamp("2025-01-28T12:00:00.000000Z");
+            setCurrentMicros(monday);
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // a row every minute of the five days from 2025-01-24 to 2025-01-28
+                statement.execute("INSERT INTO base SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L), 1 FROM long_sequence(7_200)");
+            }
+            drainWalQueue();
+            try (PreparedStatement literal = connection.prepareStatement("SELECT count(), min(ts), max(ts) FROM base WHERE ts IN '[$today, 2025-01-24]#XNYS;1h'")) {
+                for (int i = 0; i < 2; i++) {
+                    currentMicros = monday;
+                    assertRows(literal, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n900,2025-01-24 14:30:00.0,2025-01-27 21:59:00.0\n");
+                    currentMicros = tuesday;
+                    assertRows(literal, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n900,2025-01-24 14:30:00.0,2025-01-28 21:59:00.0\n");
+                }
+            }
+            currentMicros = monday;
+            final String overflowSql = "SELECT count(), min(ts), max(ts) FROM base WHERE ts IN '[$today, 2025-01-27T[00..23]:[00..59]:00]#XNYS;1m'";
+            try (PreparedStatement overflow = connection.prepareStatement(overflowSql)) {
+                for (int i = 0; i < 2; i++) {
+                    currentMicros = monday;
+                    assertRows(overflow, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n391,2025-01-27 14:30:00.0,2025-01-27 21:00:00.0\n");
+                    currentMicros = tuesday;
+                    assertFails(overflow, "Bracket expansion produces too many intervals (max 1024)", overflowSql.indexOf('\'') + 1);
+                }
+            }
+        }, () -> factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        });
+    }
+
+    @Test
     public void testStatementPreparedBeforeRangeStartRunsAfterIt() throws Exception {
         // At 03:00 the range from 09:30 to "now" starts after it ends, and from "now" to 1024 days
         // after today, 09:00 comes 1025 times, one more than the limit. A connection whose last

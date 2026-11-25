@@ -24,11 +24,16 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
 import io.questdb.cairo.sql.Record;
@@ -51,7 +56,9 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -460,6 +467,210 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticDateTickCalendarLenientOverflowStopsAtLimit() throws Exception {
+        // A list whose fixed date alone has more own extents than the interval limit parses as its bind
+        // variable on each evaluation. SQL that the engine runs on its own parses it with the limit
+        // too, so the parse stops once its intervals exceed the limit, and then evaluates the list as it
+        // always has. At a merge threshold of 8 and a limit of 16, on Monday 2025-01-27, nothing holds
+        // the 1,440 seconds at the minutes of 2025-01-24; their windows of a minute join into the day, and
+        // the sessions of the Friday and of the Monday keep 14:30 to 21:00Z of them, a minute longer. With
+        // the limit, the parse holds at most 17 intervals, 34 longs, and a sort of them takes 128 more
+        // longs of the list as its stack, so the list, which doubles as it grows, never exceeds 324 longs;
+        // a parse without the limit would hold 1,441 intervals, 2,882 longs.
+        final String expression = "[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m";
+        final CairoConfiguration smallLimits = tickCalendarConfiguration(8, 16);
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContextImpl engineJob = newEngineJobContext()) {
+                for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
+                    try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, smallLimits, expression, 0, expression.length(), 0)) {
+                        Assert.assertTrue(expression, compiled.isParsedOnEvaluation());
+                        engineJob.setNowAndFixClock(driver.parseFloorLiteral("2025-01-27T12:00:00.000000Z"), driver.getTimestampType());
+                        compiled.init(null, engineJob);
+                        final LongList out = new LongList();
+                        compiled.evaluate(out);
+                        // intervalToString() prints to a sink that it reuses
+                        final String expected = intervalToString(driver, expectedIntervals(
+                                driver,
+                                "2025-01-24T14:30:00.000000Z", "2025-01-24T21:01:00.000000Z",
+                                "2025-01-27T14:30:00.000000Z", "2025-01-27T21:01:00.000000Z"
+                        )).toString();
+                        TestUtils.assertEquals(expression, expected, intervalToString(driver, out));
+                        Assert.assertTrue(expression + ": capacity " + out.capacity(), out.capacity() <= 2 * (2 * 17 + 128));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarOverflowFuzzInBackgroundJob() throws Exception {
+        // Random lists whose fixed date alone has more own extents than the interval limit, which SQL
+        // that the engine runs on its own and a compile probe evaluate without an error. Where the
+        // parse with the limit fits, as the bind variable with the limit shows, they evaluate to the
+        // documented semantics: the own extents of the elements, united, cut by the sessions, each piece
+        // extended by the duration, and merged. Where it does not, they evaluate as the list always
+        // has: the same with the fixed date as windows as long as the duration from each of its
+        // slots. No element holds a window there, as an element that held the slots would let the parse
+        // fit. The windows are at least as long as the time between the slots, so that they join, as
+        // windows that stay apart fail the list as it compiles. questdb.fuzz.tickExpressions sets the
+        // number of lists, a tenth of it.
+        final String[] variables = {"$today", "$yesterday", "$today-3d..$today", "$yesterday..$tomorrow"};
+        final int[][] variableDays = {{0, 0}, {-1, -1}, {-3, 0}, {-1, 1}};
+        final String[] days = {"2025-01-23", "2025-01-24", "2025-01-27", "2025-01-28"};
+        // the durations at the default limit, of which those from an hour on at a limit of 16
+        final String[] durations = {"1m", "10m", "30m", "1h", "4h", "1d"};
+        final long[] durationSeconds = {60, 600, 1_800, 3_600, 14_400, 86_400};
+        final String[] zones = {"", "@+08:00", "@-05:00"};
+        final int[] zoneMinutes = {0, 480, -300};
+        final String[] nows = {"2025-01-27T12:00:00.000000Z", "2025-01-27T15:30:00.000000Z", "2025-01-24T03:00:00.000000Z", "2025-01-28T12:00:00.000000Z"};
+        final int listCount = Math.max(100, Integer.getInteger("questdb.fuzz.tickExpressions", 1_000) / 10);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final CairoConfiguration smallLimits = tickCalendarConfiguration(8, 16);
+        final CairoConfiguration defaultLimits = tickCalendarConfiguration(256, 1024);
+        assertMemoryLeak(() -> {
+            int fittingCount = 0;
+            int fallbackCount = 0;
+            final LongList ownExtents = new LongList();
+            final LongList windows = new LongList();
+            final StringBuilder sb = new StringBuilder();
+            try (
+                    SqlExecutionContextImpl engineJob = newEngineJobContext();
+                    SqlExecutionContextImpl compileProbe = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                compileProbe.with(securityContext, bindVariableService, null);
+                compileProbe.setCompileProbe(true);
+                for (int i = 0; i < listCount; i++) {
+                    final TimestampDriver driver = TIMESTAMP_DRIVERS[rnd.nextInt(TIMESTAMP_DRIVERS.length)];
+                    final String nowText = nows[rnd.nextInt(nows.length)];
+                    final long now = driver.parseFloorLiteral(nowText);
+                    final long today = driver.startOfDay(now, 0);
+                    final String calendar = rnd.nextBoolean() ? "XNYS" : "XHKG";
+                    // the seconds at the hours of a day at a limit of 16, or at the minutes at the default limit
+                    final boolean isSmallLimit = rnd.nextInt(10) != 0;
+                    final int zoneIndex = rnd.nextInt(zones.length);
+                    final long zoneOffset = driver.fromMinutes(zoneMinutes[zoneIndex]);
+                    final int durationIndex = isSmallLimit ? 3 + rnd.nextInt(3) : rnd.nextInt(durations.length);
+                    final long duration = driver.fromSeconds(durationSeconds[durationIndex]);
+                    ownExtents.clear();
+                    windows.clear();
+                    sb.setLength(0);
+                    sb.append('[');
+                    final int variableCount = rnd.nextInt(3);
+                    final int fixedDatePlace = rnd.nextInt(variableCount + 1);
+                    for (int e = 0; e <= variableCount; e++) {
+                        if (e > 0) {
+                            sb.append(", ");
+                        }
+                        if (e == fixedDatePlace) {
+                            final String dayText = days[rnd.nextInt(days.length)];
+                            final long day = driver.parseFloorLiteral(dayText + "T00:00:00.000000Z");
+                            sb.append(dayText).append(isSmallLimit ? "T[00..23]:00:00" : "T[00..23]:[00..59]:00");
+                            for (int hour = 0; hour < 24; hour++) {
+                                for (int minute = 0, n = isSmallLimit ? 1 : 60; minute < n; minute++) {
+                                    final long lo = day + driver.fromHours(hour) + driver.fromMinutes(minute) - zoneOffset;
+                                    ownExtents.add(lo, lo + driver.fromSeconds(1) - 1);
+                                    windows.add(lo, lo + duration - 1);
+                                }
+                            }
+                        } else {
+                            final int v = rnd.nextInt(variables.length);
+                            sb.append(variables[v]);
+                            for (int d = variableDays[v][0]; d <= variableDays[v][1]; d++) {
+                                final long lo = today + driver.fromDays(d) - zoneOffset;
+                                ownExtents.add(lo, lo + driver.fromDays(1) - 1);
+                                windows.add(lo, lo + driver.fromDays(1) - 1);
+                            }
+                        }
+                    }
+                    sb.append(']').append(zones[zoneIndex]).append('#').append(calendar).append(';').append(durations[durationIndex]);
+                    final String text = sb.toString();
+                    final CairoConfiguration limits = isSmallLimit ? smallLimits : defaultLimits;
+                    final String message = text + " at " + nowText + " [" + ColumnType.nameOf(driver.getTimestampType()) + (isSmallLimit ? ", limit 16]" : "]");
+                    boolean isFit = true;
+                    try {
+                        IntervalUtils.parseTickExpr(driver, limits, text, 0, text.length(), 0, new LongList(), IntervalOperation.INTERSECT, sink, true, now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(message, e.getFlyweightMessage(), LIMIT_ERROR);
+                        isFit = false;
+                    }
+                    final LongList kept = TickCalendarTest.union(TickCalendarTest.intersect(TickCalendarTest.union(isFit ? ownExtents : windows), TickCalendarTest.sessions(driver, calendar)));
+                    for (int k = 1, n = kept.size(); k < n; k += 2) {
+                        kept.setQuick(k, kept.getQuick(k) + duration);
+                    }
+                    // intervalToString() prints to a sink that it reuses
+                    final String expected = intervalToString(driver, TickCalendarTest.union(kept)).toString();
+                    if (isFit) {
+                        fittingCount++;
+                    } else {
+                        fallbackCount++;
+                    }
+                    try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, limits, text, 0, text.length(), 0)) {
+                        Assert.assertTrue(message, compiled.isParsedOnEvaluation());
+                        for (SqlExecutionContextImpl context : new SqlExecutionContextImpl[]{engineJob, compileProbe}) {
+                            context.setNowAndFixClock(now, driver.getTimestampType());
+                            compiled.init(null, context);
+                            intervals.clear();
+                            compiled.evaluate(intervals);
+                            TestUtils.assertEquals(message, expected, intervalToString(driver, intervals));
+                        }
+                    }
+                }
+            }
+            LOG.info().$("static date overflow fuzz in background jobs [fitting=").$(fittingCount).$(", fallback=").$(fallbackCount).I$();
+            Assert.assertTrue("a parse that fits", fittingCount > 0);
+            Assert.assertTrue("a parse that does not fit", fallbackCount > 0);
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarOverflowInBackgroundJob() throws Exception {
+        // A list whose fixed date alone has more own extents than the interval limit parses as its bind
+        // variable on each evaluation. SQL that the engine runs on its own, and a cursor that the compiler
+        // holds to inspect a query, parse it with the limit, and where the parse fails, they evaluate the
+        // list as it always has, without an error: the windows of the fixed date as long as the duration,
+        // which join into its day, cut by the sessions, and extended by the duration again. On Monday
+        // 2025-01-27, nothing holds the 1,440 seconds at the minutes of 2025-01-24, nor at a limit of 16
+        // its 24 seconds at the hours. At 03:30Z, the range from today to now holds the seconds every ten
+        // minutes from 01:00 up to now, and the parse keeps those at 03:40 and 03:50, the last of which
+        // ends the session of XHKG at 04:00Z, ten minutes later; the windows of ten minutes used to end it
+        // at 04:10.
+        final CairoConfiguration defaultLimits = tickCalendarConfiguration(256, 1024);
+        final CairoConfiguration smallLimits = tickCalendarConfiguration(8, 16);
+        assertMemoryLeak(() -> {
+            try (
+                    SqlExecutionContextImpl engineJob = newEngineJobContext();
+                    SqlExecutionContextImpl compileProbe = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                compileProbe.with(securityContext, bindVariableService, null);
+                compileProbe.setCompileProbe(true);
+                for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
+                    final long monday = driver.parseFloorLiteral("2025-01-27T12:00:00.000000Z");
+                    final long mondayMorning = driver.parseFloorLiteral("2025-01-27T03:30:00.000000Z");
+                    for (SqlExecutionContextImpl context : new SqlExecutionContextImpl[]{engineJob, compileProbe}) {
+                        assertLenientIntervals(
+                                driver, defaultLimits, context, monday,
+                                "[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m",
+                                "2025-01-24T14:30:00.000000Z", "2025-01-24T21:01:00.000000Z",
+                                "2025-01-27T14:30:00.000000Z", "2025-01-27T21:01:00.000000Z"
+                        );
+                        assertLenientIntervals(
+                                driver, smallLimits, context, monday,
+                                "[$today, 2025-01-24T[00..23]:00:00]#XNYS;1h",
+                                "2025-01-24T14:30:00.000000Z", "2025-01-24T22:00:00.000000Z",
+                                "2025-01-27T14:30:00.000000Z", "2025-01-27T22:00:00.000000Z"
+                        );
+                        assertLenientIntervals(
+                                driver, smallLimits, context, mondayMorning,
+                                "[$today..$now, 2025-01-27T[01..03]:[00,10,20,30,40,50]:00]#XHKG;10m",
+                                "2025-01-27T01:30:00.000000Z", "2025-01-27T04:00:01.000000Z"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnknownDurationUnitActsAsNull() throws Exception {
         // A WAL may hold a literal with a duration unit that the timestamp drivers do not add from
         // before SQL rejected it as it compiled. An engine job evaluates it as a null value, and a
@@ -575,8 +786,49 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Returns the intervals from each start to the instant before each end, given as pairs of
+     * timestamps, at the precision of the driver.
+     */
+    private static LongList expectedIntervals(TimestampDriver driver, String... startsAndEnds) {
+        final LongList intervals = new LongList();
+        for (int i = 0; i < startsAndEnds.length; i += 2) {
+            intervals.add(driver.parseFloorLiteral(startsAndEnds[i]), driver.parseFloorLiteral(startsAndEnds[i + 1]) - 1);
+        }
+        return intervals;
+    }
+
     private static boolean isError(String result) {
         return result.startsWith("error: ");
+    }
+
+    /**
+     * Returns a configuration with the test tick calendars, XNYS and XHKG, the given number of
+     * intervals after which an expansion merges them, and the given limit on the merged intervals.
+     */
+    private static CairoConfiguration tickCalendarConfiguration(int mergeThreshold, int maxIntervals) {
+        final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        return new DefaultCairoConfiguration(root) {
+            @Override
+            public @NotNull FactoryProvider getFactoryProvider() {
+                return factoryProvider;
+            }
+
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return mergeThreshold;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return maxIntervals;
+            }
+        };
     }
 
     /**
@@ -721,6 +973,31 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             }
         } finally {
             builder.clear();
+        }
+    }
+
+    /**
+     * Asserts that the compiled form of the expression, which parses it on evaluation, evaluates it at
+     * "now" in the lenient context to the intervals from each start to the instant before each end.
+     */
+    private void assertLenientIntervals(
+            TimestampDriver driver,
+            CairoConfiguration limitConfiguration,
+            SqlExecutionContextImpl context,
+            long now,
+            String expression,
+            String... startsAndEnds
+    ) throws SqlException {
+        final String message = expression + " [" + ColumnType.nameOf(driver.getTimestampType()) + (context.isCompileProbe() ? ", compile probe]" : ", engine job]");
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, limitConfiguration, expression, 0, expression.length(), 0)) {
+            Assert.assertTrue(message, compiled.isParsedOnEvaluation());
+            context.setNowAndFixClock(now, driver.getTimestampType());
+            compiled.init(null, context);
+            intervals.clear();
+            compiled.evaluate(intervals);
+            // intervalToString() prints to a sink that it reuses
+            final String expected = intervalToString(driver, expectedIntervals(driver, startsAndEnds)).toString();
+            TestUtils.assertEquals(message, expected, intervalToString(driver, intervals));
         }
     }
 

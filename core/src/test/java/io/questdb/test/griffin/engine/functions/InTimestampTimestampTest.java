@@ -57,6 +57,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class InTimestampTimestampTest extends AbstractCairoTest {
     // a Friday that XNYS trades on from 14:30 to 21:00Z
     private static final long FRIDAY_NOON = MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z");
+    // the Monday after FRIDAY_NOON, which XNYS trades on from 14:30 to 21:00Z too
+    private static final long MONDAY_NOON = MicrosFormatUtils.parseTimestamp("2025-01-27T12:00:00.000000Z");
     // 2024-01-02, before the range from 09:30 to "now" starts, and after
     private static final long NOW_0300 = MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z");
     private static final long NOW_1200 = MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z");
@@ -2678,6 +2680,305 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticDateTickCalendarDurationInEveryContext() throws Exception {
+        // A literal with a fixed date, a date variable, a tick calendar and a duration selects the same
+        // rows wherever a query holds it, as does its bind variable: on Monday 2025-01-27, the sessions of
+        // Friday 2025-01-24 and of the Monday, from 14:30 to 21:00Z, each an hour longer, which hold the
+        // 15 half hours from 14:30 to 21:30 of each day, 8 of symbol 'a' and 7 of symbol 'b'. The table
+        // has the 192 half hours of 2025-01-24 to 2025-01-27, 96 of each symbol.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 1_800_000_000L) ts,
+                               (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s
+                        FROM long_sequence(192)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("CREATE TABLE ti (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ti SELECT ts, s FROM t");
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                final String tickExpr = "[$today, 2025-01-24]#XNYS;1h";
+                // ? stands for the tick expression
+                final String[][] contexts = {
+                        {"WITH c AS (SELECT * FROM t WHERE ts IN ?) SELECT count() FROM c", "count\n30\n"},
+                        {"SELECT count() FROM (SELECT * FROM t WHERE ts IN ?)", "count\n30\n"},
+                        {"SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a JOIN t b ON a.s = b.s", "count\n2880\n"},
+                        {"SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s", "count\n2880\n"},
+                        {"SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a LEFT JOIN t b ON a.s = b.s", "count\n2880\n"},
+                        {"SELECT count() FROM t a LEFT JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s", "count\n2880\n"},
+                        {"SELECT count(), max(b.ts) FROM (SELECT * FROM t WHERE ts IN ?) a ASOF JOIN t b", "count\tmax\n30\t2025-01-27T21:30:00.000000Z\n"},
+                        {"SELECT count(), max(b.ts) FROM t a ASOF JOIN (SELECT * FROM t WHERE ts IN ?) b", "count\tmax\n192\t2025-01-27T21:30:00.000000Z\n"},
+                        {"SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a CROSS JOIN t b", "count\n5760\n"},
+                        {"SELECT count() FROM t a CROSS JOIN (SELECT * FROM t WHERE ts IN ?) b", "count\n5760\n"},
+                        // the two rows before 01:00 and the rows of the expression
+                        {"SELECT count() FROM (SELECT ts FROM t WHERE ts IN ? UNION SELECT ts FROM t WHERE ts < '2025-01-24T01:00')", "count\n32\n"},
+                        {"SELECT count() FROM (SELECT ts FROM t WHERE ts < '2025-01-24T01:00' UNION SELECT ts FROM t WHERE ts IN ?)", "count\n32\n"},
+                        // the rows of the expression from 16:00 on 2025-01-24 on
+                        {"SELECT count() FROM (SELECT ts FROM t WHERE ts IN ? EXCEPT SELECT ts FROM t WHERE ts < '2025-01-24T16:00')", "count\n27\n"},
+                        // the nine rows from 14:00 to 18:00 but those of the expression
+                        {
+                                "SELECT count() FROM (SELECT ts FROM t WHERE ts BETWEEN '2025-01-24T14:00' AND '2025-01-24T18:00' EXCEPT SELECT ts FROM t WHERE ts IN ?)",
+                                "count\n1\n"
+                        },
+                        {"SELECT count() FROM (SELECT ts FROM t WHERE ts IN ? INTERSECT SELECT ts FROM t WHERE ts >= '2025-01-24T16:00')", "count\n27\n"},
+                        {"SELECT count() FROM (SELECT ts FROM t WHERE ts >= '2025-01-24T16:00' INTERSECT SELECT ts FROM t WHERE ts IN ?)", "count\n27\n"},
+                        {"SELECT s, count() FROM t WHERE ts IN ? ORDER BY s", "s\tcount\na\t16\nb\t14\n"},
+                        {
+                                "SELECT ts, count() FROM t WHERE ts IN ? SAMPLE BY 1h",
+                                """
+                                        ts\tcount
+                                        2025-01-24T14:00:00.000000Z\t1
+                                        2025-01-24T15:00:00.000000Z\t2
+                                        2025-01-24T16:00:00.000000Z\t2
+                                        2025-01-24T17:00:00.000000Z\t2
+                                        2025-01-24T18:00:00.000000Z\t2
+                                        2025-01-24T19:00:00.000000Z\t2
+                                        2025-01-24T20:00:00.000000Z\t2
+                                        2025-01-24T21:00:00.000000Z\t2
+                                        2025-01-27T14:00:00.000000Z\t1
+                                        2025-01-27T15:00:00.000000Z\t2
+                                        2025-01-27T16:00:00.000000Z\t2
+                                        2025-01-27T17:00:00.000000Z\t2
+                                        2025-01-27T18:00:00.000000Z\t2
+                                        2025-01-27T19:00:00.000000Z\t2
+                                        2025-01-27T20:00:00.000000Z\t2
+                                        2025-01-27T21:00:00.000000Z\t2
+                                        """
+                        },
+                        {
+                                "SELECT s, ts FROM (SELECT * FROM t WHERE ts IN ? LATEST ON ts PARTITION BY s) ORDER BY s",
+                                "s\tts\na\t2025-01-27T21:30:00.000000Z\nb\t2025-01-27T21:00:00.000000Z\n"
+                        },
+                        {
+                                "SELECT count(), max(rn) FROM (SELECT ts, s, row_number() OVER (PARTITION BY s ORDER BY ts) rn FROM t WHERE ts IN ?)",
+                                "count\tmax\n30\t16\n"
+                        },
+                        {"SELECT ts, s FROM t WHERE ts IN ? ORDER BY ts LIMIT -1", "ts\ts\n2025-01-27T21:30:00.000000Z\ta\n"},
+                        // a symbol without an index, and one with an index
+                        {"SELECT count() FROM t WHERE s = 'a' AND ts IN ?", "count\n16\n"},
+                        {"SELECT count() FROM ti WHERE s = 'a' AND ts IN ?", "count\n16\n"}
+                };
+                for (String[] context : contexts) {
+                    bindVariableService.clear();
+                    assertQuery(context[0].replace("?", "'" + tickExpr + "'"))
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .inferTimestamp()
+                            .sizeMayVary()
+                            .returns(context[1]);
+                    bindVariableService.setStr(0, tickExpr);
+                    assertQuery(context[0].replace("?", "$1"))
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .inferTimestamp()
+                            .sizeMayVary()
+                            .returns(context[1]);
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarDurationInEveryFilterPath() throws Exception {
+        // A literal with a fixed date, a date variable, a tick calendar and a duration takes the fixed
+        // date with its own extent, the tick calendar keeps what its sessions hold of it, and the duration
+        // extends what they keep, once, in every filter path, as its bind variable does. On Monday
+        // 2025-01-27, XNYS trades from 14:30 to 21:00Z, as on Friday 2025-01-24: each session an hour
+        // longer holds the half hours from 14:30 to 21:30, the minute at 15:00 an hour longer those from
+        // 15:00 to 16:00, and the minute at 15:00Z alone the half hour at 15:00.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                assertTickExprInEveryFilterPath("[$today, 2025-01-24]#XNYS;1h", 30, "2025-01-24T14:30", "2025-01-27T21:30");
+                assertTickExprInEveryFilterPath("[2025-01-24, $today]@America/New_York#XNYS;1h", 30, "2025-01-24T14:30", "2025-01-27T21:30");
+                assertTickExprInEveryFilterPath("[$today, 2025-01-24T15:00]#XNYS;1h", 18, "2025-01-24T15:00", "2025-01-27T21:30");
+                assertTickExprInEveryFilterPath("[$today, 2025-01-24T[09:30@America/New_York]]@Europe/Paris#XNYS;1h", 18, "2025-01-24T14:30", "2025-01-27T21:30");
+                assertTickExprInEveryFilterPath("[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", 14, "2025-01-24T15:00", "2025-01-27T20:30");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarDurationInView() throws Exception {
+        // A view stores the literal and parses it again for each query, before and after the engine
+        // releases what it holds, and EXPLAIN shows its intervals: on Monday 2025-01-27, the sessions of
+        // Friday 2025-01-24 and of the Monday, from 14:30 to 21:00Z, each an hour longer.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                execute("CREATE VIEW v AS (SELECT * FROM m WHERE ts IN '[$today, 2025-01-24]#XNYS;1h')");
+                drainViewQueue();
+                final String expected = "count\tmin\tmax\n900\t2025-01-24T14:30:00.000000Z\t2025-01-27T21:59:00.000000Z\n";
+                assertQuery("SELECT count(), min(ts), max(ts) FROM v")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                engine.releaseInactive();
+                assertQuery("SELECT count(), min(ts), max(ts) FROM v")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                try (RecordCursorFactory factory = select("SELECT * FROM m WHERE ts IN '[$today, 2025-01-24]#XNYS;1h'")) {
+                    assertPlanContains(
+                            factory,
+                            "intervals: [(\"2025-01-24T14:30:00.000000Z\",\"2025-01-24T21:59:59.999999Z\"),(\"2025-01-27T14:30:00.000000Z\",\"2025-01-27T21:59:59.999999Z\")]"
+                    );
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarDurationPerMinute() throws Exception {
+        // A literal with a fixed date, a date variable, a tick calendar and a duration, over the minutes
+        // of 2025-01-24 to 2025-01-27, 5,760 rows, in the interval scan, the row filter with the JIT on
+        // and off, on another timestamp column, under NOT IN, on a nanosecond timestamp, and through a
+        // dateadd() of the designated timestamp, which selects the minutes an hour before. On Monday
+        // 2025-01-27, XNYS trades from 14:30 to 21:00Z, as on Friday 2025-01-24: a session holds 390
+        // minutes, and an hour longer 450. Where the parser reads the list alike, its bind variable selects
+        // the same rows; where a fixed date holds another, the parser keeps the end of the inner one, see
+        // bug-nested-slots-tick-calendar, and the parser does not take the duration of a fixed date in a
+        // list with a tick calendar, see bug-date-list-calendar-cut-inside-list.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            execute("CREATE TABLE e (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                // each session, an hour longer
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24]#XNYS;1h", 900, "2025-01-24T14:30", "2025-01-27T21:59", 900);
+                // the minute at 15:00, an hour longer, and the session of the Monday, an hour longer
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T15:00]#XNYS;1h", 511, "2025-01-24T15:00", "2025-01-27T21:59", 511);
+                // the hour of the fixed date from 15:00, its own duration, and the session of the Monday;
+                // 15:00 in New York is 20:00Z, and 15:00 in New York on the days of the first 24 of January
+                // and of the Monday, which the parser does not read either
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T15:00;1h]#XNYS", 450, "2025-01-24T15:00", "2025-01-27T20:59", -1);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T15:00;1h]@America/New_York#XNYS", 450, "2025-01-24T20:00", "2025-01-27T20:59", -1);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01;24d]T15:00@America/New_York#XNYS", 2, "2025-01-24T20:00", "2025-01-27T20:00", -1);
+                // each session as it is
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24]#XNYS;", 780, "2025-01-24T14:30", "2025-01-27T20:59", 780);
+                // 09:30 in New York is 14:30Z, and today in Paris holds the session of the Monday
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[09:30@America/New_York]]@Europe/Paris#XNYS;1h", 511, "2025-01-24T14:30", "2025-01-27T21:59", 511);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[09:30@America/New_York]]@Europe/Paris#XNYS;1h1m", 513, "2025-01-24T14:30", "2025-01-27T22:00", 513);
+                // 15:00:00Z in Paris is 14:00Z, before the session
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T15:00:00Z]@Europe/Paris#XNYS;1h", 450, "2025-01-27T14:30", "2025-01-27T21:59", 450);
+                // today in Hong Kong ends at 16:00Z and holds its minute at 23:00, 15:00Z
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;1h", 150, "2025-01-27T14:30", "2025-01-27T16:59", 91);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;", 90, "2025-01-27T14:30", "2025-01-27T15:59", 31);
+                // the minute at 15:00Z, or at 09:30 in New York, as it is
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", 391, "2025-01-24T15:00", "2025-01-27T20:59", 391);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[15:00@UTC]]#XNYS;", 391, "2025-01-24T15:00", "2025-01-27T20:59", 391);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[09:30@America/New_York]]#XNYS;0h", 391, "2025-01-24T14:30", "2025-01-27T20:59", 391);
+                // an empty table
+                assertCountMinMax("e", "ts IN '[$today, 2025-01-24]#XNYS;1h'", "count\tmin\tmax\n0\t\t\n");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarFixedDateSemicolonFailsInEveryPath() throws Exception {
+        // A fixed date with a ';' of its own before the ';' of the list makes its parse read a
+        // repeating interval, so the literal fails as the query compiles, at its position, wherever the
+        // query holds it, as it always has; its bind variable fails on the list, which the parser takes
+        // to the first ';' under a tick calendar.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                final String tickExpr = "[$today, 2025-01-24;1h;1d]#XNYS;1h";
+                for (String condition : new String[]{
+                        "ts IN '" + tickExpr + "'",
+                        "ts2 IN '" + tickExpr + "'",
+                        "ts NOT IN '" + tickExpr + "'",
+                        "dateadd('h', 1, ts) IN '" + tickExpr + "'"
+                }) {
+                    final String sql = "SELECT count() FROM m WHERE " + condition;
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'["), "Count not a number");
+                }
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                final String bindSql = "SELECT count() FROM m WHERE ts IN $1";
+                assertExceptionNoLeakCheck(bindSql, bindSql.indexOf("$1"), "Unclosed '[' in date list");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarOverflowFailsInEveryContext() throws Exception {
+        // A fixed date whose own extents alone exceed the interval limit, the 1,440 seconds at the
+        // minutes of 2025-01-24, which nothing else in the list holds on Monday 2025-01-27, fails a query
+        // wherever it holds the list: the literal as the query compiles, and its bind variable as the
+        // query runs, each at its position. The table keeps answering.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createContextTables();
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                final String overLimit = "[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m";
+                final String limitError = "Bracket expansion produces too many intervals (max 1024)";
+                assertTickExprFailsInEveryContext(overLimit, limitError, overLimit, limitError);
+                assertIntrinsicRows("ts IN '[2024-01-02]T[09:00,10:00]'", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticDateTickCalendarOverflowRangeOrderFailsAsBindVariable() throws Exception {
+        // A literal whose fixed date alone has more own extents than the interval limit parses as its
+        // bind variable on each run, so a range that starts after it ends fails it with the error of the
+        // parser, at the position of the parser: the literal, its quote, plus the 6 characters to the
+        // '..' in the expression, see bug-range-order-error-position-by-form. A bind variable fails at
+        // the bind variable, as the position of the parser points into its value. Compiled at 14:00Z on
+        // Monday 2025-01-27, the range from today to 13 hours before now ends at 01:00Z, and today holds
+        // the 1,440 seconds of the fixed date; at 12:00Z the range ends on the Sunday before.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createHalfHourTables();
+            final String tickExpr = "[$today..$now-13h, $today, 2025-01-27T[00..23]:[00..59]:00]#XNYS;1m";
+            final String literalSql = "SELECT count() FROM t WHERE ts IN '" + tickExpr + "'";
+            final String bindSql = "SELECT count() FROM t WHERE ts IN $1";
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-27T14:00:00.000000Z"));
+                try (RecordCursorFactory factory = select(literalSql)) {
+                    setCurrentMicros(MONDAY_NOON);
+                    assertRunFails(factory, literalSql, literalSql.indexOf('\'') + 6, RANGE_ORDER_ERROR);
+                }
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                assertExceptionNoLeakCheck(bindSql, bindSql.indexOf("$1"), RANGE_ORDER_ERROR);
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testTickExprAfterDynamicInterval() throws Exception {
         // An interval scan combines its conditions in the order the query lists them, so a static
         // tick expression can follow a condition that only resolves when the query runs. The
@@ -3305,6 +3606,24 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 """);
     }
 
+    /**
+     * Creates table m with a row every minute of 2025-01-24 to 2025-01-27, 5,760 rows, in the
+     * designated timestamp ts and in timestamp ts2, and v of 1 to 5,760, and table mn with the same rows
+     * in a designated nanosecond timestamp.
+     */
+    private static void createMinuteTables() throws SqlException {
+        execute("""
+                CREATE TABLE m AS (
+                    SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L) ts,
+                           timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L) ts2,
+                           x v
+                    FROM long_sequence(5_760)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("CREATE TABLE mn (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO mn SELECT ts::TIMESTAMP_NS, v FROM m");
+    }
+
     private static void createJanuaryAndSpringTable() throws SqlException {
         // hourly rows from 2024-01-01T00:00 to 2024-01-10T23:00, and from 2024-03-28T00:00 to
         // 2024-04-03T23:00, across the London spring-forward change on 2024-03-31
@@ -3542,6 +3861,56 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns(selected);
+        } finally {
+            bindVariableService.clear();
+        }
+    }
+
+    /**
+     * Asserts the count, first and last minute of the rows of the tables of {@link #createMinuteTables}
+     * that the literal selects, in the interval scan, in the row filter of an OR with the JIT on and
+     * off, on ts2, on the nanosecond timestamp, and an hour earlier through dateadd('h', 1, ts); the
+     * other rows under NOT IN; and the count of the rows of its STRING bind variable, which fails on the
+     * list where bindCount is -1.
+     */
+    private void assertMinuteRowsInEveryFilterPath(String tickExpr, int count, String first, String last, int bindCount) throws Exception {
+        final String literal = "'" + tickExpr + "'";
+        final String rows = count + "\t" + first + ":00.000000Z\t" + last + ":00.000000Z";
+        final String expected = "count\tmin\tmax\n" + rows + "\n";
+        assertCountMinMax("m", "ts IN " + literal, expected);
+        assertCountMinMax("m", "ts2 IN " + literal, expected);
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(mode);
+                assertCountMinMax("m", "ts IN " + literal + " OR v = -1", expected);
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
+        assertCountMinMax("m", "ts NOT IN " + literal, "count\tmin\tmax\n" + (5_760 - count) + "\t2025-01-24T00:00:00.000000Z\t2025-01-27T23:59:00.000000Z\n");
+        assertCountMinMax("mn", "ts IN " + literal, "count\tmin\tmax\n" + count + "\t" + first + ":00.000000000Z\t" + last + ":00.000000000Z\n");
+        final long hour = 3_600_000_000L;
+        final StringSink shifted = new StringSink();
+        shifted.put("count\tmin\tmax\n").put(count).put('\t');
+        MicrosFormatUtils.appendDateTimeUSec(shifted, MicrosFormatUtils.parseTimestamp(first + ":00.000000Z") - hour);
+        shifted.put('\t');
+        MicrosFormatUtils.appendDateTimeUSec(shifted, MicrosFormatUtils.parseTimestamp(last + ":00.000000Z") - hour);
+        shifted.put('\n');
+        assertCountMinMax("m", "dateadd('h', 1, ts) IN " + literal, shifted.toString());
+        bindVariableService.clear();
+        bindVariableService.setStr(0, tickExpr);
+        try {
+            final String bindSql = "SELECT count() FROM m WHERE ts IN $1";
+            if (bindCount < 0) {
+                assertExceptionNoLeakCheck(bindSql, bindSql.indexOf("$1"), "Unclosed '[' in date list");
+            } else {
+                assertQuery(bindSql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n" + bindCount + "\n");
+            }
         } finally {
             bindVariableService.clear();
         }

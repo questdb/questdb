@@ -66,6 +66,11 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #evaluate} runs the steps of the parser in the same order, and stops at the interval
  * limit where the parser stops, with the same error.
  * <p>
+ * In a list with a tick calendar whose only ';' starts its duration, each static date keeps its own
+ * extent in UTC, see {@link #HDR_STATIC_OWN_EXTENT_BIT}, as the parser keeps it for a bind variable.
+ * Where the own extents of a static date alone exceed the interval limit, the IR holds windows as long
+ * as the duration instead, and {@link #evaluate} parses the list first, see {@link #HDR_PARSE_FIRST_BIT}.
+ * <p>
  * An expression that the IR cannot represent exactly has no IR: {@link #evaluate} parses it with
  * {@link IntervalUtils#parseTickExpr} instead, the way a bind variable is parsed, so that a
  * literal and a bind variable with the same expression always produce the same intervals.
@@ -86,6 +91,14 @@ public class CompiledTickExpression extends UntypedFunction {
     static final long TAG_RANGE = 0x8000_0000_0000_0000L;
     static final long TAG_SINGLE_VAR = 0x0000_0000_0000_0000L;
     static final long TAG_STATIC = 0x4000_0000_0000_0000L;
+    // ---- Header (ir[0]) bits that IntervalUtils.compileTickExpr() sets ----
+    // evaluate() parses the expression as its bind variable, with the dates of the list keeping their
+    // own extent, and evaluates the IR, whose static dates are windows as long as the duration, only
+    // where the evaluation is lenient and the parse fails
+    static final long HDR_PARSE_FIRST_BIT = 1L << 25;
+    // the static dates are their own extents in UTC, which the steps of the elements skip, and the
+    // intervals unite before the tick calendar cuts them
+    static final long HDR_STATIC_OWN_EXTENT_BIT = 1L << 24;
     // ---- Section counts (ir[2..4]), a long each, so that no count is ever truncated ----
     static final int IR_DURATION_PART_COUNT_INDEX = 2;
     static final int IR_ELEMENT_COUNT_INDEX = 4;
@@ -120,7 +133,11 @@ public class CompiledTickExpression extends UntypedFunction {
     private final boolean hasDurationWithExchange;
     // null for an expression without IR, which evaluate() parses
     private final LongList ir;
-    // set only for an expression without IR
+    // see HDR_PARSE_FIRST_BIT
+    private final boolean isParseFirst;
+    // see HDR_STATIC_OWN_EXTENT_BIT
+    private final boolean isStaticOwnExtent;
+    // set only for an expression that evaluate() parses
     private final StringSink parseSink;
     // the position of the expression, for errors
     private final int position;
@@ -156,10 +173,12 @@ public class CompiledTickExpression extends UntypedFunction {
         this.tzRules = tzRules;
         this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
-        this.parseSink = null;
 
         // Pre-decode header and section offsets
         long header = ir.getQuick(0);
+        this.isParseFirst = (header & HDR_PARSE_FIRST_BIT) != 0;
+        this.isStaticOwnExtent = (header & HDR_STATIC_OWN_EXTENT_BIT) != 0;
+        this.parseSink = isParseFirst ? new StringSink() : null;
         this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
         this.durationPartCount = (int) ir.getQuick(IR_DURATION_PART_COUNT_INDEX);
@@ -186,6 +205,8 @@ public class CompiledTickExpression extends UntypedFunction {
         this.position = position;
         this.parseSink = new StringSink();
         this.ir = null;
+        this.isParseFirst = false;
+        this.isStaticOwnExtent = false;
         this.tzRules = null;
         this.dateLocale = null;
         this.exchangeSchedule = null;
@@ -226,10 +247,17 @@ public class CompiledTickExpression extends UntypedFunction {
      * not parse appends nothing, as an expression that resolves to no interval does, which IN
      * matches no row with, and NOT IN every row, the same as a null value. A query that a user runs
      * fails on it instead.
+     * <p>
+     * An expression whose IR holds windows for static dates whose own extents alone exceed the limit,
+     * see {@link #HDR_PARSE_FIRST_BIT}, parses as its bind variable, with the limit also where the
+     * evaluation is lenient, and there the IR evaluates it as it always has where the parse fails.
      */
     public void evaluate(LongList outIntervals) {
         if (ir == null) {
             parse(outIntervals);
+            return;
+        }
+        if (isParseFirst && parseFirst(outIntervals)) {
             return;
         }
         final int outStart = outIntervals.size();
@@ -250,7 +278,9 @@ public class CompiledTickExpression extends UntypedFunction {
             } else if (tag == TAG_STATIC) {
                 final int elementStart = outIntervals.size();
                 outIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
-                applyElementSteps(outIntervals, elementStart);
+                if (!isStaticOwnExtent) {
+                    applyElementSteps(outIntervals, elementStart);
+                }
                 pos += 3;
             } else {
                 mergedEnd = emitRange(word, ir.getQuick(pos + 1), outIntervals, outStart, mergedEnd);
@@ -260,6 +290,11 @@ public class CompiledTickExpression extends UntypedFunction {
 
         // The tick calendar filter and its duration apply to the whole result, in UTC
         if (exchangeSchedule != null) {
+            if (isStaticOwnExtent && outIntervals.size() > outStart + 2) {
+                // own extents can hold one another, as a day holds a minute of a static date, and the
+                // tick calendar intersects a sorted list of intervals that are apart
+                IntervalUtils.unionAppendedIntervals(outIntervals, outStart, mergedEnd);
+            }
             IntervalUtils.applyTickCalendarFilter(timestampDriver, exchangeSchedule, outIntervals, outStart);
             if (hasDurationWithExchange) {
                 applyDurationToAllIntervals(outIntervals, outStart);
@@ -299,12 +334,12 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     /**
-     * Returns whether {@link #evaluate} parses the expression, as it does for one without IR,
-     * rather than evaluating the IR. Both forms produce the same intervals, so only tests tell them
-     * apart this way.
+     * Returns whether {@link #evaluate} parses the expression, as it does for one without IR, or
+     * parses it first, see {@link #HDR_PARSE_FIRST_BIT}, rather than evaluating the IR. The parse
+     * produces the intervals that an IR would, so only tests tell the forms apart this way.
      */
     public boolean isParsedOnEvaluation() {
-        return ir == null;
+        return ir == null || isParseFirst;
     }
 
     @Override
@@ -576,6 +611,42 @@ public class CompiledTickExpression extends UntypedFunction {
             if (isLenient) {
                 outIntervals.setPos(outStart);
                 return;
+            }
+            throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
+        }
+    }
+
+    /**
+     * Parses the expression as its bind variable, with each date of the list keeping its own extent,
+     * see {@link #HDR_PARSE_FIRST_BIT}, and returns true, or fails with the error of the parser at its
+     * position. Where {@link IntervalUtils#isTickEvaluationLenient} holds, it parses with the interval
+     * limit too, which bounds the parse, and where the parse fails, it drops what the parse appended and
+     * returns false, so that the IR evaluates the expression.
+     */
+    private boolean parseFirst(LongList outIntervals) {
+        final int outStart = outIntervals.size();
+        try {
+            IntervalUtils.parseTickExpr(
+                    timestampDriver,
+                    configuration,
+                    expression,
+                    0,
+                    expression.length(),
+                    position,
+                    outIntervals,
+                    IntervalOperation.INTERSECT,
+                    parseSink,
+                    true,
+                    now,
+                    isLenient ? checks | IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : checks,
+                    false,
+                    true
+            );
+            return true;
+        } catch (SqlException e) {
+            outIntervals.setPos(outStart);
+            if (isLenient) {
+                return false;
             }
             throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
         }

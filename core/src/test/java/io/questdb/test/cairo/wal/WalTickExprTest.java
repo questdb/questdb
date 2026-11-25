@@ -737,6 +737,52 @@ public class WalTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticDateTickCalendarDurationInUpdate() throws Exception {
+        // An UPDATE with a literal with a fixed date, a date variable, a tick calendar and a duration
+        // updates what the tick calendar keeps of the own extent of the fixed date, extended by the
+        // duration once, as a query selects it, applied from the WAL and run directly: on Monday
+        // 2025-01-27, the sessions of Friday 2025-01-24 and of the Monday, from 14:30 to 21:00Z, each an
+        // hour longer, 900 minutes. A fixed date whose own extents alone exceed the interval limit, the
+        // 1,440 seconds at the minutes of 2025-01-24, which nothing else in the list holds, fails the
+        // UPDATE of the WAL table as it compiles, before the client sees it succeed, and the table keeps
+        // applying.
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-27T12:00:00.000000Z"));
+            try {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String name = isWal ? "w" : "nw";
+                    execute("CREATE TABLE " + name + " AS ("
+                            + "SELECT timestamp_sequence('2025-01-24T00:00:00.000000Z', 60_000_000L) ts, 1 v FROM long_sequence(5_760)"
+                            + ") TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"));
+                    drainWalQueue();
+                    update("UPDATE " + name + " SET v = 2 WHERE ts IN '[$today, 2025-01-24]#XNYS;1h'");
+                    drainWalQueue();
+                    assertRowsWithValue(name, 2, "900\t2025-01-24T14:30:00.000000Z\t2025-01-27T21:59:00.000000Z");
+                }
+
+                final TableToken walToken = engine.verifyTableName("w");
+                final String rejected = "UPDATE w SET v = 3 WHERE ts IN '[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m'";
+                final long seqTxn = engine.getTableSequencerAPI().lastTxn(walToken);
+                assertExceptionNoLeakCheck(rejected, rejected.indexOf('\''), "Bracket expansion produces too many intervals (max 1024)");
+                Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(walToken));
+                update("UPDATE w SET v = 4 WHERE ts = '2025-01-25T00:00:00.000000Z'");
+                drainWalQueue();
+                Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(walToken));
+                assertRowsWithValue("w", 3, "0\t\t");
+                assertRowsWithValue("w", 4, "1\t2025-01-25T00:00:00.000000Z\t2025-01-25T00:00:00.000000Z");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testTableKeepsApplyingAfterUpdate() throws Exception {
         // the shapes that suspended the table before this fix, followed by an INSERT, all apply
         assertMemoryLeak(() -> {

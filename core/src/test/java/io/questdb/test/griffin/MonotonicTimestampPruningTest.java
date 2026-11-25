@@ -1668,6 +1668,47 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInStaticDateTickCalendarLiteralAppliesDurationOnce() throws Exception {
+        // g(ts) IN a literal with a fixed date, a date variable, a tick calendar and a duration inverts
+        // the intervals of each run: the fixed date keeps its own extent, the tick calendar keeps what its
+        // sessions hold of it, and the duration extends what they keep, once. On Monday 2025-01-27, XNYS
+        // trades from 14:30 to 21:00Z, as on Friday 2025-01-24. dateadd('h', 1, ts) selects the minutes an
+        // hour before the intervals, on a microsecond and a nanosecond timestamp. A fixed date with a ';' of
+        // its own and the duration of the list fails the query as it compiles, at the literal, after the
+        // inversion as the query compiles declines it.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(parseMicros("2025-01-27T12:00:00.000000Z"));
+            try {
+                final String[][] literals = {
+                        // each session, an hour longer
+                        {"[$today, 2025-01-24]#XNYS;1h", "900", "2025-01-24T13:30:00.000000", "2025-01-27T20:59:00.000000"},
+                        // the hour from 15:00 of the fixed date, its own duration, and the session of the Monday
+                        {"[$today, 2025-01-24T15:00;1h]#XNYS", "450", "2025-01-24T14:00:00.000000", "2025-01-27T19:59:00.000000"},
+                        // the minute at 15:00Z as it is, and the session of the Monday
+                        {"[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", "391", "2025-01-24T14:00:00.000000", "2025-01-27T19:59:00.000000"}
+                };
+                for (String[] literal : literals) {
+                    for (String table : new String[]{"m", "mn"}) {
+                        final String fraction = table.equals("m") ? "Z" : "000Z";
+                        assertQuery("SELECT count(), min(ts), max(ts) FROM " + table + " WHERE dateadd('h', 1, ts) IN '" + literal[0] + "'")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .withPlanContaining("filter: dateadd('h',1,ts) in [")
+                                .returns("count\tmin\tmax\n" + literal[1] + '\t' + literal[2] + fraction + '\t' + literal[3] + fraction + '\n');
+                    }
+                }
+                final String sql = "SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN '[$today, 2025-01-24;1h;1d]#XNYS;1h'";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("'["), "Count not a number");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testNanoColumnRuntimeMicroBound() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");

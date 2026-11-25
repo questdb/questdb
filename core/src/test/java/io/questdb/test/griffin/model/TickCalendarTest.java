@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
@@ -38,6 +39,7 @@ import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -61,9 +63,18 @@ import java.util.Arrays;
  */
 public class TickCalendarTest {
 
+    // the test calendars XNYS and XHKG, see TestTickCalendarService, and X24H
+    private static final TickCalendarService CALENDARS = exchange -> Chars.equalsIgnoreCase("X24H", exchange)
+            ? TickCalendarTest.X24H
+            : TestTickCalendarService.INSTANCE.getSchedule(exchange);
     // a Friday that XNYS trades on from 14:30 to 21:00Z
     private static final String FRIDAY_NOON = "2025-01-24T12:00:00.000000Z";
     private static final Log LOG = LogFactory.getLog(TickCalendarTest.class);
+    // the Monday after FRIDAY_NOON, which XNYS trades on from 14:30 to 21:00Z too
+    private static final String MONDAY_NOON = "2025-01-27T12:00:00.000000Z";
+    // a test calendar with one session a UTC day, on 1969-12-31, 1970-01-01, every day of 2025,
+    // 2099-01-02 and 2099-01-03, so that a session holds every hour of those days
+    private static final LongList X24H = buildX24h();
     private static final StringSink sink = new StringSink();
     private static CairoConfiguration configuration;
 
@@ -73,7 +84,7 @@ public class TickCalendarTest {
             private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
                 @Override
                 public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
-                    return () -> TestTickCalendarService.INSTANCE;
+                    return () -> CALENDARS;
                 }
             };
 
@@ -1034,6 +1045,756 @@ public class TickCalendarTest {
                 "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T20:59:59.999999Z}]",
                 "[2025-01-24@-05:00#XNYS]"
         );
+    }
+
+    @Test
+    public void testCompiledStaticDateConvertsSlotZonesOnce() throws SqlException {
+        // A time slot of a fixed date in a compiled list with a tick calendar and a duration converts
+        // to UTC once, with its own timezone, or else with the timezone of the list, as the parser
+        // converts it for a bind variable. The compiled form used to convert a slot with its own
+        // timezone a second time, with the timezone of the list. XNYS trades from 14:30 to 21:00Z on
+        // Thursday 2025-01-23, Friday 2025-01-24 and Monday 2025-01-27; 09:30 in New York is 14:30Z,
+        // and "today" in Paris, Tokyo or at an offset is the day of that timezone. X24H trades all day,
+        // so the hour from 01:00 that New York repeats on 2025-11-02 keeps both of its instants.
+        final String nov4 = "2025-11-04T12:00:00.000000Z";
+        final String[][] cases = {
+                // now, expression, "bind" where the parser reads the text alike, then the intervals
+                {MONDAY_NOON, "[$today, 2025-01-24T[09:30@America/New_York]]@Europe/Paris#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T15:30:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[09:30@America/New_York]]@Europe/Paris#XNYS;1h1m", "bind", "2025-01-24T14:30", "2025-01-24T15:31:59.999999", "2025-01-27T14:30", "2025-01-27T22:00:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-[23..24]T[09:30@America/New_York]]@Europe/Paris#XNYS;1h1m", "bind", "2025-01-23T14:30", "2025-01-23T15:31:59.999999", "2025-01-24T14:30", "2025-01-24T15:31:59.999999", "2025-01-27T14:30", "2025-01-27T22:00:59.999999"},
+                // today in Tokyo ends at 15:00Z
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]@Asia/Tokyo#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T14:30", "2025-01-27T15:59:59.999999"},
+                // 16:00 in Tokyo is 07:00Z
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC,16:00]]@Asia/Tokyo#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T14:30", "2025-01-27T15:59:59.999999"},
+                // both slots are 15:00Z
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC,10:00]]@-05:00#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // 14:00Z lies before the session
+                {MONDAY_NOON, "[$today, 2025-01-24T[14:00@UTC]]@-01:00#XNYS;2h", "bind", "2025-01-27T14:30", "2025-01-27T22:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@-01:00]]@+01:00#XNYS;3h", "bind", "2025-01-24T16:00", "2025-01-24T19:00:59.999999", "2025-01-27T14:30", "2025-01-27T23:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@+01:00]]@+01:00#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // a date with an offset of its own reads as an instant, which the timezone of the list
+                // shifts again, to 14:00Z, see bug-explicit-offset-shifted-by-zone
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00Z]@Europe/Paris#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // a slot at 06:30Z on the day New York repeats 01:00, a minute longer, and the day of
+                // 2025-11-04 in New York, from 05:00Z, a minute longer; a slot taken to the local time of
+                // the list and back would add 05:30Z, which repeats 01:30 too
+                {nov4, "[$today, 2025-11-02T[06:30@UTC]]@America/New_York#X24H;1m", "bind", "2025-11-02T06:30", "2025-11-02T06:31:59.999999", "2025-11-04T05:00", "2025-11-05T05:00:59.999999"},
+                {nov4, "[$today, 2025-11-02T01:30]@America/New_York#X24H;1m", "bind", "2025-11-02T05:30", "2025-11-02T05:31:59.999999", "2025-11-02T06:30", "2025-11-02T06:31:59.999999", "2025-11-04T05:00", "2025-11-05T05:00:59.999999"}
+        };
+        assertCompiledStaticDates(configuration, cases);
+        // 15:00 at -05:00 is 20:00Z on each trading day of January, which the session holds, an hour
+        // longer; today's session, an hour longer, holds it on 2025-01-27
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            final String expected = slotOnSessionDays(driver, "XNYS", "2025-01-01", "2025-02-01", driver.fromHours(20), driver.fromMinutes(1), driver.fromHours(1), "2025-01-27T14:30", "2025-01-27T22:00");
+            assertCompiledStaticDate(configuration, driver, "[$today, 2025-01T[15:00@-05:00]]@Europe/Paris#XNYS;1h", now, expected, true);
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateIntervalLimit() throws SqlException {
+        // The compiled form of a list with a fixed date, a tick calendar and a duration counts the own
+        // extent of each fixed date against the interval limit, as the parser counts it for a bind
+        // variable, where it counted windows as long as the duration, which merged: it fails where the
+        // bind variable fails, at the same "now", as its SQL compiles and as it runs. At a merge
+        // threshold of 8 and a limit of 16, on Monday 2025-01-27, the minute at 15:00 of each day of a
+        // range of days stays apart, and so do the 24 sessions of XHKG on the 12 trading days from
+        // 2025-01-02 to 2025-01-17 once each ends 30 minutes later.
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        final String dateRangeError = "error: Date range expansion produces too many intervals (max 16)";
+        final String bracketError = "error: Bracket expansion produces too many intervals (max 16)";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            // the check after each day of a range, and the check at the end, of the IR
+            for (String[] c : new String[][]{
+                    {"[2025-01-02, $today-20d..$today]T15:00#XNYS;30d", dateRangeError},
+                    {"[2025-01-[02..09], $today-12d..$today]T15:00#XNYS;1d", dateRangeError},
+                    {"[$today, 2025-01-[02..17]]#XHKG;30m", bracketError}
+            }) {
+                assertCompiledStaticDateFails(smallLimits, driver, c[0], now, false, c[1]);
+                Assert.assertEquals(c[0], c[1], parseTickExpr(smallLimits, driver, c[0], now, IntervalUtils.TICK_CHECK_ALL));
+            }
+            // a fixed date whose own extents alone exceed the limit: the list parses as its bind
+            // variable does, which fails where no earlier element holds them
+            for (String[] c : new String[][]{
+                    {"[$today, 2025-01-24T[00..23]:00:00]#XNYS;1h", bracketError},
+                    // the minutes at 15:00Z and at 03:00Z of 20 days, whose windows used to be empty
+                    {"[$today, 2025-01-[01..20]T[15:00@UTC]]#XNYS;0h", bracketError},
+                    {"[$today, 2025-01-[01..20]T[03:00@UTC]]#XNYS;0h", bracketError}
+            }) {
+                assertCompiledStaticDateFails(smallLimits, driver, c[0], now, true, c[1]);
+                Assert.assertEquals(c[0], c[1], parseTickExpr(smallLimits, driver, c[0], now, IntervalUtils.TICK_CHECK_ALL));
+            }
+            for (String expression : new String[]{
+                    "[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m",
+                    "[$today, 2025-[01..02]-[01..28]T[00..13]:[00,30]]#XNYS;30m"
+            }) {
+                assertCompiledStaticDateFails(configuration, driver, expression, now, true, "error: Bracket expansion produces too many intervals (max 1024)");
+                Assert.assertEquals(expression, "error: Bracket expansion produces too many intervals (max 1024)", parseTickExpr(driver, expression, now));
+            }
+            // The IR counts the own extents of a fixed date apart from the elements before it as it
+            // compiles, so the list keeps its result where the parser counts the 8 minutes of the fixed
+            // date with the 13 of the range before them and fails: the minute at 15:00 of each trading
+            // day, a day longer
+            final String rangeFirst = "[$today-12d..$today, 2025-01-[02..09]]T15:00#XNYS;1d";
+            assertCompiledStaticDate(
+                    smallLimits,
+                    driver,
+                    rangeFirst,
+                    now,
+                    expectedIntervals(
+                            timestampType,
+                            "2025-01-02T15:00", "2025-01-04T15:00:59.999999",
+                            "2025-01-06T15:00", "2025-01-09T15:00:59.999999",
+                            "2025-01-15T15:00", "2025-01-18T15:00:59.999999",
+                            "2025-01-21T15:00", "2025-01-25T15:00:59.999999",
+                            "2025-01-27T15:00", "2025-01-28T15:00:59.999999"
+                    ),
+                    false
+            );
+            Assert.assertEquals(rangeFirst, bracketError, parseTickExpr(smallLimits, driver, rangeFirst, now, IntervalUtils.TICK_CHECK_ALL));
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateKeepsCompileErrors() {
+        // A compiled list with a fixed date, a tick calendar and a duration fails to compile with the
+        // error it has always failed with, at the position of the literal: the error of the same list
+        // with the day filter #Fri for the tick calendar, which compiles each fixed date with the
+        // duration as it always has. A ';' of a fixed date before the ';' of the list makes the parse of
+        // the date read a repeating interval, or too many parts; a ';' after a zone of a time slot is
+        // part of the zone, see testCompiledStaticDateKeepsZoneSwallowedSemicolon.
+        final String[][] cases = {
+                {"[$today, 2025-01-24;1h;1d]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24;1h;1d]#XHKG;1h", "Count not a number"},
+                {"[$today, 2025-01-24;1h;1d]@America/New_York#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24;1h;1d]#XNYS;", "Count not a number"},
+                {"[2025-01-24;1h;1d, $today]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24;1h;1d, 2025-01-23]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24;1h;1d]T15:00#XNYS;1h", "Period not a number"},
+                {"[$today, 2025-01-24;1h]#XNYS;1h", "Invalid interval format: 2025-01-24;1h;1h"},
+                {"[$today, 2025-01-24;]#XNYS;1h", "Invalid interval format: 2025-01-24;;1h"},
+                {"[$today, 2025-01-24;;]#XNYS;1h", "Period not a number"},
+                {"[$today, 2025-01-24;1h;1d;2]#XNYS;1h", "Invalid interval format (too many semicolons): 2025-01-24;1h;1d;2;1h"},
+                {"[$today, 2025-01-24;30m;2d;2]#XNYS;1h", "Invalid interval format (too many semicolons): 2025-01-24;30m;2d;2;1h"},
+                {"[$today, 2025-01-[24,25];1h;1d]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24T[15:00;1h;1d]]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24T[15:00,16:00;1h;1d]]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-24T15:00;1h;1d]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-[01..02]T15:00:00-05;1h;1d]#XNYS;1h", "Count not a number"},
+                {"[$today, 2025-01-[24,25;1h;1d]]#XNYS;1h", "Expected ',' or end of bracket"},
+                {"[$today, 2025-01-24]#XNYS;1h1;1d1;", "Period not a number"},
+                {"[$today, 2025-01-24]#XNYS;1;", "Invalid interval format: 2025-01-24;1;"},
+                {"[$today, 2025-01-24]#XNYS;1;23;", "Count not a number"},
+                {"[$today;1h;1d, 2025-01-24]#XNYS;1h", "Unknown date variable: $today;1h;1d"},
+                // the date, the time or the duration does not parse
+                {"[$today, 2025-01-32]#XNYS;1h", "Invalid date: 2025-01-32"},
+                {"[$today, 2025-01-[24,32]]#XNYS;1h", "Invalid date: 2025-01-32"},
+                {"[$today, 2025-01-24T25:00]#XNYS;1h", "Invalid date: 2025-01-24T25:00"},
+                {"[$today, 2025-01-24T15Z]#XNYS;1h", "Invalid date: 2025-01-24T15Z"},
+                {"[$today, 2025-01-24 15:00:00]#XNYS;1h", "Invalid date: 2025-01-24 15:00:00"},
+                {"[$today, 2025-01-24]#XNYS;1x", "Invalid duration unit: x"},
+                {"[$today, 2025-01-24T[15:00,25:00]]#XNYS;1x", "Invalid duration unit: x"},
+                {"[$today, 2025-01-24]#XNYS;h", "Expected number before unit 'h'"},
+                {"[$today, 2025-01-24]#XNYS;1h;1d;2", "Expected number before unit ';'"}
+        };
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String[] c : cases) {
+                assertCompileError(configuration, driver, c[0], c[1]);
+                assertCompileError(configuration, driver, c[0].replace("#XNYS", "#Fri").replace("#XHKG", "#Fri"), c[1]);
+            }
+        }
+        // nine digits of a second are more than microseconds hold
+        final TimestampDriver micros = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
+        assertCompileError(configuration, micros, "[$today, 2025-01-24T15:00:00.123456789Z]#XNYS;1h", "Invalid date: 2025-01-24T15:00:00.123456789Z");
+        // the windows of the days of these fixed dates stay apart, so their list fails the limit as it
+        // compiles, which the own extents, whole days that join, would not: at a limit of 16, the 14 trading
+        // days of 2025-01-01 to 2025-01-20 an hour longer, and at the default limit, the trading days
+        // of four years
+        assertCompileError(calendarConfiguration(8, 16), micros, "[$today, 2025-01-[01..20]]#XNYS;1h", "Bracket expansion produces too many intervals (max 16)");
+        assertCompileError(configuration, micros, "[$today, [2022..2025]-[01..12]-[01..28]]#XNYS;1h", "Bracket expansion produces too many intervals (max 1024)");
+    }
+
+    @Test
+    public void testCompiledStaticDateKeepsItsExtentUnderTickCalendar() throws SqlException {
+        // A fixed date in a compiled list with a tick calendar and a duration keeps its own extent,
+        // a day, an hour, a minute, a second or a point in time, as the parser keeps it for a bind
+        // variable: the tick calendar keeps what its sessions hold of it, and the duration extends
+        // what they keep, once. The compiled form used to make each fixed date a window as long as the
+        // duration from its start, which the calendar cut and the duration extended again. XNYS trades
+        // from 14:30 to 21:00Z on Thursday 2025-01-23, Friday 2025-01-24, Monday 2025-01-27 and Tuesday
+        // 2025-01-28, from 13:30 to 20:00Z after New York moves to summer time on 2025-03-09, from 13:30
+        // to 17:00Z on 2025-07-03, and not on weekends nor on the holiday 2025-01-20. XHKG trades from
+        // 01:30 to 04:00Z and from 05:00 to 08:00Z. X24H trades all day on 1969-12-31, 1970-01-01,
+        // in 2025 and on 2099-01-02 and 2099-01-03.
+        final String jul3 = "2025-07-03T12:00:00.000000Z";
+        final String[][] cases = {
+                // now, expression, "bind" where the parser reads the text alike and nothing nests, "S2"
+                // otherwise, then the intervals
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[2025-01-24, $today]#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[ $TODAY , 2025-01-24 ]#xnys;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-[23..24]]#XNYS;1h", "bind", "2025-01-23T14:30", "2025-01-23T21:59:59.999999", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-W04-5]#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // a Saturday and a holiday without a session
+                {MONDAY_NOON, "[$today, 2025-01-24, 2025-01-25]#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-20]#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00]#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00]#XNYS;30s", "bind", "2025-01-24T15:00", "2025-01-24T15:01:29.999999", "2025-01-27T14:30", "2025-01-27T21:00:29.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15]#XNYS;2h", "bind", "2025-01-24T15:00", "2025-01-24T17:59:59.999999", "2025-01-27T14:30", "2025-01-27T22:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00Z]#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // 14:00Z lies before the session, 20:00Z in it
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00+01:00]#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00-05]#XNYS;1h", "bind", "2025-01-24T20:00", "2025-01-24T21:00", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // times that the literal reads as it always has, and the parser does not: 15:00:00UTC, which
+                // the parser reads only with a duration, and 15:00:00.1234Z, which it reads as 15:00:00.234
+                // with a duration, see bug-duration-date-parse-any-format-misreads
+                {MONDAY_NOON, "[$today, 2025-01-24T09:00:00UTC]#XNYS;1h", "S2", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00UTC]#XNYS;1h", "S2", "2025-01-24T15:00", "2025-01-24T16:00", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00.1234Z]#XNYS;1h", "S2", "2025-01-24T15:00:00.234000", "2025-01-24T16:00:00.234000", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // 02:30 in Jerusalem does not exist on 2025-03-28, so no interval is left
+                {"2025-03-28T12:00:00.000000Z", "[$today, 2025-03-28]T02:30@Asia/Jerusalem#XHKG;1h", "bind"},
+                // a negative, a zero and an empty duration
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;-1h", "bind", "2025-01-24T14:30", "2025-01-24T19:59:59.999999", "2025-01-27T14:30", "2025-01-27T19:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;0h", "bind", "2025-01-24T14:30", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;", "bind", "2025-01-24T14:30", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00]#XNYS;", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // days, months, years and compound durations
+                {MONDAY_NOON, "[$today, 2025-01-23]#XNYS;2d", "bind", "2025-01-23T14:30", "2025-01-25T20:59:59.999999", "2025-01-27T14:30", "2025-01-29T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;1M", "bind", "2025-01-24T14:30", "2025-02-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;1y", "bind", "2025-01-24T14:30", "2026-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;1h30m", "bind", "2025-01-24T14:30", "2025-01-24T22:29:59.999999", "2025-01-27T14:30", "2025-01-27T22:29:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;2h-1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // two sessions a day, which an hour longer join, and half an hour shorter do not
+                {MONDAY_NOON, "[$today, 2025-01-24]#XHKG;1h", "bind", "2025-01-24T01:30", "2025-01-24T08:59:59.999999", "2025-01-27T01:30", "2025-01-27T08:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XHKG;-30m", "bind", "2025-01-24T01:30", "2025-01-24T03:29:59.999999", "2025-01-24T05:00", "2025-01-24T07:29:59.999999", "2025-01-27T01:30", "2025-01-27T03:29:59.999999", "2025-01-27T05:00", "2025-01-27T07:29:59.999999"},
+                // the timezone of the list: the day of 2025-01-24 at +08:00 starts at 16:00Z the day before
+                {MONDAY_NOON, "[$today, 2025-01-24]@America/New_York#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]@+08:00#XNYS;1h", "bind", "2025-01-23T16:00", "2025-01-23T21:59:59.999999", "2025-01-24T14:30", "2025-01-24T16:59:59.999999", "2025-01-27T14:30", "2025-01-27T16:59:59.999999"},
+                {"2025-03-10T12:00:00.000000Z", "[$today, 2025-03-07, 2025-03-10T13:00]@America/New_York#XNYS;1h", "bind", "2025-03-07T14:30", "2025-03-07T21:59:59.999999", "2025-03-10T13:30", "2025-03-10T20:59:59.999999"},
+                // the early close
+                {jul3, "[$today, 2025-07-02]#XNYS;1h", "bind", "2025-07-02T13:30", "2025-07-02T20:59:59.999999", "2025-07-03T13:30", "2025-07-03T17:59:59.999999"},
+                {jul3, "[$today, 2025-07-03T16:30]#XNYS;1h", "bind", "2025-07-03T13:30", "2025-07-03T17:59:59.999999"},
+                // $now before and in the session
+                {MONDAY_NOON, "[$now, 2025-01-27]#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {"2025-01-27T15:30:00.000000Z", "[$now, 2025-01-27]#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // times in brackets and time lists of the fixed date, and the time part of the list
+                {MONDAY_NOON, "[$today, 2025-01-24T[15,16]:00]#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T17:00:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00,16:00]]#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T17:00:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC,16:00]]#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T17:00:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24, 2025-01-24T16:00]#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today - 1d..$today, 2025-01-24]#XNYS;1h", "bind", "2025-01-24T14:30", "2025-01-24T21:59:59.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today-3d..$today, 2025-01-24]T15:00#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T15:00", "2025-01-27T16:00:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]T15:00#XNYS;1h", "bind", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T15:00", "2025-01-27T16:00:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]T15:00@America/New_York#XNYS;1h", "bind", "2025-01-24T20:00", "2025-01-24T21:00:59.999999", "2025-01-27T20:00", "2025-01-27T21:00:59.999999"},
+                // Fixed dates that hold one another, a minute and a second in it, and a day of today
+                // in Hong Kong and its minute at 23:00 or 23:30, unite before the tick calendar cuts
+                // them, so the session keeps all of the outer one; the parser keeps the end of the
+                // inner one instead, see bug-nested-slots-tick-calendar
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00,15:00:30]]#XNYS;1m", "S2", "2025-01-24T15:00", "2025-01-24T15:01:59.999999", "2025-01-27T14:30", "2025-01-27T21:00:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;1h", "S2", "2025-01-27T14:30", "2025-01-27T16:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;", "S2", "2025-01-27T14:30", "2025-01-27T15:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-27T23:30]@Asia/Hong_Kong#XNYS;1h", "S2", "2025-01-27T14:30", "2025-01-27T16:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-27T23:30]@-02:00#XHKG;1h", "S2", "2025-01-27T02:00", "2025-01-27T08:59:59.999999", "2025-01-28T01:30", "2025-01-28T02:59:59.999999"},
+                // the results that do not depend on the extent of the fixed dates
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;1d", "bind", "2025-01-24T14:30", "2025-01-25T20:59:59.999999", "2025-01-27T14:30", "2025-01-28T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS;25h", "bind", "2025-01-24T14:30", "2025-01-25T21:59:59.999999", "2025-01-27T14:30", "2025-01-28T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#XNYS", "bind", "2025-01-24T14:30", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24]#Fri;1h", "bind", "2025-01-24T00:00", "2025-01-24T00:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24];1h", "bind", "2025-01-24T00:00", "2025-01-24T00:59:59.999999", "2025-01-27T00:00", "2025-01-27T00:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-27T15:00]#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00:00+01:00]@Europe/Paris#XNYS;1h", "bind", "2025-01-27T14:30", "2025-01-27T21:59:59.999999"},
+                // dates before 1970 and far in the future, which X24H has sessions on
+                {MONDAY_NOON, "[$today, 1969-12-31]#X24H;1h", "bind", "1969-12-31T00:00", "1970-01-01T00:59:59.999999", "2025-01-27T00:00", "2025-01-28T00:59:59.999999"},
+                {MONDAY_NOON, "[1969-12-31, $today]#X24H;1h", "bind", "1969-12-31T00:00", "1970-01-01T00:59:59.999999", "2025-01-27T00:00", "2025-01-28T00:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2099-01-02]#X24H;1h", "bind", "2025-01-27T00:00", "2025-01-28T00:59:59.999999", "2099-01-02T00:00", "2099-01-03T00:59:59.999999"},
+                {MONDAY_NOON, "[$today, 1969-12-31T23:30]#X24H;1h", "bind", "1969-12-31T23:30", "1970-01-01T00:30:59.999999", "2025-01-27T00:00", "2025-01-28T00:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2099-01-02T23:30]#X24H;1h", "bind", "2025-01-27T00:00", "2025-01-28T00:59:59.999999", "2099-01-02T23:30", "2099-01-03T00:30:59.999999"},
+                {MONDAY_NOON, "[$today, 1969-12-31]@America/New_York#X24H;1h", "bind", "1969-12-31T05:00", "1970-01-01T05:59:59.999999", "2025-01-27T05:00", "2025-01-28T05:59:59.999999"},
+                {MONDAY_NOON, "[$today, 1969-12-31]#X24H;", "bind", "1969-12-31T00:00", "1969-12-31T23:59:59.999999", "2025-01-27T00:00", "2025-01-27T23:59:59.999999"},
+                {MONDAY_NOON, "[$today, 1969-12-31T[23:30@UTC]]#X24H;0h", "bind", "1969-12-31T23:30", "1969-12-31T23:30:59.999999", "2025-01-27T00:00", "2025-01-27T23:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2099-01-02T[23:30@UTC]]#X24H;0h", "bind", "2025-01-27T00:00", "2025-01-27T23:59:59.999999", "2099-01-02T23:30", "2099-01-02T23:30:59.999999"},
+                {MONDAY_NOON, "[$today, 1969-12-31]#X24H", "bind", "1969-12-31T00:00", "1969-12-31T23:59:59.999999", "2025-01-27T00:00", "2025-01-27T23:59:59.999999"}
+        };
+        assertCompiledStaticDates(configuration, cases);
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            // 15:00 at -05:00 is 20:00Z on each trading day of the month, or of the two months, a minute
+            // or a point in time that the session holds, an hour longer
+            assertCompiledStaticDate(
+                    configuration,
+                    driver,
+                    "[$today, 2025-01T[15:00@-05:00]]#XNYS;1h",
+                    now,
+                    slotOnSessionDays(driver, "XNYS", "2025-01-01", "2025-02-01", driver.fromHours(20), driver.fromMinutes(1), driver.fromHours(1), "2025-01-27T14:30", "2025-01-27T22:00"),
+                    true
+            );
+            assertCompiledStaticDate(
+                    configuration,
+                    driver,
+                    "[$today, 2025-[01..02]T15:00:00-05]#XNYS;1h",
+                    now,
+                    slotOnSessionDays(driver, "XNYS", "2025-01-01", "2025-03-01", driver.fromHours(20), 1, driver.fromHours(1), "2025-01-27T14:30", "2025-01-27T22:00"),
+                    true
+            );
+        }
+        // a nanosecond, which only nanosecond timestamps add
+        final TimestampDriver nanos = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
+        assertCompiledStaticDate(
+                configuration,
+                nanos,
+                "[$today, 2025-01-24]#XNYS;1n",
+                nanos.parseFloorLiteral(MONDAY_NOON),
+                "[{lo=2025-01-24T14:30:00.000000000Z, hi=2025-01-24T21:00:00.000000000Z},{lo=2025-01-27T14:30:00.000000000Z, hi=2025-01-27T21:00:00.000000000Z}]",
+                true
+        );
+    }
+
+    @Test
+    public void testCompiledStaticDateKeepsZoneSwallowedSemicolon() throws SqlException {
+        // The timezone of a time slot runs to the end of the slot, so a ';' after it is part of the zone,
+        // which reads as -05:00 up to it, see bug-zone-name-prefix-match. Each day of January keeps the
+        // window that the list has always made of it: the minute at 20:00Z an hour long, which the
+        // session cuts at 21:00Z and the duration extends by an hour.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            assertCompiledStaticDate(
+                    configuration,
+                    driver,
+                    "[$today, 2025-01T[15:00@-05:00;1h;1d]]#XNYS;1h",
+                    now,
+                    slotOnSessionDays(driver, "XNYS", "2025-01-01", "2025-02-01", driver.fromHours(20), driver.fromHours(1), driver.fromHours(1), "2025-01-27T14:30", "2025-01-27T22:00"),
+                    false
+            );
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOverflowParsesAsBindVariable() throws SqlException {
+        // A fixed date whose own extents alone exceed the interval limit makes the compiled form parse
+        // the list as its bind variable on each evaluation, where earlier elements may hold them, and
+        // fail with the error of the bind variable, at its position, where they do not. At a merge
+        // threshold of 8 and a limit of 16, on Monday 2025-01-27: the 24 seconds at the hours of the day
+        // lie in today; at 03:30Z, the seconds every ten minutes from 01:00 to 03:00 of the range from
+        // today to now that lie after now, at 03:40 and 03:50, end the session of XHKG, which ends at
+        // 04:00Z, ten minutes later. The text 00:00:00UTC reads as a point in time only with a duration.
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        final String bracketError = "error: Bracket expansion produces too many intervals (max 16)";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            final String hours = "[$today, 2025-01-27T[00..23]:00:00]#XNYS;1h";
+            final String session = expectedIntervals(timestampType, "2025-01-27T14:30", "2025-01-27T21:59:59.999999");
+            assertCompiledStaticDateParsesFirst(smallLimits, driver, hours, now, session);
+            Assert.assertEquals(hours, session, parseTickExpr(smallLimits, driver, hours, now, IntervalUtils.TICK_CHECK_ALL));
+            // the 21 seconds to 20:00:00 merge into today as the last of them expands, after each 7th,
+            // which leaves the parse a single interval for the tick calendar
+            final String toEight = "[$today, 2025-01-27T[00..20]:00:00]#XNYS;1h";
+            assertCompiledStaticDateParsesFirst(smallLimits, driver, toEight, now, session);
+            Assert.assertEquals(toEight, session, parseTickExpr(smallLimits, driver, toEight, now, IntervalUtils.TICK_CHECK_ALL));
+
+            final String xhkg = "[$today..$now, 2025-01-27T[01..03]:[00,10,20,30,40,50]:00]#XHKG;10m";
+            final long earlyMorning = driver.parseFloorLiteral("2025-01-27T03:30:00.000000Z");
+            final String xhkgExpected = expectedIntervals(timestampType, "2025-01-27T01:30", "2025-01-27T04:00:00.999999");
+            assertCompiledStaticDateParsesFirst(smallLimits, driver, xhkg, earlyMorning, xhkgExpected);
+            Assert.assertEquals(xhkg, xhkgExpected, parseTickExpr(smallLimits, driver, xhkg, earlyMorning, IntervalUtils.TICK_CHECK_ALL));
+
+            // the fixed date first: nothing holds its seconds
+            final String dateFirst = "[2025-01-27T[00..23]:00:00, $today]#XNYS;1h";
+            assertCompiledStaticDateParsesFirst(smallLimits, driver, dateFirst, now, bracketError);
+            Assert.assertEquals(dateFirst, bracketError, parseTickExpr(smallLimits, driver, dateFirst, now, IntervalUtils.TICK_CHECK_ALL));
+
+            // the bind variable fails on the time, which the literal reads with the duration
+            final String utc = "[$today, 2025-01-27T[00..23]:00:00UTC]#XNYS;1h";
+            assertCompiledStaticDateParsesFirst(smallLimits, driver, utc, now, session);
+            Assert.assertEquals(utc, "error: Invalid date: 2025-01-27T00:00:00UTC", parseTickExpr(smallLimits, driver, utc, now, IntervalUtils.TICK_CHECK_ALL));
+
+            // at the default limits, the 1,440 seconds at the minutes of the day lie in today on
+            // Monday, and nothing holds them on Tuesday
+            final String minutes = "[$today, 2025-01-27T[00..23]:[00..59]:00]#XNYS;1m";
+            final String minutesExpected = expectedIntervals(timestampType, "2025-01-27T14:30", "2025-01-27T21:00:59.999999");
+            assertCompiledStaticDateParsesFirst(configuration, driver, minutes, now, minutesExpected);
+            Assert.assertEquals(minutes, minutesExpected, parseTickExpr(driver, minutes, now));
+            final long tuesday = driver.parseFloorLiteral("2025-01-28T12:00:00.000000Z");
+            assertCompiledStaticDateParsesFirst(configuration, driver, minutes, tuesday, "error: Bracket expansion produces too many intervals (max 1024)");
+            Assert.assertEquals(minutes, "error: Bracket expansion produces too many intervals (max 1024)", parseTickExpr(driver, minutes, tuesday));
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOverflowRangeOrderErrorIsBindVariableError() throws SqlException {
+        // The list parses as its bind variable on each evaluation, so a range that starts after it ends
+        // fails with the error of the bind variable at the position of the bind variable: the literal at
+        // position 100, and the '..' 6 characters into the first element. At 14:00Z on Monday 2025-01-27
+        // the range from today to 13 hours ago ends at 01:00Z, and validates, today holding the 1,440
+        // seconds of the fixed date; at 12:00Z it ends on the Sunday before.
+        final String expression = "[$today..$now-13h, $today, 2025-01-27T[00..23]:[00..59]:00]#XNYS;1m";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = expression + " [" + ColumnType.nameOf(timestampType) + ']';
+            final long noon = driver.parseFloorLiteral(MONDAY_NOON);
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 100)) {
+                Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+                compiled.validate(driver.parseFloorLiteral("2025-01-27T14:00:00.000000Z"));
+                try {
+                    compiled.evaluate(new LongList(), noon);
+                    Assert.fail(context);
+                } catch (CairoException e) {
+                    Assert.assertEquals(context, "Invalid date range: start is after end", e.getFlyweightMessage().toString());
+                    Assert.assertEquals(context, 106, e.getPosition());
+                }
+            }
+            try {
+                IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 100, new LongList(), IntervalOperation.INTERSECT, sink, true, noon, IntervalUtils.TICK_CHECK_ALL);
+                Assert.fail(context);
+            } catch (SqlException e) {
+                Assert.assertEquals(context, "Invalid date range: start is after end", e.getFlyweightMessage().toString());
+                Assert.assertEquals(context, 106, e.getPosition());
+            }
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOwnExtentsAtTheLimit() throws SqlException {
+        // The compiled form counts the own extents of a fixed date alone, as it always has, so at a
+        // limit of 16 a fixed date with 16 seconds keeps its IR, and one with 17 parses as its bind
+        // variable, which fails. The session of Friday 2025-01-24 holds the second at 15:00:00, an hour
+        // longer. The parser counts the seconds with today before them, so the list fails as a bind
+        // variable, and as a bind variable with the fixed date first it returns the same intervals.
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            final String sixteen = "[$today, 2025-01-24T[00..15]:00:00]#XNYS;1h";
+            final String expected = expectedIntervals(timestampType, "2025-01-24T15:00", "2025-01-24T16:00:00.999999", "2025-01-27T14:30", "2025-01-27T21:59:59.999999");
+            assertCompiledStaticDate(smallLimits, driver, sixteen, now, expected, false);
+            Assert.assertEquals(sixteen, expected, parseTickExpr(smallLimits, driver, "[2025-01-24T[00..15]:00:00, $today]#XNYS;1h", now, IntervalUtils.TICK_CHECK_ALL));
+            Assert.assertEquals(sixteen, "error: Bracket expansion produces too many intervals (max 16)", parseTickExpr(smallLimits, driver, sixteen, now, IntervalUtils.TICK_CHECK_ALL));
+
+            assertCompiledStaticDateFails(smallLimits, driver, "[$today, 2025-01-24T[00..16]:00:00]#XNYS;1h", now, true, "error: Bracket expansion produces too many intervals (max 16)");
+
+            // the same counts without a duration, where the own extents always counted
+            assertCompiledStaticDate(
+                    smallLimits,
+                    driver,
+                    "[$today, 2025-01-24T[00..15]:00:00]#XNYS",
+                    now,
+                    expectedIntervals(timestampType, "2025-01-24T15:00", "2025-01-24T15:00:00.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"),
+                    false
+            );
+            assertCompileError(smallLimits, driver, "[$today, 2025-01-24T[00..16]:00:00]#XNYS", "Bracket expansion produces too many intervals (max 16)");
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOwnExtentsMergeAcrossRepeatedHour() throws SqlException {
+        // The 360 seconds every ten seconds of the hour from 01:00 that New York repeats on 2025-11-02
+        // turn into 720 instants, each at 05:MM:SS and at 06:MM:SS UTC, past the merge threshold of 256,
+        // so each second after the 256th lands two seconds amid those merged so far. X24H trades all
+        // day: each second, a second longer, and the day of 2025-11-04 in New York, from 05:00Z, a
+        // second longer.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral("2025-11-04T12:00:00.000000Z");
+            final LongList expected = new LongList();
+            for (int hour = 5; hour <= 6; hour++) {
+                for (int minute = 0; minute < 60; minute++) {
+                    for (int second = 0; second < 60; second += 10) {
+                        final long lo = driver.parseFloorLiteral("2025-11-02T00:00:00.000000Z") + driver.fromHours(hour) + driver.fromMinutes(minute) + driver.fromSeconds(second);
+                        expected.add(lo, lo + driver.fromSeconds(2) - 1);
+                    }
+                }
+            }
+            expected.add(driver.parseFloorLiteral("2025-11-04T05:00:00.000000Z"), driver.parseFloorLiteral("2025-11-05T05:00:01.000000Z") - 1);
+            assertCompiledStaticDate(
+                    configuration,
+                    driver,
+                    "[$today, 2025-11-02T01:[00..59]:[00,10,20,30,40,50]]@America/New_York#X24H;1s",
+                    now,
+                    intervalToString(driver, expected),
+                    true
+            );
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOwnExtentsMergeLocally() throws SqlException {
+        // The own extents of a fixed date that stay apart merge into the ones merged so far once there
+        // are as many as the merge threshold, rather than all of them again after each new one. The
+        // 1,020 seconds at the minutes from 00:00 to 16:59 of 2025-01-24 stay apart at the default
+        // threshold of 256: the first merge sorts and merges 256, and each of the 764 later seconds lands
+        // last, which its merge finds with one comparison and merges with the last merged second; the
+        // merges of the hours after their minutes merged have nothing to merge. Before, each merge
+        // sorted and merged every second so far, 496,650 groups in all. The session of Friday
+        // 2025-01-24 holds the seconds from 14:30 on, which a minute longer join. Neither the IR
+        // without a duration nor the parser, which returns the same intervals, merges this way.
+        final String ascending = "[$today, 2025-01-24T[00..16]:[00..59]:00]#XNYS;1m";
+        final String descending = "[$today, 2025-01-24T[16,15,14,13,12,11,10,09,08,07,06,05,04,03,02,01,00]:[00..59]:00]#XNYS;1m";
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            final String expected = expectedIntervals(timestampType, "2025-01-24T14:30", "2025-01-24T17:00:00.999999", "2025-01-27T14:30", "2025-01-27T21:00:59.999999");
+            final long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+            try (CompiledTickExpression ignore = IntervalUtils.compileTickExpr(driver, configuration, ascending, 0, ascending.length(), 0)) {
+                Assert.assertEquals(ascending, 2_548, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
+            }
+            assertCompiledStaticDate(configuration, driver, ascending, now, expected, false);
+            assertCompiledStaticDate(configuration, driver, descending, now, expected, false);
+
+            final long afterCompiles = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+            Assert.assertEquals(ascending, expected, parseTickExpr(driver, ascending, now));
+            final String withoutDuration = "[$today, 2025-01-24T[00..16]:[00..59]:00]#XNYS";
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, withoutDuration, 0, withoutDuration.length(), 0)) {
+                Assert.assertFalse(withoutDuration, compiled.isParsedOnEvaluation());
+            }
+            // At a limit of 16, the months of a year merge as the compiled form expands them to their
+            // days, with a time part of the list and no duration, as it always has, and the 250 minutes
+            // at 15:00 that XNYS trades on in 2025 exceed the limit at the end
+            assertCompiledStaticDateFails(smallLimits, driver, "[$today, 2025-[01..12]]T15:00#XNYS", now, false, "error: Bracket expansion produces too many intervals (max 16)");
+            Assert.assertEquals(afterCompiles, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting());
+
+            // At a limit of 16, the seconds from 15:00:00 and 16:00:00Z to 6 seconds after each merge as
+            // the second time slot expands them, which joins, and each lasts a second longer
+            final String slots = "[$today, 2025-01-24T[15:00@UTC,16:00@UTC]:[00..05]]#XNYS;1s";
+            assertCompiledStaticDate(
+                    smallLimits,
+                    driver,
+                    slots,
+                    now,
+                    expectedIntervals(
+                            timestampType,
+                            "2025-01-24T15:00", "2025-01-24T15:00:06.999999",
+                            "2025-01-24T16:00", "2025-01-24T16:00:06.999999",
+                            "2025-01-27T14:30", "2025-01-27T21:00:00.999999"
+                    ),
+                    true
+            );
+            Assert.assertTrue(slots, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() > afterCompiles);
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOwnSemicolonKeepsHeadReading() throws SqlException {
+        // A compiled list with a tick calendar and no duration of its own reads the ';' of a fixed date
+        // as the duration or the repetition of that date, as it always has, and extends nothing after
+        // the tick calendar: the interval of the date, cut by the sessions. Where the parser reads the
+        // text, that is what the parser makes of the list without its tick calendar, cut by the
+        // sessions; it does not read a ';' in a bracket of a fixed date, nor in a month under the time of
+        // the list, see bug-fixed-date-own-semicolon-parser-rejects. With a duration of the list too,
+        // the fixed date has two ';' and fails to compile, as it always has.
+        final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        final String[][] cases = {
+                // now, expression, "S9" where the parser reads it, "S2" otherwise, then the intervals
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00;1h]#XNYS", "S9", "2025-01-24T15:00", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[2025-01-24T15:00;1h, $today]#XNYS", "S9", "2025-01-24T15:00", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00;1h]@America/New_York#XNYS", "S9", "2025-01-24T20:00", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00;1h]@-05:00#XNYS", "S9", "2025-01-24T20:00", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-[23..24]T15:00;1h]#XNYS", "S9", "2025-01-23T15:00", "2025-01-23T15:59:59.999999", "2025-01-24T15:00", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00;1h, 2025-01-23T15:00;1h]#XNYS", "S9", "2025-01-23T15:00", "2025-01-23T15:59:59.999999", "2025-01-24T15:00", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T14:00;2h]#XNYS", "S9", "2025-01-24T14:30", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00;-1h]#XNYS", "S9", "2025-01-24T14:30", "2025-01-24T14:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24;1h]#XNYS", "S9", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24;1d]#XNYS", "S9", "2025-01-24T14:30", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T02:00;1h]#XHKG", "S9", "2025-01-24T02:00", "2025-01-24T02:59:59.999999", "2025-01-27T01:30", "2025-01-27T03:59:59.999999", "2025-01-27T05:00", "2025-01-27T07:59:59.999999"},
+                {MONDAY_NOON, "[$today..$today+1d, 2025-01-24T15:00;1h]#XNYS", "S9", "2025-01-24T15:00", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999", "2025-01-28T14:30", "2025-01-28T20:59:59.999999"},
+                // a repeating interval: 30 minutes from 15:00 on 2025-01-24 and on the Sunday after
+                {MONDAY_NOON, "[$today, 2025-01-24T15:00;30m;2d;2]#XNYS", "S9", "2025-01-24T15:00", "2025-01-24T15:29:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24;30m;2d;2]#XNYS", "S9", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // the windows of a minute or an hour of the fixed date cover its day
+                {MONDAY_NOON, "[$today, 2025-01-27T[00..23]:[00..59]:00;1m]#XNYS", "S9", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // a ';' in a time slot, after the time or in its zone
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00;1h]]#XNYS", "S2", "2025-01-24T15:00", "2025-01-24T15:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00,16:00;1h]]#XNYS", "S2", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-24T16:00", "2025-01-24T16:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@-05:00;1h]]#XNYS", "S2", "2025-01-24T20:00", "2025-01-24T20:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // the slot converts with its own timezone and again with that of the list, which drops
+                // it, see questdb-enterprise#1362
+                {MONDAY_NOON, "[$today, 2025-01-24T[09:30@America/New_York;1h]]@Europe/Paris#XNYS", "S2", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // a month with a duration of its own under the time of the list: the first hour of
+                // the month lies on the holiday 2025-01-01
+                {MONDAY_NOON, "[$today, 2025-01;1h]T15:00@America/New_York#XNYS", "S2", "2025-01-27T20:00", "2025-01-27T20:00:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01;1h]T15:00#XNYS", "S2", "2025-01-27T15:00", "2025-01-27T15:00:59.999999"}
+        };
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String[] c : cases) {
+                final long now = driver.parseFloorLiteral(c[0]);
+                final String expected = expectedIntervals(timestampType, c, 3);
+                assertCompiledStaticDate(configuration, driver, c[1], now, expected, false);
+                if (c[2].equals("S9")) {
+                    final String calendar = c[1].contains("#XHKG") ? "XHKG" : "XNYS";
+                    Assert.assertEquals(c[1] + " without its calendar", expected, parsedWithoutCalendarCutBySessions(driver, c[1], calendar, now));
+                }
+            }
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            // 15:00 in New York on each day of the first 24 days of January, which the sessions hold
+            // on the trading days, and on today
+            assertCompiledStaticDate(
+                    configuration,
+                    driver,
+                    "[$today, 2025-01;24d]T15:00@America/New_York#XNYS",
+                    now,
+                    slotOnSessionDays(driver, "XNYS", "2025-01-01", "2025-01-25", driver.fromHours(20), driver.fromMinutes(1), 0, "2025-01-27T20:00", "2025-01-27T20:01"),
+                    false
+            );
+            // the hourly windows of the fixed dates cover their days
+            for (String[] c : new String[][]{
+                    {"[$today, 2025-01-27T[00..23]:00:00;1h]#XNYS", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                    {"[$today, 2025-01-24T[00..23]:00:00;1h]#XNYS", "2025-01-24T14:30", "2025-01-24T20:59:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"}
+            }) {
+                assertCompiledStaticDate(smallLimits, driver, c[0], now, expectedIntervals(timestampType, c, 1), false);
+            }
+            // the errors
+            assertCompileError(configuration, driver, "[$today, 2025-01-24;1h]T15:00#XNYS", "Expected number before unit 'T'");
+            assertCompileError(configuration, driver, "[$today, 2025-01-24;1h]T15:00#Fri", "Expected number before unit 'T'");
+            assertCompileError(configuration, driver, "[$today, 2025-01-24;1h]T15:00@America/New_York#XNYS", "Expected number before unit 'T'");
+            assertCompileError(configuration, driver, "[$today, 2025-01-24;1h]T15:00@America/New_York#Fri", "Expected number before unit 'T'");
+            assertCompileError(smallLimits, driver, "[$today, 2025-01-[01..31]T15:00;1h]#XNYS", "Bracket expansion produces too many intervals (max 16)");
+            assertCompileError(configuration, driver, "[$today, 2025-01-24T15:00;1h]#XNYS;1h", "Invalid interval format: 2025-01-24T15:00;1h;1h");
+            assertCompileError(configuration, driver, "[$today, 2025-01-24T15:00;1h]#XNYS;", "Invalid interval format: 2025-01-24T15:00;1h;");
+            // a fixed date with a time of its own under the time of the list has no IR, and the parser
+            // takes the list to its first ';'
+            final String listTime = "[$today, 2025-01-24T15:00;1h]T16:00#XNYS";
+            assertCompiledParsesOnEvaluation(driver, listTime, now, "error: Unclosed '[' in date list");
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, listTime, 0, listTime.length(), 0)) {
+                compiled.validate(now);
+                Assert.fail(listTime);
+            } catch (SqlException e) {
+                Assert.assertEquals(listTime, "Unclosed '[' in date list", e.getFlyweightMessage().toString());
+            }
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateRunOneDropsEveryWindow() throws SqlException {
+        // A fixed date keeps its own extent where the window that the compiled form used to make of it
+        // was empty, so that nothing of it remained: a zero or an empty duration made each time slot an
+        // empty window, which a slot with a named timezone of its own dropped, and so did a negative
+        // duration whose window lay in the hour that New York skips on 2025-03-09 from 02:00. An offset
+        // timezone kept the empty window instead. A slot in the skipped hour has no instant either way.
+        // A list without a fixed date keeps its intervals as they were, the ones of the range from an
+        // hour before now to an hour after included, which the calendar cuts at now, where now holds
+        // it, see bug-nested-slots-tick-calendar.
+        final String mar10 = "2025-03-10T12:00:00.000000Z";
+        final String mon1500 = "2025-01-27T15:00:00.000000Z";
+        final String[][] cases = {
+                // now, expression, "bind" where the parser reads the text alike and nothing nests, then the intervals
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]#XNYS;", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]#XNYS;0m", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]#XNYS;0s", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]#XNYS;1h-1h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@GMT]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]@America/New_York#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC]]@-05:00#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[2025-01-24T[15:00@UTC], $today]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[ $today , 2025-01-24T[15:00@UTC] ]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC], 2025-01-23T[15:00@UTC]]#XNYS;0h", "bind", "2025-01-23T15:00", "2025-01-23T15:00:59.999999", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[2025-01-24T[15:00@UTC], $today, 2025-01-23T[15:00@UTC]]#XNYS;0h", "bind", "2025-01-23T15:00", "2025-01-23T15:00:59.999999", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-[23..24]T[15:00@UTC]]#XNYS;0h", "bind", "2025-01-23T15:00", "2025-01-23T15:00:59.999999", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-[23,24]T[15:00@UTC]]#XNYS;0h", "bind", "2025-01-23T15:00", "2025-01-23T15:00:59.999999", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC,16:00@UTC]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-24T16:00", "2025-01-24T16:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[09:30@America/New_York]]#XNYS;0h", "bind", "2025-01-24T14:30", "2025-01-24T14:30:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[09:30@America/New_York]]#XNYS;", "bind", "2025-01-24T14:30", "2025-01-24T14:30:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // offset timezones kept the empty window, which held nothing
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@Z]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@+00:00]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[10:00@-05:00]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {MONDAY_NOON, "[$today, 2025-01-24T[15:00@UTC+00:00]]#XNYS;0h", "bind", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                // 03:00 in New York on 2025-03-09 is 07:00Z, right after the skipped hour, 30 seconds
+                // shorter; 03:30 is 07:30Z
+                {mar10, "[$today, 2025-03-09T[03:00@America/New_York]]#X24H;-30s", "bind", "2025-03-09T07:00", "2025-03-09T07:00:29.999999", "2025-03-10T00:00", "2025-03-10T23:59:29.999999"},
+                {mar10, "[$today, 2025-03-09T[03:30@America/New_York]]#X24H;-30s", "bind", "2025-03-09T07:30", "2025-03-09T07:30:29.999999", "2025-03-10T00:00", "2025-03-10T23:59:29.999999"},
+                // 02:30 in New York on 2025-03-09 does not exist
+                {mar10, "[$today, 2025-03-09T[02:30@America/New_York]]#X24H;1m", "bind", "2025-03-10T00:00", "2025-03-11T00:00:59.999999"},
+                {mar10, "[$today, 2025-03-09T[02:30@America/New_York]]#X24H;0h", "bind", "2025-03-10T00:00", "2025-03-10T23:59:59.999999"},
+                // lists without a fixed date, and a date variable without a list
+                {MONDAY_NOON, "[$today, $yesterday]#XNYS;0h", "bind", "2025-01-27T14:30", "2025-01-27T20:59:59.999999"},
+                {mon1500, "[$now-1h..$now+1h, $now]#XNYS;0h", "bind", "2025-01-27T14:30", "2025-01-27T15:00"},
+                {MONDAY_NOON, "$todayT15:00#XNYS;1h", "bind", "2025-01-27T15:00", "2025-01-27T16:00:59.999999"},
+                // the fixed date makes the list unite its intervals before the calendar cuts them
+                {mon1500, "[$now-1h..$now+1h, $now, 2025-01-24T[15:00@UTC]]#XNYS;0h", "S2", "2025-01-24T15:00", "2025-01-24T15:00:59.999999", "2025-01-27T14:30", "2025-01-27T16:00"},
+                {mon1500, "[$now-1h..$now+1h, $now, 2025-01-24T[15:00@UTC]]#XNYS;1h", "S2", "2025-01-24T15:00", "2025-01-24T16:00:59.999999", "2025-01-27T14:30", "2025-01-27T17:00"}
+        };
+        assertCompiledStaticDates(configuration, cases);
+    }
+
+    @Test
+    public void testCompiledStaticDateSteadyStateAllocatesNoJavaHeap() throws SqlException {
+        // Filters evaluate a compiled tick expression per execution, and per worker. Once warm, a list
+        // with fixed dates, a tick calendar and a duration evaluates without allocating, with an IR
+        // whose fixed dates keep their own extent, and parsed as its bind variable where a fixed date
+        // alone has more own extents than the limit.
+        final String[][] cases = {
+                // expression, intervals, evaluations to warm up with, evaluations in each of 5 rounds;
+                // the parse of the 1,440 seconds of the second takes far longer than the IR of the first
+                {"[$today, 2025-01-24, 2025-01-27T15:00]#XNYS;1h", "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T21:59:59.999999Z},{lo=2025-01-27T14:30:00.000000Z, hi=2025-01-27T21:59:59.999999Z}]", "20000", "10000"},
+                {"[$today, 2025-01-27T[00..23]:[00..59]:00]#XNYS;1m", "[{lo=2025-01-27T14:30:00.000000Z, hi=2025-01-27T21:00:59.999999Z}]", "2000", "1000"}
+        };
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                final long now = driver.parseFloorLiteral(MONDAY_NOON);
+                for (String[] c : cases) {
+                    final String context = c[0] + " [" + ColumnType.nameOf(timestampType) + ']';
+                    final int warmUpCount = Integer.parseInt(c[2]);
+                    final int roundCount = Integer.parseInt(c[3]);
+                    try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, c[0], 0, c[0].length(), 0)) {
+                        final LongList out = new LongList();
+                        for (int i = 0; i < warmUpCount; i++) {
+                            out.clear();
+                            compiled.evaluate(out, now);
+                        }
+                        final String expected = forTimestampType(c[1], timestampType);
+                        Assert.assertEquals(context, expected, intervalToString(driver, out));
+                        final long first = out.getQuick(0);
+                        final long last = out.getQuick(out.size() - 1);
+                        final int size = out.size();
+                        long minAllocatedBytes = Long.MAX_VALUE;
+                        int expectedEvaluationCount = 0;
+                        for (int round = 0; round < 5; round++) {
+                            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                            for (int i = 0; i < roundCount; i++) {
+                                out.clear();
+                                compiled.evaluate(out, now);
+                                if (out.size() == size && out.getQuick(0) == first && out.getQuick(size - 1) == last) {
+                                    expectedEvaluationCount++;
+                                }
+                            }
+                            minAllocatedBytes = Math.min(minAllocatedBytes, threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+                        }
+                        Assert.assertEquals(context, expected, intervalToString(driver, out));
+                        Assert.assertEquals(context, 5 * roundCount, expectedEvaluationCount);
+                        Assert.assertEquals(context, 0, minAllocatedBytes);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateWithTickCalendarFuzz() throws SqlException {
+        // Random compiled lists of fixed dates and date variables with a tick calendar, checked against
+        // the documented semantics where StaticDateListFuzzer models the list, the parser, which a bind
+        // variable takes, where it reads the list alike, the same list with the day filter #Fri for a
+        // compile error, and the parser without the tick calendar for a list without a duration of its
+        // own. questdb.fuzz.tickExpressions sets the number of lists.
+        final int listCount = Integer.getInteger("questdb.fuzz.tickExpressions", 1_000);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final StaticDateListFuzzer fuzzer = new StaticDateListFuzzer();
+        for (int i = 0; i < listCount; i++) {
+            fuzzer.check(rnd);
+        }
+        fuzzer.log();
+        if (listCount >= 1_000) {
+            fuzzer.assertEveryShape();
+        }
     }
 
     @Test
@@ -2550,7 +3311,7 @@ public class TickCalendarTest {
      * timezone of its own, such as 15:00@UTC or 16:30@+01:00, moves by its offset, and a slot
      * without one by the offset of the expression, which callers leave at zero for a point in time.
      */
-    private static void addSlotExtent(TimestampDriver driver, long day, String slot, long expressionOffset, LongList out) {
+    static void addSlotExtent(TimestampDriver driver, long day, String slot, long expressionOffset, LongList out) {
         String time = slot;
         long offset = expressionOffset;
         final int zone = slot.indexOf('@');
@@ -2591,6 +3352,64 @@ public class TickCalendarTest {
     }
 
     /**
+     * Returns the parts of the sorted, disjoint intervals a that the sorted, disjoint intervals b
+     * hold.
+     */
+    static LongList intersect(LongList a, LongList b) {
+        final LongList out = new LongList();
+        int i = 0;
+        int j = 0;
+        while (i < a.size() && j < b.size()) {
+            final long lo = Math.max(a.getQuick(i), b.getQuick(j));
+            final long hi = Math.min(a.getQuick(i + 1), b.getQuick(j + 1));
+            if (lo <= hi) {
+                out.add(lo, hi);
+            }
+            if (a.getQuick(i + 1) < b.getQuick(j + 1)) {
+                i += 2;
+            } else {
+                j += 2;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Returns the sessions of the test calendar at the precision of the driver.
+     */
+    static LongList sessions(TimestampDriver driver, String calendar) {
+        final LongList schedule = CALENDARS.getSchedule(calendar);
+        Assert.assertNotNull(calendar, schedule);
+        final LongList out = new LongList(schedule.size());
+        for (int i = 0, n = schedule.size(); i < n; i += 2) {
+            out.add(driver.fromMicros(schedule.getQuick(i)), driver.fromMicros(schedule.getQuick(i + 1) + 1) - 1);
+        }
+        return out;
+    }
+
+    /**
+     * Returns the intervals sorted by their starts, with those that overlap or touch merged, as
+     * the parser merges its result.
+     */
+    static LongList union(LongList intervals) {
+        final long[][] pairs = new long[intervals.size() / 2][];
+        for (int i = 0; i < pairs.length; i++) {
+            pairs[i] = new long[]{intervals.getQuick(2 * i), intervals.getQuick(2 * i + 1)};
+        }
+        Arrays.sort(pairs, (a, b) -> Long.compare(a[0], b[0]));
+        final LongList out = new LongList();
+        for (long[] pair : pairs) {
+            final int last = out.size() - 1;
+            if (last > 0 && pair[0] <= out.getQuick(last) + 1) {
+                out.setQuick(last, Math.max(out.getQuick(last), pair[1]));
+            } else {
+                out.add(pair[0], pair[1]);
+            }
+        }
+        return out;
+    }
+
+    /**
      * Asserts that the parser parses the bare date variable expression and its date list spelling
      * to the expected intervals, and that the compiled form of the expression evaluates it to them.
      */
@@ -2599,6 +3418,19 @@ public class TickCalendarTest {
         Assert.assertEquals(context, expected, parseTickExpr(driver, expression, now));
         Assert.assertEquals(context + " as a date list", expected, parseTickExpr(driver, toDateList(expression), now));
         Assert.assertEquals(context + " compiled", expected, evaluateCompiledTickExpr(driver, expression, now));
+    }
+
+    /**
+     * Asserts that compiling the expression fails with the error, at the position of the literal, 100.
+     */
+    private static void assertCompileError(CairoConfiguration configuration, TimestampDriver driver, String expression, String expected) {
+        final String context = expression + " [" + ColumnType.nameOf(driver.getTimestampType()) + ']';
+        try (CompiledTickExpression ignore = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 100)) {
+            Assert.fail(context + " should fail to compile");
+        } catch (SqlException e) {
+            Assert.assertEquals(context, expected, e.getFlyweightMessage().toString());
+            Assert.assertEquals(context, 100, e.getPosition());
+        }
     }
 
     /**
@@ -2613,6 +3445,99 @@ public class TickCalendarTest {
             }
         }
         Assert.assertEquals(expression, expected, evaluateCompiledTickExpr(driver, expression, now));
+    }
+
+    /**
+     * Asserts that the compiled form of a tick expression has an IR, which validates the expression at
+     * "now" and evaluates it to the expected intervals, and, with isBindAlike, that the parser, which
+     * a bind variable takes, parses the same text to them too.
+     */
+    private static void assertCompiledStaticDate(
+            CairoConfiguration configuration,
+            TimestampDriver driver,
+            String expression,
+            long now,
+            String expected,
+            boolean isBindAlike
+    ) throws SqlException {
+        final String context = expression + " [" + ColumnType.nameOf(driver.getTimestampType()) + ']';
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            Assert.assertFalse(context, compiled.isParsedOnEvaluation());
+            compiled.validate(now);
+            final LongList out = new LongList();
+            compiled.evaluate(out, now);
+            Assert.assertEquals(context, expected, intervalToString(driver, out));
+        }
+        if (isBindAlike) {
+            Assert.assertEquals(context + " as a bind variable", expected, parseTickExpr(configuration, driver, expression, now, IntervalUtils.TICK_CHECK_ALL));
+        }
+    }
+
+    /**
+     * Asserts that the expression compiles, with an IR or to parse it on evaluation as
+     * isParsedOnEvaluation tells, and that validate() and an evaluation at "now" both fail with the
+     * error, at the position of the literal, 100.
+     */
+    private static void assertCompiledStaticDateFails(
+            CairoConfiguration configuration,
+            TimestampDriver driver,
+            String expression,
+            long now,
+            boolean isParsedOnEvaluation,
+            String expected
+    ) throws SqlException {
+        final String context = expression + " [" + ColumnType.nameOf(driver.getTimestampType()) + ']';
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 100)) {
+            Assert.assertEquals(context, isParsedOnEvaluation, compiled.isParsedOnEvaluation());
+            try {
+                compiled.validate(now);
+                Assert.fail(context + " should fail to validate");
+            } catch (SqlException e) {
+                Assert.assertEquals(context, expected, "error: " + e.getFlyweightMessage());
+                Assert.assertEquals(context, 100, e.getPosition());
+            }
+            try {
+                compiled.evaluate(new LongList(), now);
+                Assert.fail(context + " should fail to evaluate");
+            } catch (CairoException e) {
+                Assert.assertEquals(context, expected, "error: " + e.getFlyweightMessage());
+                Assert.assertEquals(context, 100, e.getPosition());
+            }
+        }
+    }
+
+    /**
+     * Asserts that the compiled form of the expression parses it on evaluation, as a bind variable,
+     * and that validate() and an evaluation at "now" both give the expected intervals, or both fail
+     * with the expected error, at the position of the literal, 100.
+     */
+    private static void assertCompiledStaticDateParsesFirst(CairoConfiguration configuration, TimestampDriver driver, String expression, long now, String expected) throws SqlException {
+        if (expected.startsWith("error: ")) {
+            assertCompiledStaticDateFails(configuration, driver, expression, now, true, expected);
+            return;
+        }
+        final String context = expression + " [" + ColumnType.nameOf(driver.getTimestampType()) + ']';
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 100)) {
+            Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+            compiled.validate(now);
+            final LongList out = new LongList();
+            compiled.evaluate(out, now);
+            Assert.assertEquals(context, expected, intervalToString(driver, out));
+        }
+    }
+
+    /**
+     * Runs {@link #assertCompiledStaticDate} on each case with both timestamp types: the "now", the
+     * expression, "bind" where the parser reads the text alike, then the bounds of the expected
+     * intervals in pairs, see {@link #expectedIntervals(int, String[], int)}.
+     */
+    private static void assertCompiledStaticDates(CairoConfiguration configuration, String[][] cases) throws SqlException {
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String[] c : cases) {
+                assertCompiledStaticDate(configuration, driver, c[1], driver.parseFloorLiteral(c[0]), expectedIntervals(timestampType, c, 3), c[2].equals("bind"));
+            }
+        }
     }
 
     /**
@@ -2643,6 +3568,21 @@ public class TickCalendarTest {
         for (int checks : new int[]{IntervalUtils.TICK_CHECK_ALL, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
             Assert.assertEquals(expression + " [checks=" + checks + ']', expected, parseTickExpr(driver, expression, now, checks));
         }
+    }
+
+    private static LongList buildX24h() {
+        final long day = Micros.DAY_MICROS;
+        final LongList sessions = new LongList();
+        sessions.add(-day, -1L);
+        sessions.add(0L, day - 1);
+        final long start = LocalDate.of(2025, 1, 1).toEpochDay() * day;
+        for (int d = 0; d < 365; d++) {
+            sessions.add(start + d * day, start + (d + 1) * day - 1);
+        }
+        final long year2099 = LocalDate.of(2099, 1, 2).toEpochDay() * day;
+        sessions.add(year2099, year2099 + day - 1);
+        sessions.add(year2099 + day, year2099 + 2 * day - 1);
+        return sessions;
     }
 
     /**
@@ -2687,33 +3627,29 @@ public class TickCalendarTest {
     }
 
     /**
+     * Returns the intervals of the bounds from index lo on, in pairs, written as {@link #ts} takes them,
+     * as intervalToString() prints them at the precision of the timestamp type.
+     */
+    private static String expectedIntervals(int timestampType, String[] bounds, int lo) {
+        final StringBuilder sb = new StringBuilder("[");
+        for (int i = lo; i < bounds.length; i += 2) {
+            if (i > lo) {
+                sb.append(',');
+            }
+            sb.append("{lo=").append(ts(bounds[i])).append(", hi=").append(ts(bounds[i + 1])).append('}');
+        }
+        return forTimestampType(sb.append(']').toString(), timestampType);
+    }
+
+    private static String expectedIntervals(int timestampType, String... bounds) {
+        return expectedIntervals(timestampType, bounds, 0);
+    }
+
+    /**
      * Returns intervals given at microsecond precision at the precision of the timestamp type.
      */
     private static String forTimestampType(String expected, int timestampType) {
         return ColumnType.isTimestampNano(timestampType) ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z") : expected;
-    }
-
-    /**
-     * Returns the parts of the sorted, disjoint intervals a that the sorted, disjoint intervals b
-     * hold.
-     */
-    private static LongList intersect(LongList a, LongList b) {
-        final LongList out = new LongList();
-        int i = 0;
-        int j = 0;
-        while (i < a.size() && j < b.size()) {
-            final long lo = Math.max(a.getQuick(i), b.getQuick(j));
-            final long hi = Math.min(a.getQuick(i + 1), b.getQuick(j + 1));
-            if (lo <= hi) {
-                out.add(lo, hi);
-            }
-            if (a.getQuick(i + 1) < b.getQuick(j + 1)) {
-                i += 2;
-            } else {
-                j += 2;
-            }
-        }
-        return out;
     }
 
     private static String intervalToString(TimestampDriver driver, LongList intervals) {
@@ -2800,6 +3736,17 @@ public class TickCalendarTest {
     }
 
     /**
+     * Returns the intervals that the parser makes of the expression without its tick calendar, which
+     * reads the duration of each fixed date, cut by the sessions of the calendar.
+     */
+    private static String parsedWithoutCalendarCutBySessions(TimestampDriver driver, String expression, String calendar, long now) throws SqlException {
+        final String withoutCalendar = expression.replace('#' + calendar, "");
+        final LongList out = new LongList();
+        IntervalUtils.parseTickExpr(driver, configuration, withoutCalendar, 0, withoutCalendar.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, IntervalUtils.TICK_CHECK_ALL);
+        return intervalToString(driver, union(intersect(out, sessions(driver, calendar))));
+    }
+
+    /**
      * Returns the intervals that the parser parses the expression to, or its error.
      */
     private static String parseTickExpr(TimestampDriver driver, String expression, long now) {
@@ -2843,19 +3790,6 @@ public class TickCalendarTest {
     }
 
     /**
-     * Returns the sessions of the test calendar at the precision of the driver.
-     */
-    private static LongList sessions(TimestampDriver driver, String calendar) {
-        final LongList schedule = TestTickCalendarService.INSTANCE.getSchedule(calendar);
-        Assert.assertNotNull(calendar, schedule);
-        final LongList out = new LongList(schedule.size());
-        for (int i = 0, n = schedule.size(); i < n; i += 2) {
-            out.add(driver.fromMicros(schedule.getQuick(i)), driver.fromMicros(schedule.getQuick(i + 1) + 1) - 1);
-        }
-        return out;
-    }
-
-    /**
      * Returns the sessions of the test calendar that start from {@code from} to {@code to}, each
      * extended by the duration, and asserts that there are as many as expected.
      */
@@ -2870,6 +3804,44 @@ public class TickCalendarTest {
         final LongList merged = union(out);
         Assert.assertEquals(calendar, expectedCount, merged.size() / 2);
         return intervalToString(driver, merged);
+    }
+
+    /**
+     * Returns the part of a slot that the session of each day holds, for the sessions of the calendar
+     * that start from fromDay to before toDay, each extended by the duration, united with the extra
+     * intervals, given as pairs of a start and an end that is not part of them, as the parser merges its
+     * result. The slot starts slotOffset after the start of its day and lasts slotWidth.
+     */
+    private static String slotOnSessionDays(
+            TimestampDriver driver,
+            String calendar,
+            String fromDay,
+            String toDay,
+            long slotOffset,
+            long slotWidth,
+            long duration,
+            String... extra
+    ) {
+        final long from = driver.parseFloorLiteral(fromDay + "T00:00:00.000000Z");
+        final long to = driver.parseFloorLiteral(toDay + "T00:00:00.000000Z");
+        final LongList sessions = sessions(driver, calendar);
+        final LongList out = new LongList();
+        for (int i = 0, n = sessions.size(); i < n; i += 2) {
+            final long sessionLo = sessions.getQuick(i);
+            final long sessionHi = sessions.getQuick(i + 1);
+            if (sessionLo >= from && sessionLo < to) {
+                final long slotLo = driver.startOfDay(sessionLo, 0) + slotOffset;
+                final long lo = Math.max(slotLo, sessionLo);
+                final long hi = Math.min(slotLo + slotWidth - 1, sessionHi);
+                if (lo <= hi) {
+                    out.add(lo, hi + duration);
+                }
+            }
+        }
+        for (int i = 0; i < extra.length; i += 2) {
+            out.add(driver.parseFloorLiteral(ts(extra[i])), driver.parseFloorLiteral(ts(extra[i + 1])) - 1);
+        }
+        return intervalToString(driver, union(out));
     }
 
     /**
@@ -2890,25 +3862,16 @@ public class TickCalendarTest {
     }
 
     /**
-     * Returns the intervals sorted by their starts, with those that overlap or touch merged, as
-     * the parser merges its result.
+     * Returns a timestamp written to the minute, the second or the microsecond as intervalToString()
+     * prints it at microsecond precision.
      */
-    private static LongList union(LongList intervals) {
-        final long[][] pairs = new long[intervals.size() / 2][];
-        for (int i = 0; i < pairs.length; i++) {
-            pairs[i] = new long[]{intervals.getQuick(2 * i), intervals.getQuick(2 * i + 1)};
-        }
-        Arrays.sort(pairs, (a, b) -> Long.compare(a[0], b[0]));
-        final LongList out = new LongList();
-        for (long[] pair : pairs) {
-            final int last = out.size() - 1;
-            if (last > 0 && pair[0] <= out.getQuick(last) + 1) {
-                out.setQuick(last, Math.max(out.getQuick(last), pair[1]));
-            } else {
-                out.add(pair[0], pair[1]);
-            }
-        }
-        return out;
+    private static String ts(String text) {
+        return switch (text.length()) {
+            case 16 -> text + ":00.000000Z";
+            case 19 -> text + ".000000Z";
+            case 26 -> text + 'Z';
+            default -> throw new IllegalArgumentException(text);
+        };
     }
 
     private void assertTickInterval(String expected, String interval) throws SqlException {
@@ -3247,6 +4210,613 @@ public class TickCalendarTest {
             dayRangeCount += isRange ? 1 : 0;
             negativeDurationCount += MODEL_DURATION_SECONDS[durationIndex] < 0 ? 1 : 0;
             pointInTimeCount += hasPointInTime ? 1 : 0;
+        }
+    }
+
+    /**
+     * Generates compiled lists of fixed dates and date variables with a tick calendar, mostly with a
+     * duration, and checks what the compiled form makes of each as a user's query evaluates and
+     * validates it:
+     * <ul>
+     * <li>a list that fails to compile fails as the same list with the day filter #Fri does, which
+     * compiles its fixed dates the same way, unless the interval limit fails it;</li>
+     * <li>a list with a fixed date whose only ';' starts its duration evaluates, where the model takes
+     * its elements, to the documented semantics of their own extents, see {@link #model}, and, where the
+     * parser reads it alike and no element holds another, to what the parser makes of it for a bind
+     * variable, which fails where it fails, with the same error; a fixed date whose own extents alone
+     * exceed the limit makes it parse as the bind variable;</li>
+     * <li>a list without a duration of its own evaluates, where nothing nests, to what the parser makes
+     * of it without the tick calendar, cut by the sessions, and a list of date variables to what the
+     * parser makes of it;</li>
+     * <li>validate() fails only where the evaluation fails, on the interval limit.</li>
+     * </ul>
+     * The parser differs where a date holds another, as it loses the end of the outer one
+     * (bug-nested-slots-tick-calendar), where it fails on a time that it reads only with a duration,
+     * such as 15:00:00UTC, and where it counts the own extents of a bracketed fixed date with the
+     * intervals of the elements before it, which the compiled form counts apart. It counts the shapes
+     * it checks.
+     */
+    private static final class StaticDateListFuzzer {
+        private static final String[] CALENDARS = {"XNYS", "XHKG", "X24H"};
+        // the date variable ranges of whole days, and their days relative to today
+        private static final String[] DAY_RANGES = {"$today-3d..$today", "$yesterday..$tomorrow", "$today..$today+2d", "$today-20d..$today"};
+        private static final int[][] DAY_RANGE_DAYS = {{-3, 0}, {-1, 1}, {0, 2}, {-20, 0}};
+        // the date variables of a whole day, and their days relative to today
+        private static final String[] DAY_VARIABLES = {"$today", "$yesterday", "$tomorrow", "$today - 3d", "$today + 1d"};
+        private static final int[] DAY_VARIABLE_DAYS = {0, -1, 1, -3, 1};
+        // the days of fixed dates; X24H trades on the last day of 1969, in 2099, and across the DST changes
+        private static final String[] DAYS = {"2025-01-20", "2025-01-23", "2025-01-24", "2025-01-25", "2025-01-27", "2025-01-28"};
+        // durations of a fixed length, and their lengths in seconds
+        private static final String[] DURATIONS = {"30s", "1m", "10m", "30m", "1h", "90m", "4h", "1d", "25h", "1h30m", "2h-1h", "0h", "", "-30m", "-1h"};
+        private static final long[] DURATION_SECONDS = {30, 60, 600, 1_800, 3_600, 5_400, 14_400, 86_400, 90_000, 5_400, 3_600, 0, 0, -1_800, -3_600};
+        private static final String[] CALENDAR_UNIT_DURATIONS = {"1M", "1y"};
+        private static final String[] MALFORMED_DURATIONS = {"1x", "h", "1h;1d;2", "1"};
+        private static final String[] NOWS = {
+                "2025-01-27T12:00:00.000000Z", // a Monday, before the XNYS session
+                "2025-01-27T15:30:00.000000Z", // in the XNYS session
+                "2025-01-24T03:00:00.000000Z", // a Friday, in the morning XHKG session
+                "2025-01-25T12:00:00.000000Z", // a Saturday
+                "2025-01-20T12:00:00.000000Z", // a Monday that XNYS closes for
+                "2025-03-10T12:00:00.000000Z", // the Monday after New York moves to summer time
+                "2025-11-04T12:00:00.000000Z" // two days after New York moves back
+        };
+        // fixed dates that the model does not take, which the parser reads alike only as whole days
+        private static final String[] OTHER_FIXED_DATES = {
+                "2025-W04-5", "2025-01-24T[09:30@America/New_York]", "2025-01T[15:00@-05:00]", "2025-[01..02]T15:00:00-05",
+                "2025-01-24T[15:00@GMT]", "2025-01-24T15:00:00.1234Z", "2025-03-09T[02:30@America/New_York]", "2025-11-02T01:30"
+        };
+        private static final String[] OTHER_VARIABLES = {"$now", "$now - 1h..$now + 1h", "$today..$today+2bd", "$today + 870m..$now"};
+        // fixed dates with a ';' of their own: the duration of the date in its text, a repeating interval,
+        // a ';' in a bracket, which the parser does not read, and one in the timezone of a time slot
+        private static final String[] OWN_SEMICOLON_DATES = {
+                "2025-01-24T15:00;1h", "2025-01-23T14:00;2h", "2025-01-24;1d", "2025-01-24;30m;2d;2", "2025-01-24T[15:00;1h]",
+                "2025-01-24T[15:00@-05:00;1h]"
+        };
+        // the windows of those dates in a list without a duration: the day, the start and the length in
+        // seconds, and the days to a repetition of the first window, where the time slot with the zone
+        // -05:00 starts at 20:00Z
+        private static final String[] OWN_SEMICOLON_DAYS = {"2025-01-24", "2025-01-23", "2025-01-24", "2025-01-24", "2025-01-24", "2025-01-24"};
+        private static final long[][] OWN_SEMICOLON_WINDOWS = {
+                {15 * 3_600, 3_600, 0}, {14 * 3_600, 7_200, 0}, {0, 86_400, 0}, {0, 1_800, 2}, {15 * 3_600, 3_600, 0}, {20 * 3_600, 60, 0}
+        };
+        private static final String RANGE_ORDER_ERROR = "error: Invalid date range: start is after end";
+        // points in time with a zone of their own, which the timezone of the list would move again
+        private static final String[] POINTS = {"15:00:00Z", "17:00:00Z", "02:00:00Z", "15:00:00+01:00", "15:00:00-05:00", "15:00:00UTC"};
+        private static final String[] SLOTS = {"15:00", "16:00", "15:30", "15:00:30", "20:30", "02:00", "15", "15:00@UTC", "16:30@+01:00", "10:00@-05:00", "15:00@+00:00"};
+        private static final String[] TIMES = {"15", "15:00", "15:30", "15:00:30", "20:30", "14:15", "02:00", "23:30"};
+        private static final String[] X24H_DAYS = {"1969-12-31", "2099-01-02", "2025-03-09", "2025-11-02"};
+        // the timezones of the list, and their offsets in minutes; the model takes no named one
+        private static final String[] ZONES = {"", "", "@+08:00", "@-05:00", "@America/New_York"};
+        private static final int[] ZONE_MINUTES = {0, 0, 480, -300, 0};
+        private final LongList extents = new LongList();
+        private final StringBuilder sb = new StringBuilder();
+        private final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        // the shapes that the fuzzer checked
+        private int bindAlikeCount;
+        private int calendarUnitDurationCount;
+        private int compileErrorCount;
+        private int dateRangeLimitCount;
+        private int dateVariableOnlyCount;
+        private int emptyDurationCount;
+        private int finalLimitCount;
+        private int irCount;
+        private int malformedDurationCount;
+        private int modelCount;
+        private int negativeDurationCount;
+        private int nestedCount;
+        private int ownSemicolonCount;
+        private int otherSemicolonCount;
+        private int overflowBridgedCount;
+        private int overflowErrorCount;
+        private int pastOrFutureCount;
+        private int rangeOrderErrorCount;
+        private int separateCountCount;
+        private int slotZoneCount;
+        private int slotZoneUnderListZoneCount;
+        private int withoutDurationCount;
+        private int zeroDurationCount;
+        private String calendar;
+        private TimestampDriver driver;
+        private long durationUnits;
+        // the list has a bracketed fixed date after another element, which the parser counts with it
+        private boolean hasBracketedFixedDateAfterElement;
+        private boolean hasFixedDate;
+        private boolean hasListDuration;
+        private boolean hasOwnSemicolon;
+        // a ';' of a fixed date in a bracket, which the parser does not read without a tick calendar either
+        private boolean hasOwnSemicolonInBracket;
+        private boolean hasSlotZone;
+        private boolean isBindAlike;
+        private boolean isDurationModelled;
+        private boolean isModelled;
+        private boolean isSmallLimit;
+        private boolean isWholeDays;
+        private long now;
+        private String nowText;
+        private String text;
+        private String zone;
+        private long zoneOffset;
+
+        void assertEveryShape() {
+            Assert.assertTrue("a list whose fixed dates keep their own extent in its IR", irCount > 0);
+            Assert.assertTrue("a modelled list", modelCount > 0);
+            Assert.assertTrue("a list that the parser reads alike", bindAlikeCount > 0);
+            Assert.assertTrue("fixed dates that hold one another", nestedCount > 0);
+            Assert.assertTrue("a fixed date that parses as the bind variable where an earlier element holds it", overflowBridgedCount > 0);
+            Assert.assertTrue("a fixed date that parses as the bind variable and fails", overflowErrorCount > 0);
+            Assert.assertTrue("a failure of the check after a day of a range", dateRangeLimitCount > 0);
+            Assert.assertTrue("a failure of the check at the end", finalLimitCount > 0);
+            Assert.assertTrue("a bracketed fixed date that the parser counts with the elements before it", separateCountCount > 0);
+            Assert.assertTrue("a range that starts after it ends", rangeOrderErrorCount > 0);
+            Assert.assertTrue("a time slot with a timezone of its own", slotZoneCount > 0);
+            Assert.assertTrue("a time slot with a timezone of its own under a timezone of the list", slotZoneUnderListZoneCount > 0);
+            Assert.assertTrue("an empty duration", emptyDurationCount > 0);
+            Assert.assertTrue("a zero duration", zeroDurationCount > 0);
+            Assert.assertTrue("a negative duration", negativeDurationCount > 0);
+            Assert.assertTrue("a duration in months or years", calendarUnitDurationCount > 0);
+            Assert.assertTrue("a duration that does not parse", malformedDurationCount > 0);
+            Assert.assertTrue("a list without a duration of its own", withoutDurationCount > 0);
+            Assert.assertTrue("a fixed date with a ';' of its own in a list without a duration", ownSemicolonCount > 0);
+            Assert.assertTrue("a fixed date with a ';' of its own beside the duration of the list", otherSemicolonCount > 0);
+            Assert.assertTrue("a list of date variables only", dateVariableOnlyCount > 0);
+            Assert.assertTrue("a fixed date before 1970 or in 2099", pastOrFutureCount > 0);
+            Assert.assertTrue("a compile error", compileErrorCount > 0);
+        }
+
+        void check(Rnd rnd) throws SqlException {
+            generate(rnd);
+            final CairoConfiguration limitConfiguration = isSmallLimit ? smallLimits : configuration;
+            final String context = text + " at " + nowText + " [" + ColumnType.nameOf(driver.getTimestampType()) + (isSmallLimit ? ", limit 16]" : "]");
+            final CompiledTickExpression compiled;
+            try {
+                compiled = IntervalUtils.compileTickExpr(driver, limitConfiguration, text, 0, text.length(), 0);
+            } catch (SqlException e) {
+                compileErrorCount++;
+                final String error = e.getFlyweightMessage().toString();
+                if (!error.contains(" produces too many intervals ")) {
+                    // the compiled form compiles the fixed dates of the same list with a day filter the same way
+                    final String dayFilter = text.replace('#' + calendar, "#Fri");
+                    try (CompiledTickExpression ignore = IntervalUtils.compileTickExpr(driver, limitConfiguration, dayFilter, 0, dayFilter.length(), 0)) {
+                        Assert.fail(context + " compiles as " + dayFilter + " where it fails with " + error);
+                    } catch (SqlException dayFilterError) {
+                        Assert.assertEquals(context + " as " + dayFilter, error, dayFilterError.getFlyweightMessage().toString());
+                    }
+                }
+                otherSemicolonCount += hasListDuration && hasOwnSemicolon ? 1 : 0;
+                return;
+            }
+            try {
+                final LongList out = new LongList();
+                String evaluated;
+                try {
+                    compiled.evaluate(out, now);
+                    evaluated = intervalToString(driver, out);
+                } catch (CairoException e) {
+                    evaluated = "error: " + e.getFlyweightMessage();
+                }
+                String validated = null;
+                try {
+                    compiled.validate(now);
+                } catch (SqlException e) {
+                    validated = "error: " + e.getFlyweightMessage();
+                }
+                if (validated == null) {
+                    // validate() runs the interval limit as the evaluation does, but not the range order check
+                    Assert.assertFalse(context + ": " + evaluated, isIntervalLimitError(evaluated));
+                } else {
+                    Assert.assertTrue(context + ": " + evaluated + " where validate() fails with " + validated, evaluated.equals(validated) || evaluated.equals(RANGE_ORDER_ERROR));
+                }
+                rangeOrderErrorCount += evaluated.equals(RANGE_ORDER_ERROR) ? 1 : 0;
+                final String bind = parseTickExpr(limitConfiguration, driver, text, now, IntervalUtils.TICK_CHECK_ALL);
+                if (!hasListDuration) {
+                    withoutDurationCount++;
+                    checkWithoutDuration(context, evaluated);
+                } else if (!hasFixedDate) {
+                    dateVariableOnlyCount++;
+                    // the compiled form keeps its code for a list without a fixed date
+                    Assert.assertEquals(context + " as a bind variable", bind, evaluated);
+                } else if (hasOwnSemicolon) {
+                    // a ';' in the timezone of a time slot, which reads as the offset up to it
+                    otherSemicolonCount++;
+                } else {
+                    checkOwnExtents(context, compiled.isParsedOnEvaluation(), evaluated, bind);
+                }
+            } finally {
+                Misc.free(compiled);
+            }
+        }
+
+        void log() {
+            LOG.info().$("compiled static date fuzz [irs=").$(irCount)
+                    .$(", modelled=").$(modelCount)
+                    .$(", bindAlike=").$(bindAlikeCount)
+                    .$(", nested=").$(nestedCount)
+                    .$(", overflowBridged=").$(overflowBridgedCount)
+                    .$(", overflowErrors=").$(overflowErrorCount)
+                    .$(", dateRangeLimits=").$(dateRangeLimitCount)
+                    .$(", finalLimits=").$(finalLimitCount)
+                    .$(", separateCounts=").$(separateCountCount)
+                    .$(", rangeOrderErrors=").$(rangeOrderErrorCount)
+                    .$(", slotZones=").$(slotZoneCount)
+                    .$(", slotZonesUnderListZone=").$(slotZoneUnderListZoneCount)
+                    .$(", emptyDurations=").$(emptyDurationCount)
+                    .$(", zeroDurations=").$(zeroDurationCount)
+                    .$(", negativeDurations=").$(negativeDurationCount)
+                    .$(", calendarUnitDurations=").$(calendarUnitDurationCount)
+                    .$(", malformedDurations=").$(malformedDurationCount)
+                    .$(", withoutDuration=").$(withoutDurationCount)
+                    .$(", ownSemicolons=").$(ownSemicolonCount)
+                    .$(", otherSemicolons=").$(otherSemicolonCount)
+                    .$(", dateVariablesOnly=").$(dateVariableOnlyCount)
+                    .$(", pastOrFuture=").$(pastOrFutureCount)
+                    .$(", compileErrors=").$(compileErrorCount)
+                    .I$();
+        }
+
+        /**
+         * Returns whether any two of the intervals overlap so that, sorted by their starts and ends, one
+         * ends before one before it ends: the tick calendar keeps the end of the inner one of those.
+         */
+        private static boolean isNested(LongList intervals) {
+            final long[][] pairs = new long[intervals.size() / 2][];
+            for (int i = 0; i < pairs.length; i++) {
+                pairs[i] = new long[]{intervals.getQuick(2 * i), intervals.getQuick(2 * i + 1)};
+            }
+            Arrays.sort(pairs, (a, b) -> a[0] != b[0] ? Long.compare(a[0], b[0]) : Long.compare(a[1], b[1]));
+            long maxHi = Long.MIN_VALUE;
+            for (long[] pair : pairs) {
+                if (pair[1] < maxHi) {
+                    return true;
+                }
+                maxHi = Math.max(maxHi, pair[1]);
+            }
+            return false;
+        }
+
+        private void addDays(long firstDay, int dayCount, String time) {
+            for (int day = 0; day < dayCount; day++) {
+                final long localDay = firstDay + driver.fromDays(day);
+                if (time == null) {
+                    extents.add(localDay - zoneOffset, localDay - zoneOffset + driver.fromDays(1) - 1);
+                } else {
+                    addSlotExtent(driver, localDay, time, zoneOffset, extents);
+                }
+            }
+        }
+
+        /**
+         * Appends an element of the kind, or a random one where it is -1, to the list, and its own
+         * extents to the model.
+         */
+        private void appendElement(Rnd rnd, String listTime, boolean isFirst, int forcedKind) {
+            // a date variable takes the date of "now" in UTC, which the timezone of the list then reads
+            // as a local date, in both forms
+            final long localToday = driver.startOfDay(now, 0);
+            final String[] days = calendar.equals("X24H") && rnd.nextBoolean() ? X24H_DAYS : DAYS;
+            final String dayText = days[rnd.nextInt(days.length)];
+            pastOrFutureCount += dayText.startsWith("1969") || dayText.startsWith("2099") ? 1 : 0;
+            final long day = driver.parseFloorLiteral(dayText + "T00:00:00.000000Z");
+            // with a time part of the list, only whole days, which take it
+            final int kind = forcedKind >= 0 ? forcedKind : listTime.isEmpty() ? rnd.nextInt(12) : (rnd.nextInt(3) == 0 ? 1 : rnd.nextBoolean() ? 0 : 3);
+            switch (kind) {
+                case 0 -> {
+                    final int i = rnd.nextInt(DAY_VARIABLES.length);
+                    sb.append(DAY_VARIABLES[i]);
+                    addDays(localToday + driver.fromDays(DAY_VARIABLE_DAYS[i]), 1, listTime.isEmpty() ? null : "15:00");
+                }
+                case 1 -> {
+                    final int i = rnd.nextInt(DAY_RANGES.length);
+                    sb.append(DAY_RANGES[i]);
+                    addDays(localToday + driver.fromDays(DAY_RANGE_DAYS[i][0]), DAY_RANGE_DAYS[i][1] - DAY_RANGE_DAYS[i][0] + 1, listTime.isEmpty() ? null : "15:00");
+                }
+                case 2 -> {
+                    sb.append(OTHER_VARIABLES[rnd.nextInt(OTHER_VARIABLES.length)]);
+                    isModelled = false;
+                    isWholeDays = false;
+                }
+                case 3 -> {
+                    hasFixedDate = true;
+                    sb.append(dayText);
+                    addDays(day, 1, listTime.isEmpty() ? null : "15:00");
+                }
+                case 4 -> {
+                    hasFixedDate = true;
+                    final String time = TIMES[rnd.nextInt(TIMES.length)];
+                    sb.append(dayText).append('T').append(time);
+                    addSlotExtent(driver, day, time, zoneOffset, extents);
+                    isWholeDays = false;
+                }
+                case 5 -> {
+                    hasFixedDate = true;
+                    isWholeDays = false;
+                    if (zoneOffset == 0 && isModelled) {
+                        final String point = POINTS[rnd.nextInt(POINTS.length)];
+                        sb.append(dayText).append('T').append(point);
+                        addSlotExtent(driver, day, point, 0, extents);
+                        isBindAlike &= !point.endsWith("UTC");
+                    } else {
+                        sb.append(dayText).append("T15:00:00Z");
+                        isModelled = false;
+                    }
+                }
+                case 6 -> {
+                    hasFixedDate = true;
+                    isWholeDays = false;
+                    hasBracketedFixedDateAfterElement |= !isFirst;
+                    sb.append(dayText).append("T[");
+                    for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                        final String slot = SLOTS[rnd.nextInt(SLOTS.length)];
+                        if (i > 0) {
+                            sb.append(',');
+                        }
+                        sb.append(slot);
+                        addSlotExtent(driver, day, slot, zoneOffset, extents);
+                        if (slot.indexOf('@') >= 0) {
+                            hasSlotZone = true;
+                        }
+                    }
+                    sb.append(']');
+                }
+                case 7 -> {
+                    // two whole days, or their minute at 15:00
+                    hasFixedDate = true;
+                    hasBracketedFixedDateAfterElement |= !isFirst;
+                    final boolean isTimed = rnd.nextBoolean();
+                    sb.append("2025-01-[23..24]").append(isTimed ? "T15:00" : "");
+                    addDays(driver.parseFloorLiteral("2025-01-23T00:00:00.000000Z"), 2, isTimed ? "15:00" : null);
+                    isWholeDays &= !isTimed;
+                }
+                case 8, 9 -> {
+                    // the seconds at the hours of a day, or the minutes from 14:00 to 20:30 every half hour
+                    hasFixedDate = true;
+                    hasBracketedFixedDateAfterElement |= !isFirst;
+                    isWholeDays = false;
+                    if (kind == 8) {
+                        sb.append(dayText).append("T[00..23]:00:00");
+                        for (int hour = 0; hour < 24; hour++) {
+                            addSlotExtent(driver, day, (hour < 10 ? "0" : "") + hour + ":00:00", zoneOffset, extents);
+                        }
+                    } else {
+                        sb.append(dayText).append("T[14..20]:[00,30]");
+                        for (int hour = 14; hour <= 20; hour++) {
+                            addSlotExtent(driver, day, hour + ":00", zoneOffset, extents);
+                            addSlotExtent(driver, day, hour + ":30", zoneOffset, extents);
+                        }
+                    }
+                }
+                case 10 -> {
+                    hasFixedDate = true;
+                    final String date = OTHER_FIXED_DATES[rnd.nextInt(OTHER_FIXED_DATES.length)];
+                    sb.append(date);
+                    isModelled = false;
+                    isWholeDays &= date.equals("2025-W04-5");
+                    // the parser reads 15:00:00.1234Z as 15:00:00.234 with a duration only, see
+                    // bug-duration-date-parse-any-format-misreads
+                    isBindAlike &= !date.endsWith(".1234Z");
+                    hasBracketedFixedDateAfterElement |= !isFirst && date.indexOf('[') >= 0;
+                    hasSlotZone |= date.indexOf('@') >= 0;
+                }
+                default -> {
+                    // the extents are the windows of the date, which tell whether the date holds another
+                    hasFixedDate = true;
+                    hasOwnSemicolon = true;
+                    final int i = rnd.nextInt(OWN_SEMICOLON_DATES.length);
+                    sb.append(OWN_SEMICOLON_DATES[i]);
+                    hasOwnSemicolonInBracket |= OWN_SEMICOLON_DATES[i].indexOf('[') >= 0;
+                    hasSlotZone |= OWN_SEMICOLON_DATES[i].indexOf('@') >= 0;
+                    final long windowDay = driver.parseFloorLiteral(OWN_SEMICOLON_DAYS[i] + "T00:00:00.000000Z");
+                    final long[] window = OWN_SEMICOLON_WINDOWS[i];
+                    for (long repeat = 0; repeat <= window[2]; repeat += Math.max(window[2], 1)) {
+                        final long lo = windowDay + driver.fromDays((int) repeat) + driver.fromSeconds(window[0]) - (OWN_SEMICOLON_DATES[i].contains("@-05:00") ? 0 : zoneOffset);
+                        extents.add(lo, lo + driver.fromSeconds(window[1]) - 1);
+                    }
+                    isWholeDays = false;
+                }
+            }
+        }
+
+        /**
+         * Checks a list with a fixed date whose only ';' starts its duration, whose fixed dates keep
+         * their own extent: the model, the parser where it reads the list alike, and the errors.
+         */
+        private void checkOwnExtents(String context, boolean isParsedOnEvaluation, String evaluated, String bind) {
+            irCount += isParsedOnEvaluation ? 0 : 1;
+            final boolean isNested = isModelled && isNested(extents);
+            nestedCount += isNested ? 1 : 0;
+            final boolean isAlike = isBindAlike && (isModelled ? !isNested : isWholeDays);
+            if (evaluated.startsWith("error: ")) {
+                if (isParsedOnEvaluation) {
+                    overflowErrorCount++;
+                }
+                dateRangeLimitCount += evaluated.startsWith("error: Date range expansion") ? 1 : 0;
+                finalLimitCount += !isParsedOnEvaluation && evaluated.startsWith("error: Bracket expansion") ? 1 : 0;
+                // the compiled form fails where the parser fails, with the same error, unless the parser
+                // counted a bracketed fixed date with the elements before it, and failed first
+                if (isAlike && (isParsedOnEvaluation || !hasBracketedFixedDateAfterElement)) {
+                    Assert.assertEquals(context + " as a bind variable", evaluated, bind);
+                }
+                return;
+            }
+            if (isParsedOnEvaluation) {
+                overflowBridgedCount++;
+            }
+            if (isModelled && isDurationModelled) {
+                modelCount++;
+                Assert.assertEquals(context + " by the model", model(), evaluated);
+            }
+            if (isAlike) {
+                if (isIntervalLimitError(bind)) {
+                    // the parser counts a bracketed fixed date with the elements before it
+                    Assert.assertTrue(context + ": " + bind, hasBracketedFixedDateAfterElement && !isParsedOnEvaluation);
+                    separateCountCount++;
+                } else {
+                    bindAlikeCount++;
+                    Assert.assertEquals(context + " as a bind variable", bind, evaluated);
+                }
+            }
+        }
+
+        /**
+         * Checks a list without a duration of its own, which compiles as it always has: where nothing
+         * nests, the fixed dates have no ';' in a bracket, and no time slot with a timezone of its own
+         * has one of the list too, it evaluates to what the parser makes of it without the tick
+         * calendar, cut by the sessions.
+         */
+        private void checkWithoutDuration(String context, String evaluated) {
+            ownSemicolonCount += hasOwnSemicolon ? 1 : 0;
+            final boolean isS9 = isBindAlike
+                    && !hasOwnSemicolonInBracket
+                    && (isModelled ? !isNested(extents) : isWholeDays)
+                    && !(hasSlotZone && !zone.isEmpty());
+            if (isS9 && !evaluated.startsWith("error: ")) {
+                final String withoutCalendar = text.replace('#' + calendar, "");
+                final LongList out = new LongList();
+                try {
+                    IntervalUtils.parseTickExpr(driver, configuration, withoutCalendar, 0, withoutCalendar.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, IntervalUtils.TICK_CHECK_ALL);
+                } catch (SqlException e) {
+                    return;
+                }
+                Assert.assertEquals(context + " without its tick calendar, cut by the sessions", intervalToString(driver, union(intersect(out, sessions(driver, calendar)))), evaluated);
+            }
+        }
+
+        private void generate(Rnd rnd) {
+            driver = ColumnType.getTimestampDriver(rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO);
+            nowText = NOWS[rnd.nextInt(NOWS.length)];
+            now = driver.parseFloorLiteral(nowText);
+            calendar = CALENDARS[rnd.nextInt(CALENDARS.length)];
+            isSmallLimit = rnd.nextInt(3) == 0;
+            final int zoneIndex = rnd.nextInt(ZONES.length);
+            zone = ZONES[zoneIndex];
+            zoneOffset = driver.fromMinutes(ZONE_MINUTES[zoneIndex]);
+            isModelled = !zone.equals("@America/New_York");
+            isWholeDays = true;
+            isBindAlike = true;
+            hasFixedDate = false;
+            hasOwnSemicolon = false;
+            hasOwnSemicolonInBracket = false;
+            hasSlotZone = false;
+            hasBracketedFixedDateAfterElement = false;
+            extents.clear();
+            sb.setLength(0);
+            sb.append('[');
+            // a duration of DURATIONS that a scenario takes, or -1
+            int forcedDuration = -1;
+            final String listTime;
+            final int scenario = rnd.nextInt(20);
+            if (scenario == 0) {
+                // At a limit of 16, three minutes and the 14 of a bracketed fixed date after them: the
+                // parser counts the 17 together, and the compiled form the 14 apart
+                isSmallLimit = true;
+                listTime = "";
+                sb.append("2025-01-23T[15:00,16:00,20:30], ");
+                addSlotExtent(driver, driver.parseFloorLiteral("2025-01-23T00:00:00.000000Z"), "15:00", zoneOffset, extents);
+                addSlotExtent(driver, driver.parseFloorLiteral("2025-01-23T00:00:00.000000Z"), "16:00", zoneOffset, extents);
+                addSlotExtent(driver, driver.parseFloorLiteral("2025-01-23T00:00:00.000000Z"), "20:30", zoneOffset, extents);
+                appendElement(rnd, listTime, false, 9);
+            } else if (scenario == 1) {
+                // At a limit of 16, the 24 seconds at the hours of today, which today holds
+                isSmallLimit = true;
+                listTime = "";
+                hasFixedDate = true;
+                isWholeDays = false;
+                final String todayText = nowText.substring(0, 10);
+                sb.append("$today, ").append(todayText).append("T[00..23]:00:00");
+                final long today = driver.startOfDay(now, 0);
+                addDays(today, 1, null);
+                for (int hour = 0; hour < 24; hour++) {
+                    addSlotExtent(driver, today, (hour < 10 ? "0" : "") + hour + ":00:00", zoneOffset, extents);
+                }
+                hasBracketedFixedDateAfterElement = true;
+            } else if (scenario == 2) {
+                // At a limit of 16, the minute at 15:00 of a fixed date and of the 21 days of a range,
+                // which stay apart, past the limit after a day of the range
+                isSmallLimit = true;
+                listTime = "T15:00";
+                hasFixedDate = true;
+                isWholeDays = false;
+                sb.append("2025-01-24, $today-20d..$today");
+                addDays(driver.parseFloorLiteral("2025-01-24T00:00:00.000000Z"), 1, "15:00");
+                addDays(driver.startOfDay(now, 0) - driver.fromDays(20), 21, "15:00");
+            } else if (scenario == 3) {
+                // At a limit of 16, the minutes of three fixed dates, 18 that XNYS trades on, each 30
+                // seconds longer, past the limit at the end
+                isSmallLimit = true;
+                listTime = "";
+                calendar = "XNYS";
+                zone = "";
+                zoneOffset = 0;
+                isModelled = true;
+                hasFixedDate = true;
+                isWholeDays = false;
+                forcedDuration = 0;
+                sb.append("2025-01-24T[14..20]:[00,30], 2025-01-23T[15:00,16:00,20:30], 2025-01-27T[15:00,16:00]");
+                final long january23 = driver.parseFloorLiteral("2025-01-23T00:00:00.000000Z");
+                for (int hour = 14; hour <= 20; hour++) {
+                    addSlotExtent(driver, january23 + driver.fromDays(1), hour + ":00", 0, extents);
+                    addSlotExtent(driver, january23 + driver.fromDays(1), hour + ":30", 0, extents);
+                }
+                for (String slot : new String[]{"15:00", "16:00", "20:30"}) {
+                    addSlotExtent(driver, january23, slot, 0, extents);
+                }
+                for (String slot : new String[]{"15:00", "16:00"}) {
+                    addSlotExtent(driver, january23 + driver.fromDays(4), slot, 0, extents);
+                }
+                hasBracketedFixedDateAfterElement = true;
+            } else {
+                // the time part of the list, for whole days only
+                listTime = rnd.nextInt(6) == 0 ? "T15:00" : "";
+                for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
+                    if (i > 0) {
+                        sb.append(", ");
+                    }
+                    appendElement(rnd, listTime, i == 0, -1);
+                }
+            }
+            sb.append(']').append(listTime).append(zone).append('#').append(calendar);
+            isWholeDays &= listTime.isEmpty();
+            slotZoneCount += hasSlotZone ? 1 : 0;
+            slotZoneUnderListZoneCount += hasSlotZone && !zone.isEmpty() ? 1 : 0;
+            // the duration of the list, which a list with a fixed date with a ';' of its own mostly goes without
+            final int durationKind = rnd.nextInt(12);
+            isDurationModelled = false;
+            durationUnits = 0;
+            if (forcedDuration >= 0 || durationKind < 11 && !(hasOwnSemicolon && rnd.nextInt(4) != 0)) {
+                final String duration;
+                if (forcedDuration >= 0 || durationKind < 8) {
+                    final int i = forcedDuration >= 0 ? forcedDuration : rnd.nextInt(DURATIONS.length);
+                    duration = DURATIONS[i];
+                    durationUnits = driver.fromSeconds(DURATION_SECONDS[i]);
+                    isDurationModelled = true;
+                    emptyDurationCount += duration.isEmpty() ? 1 : 0;
+                    zeroDurationCount += !duration.isEmpty() && DURATION_SECONDS[i] == 0 ? 1 : 0;
+                    negativeDurationCount += DURATION_SECONDS[i] < 0 ? 1 : 0;
+                } else if (durationKind < 10) {
+                    duration = CALENDAR_UNIT_DURATIONS[rnd.nextInt(CALENDAR_UNIT_DURATIONS.length)];
+                    calendarUnitDurationCount++;
+                } else {
+                    duration = MALFORMED_DURATIONS[rnd.nextInt(MALFORMED_DURATIONS.length)];
+                    malformedDurationCount++;
+                }
+                sb.append(';').append(duration);
+                hasListDuration = true;
+            } else {
+                hasListDuration = false;
+            }
+            text = sb.toString();
+        }
+
+        /**
+         * Returns the documented semantics of the list: the own extents of its elements, united, cut by
+         * the sessions of the calendar into pieces as long as the sessions hold them, each piece's end
+         * extended by the duration, and merged.
+         */
+        private String model() {
+            final LongList kept = union(intersect(union(extents), sessions(driver, calendar)));
+            for (int i = 1, n = kept.size(); i < n; i += 2) {
+                kept.setQuick(i, kept.getQuick(i) + durationUnits);
+            }
+            return intervalToString(driver, union(kept));
         }
     }
 }
