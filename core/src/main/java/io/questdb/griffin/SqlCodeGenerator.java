@@ -579,9 +579,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean fullFatJoins = false;
     // Only this RHS leaf must retain a time-frame-capable scan beneath its residual filter.
     private IQueryModel horizonJoinSlaveModel;
+    // While generateJoins() generates an operand that SPLICE JOIN or the single-threaded HORIZON JOIN reads by row
+    // id: whether a parallel filter or the parallel HORIZON JOIN above rowIdOrderByModel may read the page frames its
+    // rows arrive in.
+    private boolean isRowIdOrderByFrameReaderAbove;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
+    // While generateJoins() generates an operand that SPLICE JOIN or the single-threaded HORIZON JOIN reads by row
+    // id: the model whose ORDER BY produces that operand's rows. generateOrderBy() keeps its sort when the rows
+    // already arrive in order but only the sort can give them random access.
+    private IQueryModel rowIdOrderByModel;
     private int whereClauseParserDepth;
     @Nullable
     private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
@@ -757,6 +765,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             scratchSnapshots.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, scratchSnapshots.size() - 1);
         }
         horizonJoinSlaveModel = null;
+        rowIdOrderByModel = null;
+        isRowIdOrderByFrameReaderAbove = false;
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
@@ -2059,6 +2069,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    // Names a master column of the constant-false WINDOW JOIN splice under a reordering projection.
+    // The splice holds every master column next to the aggregates, and a projection alias may repeat
+    // the name of a master column it does not stand for. Such a master column takes its own alias
+    // when the projection lists it. Otherwise it takes a name that neither the projection nor the
+    // master uses, since nothing reads an unprojected column by name.
+    private static TableColumnMetadata spliceMasterColumnMetadata(
+            RecordMetadata masterMetadata,
+            int masterIndex,
+            RecordMetadata projectionMetadata,
+            IntList projectionColumnIndex
+    ) {
+        final TableColumnMetadata column = masterMetadata.getColumnMetadata(masterIndex);
+        final String name = column.getColumnName();
+        final int aliasIndex = projectionMetadata.getColumnIndexQuiet(name);
+        if (aliasIndex < 0 || projectionColumnIndex.getQuick(aliasIndex) == masterIndex) {
+            return column;
+        }
+        final int projectedIndex = projectionColumnIndex.indexOf(masterIndex, 0, projectionColumnIndex.size());
+        if (projectedIndex > -1) {
+            return projectionMetadata.getColumnMetadata(projectedIndex);
+        }
+        String freeName;
+        int suffix = 1;
+        do {
+            freeName = name + '_' + suffix++;
+        } while (projectionMetadata.getColumnIndexQuiet(freeName) > -1 || masterMetadata.getColumnIndexQuiet(freeName) > -1);
+        return new TableColumnMetadata(freeName, column.getColumnType(), column.getIndexType(),
+                column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata());
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -3827,6 +3867,80 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
+    }
+
+    // Finds the model whose ORDER BY produces the rows of a join operand, as generateQuery() builds them: down the
+    // models whose factories keep the order of their input and pass its random access on - a SELECT_MODEL_CHOOSE or
+    // SELECT_MODEL_VIRTUAL projection and a sub-query wrapper, each with its WHERE and LIMIT, and an EXCEPT or
+    // INTERSECT that takes the rows as its first branch. Records whether a reader of the page frames those rows
+    // arrive in sits above that ORDER BY: a WHERE, which may run as a parallel filter and then supplies random access
+    // itself, or isFrameReaderAtTop. A VIRTUAL projection, a LIMIT and a set operation offer no page frames, so they
+    // cut the readers above them off. A UNION never offers random access and LATEST ON over a random-access input
+    // emits rows in key order (LatestByLightRecordCursorFactory), so both stop the walk, as do the models that build
+    // their own cursors: GROUP BY, window, WINDOW JOIN, HORIZON JOIN, DISTINCT, cursor and SHOW models, joins and
+    // tables.
+    private void findRowIdOrderByModel(
+            IQueryModel model,
+            boolean processJoins,
+            boolean isFrameReaderAtTop,
+            boolean isParallelFilterEnabled
+    ) {
+        rowIdOrderByModel = null;
+        boolean isFrameReaderAbove = isFrameReaderAtTop;
+        while (true) {
+            if (model instanceof QueryModelWrapper wrapper) {
+                // generateQuery0() generates a shared model through its delegate
+                model = wrapper.getDelegate();
+            }
+            // generateQuery() applies the set operations of a model above its LIMIT, and generateQuery0Inner() the
+            // LIMIT above the ORDER BY and the WHERE
+            for (IQueryModel setModel = model; setModel.getUnionModel() != null; setModel = setModel.getUnionModel()) {
+                final int setOperationType = setModel.getSetOperationType();
+                if (setOperationType == IQueryModel.SET_OPERATION_UNION || setOperationType == IQueryModel.SET_OPERATION_UNION_ALL) {
+                    return;
+                }
+                isFrameReaderAbove = false;
+            }
+            if (model.getLimitLo() != null || model.getLimitHi() != null) {
+                isFrameReaderAbove = false;
+            }
+            if (model.getOrderHash().size() > 0) {
+                rowIdOrderByModel = model;
+                isRowIdOrderByFrameReaderAbove = isFrameReaderAbove;
+                return;
+            }
+            if (model.getLatestBy().size() > 0) {
+                return;
+            }
+            switch (model.getSelectModelType()) {
+                case IQueryModel.SELECT_MODEL_CHOOSE -> {
+                }
+                // its WHERE reads the projection, which offers no page frames
+                case IQueryModel.SELECT_MODEL_VIRTUAL -> isFrameReaderAbove = false;
+                case IQueryModel.SELECT_MODEL_GROUP_BY, IQueryModel.SELECT_MODEL_WINDOW,
+                     IQueryModel.SELECT_MODEL_WINDOW_JOIN,
+                     IQueryModel.SELECT_MODEL_HORIZON_JOIN, IQueryModel.SELECT_MODEL_DISTINCT,
+                     IQueryModel.SELECT_MODEL_CURSOR,
+                     IQueryModel.SELECT_MODEL_SHOW -> {
+                    return;
+                }
+                default -> {
+                    // generateSelect() builds a join, reads a table or function, or wraps the sub-query
+                    if (model.getTableNameExpr() != null || (processJoins && model.getJoinModels().size() > 1)) {
+                        return;
+                    }
+                }
+            }
+            // An earlier generation of a shared model consumed its WHERE and left the backup behind.
+            if (isParallelFilterEnabled
+                    && model.getSelectModelType() != IQueryModel.SELECT_MODEL_VIRTUAL
+                    && (model.getWhereClause() != null || model.getBackupWhereClause() != null)) {
+                isFrameReaderAbove = true;
+            }
+            model = model.getNestedModel();
+            assert model != null; // generateSubQuery() asserts the same
+            processJoins = true;
+        }
     }
 
     private ObjList<Function> generateCastFunctions(
@@ -6141,6 +6255,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         "right-hand side of HORIZON JOIN can only be a table with an optional filter"
                 );
             }
+            if (!slaveFactory.supportsConcurrentTimeFrameCursor()) {
+                supportsParallelism = false;
+            }
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
@@ -7162,6 +7279,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             int n = ordered.size();
             assert n > 1;
+            // SPLICE JOIN and the single-threaded HORIZON JOIN read their operands by row id. HORIZON JOIN shares a
+            // query level only with HORIZON JOINs, so it reads operand 0. Every join factory lacks random access, so
+            // SPLICE JOIN reads operand 0 only as the first join.
+            final boolean isHorizonJoinLevel = IQueryModel.isHorizonJoin(model);
+            final boolean isMasterReadByRowId = isHorizonJoinLevel
+                    || joinModels.getQuick(ordered.getQuick(1)).getJoinType() == IQueryModel.JOIN_SPLICE;
             for (int i = 0; i < n; i++) {
                 int index = ordered.getQuick(i);
                 IQueryModel slaveModel = joinModels.getQuick(index);
@@ -7222,6 +7345,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // compile
                     RecordMetadata horizonSlaveProjectionMetadata = null;
                     final IQueryModel previousHorizonSlaveModel = horizonJoinSlaveModel;
+                    final IQueryModel previousRowIdOrderByModel = rowIdOrderByModel;
+                    final boolean previousRowIdOrderByFrameReaderAbove = isRowIdOrderByFrameReaderAbove;
                     if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
                         horizonJoinSlaveModel = slaveModel;
                         while (horizonJoinSlaveModel.getNestedModel() != null) {
@@ -7229,6 +7354,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                     try {
+                        if (i == 0 ? isMasterReadByRowId : slaveModel.getJoinType() == IQueryModel.JOIN_SPLICE) {
+                            // SqlOptimiser anchors a post-join WHERE at a join, never at the first operand.
+                            assert i > 0 || slaveModel.getPostJoinWhereClause() == null;
+                            findRowIdOrderByModel(
+                                    slaveModel,
+                                    index > 0,
+                                    i == 0 && isHorizonJoinLevel && executionContext.isParallelHorizonJoinEnabled(),
+                                    executionContext.isParallelFilterEnabled()
+                            );
+                        } else {
+                            rowIdOrderByModel = null;
+                        }
                         slaveToFree = generateQuery(slaveModel, executionContext, index > 0);
                         if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
                             // A filtered subquery may project away filter-only columns. Keep
@@ -7272,6 +7409,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     } finally {
                         horizonJoinSlaveModel = previousHorizonSlaveModel;
+                        rowIdOrderByModel = previousRowIdOrderByModel;
+                        isRowIdOrderByFrameReaderAbove = previousRowIdOrderByFrameReaderAbove;
                     }
 
                     // check if this is the root of joins
@@ -7517,8 +7656,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (colIndex >= splitIndex) {
                                                 throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
                                             }
-                                            if (colIndex == masterMetadata.getTimestampIndex()) {
-                                                timestampIndex = colIndex;
+                                            // outerProjectionMetadata is indexed by projection position, so the
+                                            // designated timestamp is the first projection slot that holds it.
+                                            if (colIndex == masterMetadata.getTimestampIndex() && timestampIndex == -1) {
+                                                timestampIndex = j;
                                             }
                                             columnIndex.add(colIndex);
                                         } else {
@@ -7673,19 +7814,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (joinFilter != null && joinFilter.isConstant()) {
                                     joinFilter.init(null, executionContext);
                                     if (!joinFilter.getBool(null)) {
+                                        // An empty window still has a value for some aggregates, e.g. count() is 0,
+                                        // isOrdered() is true and haversine_dist_deg() is 0.0. Spliced column k maps
+                                        // to groupByFunctions[k] only when every aggregate column assembled into a
+                                        // group-by function. When an aggregate folds to a constant, the lists no
+                                        // longer line up, and the shortcut keeps NULL mode.
+                                        final IntList emptyValueTypes = new IntList();
+                                        final LongList emptyValues = groupByFunctions.size() == aggregateCols.size()
+                                                ? GroupByUtils.computeNonNullEmptyValues(groupByFunctions, valueTypes.getColumnCount(), emptyValueTypes)
+                                                : null;
+                                        final IntList spliceEmptyValueTypes = emptyValues != null ? emptyValueTypes : null;
                                         RecordCursorFactory factory;
                                         if (isLastWindowJoin) {
                                             if (columnIndex == null) {
-                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
+                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues, spliceEmptyValueTypes);
                                             } else {
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
-                                                for (int k = 0, m = aggregateCols.size(); k < m; k++) {
-                                                    metadata.add(new TableColumnMetadata(SqlUtil.toColumnName(aggregateCols.get(k).getAlias()), groupByFunctions.get(k).getType()));
+                                                // SelectedRecordCursorFactory exposes outerProjectionMetadata and reads the splice by index, so
+                                                // spliced column k takes the projection slot that maps to it, the metadata the regular path
+                                                // reports. A parallel Top K peels the SelectedRecord and prints its sort keys by the splice's
+                                                // column names, so the splice names no column in a way the query does not.
+                                                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                                                for (int c = 0; c < splitIndex; c++) {
+                                                    metadata.add(spliceMasterColumnMetadata(masterMetadata, c, outerProjectionMetadata, columnIndex));
                                                 }
-                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master));
+                                                metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+                                                for (int j = 0, m = columnIndex.size(); j < m; j++) {
+                                                    if (columnIndex.getQuick(j) >= splitIndex) {
+                                                        metadata.add(outerProjectionMetadata.getColumnMetadata(j));
+                                                    }
+                                                }
+                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex,
+                                                        new ExtraNullColumnCursorFactory(metadata, splitIndex, master, emptyValues, spliceEmptyValueTypes));
                                             }
                                         } else {
-                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
+                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues, spliceEmptyValueTypes);
                                         }
 
                                         Misc.free(slaveToFree);
@@ -7731,7 +7893,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (parallelWindowJoinEnabled
                                         && masterSupportsPageFrames
                                         && GroupByUtils.isParallelismSupported(groupByFunctions)
-                                        && slaveToFree.supportsTimeFrameCursor()) {
+                                        && slaveToFree.supportsConcurrentTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -9057,6 +9219,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             "right-hand side of HORIZON JOIN can only be a table with an optional filter"
                     );
                 }
+                if (!slaveFactory.supportsConcurrentTimeFrameCursor()) {
+                    supportsParallelism = false;
+                }
             }
 
             // Build combined metadata: [master cols] [offset, timestamp] [slave0 cols] [slave1 cols] ...
@@ -9693,7 +9858,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (recordCursorFactory.followedOrderByAdvice()) {
+        // Rows that already arrive in ORDER BY order skip the sort, unless SPLICE JOIN or the single-threaded HORIZON
+        // JOIN reads them by row id and only the sort can give them random access.
+        final boolean isRowIdSortRequired = isRowIdSortRequired(recordCursorFactory, model);
+        if (recordCursorFactory.followedOrderByAdvice() && !isRowIdSortRequired) {
             return recordCursorFactory;
         }
         try {
@@ -9754,7 +9922,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int index = SqlUtil.getColumnIndexQuiet(metadata, column);
                     if (index == timestampIndex) {
                         if (orderByColumnCount == 1) {
-                            if (directionMatchesScan(orderByColumnNameToIndexMap.get(column), recordCursorFactory.getScanDirection())) {
+                            if (directionMatchesScan(orderByColumnNameToIndexMap.get(column), recordCursorFactory.getScanDirection())
+                                    && !isRowIdSortRequired) {
                                 return recordCursorFactory;
                             }
                         } else { // orderByColumnCount > 1
@@ -15282,6 +15451,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
                 && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    // SPLICE JOIN and the single-threaded HORIZON JOIN read the rows of rowIdOrderByModel by row id. Its sort supplies
+    // the random access when the rows arrive without it, unless a reader above takes their page frames instead: a
+    // parallel filter supplies random access itself, and the parallel HORIZON JOIN reads page frames.
+    private boolean isRowIdSortRequired(RecordCursorFactory factory, IQueryModel model) {
+        if (model != rowIdOrderByModel || factory.recordCursorSupportsRandomAccess()) {
+            return false;
+        }
+        // A factory that offers a filter to steal also offers random access or page frames: the async filters, the
+        // runtime-constant gate over page frames, a HORIZON JOIN slave filter over a time-frame scan and a
+        // self-filtering symbol-pattern scan. So page frames alone tell whether a reader can take these rows.
+        assert factory.supportsPageFrameCursor() || !factory.supportsFilterStealing();
+        return !factory.supportsPageFrameCursor() || !isRowIdOrderByFrameReaderAbove;
     }
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {

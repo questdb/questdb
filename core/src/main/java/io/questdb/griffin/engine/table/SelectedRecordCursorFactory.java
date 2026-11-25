@@ -264,6 +264,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
+    }
+
+    @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
     }
