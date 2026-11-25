@@ -46,10 +46,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBoundBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBounds;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -71,6 +75,7 @@ import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -510,24 +515,22 @@ public class CompiledFilterIRSerializer implements Mutable {
         return argAt(node, argCount(node) - 1);
     }
 
-    /**
-     * {@code dt IN '<interval>'} on a DATE key: the Java filter reads the text as an interval, which
-     * only the TIMESTAMP interval path serializes.
-     */
-    private static boolean isDateIntervalIn(FunctionExpression call) {
-        return call.getArgumentCount() == 2 && SqlKeywords.isInKeyword(call.getName())
-                && ColumnType.tagOf(call.argumentAt(0).getDataType()) == ColumnType.DATE
-                && ColumnType.isVarcharOrString(call.argumentAt(1).getDataType());
+    // A quoted string or NULL: the right-hand constants that InTimestampTimestampFunctionFactory reads as an interval
+    // expression. It reads an unquoted integer such as 2024 as a point, which the tick expression parser would read as
+    // a year.
+    private static boolean isIntervalExpressionToken(@Nullable CharSequence token) {
+        return token != null && (Chars.isQuoted(token) || SqlKeywords.isNullKeyword(token));
     }
 
     /**
-     * {@code ts IN '<interval>'}: the right operand is the interval text itself, never re-read
-     * through a folded source.
+     * {@code ts IN '<interval>'} or {@code ts IN ('<interval>')} over a TIMESTAMP, TIMESTAMP_NS or DATE key, which
+     * InTimestampTimestampFunctionFactory reads as an interval search: the right operand is the interval text itself,
+     * never re-read through a folded source.
      */
     private static boolean isIntervalIn(FunctionExpression call) {
         return call.getArgumentCount() == 2 && SqlKeywords.isInKeyword(call.getName())
                 && !(call.argumentAt(0) instanceof ConstantExpression)
-                && ColumnType.isTimestamp(call.argumentAt(0).getDataType())
+                && isTemporal(call.argumentAt(0).getDataType())
                 && call.argumentAt(1) instanceof ConstantExpression interval && interval.isLiteral()
                 && ColumnType.isVarcharOrString(interval.getDataType());
     }
@@ -552,6 +555,11 @@ public class CompiledFilterIRSerializer implements Mutable {
         } catch (NumericException e) {
             return false;
         }
+    }
+
+    // TIMESTAMP, TIMESTAMP_NS or DATE: the key types of InTimestampTimestampFunctionFactory.
+    private static boolean isTemporal(int columnType) {
+        return ColumnType.isTimestamp(columnType) || ColumnType.tagOf(columnType) == ColumnType.DATE;
     }
 
     private static boolean isTimestampConvertible(long value, int fromType, int toType) {
@@ -900,13 +908,16 @@ public class CompiledFilterIRSerializer implements Mutable {
         if (isIntervalIn(call)) {
             final ConstantExpression interval = (ConstantExpression) call.argumentAt(1);
             final CharSequence intervalText = interval.getText();
-            if (intervalText == null) {
+            // The Java filter types an expression key and may search intervals over it; the JIT has no type for it
+            // before it visits the key's leaves, so it takes a column or a bind variable alone.
+            final BoundExpression key = call.argumentAt(0);
+            if (intervalText == null || !(key instanceof ColumnExpression || key instanceof BindVariableExpression)) {
                 return false;
             }
             constantTokens.put(interval, quoted(intervalText));
-            return hasJitShape(call.argumentAt(0));
+            return hasJitShape(key);
         }
-        if (isDateIntervalIn(call) || count >= 2 && !hasJitCompatibleTimestampConstants(call)) {
+        if (count >= 2 && !hasJitCompatibleTimestampConstants(call)) {
             return false;
         }
         final boolean isUnary = count == 1 && ("-".equals(name) || SqlKeywords.isNotKeyword(name));
@@ -3247,8 +3258,8 @@ public class CompiledFilterIRSerializer implements Mutable {
         predicateContext.onNodeVisited(rhs(predicateContext.inOperationNode));
         predicateContext.onNodeVisited(lhs(predicateContext.inOperationNode));
 
-        // check predicate type is timestamp
-        return ColumnType.isTimestamp(predicateContext.columnType);
+        // check predicate type is timestamp or date
+        return isTemporal(predicateContext.columnType);
     }
 
     // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
@@ -5071,39 +5082,123 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
     }
 
-    private void serializeInTimestampRange(int position) throws SqlException {
+    /**
+     * Serializes an IN over an interval expression that holds a date variable, such as {@code tm IN '$today'}. The Java
+     * filter resolves $now, $today and the like each time the cursor opens, so a cached plan keeps up with the clock,
+     * and immediates would freeze the bounds of the moment the filter compiled. The range checks read their bounds from
+     * bind variable slots instead, and {@link CompiledFilterTickBounds} fills them on every cursor open.
+     * <p>
+     * The IR has a fixed shape, while the interval count moves with the clock: '$today#workday' holds no interval at
+     * weekends. So the IR holds as many range checks as {@link CompiledTickExpression#getMaxIntervalCount(int)} proves
+     * the expression can yield, and the holder pads the unused ones with an interval that matches no row. An expression
+     * without such a bound, or with more intervals than the IN list threshold, goes to the Java filter: every check
+     * costs a comparison per row whether its interval is live or padding.
+     */
+    private void serializeInDateVariableRange(
+            int position,
+            CharSequence token,
+            CharSequence intervalEx,
+            TimestampDriver driver,
+            boolean isDate
+    ) throws SqlException {
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        // The same compilation InTimestampTimestampFunctionFactory gives the Java filter, which the JIT factories run
+        // on frames with column tops, so both see the same intervals.
+        final CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(driver, configuration, intervalEx, 0, intervalEx.length(), position);
+        final int threshold = configuration.getSqlJitMaxInListSizeThreshold();
+        final int maxIntervalCount = compiledExpr.getMaxIntervalCount(threshold);
+        if (maxIntervalCount < 1) {
+            throw SqlException.position(position)
+                    .put("date variable interval has no bound within the JIT IN list threshold [threshold=")
+                    .put(threshold).put("]: ").put(token);
+        }
+        final CompiledFilterTickBounds bounds = new CompiledFilterTickBounds(compiledExpr, driver.getTimestampType(), maxIntervalCount, isDate);
+        final BoundExpression lhs = lhs(predicateContext.inOperationNode);
+        // The operand order of the constant intervals in serializeInTimestampRange(). No lo == hi shortcut: whether an
+        // interval is a point is only known at run time.
+        for (int i = 0; i < maxIntervalCount; i++) {
+            bindVarFunctions.add(new CompiledFilterTickBoundBindVariable(bounds, 2 * i));
+            putOperand(VAR, I8_TYPE, bindVarFunctions.size() - 1);
+            traverse(lhs, irEmitter);
+            putOperator(GE);
+            bindVarFunctions.add(new CompiledFilterTickBoundBindVariable(bounds, 2 * i + 1));
+            putOperand(VAR, I8_TYPE, bindVarFunctions.size() - 1);
+            traverse(lhs, irEmitter);
+            putOperator(LE);
+            putOperator(AND);
+        }
+        for (int i = 1; i < maxIntervalCount; i++) {
+            putOperator(OR);
+        }
+    }
+
+    /**
+     * Serializes an IN over an interval expression as range checks, at most {@code maxIntervalCount} of them. A DATE
+     * key compares in milliseconds what InTimestampTimestampFunctionFactory compares in microseconds.
+     */
+    private void serializeInTimestampRange(int position, int maxIntervalCount) throws SqlException {
         predicateContext.currentInSerialization = true;
 
         final CharSequence token = token(rhs(predicateContext.inOperationNode));
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(predicateContext.columnType));
+        final boolean isDate = ColumnType.tagOf(predicateContext.columnType) == ColumnType.DATE;
+        if (intervalEx != null && DateExpressionEvaluator.containsDateVariable(intervalEx, 0, intervalEx.length())) {
+            serializeInDateVariableRange(position, token, intervalEx, driver, isDate);
+            return;
+        }
 
         final LongList intervals = tmpLongs;
         intervals.clear();
         IntervalUtils.parseTickExprAndIntersect(
-                ColumnType.getTimestampDriver(predicateContext.columnType),
+                driver,
                 executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
                 position,
                 sink);
 
-        final BoundExpression lhs = lhs(predicateContext.inOperationNode);
-        if (intervals.size() == 0) {
-            // An empty interval set keeps no row; the inverted range [1, 0] matches nothing.
-            intervals.add(1L, 0L);
+        final int intervalCount = intervals.size() / 2;
+        if (intervalCount > maxIntervalCount) {
+            throw SqlException.$(position, "exceeded JIT IN list threshold [threshold=")
+                    .put(maxIntervalCount)
+                    .put(", intervals=").put(intervalCount).put(']');
+        }
+        if (intervalCount == 0) {
+            // The expression holds no instant, e.g. '2024-01-06#workday', where the day filter drops the only day, a
+            // Saturday. FunctionBinder#foldEmptyIntervalIn folds such an IN to false with the same parse, so none
+            // reaches the JIT; the Java filter takes one that would, since an IN that pushed no value would leave its
+            // parent popping one that was never pushed.
+            assert false : "an IN over no instant reached the JIT: " + token;
+            throw SqlException.position(position).put("interval expression holds no instant: ").put(token);
         }
 
+        final BoundExpression lhs = lhs(predicateContext.inOperationNode);
         int orCount = -1;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
             long lo = IntervalUtils.decodeIntervalLo(intervals, i);
             long hi = IntervalUtils.decodeIntervalHi(intervals, i);
-            putOperand(IMM, I8_TYPE, lo);
-            traverse(lhs, irEmitter);
-            putOperator(GE);
-            putOperand(IMM, I8_TYPE, hi);
-            traverse(lhs, irEmitter);
-            putOperator(LE);
-            putOperator(AND);
+            if (isDate) {
+                // The Java filter matches a DATE d when d * 1000 lies in [lo, hi]. In milliseconds, that is d in
+                // [ceil(lo / 1000), floor(hi / 1000)], which is empty when the interval holds no whole millisecond.
+                // NULL stays NULL: DATE and TIMESTAMP share the sentinel.
+                lo = lo == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.ceilDiv(lo, Micros.MILLI_MICROS);
+                hi = hi == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.floorDiv(hi, Micros.MILLI_MICROS);
+            }
+            if (lo == hi) {
+                // A point, e.g. a literal at full precision: one comparison instead of two.
+                putOperand(IMM, I8_TYPE, lo);
+                traverse(lhs, irEmitter);
+                putOperator(EQ);
+            } else {
+                putOperand(IMM, I8_TYPE, lo);
+                traverse(lhs, irEmitter);
+                putOperator(GE);
+                putOperand(IMM, I8_TYPE, hi);
+                traverse(lhs, irEmitter);
+                putOperator(LE);
+                putOperator(AND);
+            }
             orCount++;
         }
 
@@ -5529,8 +5624,15 @@ public class CompiledFilterIRSerializer implements Mutable {
             if (type == FUNCTION) {
                 serializeIn();
                 return;
-            } else if (type == SET_OPERATION && isInTimestampPredicate()) {
-                serializeInTimestampRange(position);
+            } else if (type == SET_OPERATION && isInTimestampPredicate() && isIntervalExpressionToken(token(rhs(node)))) {
+                final FunctionExpression call = (FunctionExpression) node;
+                // The range checks grow with the interval count while the Java filter's binary search barely does, so
+                // the IN list threshold caps the interval count of the parenthesised form, as it caps the element
+                // count of a list, and of a DATE key, which ran on the Java filter before. The unparenthesised form
+                // over a TIMESTAMP or TIMESTAMP_NS key has always compiled any interval count.
+                final int maxIntervalCount = call.isSetOperation() && ColumnType.tagOf(predicateContext.columnType) != ColumnType.DATE
+                        ? Integer.MAX_VALUE : executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold();
+                serializeInTimestampRange(position, maxIntervalCount);
                 return;
             }
         }

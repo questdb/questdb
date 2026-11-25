@@ -2655,19 +2655,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             5
                             """
             );
-            // WhereClauseParser subtracts a not-equals string the same way as NOT IN.
-            assertInBothOrders(
-                    "ts != '2024-09#workday'",
-                    "ts NOT IN :i",
-                    """
-                            k
-                            1
-                            2
-                            3
-                            4
-                            5
-                            """
-            );
+            // A not-equals comparison rejects interval text, which NOT IN reads.
+            final String notEquals = "SELECT k FROM x WHERE ts != '2024-09#workday' AND ts NOT IN :i";
+            assertExceptionNoLeakCheck(notEquals, notEquals.indexOf('\''), "invalid timestamp");
         });
     }
 
@@ -2692,9 +2682,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     2
                     3
                     """;
+            // The binding folds the IN over no instant to false, so NOT IN keeps every row and the scan reads the
+            // table whole.
             assertQuery("SELECT k FROM x WHERE ts NOT IN '2024-01-06#workday'")
                     .noLeakCheck()
-                    .withPlanContaining("intervals: [(\"MIN\",\"MAX\")]")
+                    .expectSize()
+                    .withPlanContaining("Frame forward scan on: x")
+                    .withPlanNotContaining("intervals")
                     .returns(all);
             assertQuery("SELECT k FROM x WHERE ts NOT IN '$today#workday'").noLeakCheck().returns(all);
             assertQuery("SELECT k FROM x WHERE NOT ts IN '$today#workday'").noLeakCheck().returns(all);
@@ -2730,7 +2724,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("d8", "2024-01-08");
             assertInBothOrders("ts NOT IN '2024-01-[05,09]'", "ts < now()", "k\n2\n");
-            assertInBothOrders("ts != '2024-01-[05,09]'", "ts < now()", "k\n2\n");
+            // a not-equals comparison rejects interval text, which NOT IN reads
+            final String notEquals = "SELECT k FROM x WHERE ts != '2024-01-[05,09]' AND ts < now()";
+            assertExceptionNoLeakCheck(notEquals, notEquals.indexOf('\''), "invalid timestamp");
             assertInBothOrders("ts NOT IN '[2024-01-05,2024-01-09]'", "ts < now()", "k\n2\n");
             assertInBothOrders("ts NOT IN '2024-01-[05,06]'", "ts IN '$today'", "k\n3\n");
             assertInBothOrders("ts NOT IN '2024-01-[08,09]'", "ts IN '$today'", "k\n");

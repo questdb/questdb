@@ -8590,7 +8590,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                             2024-01-03T12:00:00.000000Z\t3
                             """
             );
-            assertJitScalarAndVectorMatchJavaOnEmptyResult("x WHERE t IN '2024-01-02#Mon' AND v > 0", "t\tv\n");
+            // The binding folds the AND over the empty IN to false, so no filter runs.
+            assertQuery("x WHERE t IN '2024-01-02#Mon' AND v > 0").noLeakCheck().withPlan("Empty table\n").returns("t\tv\n");
         });
     }
 

@@ -846,14 +846,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertFilterWithAndWithoutJit("NOT ts" + empty + " OR k = 2", allDayKeysExcept(), false, QueryAssertion::expectSize);
 
             assertQuery("SELECT k FROM x WHERE tm" + empty + " AND k = 6").noLeakCheck().assertsPlan("""
-                    SelectedRecord
-                        Empty table
+                    Empty table
                     """);
             assertQuery("SELECT k FROM x WHERE tm NOT" + empty).noLeakCheck().assertsPlan("""
-                    SelectedRecord
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: x
                     """);
         });
     }
@@ -987,8 +985,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 assertFilterWithAndWithoutJit("(" + a + " IN ('2024-01')) != (" + b + " IN ('2024-02'))", keys(1, 3), true);
                 assertFilterWithAndWithoutJit("(" + b + " IN '2024-02-02') = (" + b + " IN '2024-02-06')", keys(1, 4, 5), true);
                 assertFilterWithAndWithoutJit("(" + b + " IN ('2024-02-02')) != (" + b + " IN ('2024-02-06'))", keys(2, 3), true);
-                // 2024-01-06 is a Saturday, so the left IN holds no interval and matches no row.
-                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01-06#workday') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+                // 2024-01-06 is a Saturday, so the left IN holds no interval and matches no row. The binding folds it
+                // to false, and the JIT takes no boolean constant as an operand, so the comparison runs on the Java
+                // filter.
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01-06#workday') = (" + b + " IN '2024-02')", keys(1, 4, 5), false);
             }
         });
     }
