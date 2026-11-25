@@ -120,6 +120,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
+    private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
     // Optional footer flag, section [u32 keyEnd; 2 * rowGroupCount][u8 keys][i64 dedupSortVersion; rowGroupCount]:
     // the first and last dedup key of each row group, then the dedup version whose keys sort each row group within
@@ -613,6 +614,22 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      */
     public long getResolvedSeqTxn() {
         return readSeqTxn0(getOrCreateNativeReaderPtr());
+    }
+
+    /**
+     * Returns the compressed byte size of the row group's column chunks (pages with
+     * headers), excluding column/offset indexes and bloom filters. O(columnCount).
+     *
+     * @param rowGroupIndex zero-based row group index
+     * @return compressed byte size of the row group's column chunks
+     */
+    public long getRowGroupCompressedSize(int rowGroupIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        long total = 0;
+        for (int c = 0; c < columnCount; c++) {
+            total += Unsafe.getLong(columnChunkAddr(rowGroupIndex, c) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
+        }
+        return total;
     }
 
     public int getRowGroupCount() {
