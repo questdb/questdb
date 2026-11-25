@@ -85,3 +85,10 @@ jobs:
           prebuiltRustArtifact: qdbr-native-linux-x86-64
           testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
           testCommitModeMember: linux_x64_graal
+      # Fails the leg when it ran on anything but GraalVM. JAVA_HOME_25_X64 holds
+      # the JDK the Maven steps used, after steps.yml's activation steps ran.
+      - bash: |
+          "$(JAVA_HOME_25_X64)/bin/java" -version 2>&1 | grep GraalVM \
+            || { echo "##vso[task.logissue type=error]linux_x64_graal did not run on GraalVM"; exit 1; }
+        displayName: "Assert the leg ran on GraalVM"
+        condition: always()

@@ -160,9 +160,11 @@ An O3 commit never has to take that failure. `O3PartitionJob.shouldAssembleFresh
 partition afresh under a new `nameTxn` when the answer is no - a directory that carries no `_geometry` file
 at all, hence all sixteen generations free again. That rewrite is the only thing that reclaims a stray
 geometry file: the ordinary partition purge never sees one in a directory that stays put, and `VACUUM
-TABLE` does not know the name. The compaction, squash and trim publish sites in `TableWriter` have no such
-escape - none of them can start a chain, so only a size-cap rotation reaches the failure there - and they
-still fail loudly rather than reuse a generation.
+TABLE` does not know the name. The publish sites in `TableWriter` ask first too. Split removal, which
+publishes for a composite parent and for a plain one it records as composite, rewrites the whole parent into
+a fresh version instead of carving its last line off. JOIN, MOVE-TAIL and MAKE-PLAIN step aside for REWRITE,
+and squash flattens a composite target before it appends. A publish whose caller did not ask still fails
+loudly rather than reuse a generation.
 
 `PartitionGeometry` resolves lazily: a table with no composite partition never opens the file, and a
 query over one partition of a thousand opens one file.

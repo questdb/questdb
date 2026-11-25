@@ -568,13 +568,14 @@ public class PartitionGeometry implements Closeable, Mutable {
         int slot = findResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
         if (slot < 0) {
             slot = insertResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
-            resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, 0);
-            resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
-            resolved.setQuick(slot + RES_WRITER_TXN, -1L);
-            resolved.setQuick(slot + RES_SEQ_TXN, -1L);
-            resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
+            resetCommittedRecord(slot);
         } else {
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
+            // The slot outlived a chain that _txn no longer names, so the next publish starts a new one.
+            if (resolved.getQuick(slot + RES_GEOMETRY_REF) != txReader.getGeometryRef(partitionIndex)) {
+                assert !txReader.isPartitionComposite(partitionIndex) : "beginUpdate left a composite slot unresolved";
+                resetCommittedRecord(slot);
+            }
         }
         final int lo = pieces.size();
         pieces.add(pending);
@@ -923,6 +924,14 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_FLAGS, 0);
         resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
         return slot;
+    }
+
+    private void resetCommittedRecord(int slot) {
+        resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, 0);
+        resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
+        resolved.setQuick(slot + RES_WRITER_TXN, -1L);
+        resolved.setQuick(slot + RES_SEQ_TXN, -1L);
+        resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
     }
 
     /**
