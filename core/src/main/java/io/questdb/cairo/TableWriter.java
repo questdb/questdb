@@ -5133,6 +5133,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (metadata.isDedupKey(index)) {
             bumpDedupVersion();
+            // The table goes on deduplicating on its other keys. The native comparers take the key count from
+            // here, and the slots that commits fill skip dropped columns: a stale count leaves an empty slot.
+            if (!timestamp && dedupColumnCommitAddresses != null) {
+                dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
+            }
         }
         metadata.removeColumn(index);
         if (timestamp) {
