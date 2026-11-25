@@ -71,7 +71,10 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * first row that a task of frame 2 joins waits there until the execution was cancelled, then joins
  * on: it calls the residual for 4,095 more rows, those up to its next check, and stops. A task
  * without the check would join to its frame's end, as a stage checks the breaker every 16,384 pairs,
- * the page frame's rows. The owner of the execution never waits: when it joins that row itself, the
+ * the page frame's rows. The owner of the execution waits at the first other row it joins until a
+ * worker reached that row, as it would otherwise take the frames after its own while the workers,
+ * which park when idle and which no publication of a frame wakes, are still asleep; when the owner
+ * joins that row itself, which it does only once the workers took the frames before it, the
  * execution runs again.
  */
 public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
@@ -232,7 +235,7 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
                                 } catch (CairoException e) {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "injected failure at " + firstRowOf(3, isFiltered, isDescending));
                                 }
-                                Assert.assertTrue(label, pause.awaitDecided());
+                                pause.assertDecided(label);
                             } while (!pause.isPaused());
                             pause.assertStoppedAtTheNextCheck(label);
                             Assert.assertEquals(label, isCopy, join.getStepperClass(0).isHidden());
@@ -334,7 +337,7 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
                     router.pause = pause;
                     try (RecordCursor cursor = factory.getCursor(context)) {
                         Assert.assertTrue(cursor.hasNext());
-                        Assert.assertTrue(pause.awaitDecided());
+                        pause.assertDecided(sql);
                         Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
                     }
                 } while (!pause.isPaused());
@@ -382,7 +385,7 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
                                 router.pause = pause;
                                 try (RecordCursor cursor = factory.getCursor(context)) {
                                     Assert.assertTrue(label, cursor.hasNext());
-                                    Assert.assertTrue(label, pause.awaitDecided());
+                                    pause.assertDecided(label);
                                     Assert.assertEquals(label, FRAME_COUNT, join.getDispatchedFrameCount());
                                     Assert.assertTrue(label, join.isExecutionActive());
                                 }
@@ -537,9 +540,11 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
     /**
      * Pauses the worker that joins the probe row of the given value until the execution was
      * cancelled, and counts the residual's calls that the worker makes after it resumed. The
-     * execution's owner never pauses: when it joins the row itself, nothing pauses, and the test runs
-     * the execution again. With {@link #failAt(long)}, the thread that joins the row of that value
-     * fails its task, once the pause was decided, which cancels the execution.
+     * execution's owner never pauses there: when it joins the row itself, nothing pauses, and the
+     * test runs the execution again. It waits instead at the first other row it joins until the
+     * pause was decided, so that a worker takes the row's frame even when the workers wake slower
+     * than the owner joins frames. With {@link #failAt(long)}, the thread that joins the row of that
+     * value fails its task, once the pause was decided, which cancels the execution.
      */
     private static final class Pause {
         private final AtomicLong callsAfterResume = new AtomicLong();
@@ -550,6 +555,9 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
         private final Thread owner;
         private final long value;
         private long failValue = -1;
+        // Read and written on the owner's thread only.
+        private boolean isOwnerHeld;
+        private volatile boolean isOwnerHoldTimedOut;
         private volatile boolean isResumed;
         private volatile boolean isTimedOut;
         private volatile Thread pausedThread;
@@ -586,6 +594,9 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
                 throw CairoException.nonCritical().put("injected failure at ").put(v);
             }
             if (v != value) {
+                if (current == owner && !isOwnerHeld) {
+                    holdOwner();
+                }
                 return true;
             }
             if (current == owner) {
@@ -609,17 +620,33 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
             return true;
         }
 
+        void assertDecided(String label) throws InterruptedException {
+            Assert.assertFalse(label + ": no worker joined the row while the owner waited", isOwnerHoldTimedOut);
+            Assert.assertTrue(label, decided.await(60, TimeUnit.SECONDS));
+        }
+
         void assertStoppedAtTheNextCheck(String label) {
             Assert.assertFalse(label + ": the execution was not cancelled", isTimedOut);
             Assert.assertEquals(label, ROWS_AFTER_PAUSE, callsAfterResume.get());
         }
 
-        boolean awaitDecided() throws InterruptedException {
-            return decided.await(60, TimeUnit.SECONDS);
-        }
-
         boolean isPaused() {
             return pausedThread != null;
+        }
+
+        // Holds the owner, inside the task of a frame other than the row's, until a worker joined the
+        // row, so that the owner takes no frame after its own before the workers woke. Every frame
+        // went out before the owner joins a row: the window holds them all, see setUpExecution(),
+        // and the queue does, so a worker takes the row's frame while the owner waits.
+        private void holdOwner() {
+            isOwnerHeld = true;
+            try {
+                if (!decided.await(60, TimeUnit.SECONDS)) {
+                    isOwnerHoldTimedOut = true;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
