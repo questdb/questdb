@@ -25,18 +25,26 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.model.IQueryModel;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -57,6 +65,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * without them.
  */
 public class QueryVariablesSqlTest extends AbstractCairoTest {
+
+    @Test
+    public void testContextWithoutVariablesDeclaresNone() {
+        // A context that implements the interface without SqlExecutionContextImpl, as other
+        // contexts may, carries no variables: the parser reads none, and the log lines show none.
+        final SqlExecutionContext context = new SqlExecutionContextStub(engine);
+        Assert.assertNull(context.getQueryVariables());
+        Assert.assertNull(context.getQueryVariablesSqlText());
+        Assert.assertNull(context.getRequestVariables());
+    }
 
     @Test
     public void testErrorInValuePointsIntoVariables() throws Exception {
@@ -86,6 +104,47 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             // a function of the view's body fails on the first row
             assertFailsWithVariablesAsWithout("SELECT * FROM vd", variables, "`null` is not a valid stride");
         });
+    }
+
+    @Test
+    public void testErrorLogWithoutTextShowsVariables() throws Exception {
+        // A plan that a compiler generates from a model rather than from a statement's text has
+        // no text to log: its error line shows **subquery** in its place, followed by the
+        // variables of the request, as any text is. simulate_crash('0') fails the filter at the
+        // first row with the fixed position 222.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                capture.start();
+                final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+                context.setRequestVariables("@a := 1");
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(
+                            "SELECT x FROM long_sequence(1) WHERE simulate_crash('0')",
+                            context
+                    );
+                    try (
+                            RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, context, true);
+                            RecordCursor cursor = factory.getCursor(context)
+                    ) {
+                        cursor.hasNext();
+                        Assert.fail("expected the filter to fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertEquals("simulated cairo exception", e.getFlyweightMessage());
+                    }
+                } finally {
+                    context.setRequestVariables(null);
+                }
+                final String line = "err \\[id=\\d+, sql=`\\*\\*subquery\\*\\*`, vars=`@a := 1`, principal=.*, msg=simulated cairo exception, errno=1, pos=222]";
+                capture.waitForRegex(line);
+                capture.assertOnlyOnce(line);
+            });
+        } finally {
+            capture.stop();
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        }
     }
 
     @Test
@@ -617,6 +676,55 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             final String fixed = "SELECT * FROM v_fixed";
             withVariables("@lim := 1", fixed, () -> assertQuery(fixed).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + 5, "variable is not overridable: @lim"));
             assertQuery("DECLARE @lim := 1 SELECT * FROM v_ovl").noLeakCheck().returns("l\n1\n");
+        });
+    }
+
+    @Test
+    public void testWithClauseLeavesVariablesToTheRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            // A WITH clause parses its CTEs ahead of the statement's root and hands each body the
+            // variables' declarations. A body copies them, and its own DECLARE block declares over
+            // the copy: only the root takes the model the variables were parsed into, with the
+            // sub-queries of their values. Each statement answers as it does with the assignments
+            // as a DECLARE block that opens it.
+            execute("CREATE TABLE s (v INT)");
+            execute("INSERT INTO s VALUES (1), (2), (3)");
+            execute("CREATE TABLE r (a INT, v INT)");
+            drainWalQueue();
+            // variables, statement, result, whether its cursor knows its size and supports random
+            // access
+            final Object[][] cases = {
+                    // a CTE that declares a variable of the client's name keeps it to itself
+                    {"@a := 1", "WITH c AS (DECLARE @a := 5 SELECT @a v) SELECT @a a, v FROM c", "a\tv\n1\t5\n", true, true},
+                    {"@a := 1", "WITH c AS (DECLARE @a := 5 SELECT @a v), d AS (SELECT @a w) SELECT * FROM c CROSS JOIN d", "v\tw\n5\t1\n", true, false},
+                    // the root reads a sub-query value that no CTE reads
+                    {"@m := (SELECT max(v) FROM s)", "WITH c AS (SELECT 1 y) SELECT v FROM s WHERE v = @m", "v\n3\n", false, true},
+            };
+            for (Object[] c : cases) {
+                final String variables = (String) c[0];
+                final String sql = (String) c[1];
+                final String result = (String) c[2];
+                final boolean isSizeKnown = (boolean) c[3];
+                final boolean isRandomAccess = (boolean) c[4];
+                assertQuery("DECLARE " + variables + ' ' + sql).noLeakCheck()
+                        .expectSize(isSizeKnown).supportsRandomAccess(isRandomAccess).returns(result);
+                withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck()
+                        .expectSize(isSizeKnown).supportsRandomAccess(isRandomAccess).returns(result));
+            }
+
+            // A sub-query value that nothing reads still compiles, see
+            // testUnusedSubQueryValueIsCompiled. nope sits 29 characters into the DECLARE form,
+            // and 21 into the assignments.
+            final String unread = "WITH c AS (SELECT 1 y) SELECT 1 x";
+            final String nope = "@q := (SELECT * FROM nope)";
+            assertQuery("DECLARE " + nope + ' ' + unread).noLeakCheck().fails(29, "table does not exist [table=nope]");
+            withVariables(nope, unread, () -> assertQuery(unread).noLeakCheck()
+                    .fails(SqlParser.QUERY_VARIABLES_POSITION + 21, "table does not exist [table=nope]"));
+
+            // the query of an INSERT reads the client's value, and the CTE its own
+            executeWithVariables("@a := 1", "WITH c AS (DECLARE @a := 5 SELECT @a v) INSERT INTO r SELECT @a, v FROM c");
+            drainWalQueue();
+            assertQuery("SELECT * FROM r").noLeakCheck().expectSize().returns("a\tv\n1\t5\n");
         });
     }
 

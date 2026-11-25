@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
@@ -347,6 +348,32 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testExportParquetResumesWithVariables() throws Exception {
+        // A send buffer far smaller than the file makes the export stop whenever the buffer is
+        // full and resume once the client has read it. The temp table, CREATE TABLE AS on the
+        // query's text, reads the variables once, and the resumed export streams the whole file.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester()
+                .withSendBufferSize(1024)
+                .withForceSendFragmentationChunkSize(1024)
+                .run((engine, sqlExecutionContext) -> {
+                    final CharSequenceObjHashMap<String> parquet = new CharSequenceObjHashMap<>();
+                    parquet.put("fmt", "parquet");
+                    engine.execute("CREATE TABLE b AS (SELECT x, rnd_bin(64, 64, 0) bin FROM long_sequence(2_000))", sqlExecutionContext);
+                    final Utf8StringSink file = assertSameExport(
+                            "SELECT CASE WHEN x > 1 THEN bin END bin, 1 v FROM b",
+                            "SELECT CASE WHEN x > @a THEN bin END bin, @a v FROM b",
+                            "@a := 1",
+                            parquet
+                    );
+                    // An export cut short would match a reference cut short at the same place. A
+                    // whole file, here over a hundred send buffers, opens and closes with PAR1.
+                    Assert.assertTrue(file.size() > 100 * 1024);
+                    Assert.assertTrue(Utf8s.startsWithAscii(file, "PAR1"));
+                    Assert.assertTrue(Utf8s.endsWithAscii(file, "PAR1"));
+                }));
+    }
+
+    @Test
     public void testExportRecompilesStaleQueryWithVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
@@ -534,6 +561,34 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testLogsShowVariablesOfErrorWithoutPosition() throws Exception {
+        // The error line shows the request's variables for an error that carries no position as
+        // well, such as the OutOfMemoryError that simulate_crash('M') throws, and shows JIT off.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        final LogCapture capture = new LogCapture();
+        try {
+            TestUtils.assertMemoryLeak(() -> getSimpleTester().withJitMode(SqlJitMode.JIT_MODE_DISABLED).run((engine, sqlExecutionContext) -> {
+                capture.start();
+                // the filter runs while the cursor looks for its first row, so the cursor sees the error
+                final String sql = "SELECT x FROM long_sequence(1) WHERE simulate_crash('M')";
+                final Utf8StringSink sink = new Utf8StringSink();
+                Assert.assertEquals("500", testHttpClient.get(sql, "@a := 1", sink));
+                // an internal error reports position 0, which lies in the query, not in the variables
+                TestUtils.assertEquals(
+                        "{\"query\":\"" + sql + "\",\"error\":\"simulated OOM\",\"position\":0}",
+                        sink.toString()
+                );
+                final String errLine = "err \\[id=\\d+, sql=`" + Pattern.quote(sql) + "`, vars=`@a := 1`, principal=.*, jit=false, time=\\d+, exception=java.lang.OutOfMemoryError: simulated OOM";
+                capture.waitForRegex(errLine);
+                capture.assertOnlyOnce(errLine);
+            }));
+        } finally {
+            capture.stop();
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        }
+    }
+
+    @Test
     public void testRedefineViewIgnoresVariables() throws Exception {
         // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
         // the statement compiles. The body is stored as text, without the variables, so it fails
@@ -669,8 +724,9 @@ public class HttpQueryVariablesTest extends AbstractTest {
         TestUtils.assertEquals(expected, sink.toString());
     }
 
-    // the export of the query with the variables is the export of the reference without them
-    private static void assertSameExport(String reference, String sql, String variables, @Nullable CharSequenceObjHashMap<String> params) {
+    // The export of the query with the variables is the export of the reference without them.
+    // Returns the export.
+    private static Utf8StringSink assertSameExport(String reference, String sql, String variables, @Nullable CharSequenceObjHashMap<String> params) {
         final Utf8StringSink expected = new Utf8StringSink();
         Assert.assertEquals("200", testHttpClient.get("/exp", reference, null, params, expected));
         final Utf8StringSink actual = new Utf8StringSink();
@@ -681,6 +737,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
         // a parquet file is binary, so compare the bytes
         Assert.assertTrue(actual.size() > 0);
         Assert.assertTrue(Utf8s.equals(expected, actual));
+        return actual;
     }
 
     // the statement answers with the variables as it does without them
