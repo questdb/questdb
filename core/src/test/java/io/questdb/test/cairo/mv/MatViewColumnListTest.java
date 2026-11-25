@@ -410,6 +410,35 @@ public class MatViewColumnListTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLetterCaseAndComments() throws Exception {
+        // keywords and types in any letter case, and comments between the list's tokens
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            drainWalQueue();
+            execute("""
+                    create materialized view v (
+                        -- the bucket
+                        ts timestamp,
+                        /* the key */ SYM symbol capacity 64 /* cached */ cache,
+                        Price Double -- the last price
+                    ) as (select ts, sym, last(price) as price from base sample by 1h)""");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT \"column\", type, designated, symbolCached, symbolCapacity FROM table_columns('v')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tdesignated\tsymbolCached\tsymbolCapacity
+                            ts\tTIMESTAMP\ttrue\tfalse\t0
+                            SYM\tSYMBOL\tfalse\ttrue\t64
+                            Price\tDOUBLE\tfalse\tfalse\t0
+                            """);
+            assertSqlCursors("SELECT ts, sym AS SYM, price AS Price FROM (" + SAMPLE_SQL + ") ORDER BY ts, sym", "SELECT * FROM v ORDER BY ts, SYM");
+            assertMapping("v", "", "");
+        });
+    }
+
+    @Test
     public void testListColumnsAndRefreshByName() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
