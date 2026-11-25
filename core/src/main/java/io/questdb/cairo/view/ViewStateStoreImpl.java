@@ -33,31 +33,68 @@ import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class ViewStateStoreImpl implements ViewStateStore {
+    // guards the pending busy retries, the task that queues them, and the writes of their next due time
+    private final Object compileBusyRetryLock = new Object();
+    private final ViewCompilerTask compileBusyRetryTask = new ViewCompilerTask();
+    // one word, so that a reader gets both counts from one read, see getCompileRunActivity(); it
+    // changes under compileRunLock only
+    private final AtomicLong compileRunActivity = new AtomicLong();
+    // guards the record of the threads that run a view compile run, and the changes of
+    // compileRunActivity, see startCompileRun()
+    private final Object compileRunLock = new Object();
+    // the threads that run a view compile run, each followed by the number of its run
+    private final LongList compileRunThreadsAndNumbers = new LongList();
     private final CairoEngine engine;
     private final MicrosecondClock microsecondClock;
+    // the pending busy retries, at most one per view with a state: the view, the update timestamp
+    // the retry compiles it with, and the time the retry is due at
+    private final LongList pendingCompileBusyRetryDueTimestamps = new LongList();
+    private final LongList pendingCompileBusyRetryUpdateTimestamps = new LongList();
+    private final ObjList<TableToken> pendingCompileBusyRetryViews = new ObjList<>();
     private final ConcurrentHashMap<ViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final CarrierLocal<ViewCompilerTask> taskHolder = new CarrierLocal<>(ViewCompilerTask::new);
     // using unlimited concurrent queue to avoid dropping notifications when the queue is full,
     // generally not expecting too many view compile notifications, but if table schema changes
     // are very frequent, then the number of notifications can be high too
     private final Queue<ViewCompilerTask> taskQueue = ConcurrentQueue.createConcurrentQueue(ViewCompilerTask::new);
+    // see setCompileBusyRetryAddCallback()
+    private volatile Runnable compileBusyRetryAddCallback;
+    // the number of the view compile run that started last, under compileRunLock
+    private long lastCompileRunNumber;
+    // The earliest due time of the pending busy retries, or Long.MAX_VALUE when none is ever due.
+    // Written under the lock and read without it: a stale value only delays a retry to the next
+    // drain, or takes the lock for nothing.
+    private volatile long nextCompileBusyRetryDueMicros = Long.MAX_VALUE;
 
     public ViewStateStoreImpl(CairoEngine engine) {
         this.engine = engine;
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
+    // Leaves the compile run counts and the record of their threads alone: a run that is still
+    // running would finish after the reset and drive the running count below zero.
     @TestOnly
     @Override
     public void clear() {
         stateByTableDirName.clear();
         taskQueue.clear();
+        synchronized (compileBusyRetryLock) {
+            pendingCompileBusyRetryViews.clear();
+            pendingCompileBusyRetryUpdateTimestamps.clear();
+            pendingCompileBusyRetryDueTimestamps.clear();
+            nextCompileBusyRetryDueMicros = Long.MAX_VALUE;
+        }
     }
 
     @Override
@@ -81,9 +118,76 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @Override
     public void enqueueCompile(@NotNull TableToken tableToken) {
         final ViewCompilerTask task = taskHolder.get();
+        task.isBusyRetry = false;
         task.tableToken = tableToken;
         task.updateTimestamp = microsecondClock.getTicks();
         taskQueue.enqueue(task);
+    }
+
+    @Override
+    public void enqueueDueCompileBusyRetries() {
+        final long nextDueMicros = nextCompileBusyRetryDueMicros;
+        if (nextDueMicros == Long.MAX_VALUE) {
+            // nothing pending, or only retries that are never due: one read on every drain
+            return;
+        }
+        final long now = microsecondClock.getTicks();
+        if (now < nextDueMicros) {
+            return;
+        }
+        synchronized (compileBusyRetryLock) {
+            long nextDue = Long.MAX_VALUE;
+            for (int i = 0; i < pendingCompileBusyRetryViews.size(); ) {
+                final long dueMicros = pendingCompileBusyRetryDueTimestamps.getQuick(i);
+                if (dueMicros <= now) {
+                    compileBusyRetryTask.isBusyRetry = true;
+                    compileBusyRetryTask.tableToken = pendingCompileBusyRetryViews.getQuick(i);
+                    compileBusyRetryTask.updateTimestamp = pendingCompileBusyRetryUpdateTimestamps.getQuick(i);
+                    taskQueue.enqueue(compileBusyRetryTask);
+                    removePendingCompileBusyRetry(i);
+                } else {
+                    nextDue = Math.min(nextDue, dueMicros);
+                    i++;
+                }
+            }
+            nextCompileBusyRetryDueMicros = nextDue;
+        }
+    }
+
+    @Override
+    public void finishCompileRun() {
+        synchronized (compileRunLock) {
+            final int index = indexOfCompileRun(Thread.currentThread().threadId());
+            // the callers start and finish a run on the same thread, in a try/finally
+            assert index > -1;
+            compileRunThreadsAndNumbers.removeIndexBlock(index, 2);
+            compileRunActivity.decrementAndGet();
+        }
+    }
+
+    @Override
+    public long getCompileRunActivity() {
+        return compileRunActivity.get();
+    }
+
+    @Override
+    public long getCompileRunOfThread(long threadId) {
+        synchronized (compileRunLock) {
+            final int index = indexOfCompileRun(threadId);
+            return index > -1 ? compileRunThreadsAndNumbers.getQuick(index + 1) : 0;
+        }
+    }
+
+    /**
+     * Copies the pending busy retries, one per view, into the sinks, and leaves them pending.
+     */
+    @TestOnly
+    public void getPendingCompileBusyRetries(ObjList<TableToken> viewTokens, LongList updateTimestamps, LongList dueTimestamps) {
+        synchronized (compileBusyRetryLock) {
+            viewTokens.addAll(pendingCompileBusyRetryViews);
+            updateTimestamps.add(pendingCompileBusyRetryUpdateTimestamps);
+            dueTimestamps.add(pendingCompileBusyRetryDueTimestamps);
+        }
     }
 
     @Override
@@ -94,10 +198,96 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @Override
     public void removeViewState(TableToken viewToken) {
         stateByTableDirName.remove(viewToken.getDirName());
+        // After the state: a retry scheduled before this point is removed here, and one scheduled
+        // after it finds no state, so no retry outlives its view.
+        synchronized (compileBusyRetryLock) {
+            final int index = indexOfPendingCompileBusyRetry(viewToken);
+            if (index > -1) {
+                removePendingCompileBusyRetry(index);
+            }
+        }
+    }
+
+    @Override
+    public long scheduleCompileBusyRetry(@NotNull TableToken viewToken, long updateTimestamp) {
+        synchronized (compileBusyRetryLock) {
+            if (getViewState(viewToken) == null) {
+                return Numbers.LONG_NULL;
+            }
+            final int index = indexOfPendingCompileBusyRetry(viewToken);
+            if (index > -1) {
+                pendingCompileBusyRetryUpdateTimestamps.setQuick(index, Math.max(pendingCompileBusyRetryUpdateTimestamps.getQuick(index), updateTimestamp));
+                return pendingCompileBusyRetryDueTimestamps.getQuick(index);
+            }
+            final Runnable addCallback = compileBusyRetryAddCallback;
+            if (addCallback != null) {
+                addCallback.run();
+            }
+            // A retry whose due time does not fit a long is never due. The setting is read at
+            // each schedule, which only a lock failure makes.
+            final long delayMillis = engine.getConfiguration().getViewCompileBusyRetryTimeout();
+            final long delayMicros = delayMillis > Long.MAX_VALUE / 1_000 ? Long.MAX_VALUE : delayMillis * 1_000;
+            final long now = microsecondClock.getTicks();
+            final long dueMicros = delayMicros > Long.MAX_VALUE - now ? Long.MAX_VALUE : now + delayMicros;
+            pendingCompileBusyRetryViews.add(viewToken);
+            pendingCompileBusyRetryUpdateTimestamps.add(updateTimestamp);
+            pendingCompileBusyRetryDueTimestamps.add(dueMicros);
+            nextCompileBusyRetryDueMicros = Math.min(nextCompileBusyRetryDueMicros, dueMicros);
+            return dueMicros;
+        }
+    }
+
+    /**
+     * Sets a callback that {@link #scheduleCompileBusyRetry} runs under the lock of the pending
+     * busy retries, after it found no pending busy retry of the view and before it adds one.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setCompileBusyRetryAddCallback(Runnable callback) {
+        this.compileBusyRetryAddCallback = callback;
+    }
+
+    @Override
+    public void startCompileRun() {
+        final long thread = Thread.currentThread().threadId();
+        synchronized (compileRunLock) {
+            compileRunThreadsAndNumbers.add(thread, ++lastCompileRunNumber);
+            // one more run started, and one more running
+            compileRunActivity.addAndGet((1L << 32) + 1);
+        }
     }
 
     @Override
     public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
         return taskQueue.tryDequeue(task);
+    }
+
+    // the index of the thread's entry in the record of the threads that run a view compile run,
+    // the entry of the run that the thread started last, or -1 when the thread runs none; the
+    // caller holds compileRunLock
+    private int indexOfCompileRun(long threadId) {
+        for (int i = compileRunThreadsAndNumbers.size() - 2; i > -1; i -= 2) {
+            if (compileRunThreadsAndNumbers.getQuick(i) == threadId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfPendingCompileBusyRetry(TableToken viewToken) {
+        final String dirName = viewToken.getDirName();
+        for (int i = 0, n = pendingCompileBusyRetryViews.size(); i < n; i++) {
+            if (dirName.equals(pendingCompileBusyRetryViews.getQuick(i).getDirName())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void removePendingCompileBusyRetry(int index) {
+        pendingCompileBusyRetryViews.remove(index);
+        pendingCompileBusyRetryUpdateTimestamps.removeIndex(index);
+        pendingCompileBusyRetryDueTimestamps.removeIndex(index);
     }
 }
