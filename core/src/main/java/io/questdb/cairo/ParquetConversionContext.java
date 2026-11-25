@@ -180,11 +180,6 @@ public class ParquetConversionContext implements Closeable {
         return lastDecodedColumnCount;
     }
 
-    @TestOnly
-    public long getLastDecodedRowGroupBytes() {
-        return rowGroupBuffers.sumChunkBytes(0, lastDecodedColumnCount);
-    }
-
     public int getMemoryTag() {
         return memoryTag;
     }
