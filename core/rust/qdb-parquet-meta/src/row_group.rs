@@ -117,6 +117,27 @@ impl<'a> RowGroupBlockReader<'a> {
 // ── RowGroupBlockBuilder ───────────────────────────────────────────────
 
 /// Builds a row group block into a `Vec<u8>`.
+/// One row group's dedup sort claim, as the `_pm` footer stores it: see
+/// [`RowGroupBlockBuilder::set_dedup_sort`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RowGroupDedupSort {
+    /// The dedup version whose keys sort the row group's rows within each designated
+    /// timestamp; `DEDUP_SORT_VERSION_UNSET` makes no claim.
+    pub version: i64,
+    /// The dedup keys of the first and the last row, in `qdb_core::dedup_key` encoding:
+    /// the non-timestamp keys of `version` in column id order. `None` when unknown, or
+    /// when the timestamp is the only key.
+    pub keys: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+impl RowGroupDedupSort {
+    /// No claim.
+    pub const UNSET: Self = Self {
+        version: DEDUP_SORT_VERSION_UNSET,
+        keys: None,
+    };
+}
+
 #[derive(Debug)]
 pub struct RowGroupBlockBuilder {
     pub(crate) num_rows: u64,
@@ -166,6 +187,16 @@ impl RowGroupBlockBuilder {
     /// version; empty when unknown.
     pub fn dedup_sort_keys(&self) -> &(Vec<u8>, Vec<u8>) {
         &self.dedup_sort_keys
+    }
+
+    /// Records the dedup sort version, with the keys of the first and the last row when
+    /// the claim has them.
+    pub fn set_dedup_sort(&mut self, sort: &RowGroupDedupSort) -> &mut Self {
+        self.dedup_sort_version = sort.version;
+        if let Some((first, last)) = &sort.keys {
+            self.dedup_sort_keys = (first.clone(), last.clone());
+        }
+        self
     }
 
     /// Records the dedup keys of the first and the last row. They mean something only

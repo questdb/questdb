@@ -28,6 +28,7 @@ use crate::parquet::error::{
 use crate::parquet::qdb_metadata::{
     column_top_evidence, ColumnTopEvidence, QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY,
 };
+use crate::parquet_metadata::convert::RowGroupDedupSort;
 use crate::parquet_metadata::types::{SeqTxn, DEDUP_SORT_VERSION_UNSET};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{
@@ -193,10 +194,13 @@ pub struct ParquetUpdater {
     hybrid_encoded_column_chunks: u64,
     /// Set by [`Self::drop_index_row_map`]: an incremental `_pm` update keeps the identity index row map.
     is_index_row_map_dropped: bool,
-    /// The dedup sort version of each row group this updater wrote with one, see
-    /// [`Self::set_last_row_group_dedup_sort_version`], keyed by the file offset of the row group's
+    /// The dedup sort claim of each row group this updater wrote with one, see
+    /// [`Self::set_last_row_group_dedup_sort`], keyed by the file offset of the row group's
     /// first page: end() finds the row group by it once the footer has its final row group order.
-    dedup_sort_versions: RapidHashMap<u64, i64>,
+    dedup_sorts: RapidHashMap<u64, RowGroupDedupSort>,
+    /// The ids of the written partitions' columns that are the non-timestamp dedup keys, in
+    /// column id order, see [`Self::set_dedup_key_ids`].
+    dedup_key_ids: Vec<i32>,
 }
 
 fn publish_parquet_meta_with_sync<S>(
@@ -512,7 +516,8 @@ impl ParquetUpdater {
             hybrid_copied_column_chunks: 0,
             hybrid_encoded_column_chunks: 0,
             is_index_row_map_dropped: false,
-            dedup_sort_versions: RapidHashMap::default(),
+            dedup_sorts: RapidHashMap::default(),
+            dedup_key_ids: Vec::new(),
         })
     }
 
@@ -522,12 +527,36 @@ impl ParquetUpdater {
         self.is_index_row_map_dropped = true;
     }
 
+    /// The ids of the columns of the partitions this updater writes that are the non-timestamp
+    /// dedup keys, in column id order: a row group claim records the keys of its first and last
+    /// rows from them, see [`Self::last_row_group_dedup_sort`].
+    pub fn set_dedup_key_ids(&mut self, ids: Vec<i32>) {
+        self.dedup_key_ids = ids;
+    }
+
+    /// The claim of `partition`, written as one row group, in the key order of dedup `version`.
+    pub fn row_group_dedup_sort(
+        &self,
+        version: i64,
+        partition: &Partition,
+        row_count: usize,
+    ) -> ParquetResult<RowGroupDedupSort> {
+        super::dedup_sort::row_group_dedup_sort(
+            version,
+            partition,
+            &self.dedup_key_ids,
+            0,
+            row_count,
+        )
+    }
+
     /// Claims that the rows of the row group this updater wrote last are in dedup key order
-    /// within each timestamp under dedup version `version`: end() records the version for that
+    /// within each timestamp under dedup version `sort.version`: end() records the claim for that
     /// row group in `_pm`. The caller vouches for the order, this updater does not check it.
     /// `DEDUP_SORT_VERSION_UNSET` makes no claim, and neither does a row group written without
-    /// this call, whatever version the row group it replaces or copies has.
-    pub fn set_last_row_group_dedup_sort_version(&mut self, version: i64) -> ParquetResult<()> {
+    /// this call, whatever claim the row group it replaces or copies has.
+    pub fn set_last_row_group_dedup_sort(&mut self, sort: RowGroupDedupSort) -> ParquetResult<()> {
+        let version = sort.version;
         if version == DEDUP_SORT_VERSION_UNSET {
             return Ok(());
         }
@@ -543,7 +572,7 @@ impl ParquetUpdater {
                     version
                 )
             })?;
-        self.dedup_sort_versions.insert(first_page_offset, version);
+        self.dedup_sorts.insert(first_page_offset, sort);
         Ok(())
     }
 
@@ -1849,12 +1878,11 @@ impl ParquetUpdater {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
                 let origins = self.parquet_file.row_group_origins();
-                let dedup_sort_versions =
-                    resolve_dedup_sort_versions(&self.dedup_sort_versions, thrift_row_groups);
+                let dedup_sorts = resolve_dedup_sorts(&self.dedup_sorts, thrift_row_groups);
 
                 // Full create: rewrite or first-time generation.
                 let (parquet_meta_bytes, _) =
-                    crate::parquet_metadata::convert::generate_parquet_metadata_with_dedup_sort_versions(
+                    crate::parquet_metadata::convert::generate_parquet_metadata_with_dedup_sorts(
                         &col_infos,
                         thrift_row_groups,
                         designated_ts,
@@ -1866,7 +1894,7 @@ impl ParquetUpdater {
                         self.result_unused_bytes,
                         qdb_meta.squash_tracker,
                         self.seq_txn,
-                        &dedup_sort_versions,
+                        &dedup_sorts,
                     )?;
                 self.result_parquet_meta_size = parquet_meta_bytes.len() as i64;
                 parquet_meta_file
@@ -1877,8 +1905,7 @@ impl ParquetUpdater {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
                 let origins = self.parquet_file.row_group_origins();
-                let dedup_sort_versions =
-                    resolve_dedup_sort_versions(&self.dedup_sort_versions, thrift_row_groups);
+                let dedup_sorts = resolve_dedup_sorts(&self.dedup_sorts, thrift_row_groups);
 
                 // Incremental update: read the committed _pm and append the new
                 // snapshot. Two distinct offsets drive this, both threaded in
@@ -1917,7 +1944,7 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                     self.seq_txn,
                     self.is_index_row_map_dropped,
-                    &dedup_sort_versions,
+                    &dedup_sorts,
                 )?;
 
                 // Write the new snapshot at the append base. The header still
@@ -2143,22 +2170,22 @@ fn row_group_first_page_offset(row_group: &RowGroup) -> Option<u64> {
         .map(|meta| meta.dictionary_page_offset.unwrap_or(meta.data_page_offset) as u64)
 }
 
-/// The dedup sort version of each of `row_groups`, in their order: the one `versions` holds for
-/// the offset of the row group's first page, `DEDUP_SORT_VERSION_UNSET` when it holds none.
-/// Empty when no row group has a version.
-fn resolve_dedup_sort_versions(
-    versions: &RapidHashMap<u64, i64>,
+/// The dedup sort claim of each of `row_groups`, in their order: the one `sorts` holds for the
+/// offset of the row group's first page, no claim when it holds none. Empty when no row group
+/// has a claim.
+fn resolve_dedup_sorts(
+    sorts: &RapidHashMap<u64, RowGroupDedupSort>,
     row_groups: &[RowGroup],
-) -> Vec<i64> {
-    if versions.is_empty() {
+) -> Vec<RowGroupDedupSort> {
+    if sorts.is_empty() {
         return Vec::new();
     }
     row_groups
         .iter()
         .map(|row_group| {
             row_group_first_page_offset(row_group)
-                .and_then(|offset| versions.get(&offset).copied())
-                .unwrap_or(DEDUP_SORT_VERSION_UNSET)
+                .and_then(|offset| sorts.get(&offset).cloned())
+                .unwrap_or(RowGroupDedupSort::UNSET)
         })
         .collect()
 }
@@ -6947,6 +6974,35 @@ mod tests {
         )?)
     }
 
+    fn claim(version: i64) -> super::RowGroupDedupSort {
+        super::RowGroupDedupSort { version, keys: None }
+    }
+
+    /// The keys of the first and last rows of a row group.
+    type RowGroupKeys = Option<(Vec<u8>, Vec<u8>)>;
+
+    /// The dedup sort keys of the row groups of the `_pm` snapshot of `pm_size` bytes.
+    fn pm_dedup_sort_keys(
+        pm: &NamedTempFile,
+        pm_size: i64,
+    ) -> Result<Vec<RowGroupKeys>, Box<dyn Error>> {
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use std::io::Read as _;
+
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64).unwrap();
+        Ok((0..reader.row_group_count() as usize)
+            .map(|i| {
+                reader
+                    .footer()
+                    .row_group_dedup_sort_keys(i)
+                    .unwrap()
+                    .map(|(first, last)| (first.to_vec(), last.to_vec()))
+            })
+            .collect())
+    }
+
     /// The dedup sort versions of the row groups of the `_pm` snapshot of `pm_size` bytes.
     fn pm_dedup_sort_versions(
         pm: &NamedTempFile,
@@ -6988,13 +7044,19 @@ mod tests {
         let out = NamedTempFile::new()?;
         let pm = NamedTempFile::new()?;
         let mut updater = open_updater_with_pm(&alloc, &src, Some(&out), &pm, 0)?;
-        updater.replace_row_group(&ts_val_partition(&[1, 2], &[11, 21]), 0, 0)?;
-        updater.set_last_row_group_dedup_sort_version(7)?;
+        // The first column with id 0, the timestamp, stands in for a dedup key.
+        updater.set_dedup_key_ids(vec![0]);
+        let first = ts_val_partition(&[1, 2], &[11, 21]);
+        updater.replace_row_group(&first, 0, 0)?;
+        let sort = updater.row_group_dedup_sort(7, &first, 2)?;
+        updater.set_last_row_group_dedup_sort(sort)?;
         updater.copy_row_group(1)?;
-        updater.insert_row_group(&ts_val_partition(&[9, 10], &[90, 100]), 2, 6)?;
-        updater.set_last_row_group_dedup_sort_version(7)?;
+        let third = ts_val_partition(&[9, 10], &[90, 100]);
+        updater.insert_row_group(&third, 2, 6)?;
+        let sort = updater.row_group_dedup_sort(7, &third, 2)?;
+        updater.set_last_row_group_dedup_sort(sort)?;
         updater.insert_row_group(&ts_val_partition(&[11, 12], &[110, 120]), 3, 8)?;
-        updater.set_last_row_group_dedup_sort_version(DEDUP_SORT_VERSION_UNSET)?;
+        updater.set_last_row_group_dedup_sort(claim(DEDUP_SORT_VERSION_UNSET))?;
         updater.end(None)?;
         updater.commit_parquet_meta(false)?;
         let rewrite_pm_size = updater.result_parquet_meta_size();
@@ -7003,6 +7065,25 @@ mod tests {
             pm_dedup_sort_versions(&pm, rewrite_pm_size)?,
             vec![7, DEDUP_SORT_VERSION_UNSET, 7, DEDUP_SORT_VERSION_UNSET]
         );
+        let timestamp_key = |ts: i64| {
+            let mut key = Vec::new();
+            qdb_core::dedup_key::append_key_from(
+                &mut key,
+                ColumnTypeTag::Timestamp.into_type(),
+                &ts.to_le_bytes(),
+                None,
+                0,
+            )
+            .unwrap();
+            key
+        };
+        let rewrite_keys = vec![
+            Some((timestamp_key(1), timestamp_key(2))),
+            None,
+            Some((timestamp_key(9), timestamp_key(10))),
+            None,
+        ];
+        assert_eq!(pm_dedup_sort_keys(&pm, rewrite_pm_size)?, rewrite_keys);
 
         // An in-place update of the rewritten file: the first row group is written again with no
         // version and loses its claim, a row group inserted after it and the last row group are
@@ -7010,9 +7091,9 @@ mod tests {
         let mut updater = open_updater_with_pm(&alloc, &out, None, &pm, rewrite_pm_size as u64)?;
         updater.replace_row_group(&ts_val_partition(&[1, 2], &[12, 22]), 0, 0)?;
         updater.insert_row_group(&ts_val_partition(&[3, 4], &[30, 40]), 1, 2)?;
-        updater.set_last_row_group_dedup_sort_version(8)?;
+        updater.set_last_row_group_dedup_sort(claim(8))?;
         updater.replace_row_group(&ts_val_partition(&[11, 12, 13], &[111, 121, 131]), 3, 10)?;
-        updater.set_last_row_group_dedup_sort_version(8)?;
+        updater.set_last_row_group_dedup_sort(claim(8))?;
         updater.end(None)?;
         updater.commit_parquet_meta(false)?;
         let update_pm_size = updater.result_parquet_meta_size();
@@ -7025,6 +7106,17 @@ mod tests {
         assert_eq!(
             pm_dedup_sort_versions(&pm, rewrite_pm_size)?,
             vec![7, DEDUP_SORT_VERSION_UNSET, 7, DEDUP_SORT_VERSION_UNSET]
+        );
+        // the row group the update kept in place keeps its keys
+        assert_eq!(
+            pm_dedup_sort_keys(&pm, update_pm_size)?,
+            vec![
+                None,
+                None,
+                None,
+                Some((timestamp_key(9), timestamp_key(10))),
+                None
+            ]
         );
 
         // the versions follow the row groups whose rows the file holds in this order
@@ -7054,10 +7146,8 @@ mod tests {
         for out in [Some(&out), None] {
             let mut updater = open_updater_with_pm(&alloc, &src, out, &pm, 0)?;
             // no claim asks for no row group
-            updater.set_last_row_group_dedup_sort_version(DEDUP_SORT_VERSION_UNSET)?;
-            let err = updater
-                .set_last_row_group_dedup_sort_version(5)
-                .unwrap_err();
+            updater.set_last_row_group_dedup_sort(claim(DEDUP_SORT_VERSION_UNSET))?;
+            let err = updater.set_last_row_group_dedup_sort(claim(5)).unwrap_err();
             assert!(
                 err.to_string()
                     .contains("no written row group to claim dedup sort version 5 for"),

@@ -3447,7 +3447,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     copyRowGroupWithNullColumns(partitionUpdater, rg, metadata, tableToParquetIdx);
                 } else {
                     // the copy keeps the rows and their order, and with them the dedup version they claim
-                    partitionUpdater.copyRowGroup(rg, parquetMeta.getRowGroupDedupSortVersion(rg));
+                    partitionUpdater.copyRowGroup(rg, parquetMeta);
                 }
                 outputRowOffset += parquetMeta.getRowGroupSize(rg);
             }
@@ -4731,7 +4731,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableToParquetIdx
             );
         } else {
-            partitionUpdater.copyRowGroup(rowGroupIndex, partitionDecoder.metadata().getRowGroupDedupSortVersion(rowGroupIndex));
+            partitionUpdater.copyRowGroup(rowGroupIndex, partitionDecoder.metadata());
         }
         tableWriter.addPhysicallyWrittenRows(rowCount);
     }
@@ -6719,6 +6719,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
                 seqTxn
         );
+        // a row group written with a dedup sort claim records the keys of its first and last rows
+        TableUtils.collectDedupKeyIds(tableWriter.getMetadata(), ctx.getDedupKeyIds());
+        partitionUpdater.setDedupKeyColumns(ctx.getDedupKeyIds());
         if (!hasIndexedSymbolColumn(tableWriter.getMetadata())) {
             // The index row map only serves symbol indexes, and an older binary rejects a footer that
             // carries one: a table without an index keeps the identity map.
@@ -8365,6 +8368,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 bloomFilterColumnCount = (int) bloomFilterIndexes.size();
             }
 
+            final long dedupSortVersion = getParquetDedupSortVersion(tableWriter);
+            final DirectIntList dedupKeyIds = ctx.getDedupKeyIds();
+            dedupKeyIds.clear();
+            if (dedupSortVersion != ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET) {
+                TableUtils.collectDedupKeyIds(metadata, dedupKeyIds);
+            }
             PartitionEncoder.encodeWithOptions(
                     descriptor,
                     parquetPath,
@@ -8382,7 +8391,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     -1L,
                     seqTxn,
                     // the partition holds O3 rows only, in the dedup key order of the commit, see copyO3ToRowGroup()
-                    getParquetDedupSortVersion(tableWriter)
+                    dedupSortVersion,
+                    dedupKeyIds.getAddress(),
+                    (int) dedupKeyIds.size()
             );
 
             parquetFileSize = ff.length(parquetPath.$());

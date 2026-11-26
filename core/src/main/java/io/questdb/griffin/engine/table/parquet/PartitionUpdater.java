@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -104,23 +105,29 @@ public class PartitionUpdater implements QuietCloseable {
 
     /**
      * Copies row group {@code rowGroupIndex} of the source file as it is, which makes no claim about dedup key order,
-     * see {@link #copyRowGroup(int, long)}.
+     * see {@link #copyRowGroup(int, ParquetMetaFileReader)}.
      */
     public void copyRowGroup(int rowGroupIndex) {
-        copyRowGroup(rowGroupIndex, ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET);
+        assert ptr != 0;
+        copyRowGroup(ptr, rowGroupIndex, ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET, 0);
     }
 
     /**
-     * Copies row group {@code rowGroupIndex} of the source file as it is.
+     * Copies row group {@code rowGroupIndex} of the source file as it is. The copy keeps the rows and their order, so
+     * {@code _pm} records for it the dedup sort claim of the source row group, see
+     * {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: its version, and the keys of its first and last rows.
      *
-     * @param dedupSortVersion the dedup version that {@code _pm} records for the copy, see
-     *                         {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: the copy keeps the rows
-     *                         and their order, so the version of the source row group holds for it.
-     *                         {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim.
+     * @param source the {@code _pm} of the source file
      */
-    public void copyRowGroup(int rowGroupIndex, long dedupSortVersion) {
+    public void copyRowGroup(int rowGroupIndex, ParquetMetaFileReader source) {
         assert ptr != 0;
-        copyRowGroup(ptr, rowGroupIndex, dedupSortVersion);
+        final long dedupSortVersion = source.getRowGroupDedupSortVersion(rowGroupIndex);
+        copyRowGroup(
+                ptr,
+                rowGroupIndex,
+                dedupSortVersion,
+                dedupSortVersion == ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET ? 0 : source.getOrCreateNativeReaderPtr()
+        );
     }
 
     /**
@@ -283,6 +290,16 @@ public class PartitionUpdater implements QuietCloseable {
      *                   schema (column names, IDs, types). Data pointers are
      *                   not required — only schema metadata is used.
      */
+    /**
+     * Sets the descriptor column ids of the non-timestamp dedup keys, in column id order, see
+     * {@link io.questdb.cairo.TableUtils#collectDedupKeyIds}: a row group written with a dedup sort claim records in
+     * {@code _pm} the keys of its first and last rows.
+     */
+    public void setDedupKeyColumns(DirectIntList ids) {
+        assert ptr != 0;
+        setDedupKeyColumns(ptr, ids.getAddress(), (int) ids.size());
+    }
+
     public void setTargetSchema(PartitionDescriptor descriptor) {
         assert ptr != 0;
         setTargetSchema(
@@ -355,7 +372,8 @@ public class PartitionUpdater implements QuietCloseable {
     private static native void copyRowGroup(
             long impl,
             int rowGroupIndex,
-            long dedupSortVersion
+            long dedupSortVersion,
+            long sourceParquetMetaReaderPtr
     ) throws CairoException;
 
     private static native void copyRowGroupWithNullColumns(
@@ -434,6 +452,8 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private static native void setColumnTopRowLimit(long impl, long limit) throws CairoException;
+
+    private static native void setDedupKeyColumns(long impl, long idsAddr, int count) throws CairoException;
 
     private static native void setTargetSchema(
             long impl,

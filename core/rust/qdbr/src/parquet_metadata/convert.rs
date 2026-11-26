@@ -39,6 +39,7 @@ use qdb_parquet_meta::convert::{build_row_group_block, BloomFilterSource};
 use qdb_parquet_meta::error::{ParquetMetaErrorKind, ParquetMetaResult};
 use qdb_parquet_meta::types::SeqTxn;
 use qdb_parquet_meta::writer::RowGroupSlot;
+pub use qdb_parquet_meta::RowGroupDedupSort;
 
 pub use qdb_parquet_meta::convert::{
     convert_from_parquet, detect_designated_timestamp, extract_sorting_columns,
@@ -143,7 +144,7 @@ pub fn generate_parquet_metadata(
     squash_tracker: i64,
     seq_txn: SeqTxn,
 ) -> ParquetResult<(Vec<u8>, u64)> {
-    generate_parquet_metadata_with_dedup_sort_versions(
+    generate_parquet_metadata_with_dedup_sorts(
         columns,
         thrift_row_groups,
         designated_timestamp,
@@ -159,12 +160,12 @@ pub fn generate_parquet_metadata(
     )
 }
 
-/// [`generate_parquet_metadata`] with `dedup_sort_versions[i]` as the dedup
-/// sort version of row group `i`: the dedup version whose keys order its rows
-/// within each timestamp, `DEDUP_SORT_VERSION_UNSET` for no claim. A row group
-/// past the end of the slice makes no claim.
+/// [`generate_parquet_metadata`] with `dedup_sorts[i]` as the dedup sort claim
+/// of row group `i`: the dedup version whose keys order its rows within each
+/// timestamp, `DEDUP_SORT_VERSION_UNSET` for no claim, and the keys of its first
+/// and last rows. A row group past the end of the slice makes no claim.
 #[allow(clippy::too_many_arguments)]
-pub fn generate_parquet_metadata_with_dedup_sort_versions(
+pub fn generate_parquet_metadata_with_dedup_sorts(
     columns: &[ParquetMetaColumnInfo<'_>],
     thrift_row_groups: &[RowGroup],
     designated_timestamp: i32,
@@ -176,7 +177,7 @@ pub fn generate_parquet_metadata_with_dedup_sort_versions(
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
-    dedup_sort_versions: &[i64],
+    dedup_sorts: &[RowGroupDedupSort],
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let bloom_source = match origins {
         Some(origins) => VecBloomFilterSource::with_origins(bloom_bitsets, origins),
@@ -192,7 +193,7 @@ pub fn generate_parquet_metadata_with_dedup_sort_versions(
         unused_bytes,
         squash_tracker,
         seq_txn,
-        dedup_sort_versions,
+        dedup_sorts,
         &bloom_source,
     )
     .map_err(ParquetError::from)
@@ -221,12 +222,12 @@ pub fn generate_parquet_metadata_with_dedup_sort_versions(
 /// `is_index_row_map_dropped` writes the identity index row map, for a table
 /// with no symbol index (see `ParquetMetaUpdateWriter::drop_index_row_map`).
 ///
-/// `dedup_sort_versions[i]` is the dedup sort version of row group `i` when
-/// the update wrote it: the dedup version whose keys order its rows within
-/// each timestamp, `DEDUP_SORT_VERSION_UNSET` for no claim. A written row
-/// group past the end of the slice makes no claim. A row group the update
-/// kept, in place or shifted, keeps its committed version whatever the slice
-/// holds for it.
+/// `dedup_sorts[i]` is the dedup sort claim of row group `i` when the update
+/// wrote it: the dedup version whose keys order its rows within each
+/// timestamp, `DEDUP_SORT_VERSION_UNSET` for no claim, and the keys of its
+/// first and last rows. A written row group past the end of the slice makes no
+/// claim. A row group the update kept, in place or shifted, keeps its committed
+/// claim whatever the slice holds for it.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
@@ -240,7 +241,7 @@ pub fn update_parquet_metadata(
     unused_bytes: u64,
     seq_txn: SeqTxn,
     is_index_row_map_dropped: bool,
-    dedup_sort_versions: &[i64],
+    dedup_sorts: &[RowGroupDedupSort],
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     if origins.len() != thrift_row_groups.len() {
         return Err(parquet_meta_err!(
@@ -321,8 +322,8 @@ pub fn update_parquet_metadata(
             }
         }
         let mut block = build_row_group_block(thrift_rg, i, &bloom_source)?;
-        if let Some(&version) = dedup_sort_versions.get(i) {
-            block.set_dedup_sort_version(version);
+        if let Some(sort) = dedup_sorts.get(i) {
+            block.set_dedup_sort(sort);
         }
         slots.push(RowGroupSlot::New(block));
     }
@@ -1811,6 +1812,29 @@ mod tests {
         assert_eq!(old_reader.row_group_count(), 1);
     }
 
+    fn sorts(versions: &[i64]) -> Vec<RowGroupDedupSort> {
+        versions
+            .iter()
+            .map(|&version| RowGroupDedupSort {
+                version,
+                keys: (version >= 0).then(|| (vec![version as u8], vec![version as u8, 1])),
+            })
+            .collect()
+    }
+
+    fn dedup_sort_keys_of(parquet_meta: &[u8], file_size: u64) -> Vec<Option<(Vec<u8>, Vec<u8>)>> {
+        let reader = ParquetMetaReader::from_file_size(parquet_meta, file_size).unwrap();
+        (0..reader.row_group_count() as usize)
+            .map(|i| {
+                reader
+                    .footer()
+                    .row_group_dedup_sort_keys(i)
+                    .unwrap()
+                    .map(|(first, last)| (first.to_vec(), last.to_vec()))
+            })
+            .collect()
+    }
+
     fn dedup_sort_versions_of(parquet_meta: &[u8], file_size: u64) -> Vec<i64> {
         let reader = ParquetMetaReader::from_file_size(parquet_meta, file_size).unwrap();
         assert!(reader.verify_checksum().is_ok());
@@ -1878,7 +1902,7 @@ mod tests {
             written_rg(10_000),
             written_rg(20_000),
         ];
-        let (created_pm, _) = generate_parquet_metadata_with_dedup_sort_versions(
+        let (created_pm, _) = generate_parquet_metadata_with_dedup_sorts(
             &col_infos,
             &created_rgs,
             0,
@@ -1890,13 +1914,17 @@ mod tests {
             0,
             -1,
             SeqTxn::UNSET,
-            &[7, -1],
+            &sorts(&[7, -1]),
         )
         .unwrap();
         let created_size = created_pm.len() as u64;
         assert_eq!(
             dedup_sort_versions_of(&created_pm, created_size),
             vec![7, -1, -1]
+        );
+        assert_eq!(
+            dedup_sort_keys_of(&created_pm, created_size),
+            vec![Some((vec![7], vec![7, 1])), None, None]
         );
 
         // An update: a row group inserted in front claims 9. The kept row groups shift by one and keep 7 and
@@ -1927,13 +1955,24 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
-            &[9, 3, 3, 8],
+            &sorts(&[9, 3, 3, 8]),
         )
         .unwrap();
         let updated_pm = apply_update(&created_pm, &result);
         assert_eq!(
             dedup_sort_versions_of(&updated_pm, result.new_file_size),
             vec![9, 7, -1, 8, -1]
+        );
+        // the kept row group keeps its keys, the written ones take theirs from the slice
+        assert_eq!(
+            dedup_sort_keys_of(&updated_pm, result.new_file_size),
+            vec![
+                Some((vec![9], vec![9, 1])),
+                Some((vec![7], vec![7, 1])),
+                None,
+                Some((vec![8], vec![8, 1])),
+                None
+            ]
         );
         // the committed snapshot still reads its own versions
         assert_eq!(

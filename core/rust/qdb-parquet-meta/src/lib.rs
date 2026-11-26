@@ -35,6 +35,6 @@ pub use qdb_meta::{
     QdbMetaColFormat, QdbMetaSchema, QdbMetaV1, QDB_META_KEY,
 };
 pub use reader::ParquetMetaReader;
-pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader};
+pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader, RowGroupDedupSort};
 pub use types::*;
 pub use writer::{ParquetMetaUpdateWriter, ParquetMetaWriter, RowGroupSlot};

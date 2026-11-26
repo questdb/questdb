@@ -154,7 +154,9 @@ public class PartitionEncoder {
                 parquetMetaFd,
                 squashTracker,
                 seqTxn,
-                ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET
+                ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET,
+                0,
+                0
         );
     }
 
@@ -167,6 +169,10 @@ public class PartitionEncoder {
      *                         rows of the descriptor are in that order.
      *                         {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim. Without a
      *                         {@code parquetMetaFd} nothing records it.
+     * @param dedupKeyIdsPtr   the descriptor column ids of the version's non-timestamp dedup keys, in column id order,
+     *                         see {@link io.questdb.cairo.TableUtils#collectDedupKeyIds}: {@code _pm} records the keys
+     *                         of the first and last row of every row group with the claim
+     * @param dedupKeyCount    the number of ids at {@code dedupKeyIdsPtr}
      */
     public static long encodeWithOptions(
             PartitionDescriptor descriptor,
@@ -184,9 +190,12 @@ public class PartitionEncoder {
             int parquetMetaFd,
             long squashTracker,
             long seqTxn,
-            long dedupSortVersion
+            long dedupSortVersion,
+            long dedupKeyIdsPtr,
+            int dedupKeyCount
     ) {
         assert bloomFilterColumnCount >= 0;
+        assert dedupKeyCount == 0 || dedupKeyIdsPtr != 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
         assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
 
@@ -220,7 +229,9 @@ public class PartitionEncoder {
                     parquetMetaFd,
                     squashTracker,
                     seqTxn,
-                    dedupSortVersion
+                    dedupSortVersion,
+                    dedupKeyIdsPtr,
+                    dedupKeyCount
             );
         } finally {
             descriptor.clear();
@@ -387,7 +398,9 @@ public class PartitionEncoder {
             int parquetMetaFd,
             long squashTracker,
             long seqTxn,
-            long dedupSortVersion
+            long dedupSortVersion,
+            long dedupKeyIdsPtr,
+            int dedupKeyCount
     ) throws CairoException;
 
     static {

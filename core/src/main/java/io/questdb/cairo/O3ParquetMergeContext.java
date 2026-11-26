@@ -41,6 +41,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private static final long REBASE_AUX_ARENA_PAGE_SIZE = 16 * 1024;
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private DirectIntList bloomFilterColumns;
+    // The column ids of the non-timestamp dedup keys, see TableUtils.collectDedupKeyIds()
+    private DirectIntList dedupKeyIds;
     // Non-owning descriptor for the O3-only writers (writeFreshParquetFromO3 +
     // copyO3ToRowGroup). Column pointers reference already-sorted/deduped O3
     // source buffers — and the merge index for the designated timestamp — so
@@ -97,6 +99,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         super(MemoryTag.NATIVE_O3);
         actionsBuf = new ObjList<>();
         bloomFilterColumns = new DirectIntList(16, MemoryTag.NATIVE_O3);
+        dedupKeyIds = new DirectIntList(8, MemoryTag.NATIVE_O3);
         freshPartitionDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
         keyRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
@@ -116,6 +119,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     public void clear() {
         super.clear();
         bloomFilterColumns.clear();
+        dedupKeyIds.clear();
         freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
@@ -134,6 +138,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     public void close() {
         actionsBuf = null;
         bloomFilterColumns = Misc.free(bloomFilterColumns);
+        dedupKeyIds = Misc.free(dedupKeyIds);
         freshPartitionDescriptor = Misc.free(freshPartitionDescriptor);
         gapO3Ranges = null;
         keyRowGroupBuffers = Misc.free(keyRowGroupBuffers);
@@ -183,6 +188,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public DirectIntList getBloomFilterColumns() {
         return bloomFilterColumns;
+    }
+
+    public DirectIntList getDedupKeyIds() {
+        return dedupKeyIds;
     }
 
     public PartitionDescriptor getFreshPartitionDescriptor() {

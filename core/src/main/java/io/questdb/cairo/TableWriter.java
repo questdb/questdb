@@ -18101,7 +18101,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 bloomFilterFpp,
                 parquetBloomFilterIndexes,
                 -1L,
-                partitionSeqTxn
+                partitionSeqTxn,
+                // the copy keeps the rows and their order, so the dedup key order the partition claims holds for it
+                isDeduplicationEnabled() && txWriter.isPartitionDedupSorted(partitionIndex)
+                        ? metadata.getDedupVersion()
+                        : ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET
         );
     }
 

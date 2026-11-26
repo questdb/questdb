@@ -31,6 +31,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -2511,7 +2512,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     Double.NaN,
                     bloomIndexes,
                     -1L,
-                    tx.getSeqTxn()
+                    tx.getSeqTxn(),
+                    ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET
             );
             Assert.assertTrue("produceParquetFromNative must encode the partition", parquetLen > 0);
 

@@ -32,7 +32,9 @@ use parquet2::metadata::{KeyValue, SortingColumn};
 
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
-use crate::parquet_metadata::types::SeqTxn;
+use crate::parquet_metadata::convert::RowGroupDedupSort;
+use crate::parquet_metadata::types::{SeqTxn, DEDUP_SORT_VERSION_UNSET};
+use crate::parquet_write::dedup_sort::partition_row_key;
 use crate::parquet_write::file::ChunkedWriter;
 use crate::parquet_write::schema::Partition;
 
@@ -44,6 +46,12 @@ pub(crate) struct FrameAccumulator<P> {
     first_frame_start: usize,
     accumulated_rows: usize,
     rows_written_to_row_groups: usize,
+    // The dedup version every row is in the key order of, and the ids of its non-timestamp keys,
+    // see `set_dedup_sort`.
+    dedup_sort_version: i64,
+    dedup_key_ids: Vec<i32>,
+    // The claim of each written row group, when there is a version.
+    dedup_sorts: Vec<RowGroupDedupSort>,
 }
 
 impl<P> FrameAccumulator<P> {
@@ -54,7 +62,23 @@ impl<P> FrameAccumulator<P> {
             first_frame_start: 0,
             accumulated_rows: 0,
             rows_written_to_row_groups: 0,
+            dedup_sort_version: DEDUP_SORT_VERSION_UNSET,
+            dedup_key_ids: Vec::new(),
+            dedup_sorts: Vec::new(),
         }
+    }
+
+    /// Claims that every frame is in the key order of dedup `version`, whose non-timestamp keys
+    /// are the frame columns with ids `key_ids`: each row group records the version, with the
+    /// keys of its first and last rows, see [`Self::dedup_sorts`].
+    pub(crate) fn set_dedup_sort(&mut self, version: i64, key_ids: Vec<i32>) {
+        self.dedup_sort_version = version;
+        self.dedup_key_ids = key_ids;
+    }
+
+    /// The claim of each row group written so far; empty without a version.
+    pub(crate) fn dedup_sorts(&self) -> &[RowGroupDedupSort] {
+        &self.dedup_sorts
     }
 
     pub(crate) fn has_full_row_group(&self) -> bool {
@@ -127,11 +151,35 @@ impl<P> FrameAccumulator<P> {
     }
 
     fn write_frames<W: Write>(
-        &self,
+        &mut self,
         writer: &mut ChunkedWriter<W>,
         last_frame_idx: usize,
         last_frame_end: usize,
     ) -> ParquetResult<()> {
+        if self.dedup_sort_version != DEDUP_SORT_VERSION_UNSET {
+            let first = if self.dedup_key_ids.is_empty() {
+                None
+            } else {
+                partition_row_key(
+                    &self.frames[0].0,
+                    &self.dedup_key_ids,
+                    self.first_frame_start,
+                )?
+            };
+            let last = if self.dedup_key_ids.is_empty() {
+                None
+            } else {
+                partition_row_key(
+                    &self.frames[last_frame_idx].0,
+                    &self.dedup_key_ids,
+                    last_frame_end - 1,
+                )?
+            };
+            self.dedup_sorts.push(RowGroupDedupSort {
+                version: self.dedup_sort_version,
+                keys: first.zip(last),
+            });
+        }
         let frames: Vec<&Partition> = self.frames[..=last_frame_idx]
             .iter()
             .map(|(frame, _)| frame)
@@ -193,6 +241,11 @@ impl PartitionFrameWriter {
 
     pub(crate) fn rows_written_to_row_groups(&self) -> usize {
         self.frames.rows_written_to_row_groups()
+    }
+
+    /// See [`FrameAccumulator::set_dedup_sort`].
+    pub(crate) fn set_dedup_sort(&mut self, version: i64, key_ids: Vec<i32>) {
+        self.frames.set_dedup_sort(version, key_ids);
     }
 
     pub(crate) fn template(&self) -> &Partition {
@@ -266,20 +319,22 @@ impl PartitionFrameWriter {
             .position(|c| c.designated_timestamp)
             .map(|i| i as i32)
             .unwrap_or(-1);
-        let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
-            &col_infos,
-            self.chunked_writer.row_groups(),
-            designated_ts,
-            &sorting_col_indices,
-            footer_offset,
-            footer_length,
-            self.chunked_writer.bloom_bitsets(),
-            None, // a new file: write order is final order
-            0,    // unused_bytes: new file, no dead space
-            self.squash_tracker,
-            self.seq_txn,
-        )
-        .context("generate_parquet_metadata failed")?;
+        let (parquet_meta_bytes, _) =
+            crate::parquet_metadata::convert::generate_parquet_metadata_with_dedup_sorts(
+                &col_infos,
+                self.chunked_writer.row_groups(),
+                designated_ts,
+                &sorting_col_indices,
+                footer_offset,
+                footer_length,
+                self.chunked_writer.bloom_bitsets(),
+                None, // a new file: write order is final order
+                0,    // unused_bytes: new file, no dead space
+                self.squash_tracker,
+                self.seq_txn,
+                self.frames.dedup_sorts(),
+            )
+            .context("generate_parquet_metadata failed")?;
 
         if self.parquet_meta_fd >= 0 {
             // ManuallyDrop: Java owns the fd and closes it.
@@ -530,6 +585,61 @@ mod tests {
         let metadata = read_metadata(&mut Cursor::new(buf)).unwrap();
         let sizes: Vec<usize> = metadata.row_groups.iter().map(|rg| rg.num_rows()).collect();
         assert_eq!(sizes, vec![4, 4, 2]);
+    }
+
+    #[test]
+    fn row_groups_record_the_keys_of_their_first_and_last_rows_across_frames() {
+        static A: [i64; 3] = [1, 2, 3];
+        static B: [i64; 1] = [4];
+        static C: [i64; 4] = [7, 8, 9, 10];
+        let template = frame(&[], 0);
+        let (schema, meta) = to_parquet_schema(&template, false, -1, SeqTxn::UNSET).unwrap();
+        let mut buf = Vec::new();
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .with_row_group_size(Some(4))
+            .chunked_with_compressions(schema, to_encodings(&template), to_compressions(&template))
+            .unwrap();
+        let mut acc = FrameAccumulator::new(4);
+        acc.set_dedup_sort(3, vec![0]);
+        // The last frame starts with two rows of column top.
+        for f in [frame(&A, 0), frame(&B, 0), frame(&C, 2)] {
+            acc.push(f, ());
+            while acc.has_full_row_group() {
+                acc.write_row_group(&mut chunked).unwrap();
+            }
+        }
+        acc.write_remaining(&mut chunked).unwrap();
+        chunked.finish(meta).unwrap();
+        let key = |value: Option<i64>| {
+            let mut key = Vec::new();
+            let ty = qdb_core::col_type::ColumnType::try_from(LONG_TYPE).unwrap();
+            match value {
+                Some(value) => qdb_core::dedup_key::append_key_from(
+                    &mut key,
+                    ty,
+                    &value.to_le_bytes(),
+                    None,
+                    0,
+                )
+                .unwrap(),
+                None => qdb_core::dedup_key::append_null_key(&mut key, ty).unwrap(),
+            }
+            key
+        };
+        assert_eq!(
+            acc.dedup_sorts(),
+            [
+                RowGroupDedupSort {
+                    version: 3,
+                    keys: Some((key(Some(1)), key(Some(4)))),
+                },
+                RowGroupDedupSort { version: 3, keys: Some((key(None), key(Some(8)))) },
+                RowGroupDedupSort {
+                    version: 3,
+                    keys: Some((key(Some(9)), key(Some(10)))),
+                },
+            ]
+        );
     }
 
     #[test]
