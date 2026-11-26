@@ -806,7 +806,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     /**
      * Sets the variables the client declared outside the text of the statement it sent, and that
-     * text, or {@code null} for none, see {@link #getQueryVariables()}. The parser reads them only
+     * text, or {@code null} for both without variables, see {@link #getQueryVariables()}. Empty
+     * variables declare none as well, with or without the text. The parser reads them only
      * where it parses that text, not in the other SQL a compile of it parses, such as a stored
      * definition. The caller sets them around the compiles of the text and clears them after, so
      * they never reach another statement on the connection.

@@ -1000,6 +1000,18 @@ public class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
     }
 
+    // The error for a token that opens no assignment in the variables a client declared outside the
+    // statement's text, see parseQueryVariables(). No statement follows the variables, so the error
+    // names what belongs where the token sits: an assignment, or after a value a comma or the end of
+    // the variables. DECLARE, which can open the text a client sends but not the variables, gets an
+    // error of its own.
+    private static SqlException errUnexpectedInVariables(GenericLexer lexer, CharSequence token, boolean isAfterValue) {
+        if (isDeclareKeyword(token)) {
+            return SqlException.$(lexer.lastTokenPosition(), "variables are the assignments of a DECLARE block, without the DECLARE keyword");
+        }
+        return errUnexpected(lexer, token, isAfterValue ? "',' or end of variables expected" : "variable assignment expected, such as @name := value");
+    }
+
     // The name the row-expiry read filter resolves a table reference by: unquoted, without the no-rowid
     // marker. The marker only turns off random access, and the optimiser and the code generator strip it
     // before they open the table, so a reference spelled with it reads the same table as the bare name.
@@ -5750,10 +5762,13 @@ public class SqlParser {
      *                         of its body's top-level block and no others, so a marking anywhere else
      *                         would parse and never be recorded.
      * @param isQueryVariables whether the block holds the variables a client declared outside the
-     *                         statement's text, see {@link #parseQueryVariables}. It refuses the
-     *                         {@code OVERRIDABLE} marker where it reads it: the marker lets a
-     *                         view's caller set the view's variable, and the client's variables are
-     *                         the caller's values, which nothing overrides.
+     *                         statement's text, see {@link #parseQueryVariables}. No statement
+     *                         follows them, so the block refuses a token that opens no assignment,
+     *                         see {@link #errUnexpectedInVariables}, and either marker where it
+     *                         reads it: {@code OVERRIDABLE} lets a view's caller set the view's
+     *                         variable, and the client's variables are the caller's values, which
+     *                         nothing overrides, and {@code AUDITED} would parse and never be
+     *                         recorded, as anywhere but in the top-level block of a view body.
      */
     private void parseDeclare(
             GenericLexer lexer,
@@ -5763,8 +5778,8 @@ public class SqlParser {
             boolean isQueryVariables
     ) throws SqlException {
         int contentLength = lexer.getContent().length();
-        // Whether a declaration was read last, which only a comma or the query may follow. A comma
-        // anywhere else separates nothing.
+        // Whether a declaration was read last, which only a comma or the query may follow, or the
+        // end of the client's variables. A comma anywhere else separates nothing.
         boolean isCommaExpected = false;
         while (lexer.getPosition() < contentLength) {
             int pos = lexer.getPosition();
@@ -5783,7 +5798,10 @@ public class SqlParser {
                 continue;
             }
 
-            if (isDeclareKeyword(tok)) {
+            // The client's variables refuse DECLARE in their own terms, see
+            // errUnexpectedInVariables(), once the loop hands it back below as a token that opens
+            // no assignment.
+            if (isDeclareKeyword(tok) && !isQueryVariables) {
                 throw errUnexpected(lexer, tok, "Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
             }
 
@@ -5811,11 +5829,11 @@ public class SqlParser {
             boolean isOverridable = false;
             while (tok != null && (isOverridableKeyword(tok) || isAuditedKeyword(tok))) {
                 final boolean isAuditedMarker = isAuditedKeyword(tok);
+                if (isQueryVariables) {
+                    throw SqlException.$(lexer.lastTokenPosition(), isAuditedMarker ? "variables cannot be AUDITED" : "variables cannot be OVERRIDABLE");
+                }
                 if (isAuditedMarker && !isTopLevel) {
                     throw SqlException.$(lexer.lastTokenPosition(), "AUDITED is only allowed in the top-level DECLARE block");
-                }
-                if (!isAuditedMarker && isQueryVariables) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be OVERRIDABLE");
                 }
                 if (isAuditedMarker && isAudited) {
                     throw SqlException.$(lexer.lastTokenPosition(), "duplicate AUDITED");
@@ -5921,6 +5939,16 @@ public class SqlParser {
                 model.getOverridableDecls().add(tok);
             }
             isCommaExpected = true;
+        }
+
+        // A statement reads the token the block leaves. The client's variables leave none: neither
+        // one the loop hands back, nor one that the last value's parse reads and hands back at the
+        // end of the text, as in `@a := 1 SELECT`.
+        if (isQueryVariables) {
+            final CharSequence tok = optTok(lexer);
+            if (tok != null) {
+                throw errUnexpectedInVariables(lexer, tok, isCommaExpected);
+            }
         }
     }
 
@@ -8255,13 +8283,9 @@ public class SqlParser {
         final GenericLexer variablesLexer = viewLexers.next();
         variablesLexer.of(queryVariablesText, QUERY_VARIABLES_POSITION, queryVariablesText.length());
 
-        CharSequence tok = optTok(variablesLexer);
-        if (tok == null) {
+        if (optTok(variablesLexer) == null) {
             // blank, or only comments
             return null;
-        }
-        if (isDeclareKeyword(tok)) {
-            throw SqlException.$(variablesLexer.lastTokenPosition(), "variables are the assignments of a DECLARE block, without the DECLARE keyword");
         }
         // parseDeclare() reads each variable from the lexer's position, which a token handed
         // back would leave past it: start the lexer over instead
@@ -8281,16 +8305,11 @@ public class SqlParser {
         final LowerCaseCharSequenceObjHashMap<WithClauseModel> withScopeBefore = withScope;
         withScope = model.getWithClauses();
         try {
-            // the client's block, not a top-level one: a variable can be marked neither AUDITED
-            // nor OVERRIDABLE
+            // The client's block, not a top-level one. It refuses whatever is not an assignment,
+            // the markers included, and leaves no token behind, see parseDeclare().
             parseDeclare(variablesLexer, model, sqlParserCallback, false, true);
         } finally {
             withScope = withScopeBefore;
-        }
-        tok = optTok(variablesLexer);
-        if (tok != null) {
-            // not an assignment, or a value that ended early, as `1 SELECT 2` does
-            throw SqlException.unexpectedToken(variablesLexer.lastTokenPosition(), tok);
         }
 
         queryVariablesModel = model;

@@ -389,25 +389,59 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 assertQuery(declare + assignments + ' ' + sql).noLeakCheck().fails(declare.length() + offset, message);
                 withVariables(assignments, sql, () -> assertQuery(sql).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + offset, message));
             }
-            // These refusals are the parameter's own. Such a block leaves a token that opens no
+            // These refusals are the parameter's own. Such a block hands a token that opens no
             // assignment to the statement, reports DECLARE as a second block, and accepts the
-            // OVERRIDABLE and AUDITED markers, which mean nothing for a client's variables. A
-            // refused marker is reported where it sits, as a DECLARE block reports AUDITED, also
-            // when the variable it marks is declared again without it.
+            // OVERRIDABLE and AUDITED markers, which mean nothing for a client's variables. No
+            // statement follows the variables, so the error names what belongs where the token
+            // sits: an assignment at the start and after a comma, and a comma or the end of the
+            // variables after a value, also when the token ends the variables. A refused marker is
+            // reported where it sits, also when the variable it marks is declared again without
+            // it, and of two markers the first is reported.
+            final String assignmentExpected = "variable assignment expected, such as @name := value";
+            final String commaExpected = "',' or end of variables expected";
+            final String declareRefused = "variables are the assignments of a DECLARE block, without the DECLARE keyword";
             final Object[][] refused = {
-                    {"1", 0, "unexpected token [1]"},
-                    {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
+                    // where an assignment belongs
+                    {"1", 0, "unexpected token [1] - " + assignmentExpected},
+                    {"a := 1", 0, "unexpected token [a] - " + assignmentExpected},
+                    {"(@a := 1)", 0, "unexpected token [(] - " + assignmentExpected},
+                    {")", 0, "unexpected token [)] - " + assignmentExpected},
+                    {"overridable", 0, "unexpected token [overridable] - " + assignmentExpected},
+                    {"@a := 1, b := 2", 9, "unexpected token [b] - " + assignmentExpected},
+                    {"@a := 1, SELECT 2", 9, "unexpected token [SELECT] - " + assignmentExpected},
+                    {"@a := 1, audited", 9, "unexpected token [audited] - " + assignmentExpected},
+                    // after a value, with more text after the token and without
+                    {"@a := 1 SELECT 2", 8, "unexpected token [SELECT] - " + commaExpected},
+                    {"@a := 1 SELECT", 8, "unexpected token [SELECT] - " + commaExpected},
+                    {"@a := 1 b c", 8, "unexpected token [b] - " + commaExpected},
+                    {"@a := 1 b", 8, "unexpected token [b] - " + commaExpected},
+                    {"@a := 1 overridable x", 8, "unexpected token [overridable] - " + commaExpected},
+                    {"@a := 1 overridable", 8, "unexpected token [overridable] - " + commaExpected},
+                    {"@a := 1;", 7, "unexpected token [;] - " + commaExpected},
+                    {"@a := (1))", 9, "unexpected token [)] - " + commaExpected},
+                    // DECLARE, wherever it sits
+                    {"DECLARE @a := 1", 0, declareRefused},
+                    {"@a := 1, DECLARE @b := 2", 9, declareRefused},
+                    {"@a := 1 DECLARE @b := 2", 8, declareRefused},
+                    {"@a := 1 DECLARE", 8, declareRefused},
                     {"OVERRIDABLE @a := 1", 0, "variables cannot be OVERRIDABLE"},
                     {"@b := 1, OVERRIDABLE @a := 1", 9, "variables cannot be OVERRIDABLE"},
                     {"/* c */ OVERRIDABLE @a := 1", 8, "variables cannot be OVERRIDABLE"},
                     {"OVERRIDABLE @a := 1, @a := 2", 0, "variables cannot be OVERRIDABLE"},
                     {"OVERRIDABLE AUDITED @a := 1", 0, "variables cannot be OVERRIDABLE"},
-                    {"AUDITED @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
-                    {"AUDITED OVERRIDABLE @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
+                    {"AUDITED @a := 1", 0, "variables cannot be AUDITED"},
+                    {"@b := 1, AUDITED @a := 1", 9, "variables cannot be AUDITED"},
+                    {"/* c */ AUDITED @a := 1", 8, "variables cannot be AUDITED"},
+                    {"AUDITED @a := 1, @a := 2", 0, "variables cannot be AUDITED"},
+                    {"AUDITED OVERRIDABLE @a := 1", 0, "variables cannot be AUDITED"},
             };
             for (Object[] c : refused) {
                 withVariables((String) c[0], sql, () -> assertQuery(sql).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + (int) c[1], (String) c[2]));
             }
+            // the statement's own block reports a second DECLARE as it does without the variables,
+            // at that DECLARE, 16 characters in
+            final String twoBlocks = "DECLARE @b := 1 DECLARE @c := 2 SELECT @b";
+            withVariables("@a := 1", twoBlocks, () -> assertQuery(twoBlocks).noLeakCheck().fails(16, "unexpected token [DECLARE] - Multiple DECLARE statements are not allowed"));
         });
     }
 
@@ -548,7 +582,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     "WITH c AS (SELECT 1 y) INSERT BATCH 10 o3MaxLag 1s INTO x (a) SELECT y FROM c",
             };
             for (String sql : readers) {
-                withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, SqlParser.QUERY_VARIABLES_POSITION, "unexpected token [a]"));
+                withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, SqlParser.QUERY_VARIABLES_POSITION, "unexpected token [a] - variable assignment expected, such as @name := value"));
             }
 
             final String[] statements = {
@@ -724,7 +758,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         final String sql = "SELECT @a";
         // "@a := 1 SELECT 2": SELECT sits 8 characters into the assignments
         withVariables("@a := 1 SELECT 2", sql, () -> assertQuery(sql)
-                .fails(SqlParser.QUERY_VARIABLES_POSITION + 8, "unexpected token [SELECT]"));
+                .fails(SqlParser.QUERY_VARIABLES_POSITION + 8, "unexpected token [SELECT] - ',' or end of variables expected"));
     }
 
     @Test

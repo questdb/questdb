@@ -228,10 +228,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     /**
      * Returns the variables the client declared outside the text of the statement it sent, or
      * {@code null} for none: the assignments of a DECLARE block, without the DECLARE keyword,
-     * such as {@code @from := '2026-01-01', @to := dateadd('d', 1, @from)}. The parser reads
-     * them as a DECLARE block that opens the text {@link #getQueryVariablesSqlText()} returns,
-     * when that text is a statement that reads them: a query, or an INSERT of a query's rows. It
-     * never reads them in another text it parses with this context.
+     * such as {@code @from := '2026-01-01', @to := dateadd('d', 1, @from)}. A text without an
+     * assignment declares none as well: an empty one, which the HTTP endpoints pass for a request
+     * without variables, or one of blanks and comments alone. The parser reads them as a DECLARE
+     * block that opens the text {@link #getQueryVariablesSqlText()} returns, when that text is a
+     * statement that reads them: a query, or an INSERT of a query's rows. It never reads them in
+     * another text it parses with this context.
      * <p>
      * The parser reads them at {@link SqlParser#QUERY_VARIABLES_POSITION}, which no other text
      * reaches, so an error in them, however late the compile or the cursor reports it, has a
@@ -243,7 +245,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * Returns the text of the statement the client sent {@link #getQueryVariables()} with, or
-     * {@code null} for none.
+     * {@code null} when that returns {@code null}.
      */
     default @Nullable CharSequence getQueryVariablesSqlText() {
         return null;

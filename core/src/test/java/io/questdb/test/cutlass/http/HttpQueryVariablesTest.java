@@ -206,9 +206,15 @@ public class HttpQueryVariablesTest extends AbstractTest {
             );
             // a value with a query after it
             assertGet(
-                    "{\"query\":\"SELECT @a\",\"error\":\"unexpected token [SELECT]\",\"position\":8,\"errorSource\":\"variables\"}",
+                    "{\"query\":\"SELECT @a\",\"error\":\"unexpected token [SELECT] - ',' or end of variables expected\",\"position\":8,\"errorSource\":\"variables\"}",
                     "SELECT @a",
                     "@a := 1 SELECT 2"
+            );
+            // a marker, which no variable of the parameter takes
+            assertGet(
+                    "{\"query\":\"SELECT @a\",\"error\":\"variables cannot be AUDITED\",\"position\":0,\"errorSource\":\"variables\"}",
+                    "SELECT @a",
+                    "AUDITED @a := 1"
             );
             // after characters of 2, 3 and 4 bytes in UTF-8, the position counts UTF-16 characters,
             // as positions in the query do
@@ -235,7 +241,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
             final Utf8StringSink sink = new Utf8StringSink();
             Assert.assertEquals("400", testHttpClient.get("SELECT 1", "a := 1", sink));
             TestUtils.assertEquals(
-                    "{\"query\":\"SELECT 1\",\"error\":\"unexpected token [a]\",\"position\":0,\"errorSource\":\"variables\"}",
+                    "{\"query\":\"SELECT 1\",\"error\":\"unexpected token [a] - variable assignment expected, such as @name := value\",\"position\":0,\"errorSource\":\"variables\"}",
                     sink.toString()
             );
         }));
@@ -492,7 +498,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
                             // after the 6 characters of "@a := "
                             {"SELECT @a " + alias + 1, "@a := nope_fn()", unknownFunction, 6, true},
                             // at the first character of the variables
-                            {"SELECT @a " + alias + 2, "a := 1", "unexpected token [a]", 0, true},
+                            {"SELECT @a " + alias + 2, "a := 1", "unexpected token [a] - variable assignment expected, such as @name := value", 0, true},
                             // in the query, with and without variables
                             {"SELECT @a " + alias + "3, nope_fn()", "@a := 1", unknownFunction, 14, false},
                             {"SELECT nope_fn() " + alias + 4, null, unknownFunction, 7, false},
