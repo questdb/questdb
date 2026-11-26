@@ -102,9 +102,10 @@ public final class IntervalUtils {
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
     // the intervals of the time part of a date list that validateTimeSuffix() parses and drops
     private static final FiberLocal<LongList> tlTimeSuffixIntervals = new FiberLocal<>(LongList::new);
-    // Test-only observability: the intervals that the merges of the own extents of fixed dates
-    // sorted, merged, moved or compared, see getStaticOwnExtentMergeIntervalCountForTesting(). Tests
-    // read it on the thread that compiled and assert on deltas, so a plain static suffices.
+    // Test-only observability: the intervals that the merges of the own extents of the dates of a list
+    // with a tick calendar and a duration sorted, merged, moved or compared, see
+    // getStaticOwnExtentMergeIntervalCountForTesting(). Tests read it on the thread that compiled or
+    // evaluated and assert on deltas, so a plain static suffices.
     private static long staticOwnExtentMergeIntervalCount;
 
     /**
@@ -567,10 +568,11 @@ public final class IntervalUtils {
     }
 
     /**
-     * Returns the number of intervals that the merges of the own extents of fixed dates, as
-     * {@link #compileTickExpr} expands them for a list with a tick calendar and a duration, sorted,
-     * merged, moved or compared, since the class loaded. Capture it before a compile on the same
-     * thread and assert on the delta afterwards.
+     * Returns the number of intervals that the merges of own extents sorted, merged, moved or compared
+     * since the class loaded: of the fixed dates of a list with a tick calendar and a duration, as
+     * {@link #compileTickExpr} expands them, and of the dates of such a list that
+     * {@link CompiledTickExpression} parses first, see {@link PendingSteps#mergedEnd}. Capture it before
+     * a compile or an evaluation on the same thread and assert on the delta afterwards.
      */
     @TestOnly
     public static long getStaticOwnExtentMergeIntervalCountForTesting() {
@@ -973,7 +975,10 @@ public final class IntervalUtils {
      * what it keeps of them by the duration, as the bare branch does, see
      * {@link PendingSteps#isDurationAfterCalendar}: the dates of the list read as
      * {@link #compileTickExpr} reads its fixed dates. {@link CompiledTickExpression} sets it only for
-     * such a list whose fixed dates have more own extents than its IR holds.
+     * such a list whose fixed dates have more own extents than its IR holds. Own extents can stay apart
+     * where the windows of the IR merged, so each element of the list merges the intervals that it adds
+     * into those merged so far, as {@link #compileTickExpr} merges the own extents of a fixed date, see
+     * {@link PendingSteps#mergedEnd}.
      */
     static void parseTickExpr(
             TimestampDriver timestampDriver,
@@ -1068,6 +1073,9 @@ public final class IntervalUtils {
                 // duration, which it parses in static mode
                 assert !isDateListDurationAfterCalendar
                         || (applyEncoded && globalSemicolon >= 0 && findDurationSemicolon(effectiveSeq, globalSemicolon + 1, effectiveSeqLim) < 0);
+                // The own extents of such a list stay apart where the windows of its IR merged, so each
+                // element merges the intervals that it adds into those merged so far, as
+                // compileStaticElement() merges the own extents of a fixed date
                 expandDateList(
                         timestampDriver,
                         configuration,
@@ -1083,6 +1091,7 @@ public final class IntervalUtils {
                         outSize,
                         dayFilterMask,
                         nowTimestamp,
+                        isDateListDurationAfterCalendar,
                         isDateListDurationAfterCalendar
                 );
                 // Apply tick calendar filter if specified
@@ -1178,7 +1187,8 @@ public final class IntervalUtils {
                         outSize,
                         dayFilterMask,
                         nowTimestamp,
-                        isDurationAfterCalendar
+                        isDurationAfterCalendar,
+                        false
                 );
                 if (exchangeSchedule != null) {
                     if (isDurationAfterCalendar && applyEncoded && out.size() > outSize + 2) {
@@ -1233,7 +1243,7 @@ public final class IntervalUtils {
                     expandDateList(
                             timestampDriver, configuration, checks, wrappedSink, 0, wrappedSink.length(),
                             position, out, operation, dateSink, applyEncoded, outSize,
-                            dayFilterMask, nowTimestamp, false
+                            dayFilterMask, nowTimestamp, false, false
                     );
                     if (exchangeSchedule != null) {
                         int semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
@@ -3402,6 +3412,9 @@ public final class IntervalUtils {
      * @param nowTimestamp           timestamp to use for resolving date variables ($today, $now, etc.)
      * @param isDurationAfterCalendar whether the dates keep their own extent with the duration of the
      *                               list, see {@link PendingSteps#isDurationAfterCalendar}
+     * @param isMergedEndTracked     whether each incremental merge of an element after its first unions
+     *                               only the intervals that the element added since into those merged,
+     *                               see {@link PendingSteps#mergedEnd}
      */
     private static void expandDateList(
             TimestampDriver timestampDriver,
@@ -3418,7 +3431,8 @@ public final class IntervalUtils {
             int outSizeBeforeExpansion,
             int dayFilterMask,
             long nowTimestamp,
-            boolean isDurationAfterCalendar
+            boolean isDurationAfterCalendar,
+            boolean isMergedEndTracked
     ) throws SqlException {
         // lo points to '[' - find the matching ']' for the date list
         int depth = 1;
@@ -3792,6 +3806,11 @@ public final class IntervalUtils {
                     elementSteps.durationLo = globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1;
                     elementSteps.durationLim = lim;
                     elementSteps.isDurationAfterCalendar = isDurationAfterCalendar;
+                    if (isMergedEndTracked) {
+                        // nothing of this element merged yet, so its first merge unions every interval
+                        // of the list, as each merge does without it
+                        elementSteps.mergedEnd = outSizeBeforeExpansion;
+                    }
 
                     if (hasBrackets) {
                         // Element has field expansion brackets - use existing recursive expansion
@@ -6195,7 +6214,9 @@ public final class IntervalUtils {
         // The end of the intervals of the expansion of this element that its last incremental merge
         // left merged, from where the next merge unions only the new ones into them, see
         // unionAppendedIntervals(), or -1, where each merge unions all of them. compileStaticElement()
-        // sets it for the own extents of a fixed date, which stay apart where windows merged.
+        // sets it for the own extents of a fixed date, and expandDateList() for each element of a list
+        // that CompiledTickExpression parses first, as own extents stay apart where windows merged: to
+        // the start of the expansion, from where the first merge unions all intervals.
         int mergedEnd;
         PendingSteps parent;
         int tzHi;

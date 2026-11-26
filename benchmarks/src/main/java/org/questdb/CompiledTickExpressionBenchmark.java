@@ -75,7 +75,8 @@ import java.util.concurrent.TimeUnit;
  * sessions the benchmark builds, and a duration: the fixed dates keep their own extents, many of
  * which stay apart in the carried shapes, and a fixed date whose own extents alone exceed the
  * interval limit makes the list parse as its bind variable on each evaluation, in the overflow
- * shapes, where earlier elements hold them, or fail, or, in a lenient evaluation, fall back to the IR.
+ * shapes, where earlier elements hold them, where another fixed date keeps its slots apart, or fail,
+ * or, in a lenient evaluation, fall back to the IR.
  * {@link #compile} compiles and validates the expression, as SQL does for each statement and each
  * worker of a parallel filter.
  */
@@ -106,6 +107,7 @@ public class CompiledTickExpressionBenchmark {
             "staticDateOverflowBridged",
             "staticDateOverflowBridged10080",
             "staticDateOverflowBridged44640",
+            "staticDateOverflowApart",
             "staticDateOverflowError",
             "staticDateLenientFallback"
     })
@@ -269,6 +271,11 @@ public class CompiledTickExpressionBenchmark {
             case "staticDateOverflowBridged44640":
                 tickExpr = "[$today-40d..$today, 2025-01-[01..31]T[00..23]:[00..59]:00]#XNYS;1m";
                 today = "2025-01-31";
+                break;
+            case "staticDateOverflowApart":
+                // 1,440 seconds, which today holds, and 840 seconds of Friday, which stay apart
+                tickExpr = "[$today, 2025-01-27T[00..23]:[00..59]:00, 2025-01-24T[00..13]:[00..59]:00]#XNYS;1m";
+                today = "2025-01-27";
                 break;
             case "staticDateOverflowError":
             case "staticDateLenientFallback":

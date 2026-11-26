@@ -467,6 +467,49 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticDateTickCalendarLenientOverflowMergesLocally() throws Exception {
+        // A list whose fixed date alone has more own extents than the interval limit parses as its bind
+        // variable on each evaluation, with the limit where the evaluation is lenient. The parse merges the
+        // intervals of each date into those merged so far once there are as many as the merge threshold,
+        // rather than all of them again after each new one. At the default threshold of 256 and limit of
+        // 1,024, on Monday 2025-01-27, nothing holds the 1,440 seconds at the minutes of 2025-01-24, which
+        // lie before today and apart. The first merge, after 255 of them, unites all 256 intervals. Then
+        // the j-th second, for j from 256 on, merges into j intervals: 1 + floor(log2(j)) comparisons find
+        // that it lands before today, after the second before it, which it reads, and today moves after it,
+        // 4 + floor(log2(j)) in all, up to the 1,024th, whose merge leaves 1,025 intervals, past the limit:
+        // 256 + 769 x 4 + 256 x 8 + 512 x 9 + 10 = 9,998. Before, each merge sorted and merged every
+        // interval so far, 493,185 in all. The list then evaluates as it always has, see
+        // testStaticDateTickCalendarOverflowInBackgroundJob.
+        final String expression = "[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m";
+        final CairoConfiguration defaultLimits = tickCalendarConfiguration(256, 1024);
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContextImpl engineJob = newEngineJobContext()) {
+                for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
+                    final String context = expression + " [" + ColumnType.nameOf(driver.getTimestampType()) + ']';
+                    try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, defaultLimits, expression, 0, expression.length(), 0)) {
+                        Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+                        engineJob.setNowAndFixClock(driver.parseFloorLiteral("2025-01-27T12:00:00.000000Z"), driver.getTimestampType());
+                        compiled.init(null, engineJob);
+                        // intervalToString() prints to a sink that it reuses
+                        final String expected = intervalToString(driver, expectedIntervals(
+                                driver,
+                                "2025-01-24T14:30:00.000000Z", "2025-01-24T21:01:00.000000Z",
+                                "2025-01-27T14:30:00.000000Z", "2025-01-27T21:01:00.000000Z"
+                        )).toString();
+                        for (int i = 0; i < 2; i++) {
+                            intervals.clear();
+                            final long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+                            compiled.evaluate(intervals);
+                            Assert.assertEquals(context, 9_998, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
+                            TestUtils.assertEquals(context, expected, intervalToString(driver, intervals));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStaticDateTickCalendarLenientOverflowStopsAtLimit() throws Exception {
         // A list whose fixed date alone has more own extents than the interval limit parses as its bind
         // variable on each evaluation. SQL that the engine runs on its own parses it with the limit

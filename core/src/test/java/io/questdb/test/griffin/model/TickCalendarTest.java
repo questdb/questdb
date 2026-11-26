@@ -40,8 +40,10 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
@@ -54,7 +56,11 @@ import org.junit.Test;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Tests for TICK expression parsing with tick calendars.
@@ -1371,6 +1377,73 @@ public class TickCalendarTest {
                     slotOnSessionDays(driver, "XNYS", "2025-01-01", "2025-02-01", driver.fromHours(20), driver.fromHours(1), driver.fromHours(1), "2025-01-27T14:30", "2025-01-27T22:00"),
                     false
             );
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOverflowParseFuzz() throws SqlException {
+        // Random lists whose fixed date alone has more own extents than the interval limit, which the
+        // compiled form parses as their bind variable on each evaluation, see OverflowParseFuzzer: the
+        // parse merges the intervals of each date into those merged so far, which leaves the list as
+        // merging all of them again does, so it fails where the parser fails before the tick calendar,
+        // with the same error, and otherwise evaluates to the documented semantics.
+        // questdb.fuzz.tickExpressions sets the number of lists.
+        final int listCount = Integer.getInteger("questdb.fuzz.tickExpressions", 1_000);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final OverflowParseFuzzer fuzzer = new OverflowParseFuzzer();
+        for (int i = 0; i < listCount; i++) {
+            fuzzer.check(rnd);
+        }
+        fuzzer.log();
+        if (listCount >= 1_000) {
+            fuzzer.assertEveryShape();
+        }
+    }
+
+    @Test
+    public void testCompiledStaticDateOverflowParseMergesLocally() throws SqlException {
+        // A list that parses as its bind variable on each evaluation merges the intervals of each of its
+        // dates into those merged so far once there are as many as the merge threshold, as the compiled
+        // form merges the own extents of a fixed date, see testCompiledStaticDateOwnExtentsMergeLocally,
+        // rather than all of them again after each new one. At the default threshold of 256 and limit of
+        // 1,024, on Monday 2025-01-27:
+        // - today holds the 1,440 seconds at the minutes of 2025-01-27, which merge into it after each
+        //   255th: all 256 intervals the first time, then the 255 new ones and today, which they land
+        //   after, found with one comparison, 257, four times: 1,284;
+        // - the 165 seconds from 21:15 wait in today for the 840 seconds at the minutes from 00:00 to
+        //   13:59 of Friday 2025-01-24, which lie before today and apart. The first merge of the date,
+        //   after 90 of them, unites all 256 intervals into 91. The second, after 165 more, sorts them,
+        //   finds with 7 comparisons that they land before today, after the second at 01:29, which it
+        //   reads, and moves today after them: 165 + 1 + 7 + 1 = 174. Then the j-th second, for j from
+        //   256 to 840, merges into j intervals: 1 + floor(log2(j)) comparisons, the second before it
+        //   read, today moved, 4 + floor(log2(j)) in all, 585 x 4 + 256 x 8 + 329 x 9 = 7,349.
+        // That makes 1,284 + 256 + 174 + 7,349 = 9,063 for each evaluation and each validate(). Before,
+        // each merge sorted and merged every interval so far, 322,957 in all. The parser of a bind
+        // variable merges as it always has, which the count leaves out. The session keeps today, a
+        // minute longer.
+        final String expression = "[$today, 2025-01-27T[00..23]:[00..59]:00, 2025-01-24T[00..13]:[00..59]:00]#XNYS;1m";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = expression + " [" + ColumnType.nameOf(timestampType) + ']';
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            final String expected = expectedIntervals(timestampType, "2025-01-27T14:30", "2025-01-27T21:00:59.999999");
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+                Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+                long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+                compiled.validate(now);
+                Assert.assertEquals(context + " validate()", 9_063, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
+                final LongList out = new LongList();
+                for (int i = 0; i < 2; i++) {
+                    out.clear();
+                    before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+                    compiled.evaluate(out, now);
+                    Assert.assertEquals(context, 9_063, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
+                    Assert.assertEquals(context, expected, intervalToString(driver, out));
+                }
+            }
+            final long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+            Assert.assertEquals(context + " as a bind variable", expected, parseTickExpr(driver, expression, now));
+            Assert.assertEquals(context + " as a bind variable", before, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting());
         }
     }
 
@@ -4235,6 +4308,409 @@ public class TickCalendarTest {
             dayRangeCount += isRange ? 1 : 0;
             negativeDurationCount += MODEL_DURATION_SECONDS[durationIndex] < 0 ? 1 : 0;
             pointInTimeCount += hasPointInTime ? 1 : 0;
+        }
+    }
+
+    /**
+     * Generates lists with a tick calendar and a duration whose fixed date alone has more own extents
+     * than the interval limit, which the compiled form parses as their bind variable on each evaluation:
+     * fixed dates whose slots overflow the limit or stay apart, on days that date variables hold or not,
+     * ranges of days, elements in any order, numeric timezones and New York, which moves its clocks back
+     * on 2025-11-02 and forward on 2025-03-09, at a limit of 16 or at the default limit. It checks what a
+     * user's evaluation and validate() make of each against a model:
+     * <ul>
+     * <li>where a merge before the tick calendar leaves more intervals than the limit, see
+     * {@link #runningLimitError}, the list fails with that error, at the position of the literal;</li>
+     * <li>otherwise it evaluates to the documented semantics of the own extents of its elements, see
+     * {@link #model}, or fails on the limit where those leave more intervals than it;</li>
+     * <li>validate() runs the same parse with the limit, as a lenient evaluation does: it fails where
+     * the evaluation fails, with the same error, and merges as much.</li>
+     * </ul>
+     * The parser, which a bind variable takes and whose merges each unite all intervals so far, checks
+     * the model: it parses the list without its tick calendar and duration to the union of the own
+     * extents, or fails where the model fails before the tick calendar, or where that union holds more
+     * intervals than the limit, and fails the whole list where the model fails before the tick calendar.
+     * It counts the shapes it checks.
+     */
+    private static final class OverflowParseFuzzer {
+        private static final String[] CALENDARS = {"XNYS", "XHKG", "X24H"};
+        // at the default limit: the slots of fixed dates that overflow it alone, and fewer, which stay apart
+        private static final Slots[] DEFAULT_APART = {
+                new Slots("T[00..13]:[00..59]:00", 0, 13, 1),
+                new Slots("T[14..20]:[00..59]:00", 14, 20, 1),
+                new Slots("T[01..03]:[00..59]:00", 1, 3, 1)
+        };
+        private static final Slots[] DEFAULT_OVERFLOW = {new Slots("T[00..23]:[00..59]:00", 0, 23, 1)};
+        // durations, and their lengths in seconds; a list takes one at least as long as the time between
+        // the slots of its fixed dates that overflow, so that their windows join in its IR
+        private static final String[] DURATIONS = {"1m", "10m", "30m", "1h", "90m", "4h", "1d"};
+        private static final int[] DURATION_SECONDS = {60, 600, 1_800, 3_600, 5_400, 14_400, 86_400};
+        // New York moves its clocks back two days before 2025-11-04, and forward the day before 2025-03-10
+        private static final String[] NOWS = {
+                "2025-01-27T12:00:00.000000Z",
+                "2025-01-24T03:00:00.000000Z",
+                "2025-01-29T15:30:00.000000Z",
+                "2025-11-04T12:00:00.000000Z",
+                "2025-03-10T12:00:00.000000Z"
+        };
+        // at a limit of 16
+        private static final Slots[] SMALL_APART = {
+                new Slots("T[00..09]:00:00", 0, 9, 60),
+                new Slots("T[14..20]:00:00", 14, 20, 60),
+                new Slots("T[10..12]:[00,20,40]:00", 10, 12, 20)
+        };
+        private static final Slots[] SMALL_OVERFLOW = {
+                new Slots("T[00..23]:00:00", 0, 23, 60),
+                new Slots("T[06..21]:[00,30]:00", 6, 21, 30)
+        };
+        // date variables of whole days, and their first and last day after today
+        private static final String[] VARIABLES = {"$today", "$yesterday", "$tomorrow", "$today-3d..$today", "$yesterday..$tomorrow"};
+        private static final int[][] VARIABLE_DAYS = {{0, 0}, {-1, -1}, {1, 1}, {-3, 0}, {-1, 1}};
+        // the timezones of the list, and their rules
+        private static final String[] ZONES = {"", "@+08:00", "@-05:00", "@America/New_York"};
+        private static final ZoneId[] ZONE_IDS = {ZoneOffset.UTC, ZoneOffset.ofHours(8), ZoneOffset.ofHours(-5), ZoneId.of("America/New_York")};
+        private final ObjList<Element> elements = new ObjList<>();
+        private final LongList extents = new LongList();
+        // the minutes of the day of the slots of a fixed date that runningLimitError() has not converted yet
+        private final IntList pendingSlots = new IntList();
+        private final StringBuilder sb = new StringBuilder();
+        private final CairoConfiguration smallLimits = calendarConfiguration(8, 16);
+        // the shapes that the fuzzer checked
+        private int defaultLimitFailureCount;
+        private int defaultLimitFitCount;
+        private int earlierAfterLaterCount;
+        private int finalLimitCount;
+        private int fitApartCount;
+        private int fitCount;
+        private int fixedDateAfterRangeCount;
+        private int microCount;
+        private int namedZoneCount;
+        private int nanoCount;
+        private int rangeLimitCount;
+        private int repeatedHourCount;
+        private int runningLimitCount;
+        private int skippedHourCount;
+        private int twoOverflowCount;
+        private TimestampDriver driver;
+        private boolean hasRepeatedHour;
+        private boolean hasSkippedHour;
+
+        void assertEveryShape() {
+            Assert.assertTrue("a list that fits the limit", fitCount > 0);
+            Assert.assertTrue("a list that fits with as many intervals apart as the merge threshold", fitApartCount > 0);
+            Assert.assertTrue("a list that fits the default limit", defaultLimitFitCount > 0);
+            Assert.assertTrue("a list that fails before the tick calendar", runningLimitCount > 0);
+            Assert.assertTrue("a list that fails the default limit before the tick calendar", defaultLimitFailureCount > 0);
+            Assert.assertTrue("a fixed date after a range", fixedDateAfterRangeCount > 0);
+            Assert.assertTrue("two fixed dates that overflow the limit", twoOverflowCount > 0);
+            Assert.assertTrue("an element whose days lie before those of an element before it", earlierAfterLaterCount > 0);
+            Assert.assertTrue("a timezone of the list with clock changes", namedZoneCount > 0);
+            Assert.assertTrue("slots in an hour that the clocks repeat", repeatedHourCount > 0);
+            Assert.assertTrue("slots in an hour that the clocks skip", skippedHourCount > 0);
+            Assert.assertTrue("a TIMESTAMP list", microCount > 0);
+            Assert.assertTrue("a TIMESTAMP_NS list", nanoCount > 0);
+        }
+
+        void check(Rnd rnd) throws SqlException {
+            driver = ColumnType.getTimestampDriver(rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO);
+            // a tenth of the lists in New York, two days after it moves its clocks back or the day after it
+            // moves them forward, with a fixed date on the day of the change
+            final boolean isClockChange = rnd.nextInt(10) == 0;
+            final String nowText = isClockChange ? NOWS[3 + rnd.nextInt(2)] : NOWS[rnd.nextInt(NOWS.length)];
+            final long now = driver.parseFloorLiteral(nowText);
+            // a date variable takes the date of "now" in UTC, which the timezone of the list reads as a
+            // local date
+            final LocalDate today = LocalDate.parse(nowText.substring(0, 10));
+            final String calendar = CALENDARS[rnd.nextInt(CALENDARS.length)];
+            final boolean isDefaultLimit = rnd.nextInt(5) == 0;
+            final int threshold = isDefaultLimit ? 256 : 8;
+            final int maxIntervals = isDefaultLimit ? 1024 : 16;
+            final int zoneIndex = isClockChange ? ZONES.length - 1 : rnd.nextInt(ZONES.length);
+            final ZoneId zone = ZONE_IDS[zoneIndex];
+
+            // one or two fixed dates whose slots alone overflow the limit, on days that a date variable can
+            // hold, the longest time between their slots, fixed dates whose slots stay apart, and date
+            // variables, in any order
+            elements.clear();
+            final int overflowCount = rnd.nextInt(4) == 0 ? 2 : 1;
+            int overflowSpacingSeconds = 0;
+            for (int i = 0; i < overflowCount; i++) {
+                final Slots[] choices = isDefaultLimit ? DEFAULT_OVERFLOW : SMALL_OVERFLOW;
+                // the slots of each hour on the day of a clock change
+                final Slots slots = isClockChange && i == 0 ? choices[0] : choices[rnd.nextInt(choices.length)];
+                final LocalDate day = isClockChange && i == 0 ? today.minusDays(today.getMonthValue() == 11 ? 2 : 1) : today.plusDays(rnd.nextInt(5) - 3);
+                elements.add(new Element(day + slots.text(), day, day, slots, true));
+                overflowSpacingSeconds = Math.max(overflowSpacingSeconds, slots.minuteStep() * 60);
+            }
+            for (int i = 0, n = rnd.nextInt(3); i < n; i++) {
+                final Slots[] choices = isDefaultLimit ? DEFAULT_APART : SMALL_APART;
+                final Slots slots = choices[rnd.nextInt(choices.length)];
+                final LocalDate day = today.plusDays(rnd.nextInt(7) - 4);
+                elements.add(new Element(day + slots.text(), day, day, slots, false));
+            }
+            for (int i = 0, n = rnd.nextInt(3); i < n; i++) {
+                final int v = rnd.nextInt(VARIABLES.length);
+                elements.add(new Element(VARIABLES[v], today.plusDays(VARIABLE_DAYS[v][0]), today.plusDays(VARIABLE_DAYS[v][1]), null, false));
+            }
+            for (int i = elements.size() - 1; i > 0; i--) {
+                final int j = rnd.nextInt(i + 1);
+                final Element element = elements.getQuick(i);
+                elements.setQuick(i, elements.getQuick(j));
+                elements.setQuick(j, element);
+            }
+            // half the time, a date variable that holds a fixed date that overflows comes before it, which
+            // lets the parse fit the limit
+            for (int i = 0; i < elements.size(); i++) {
+                final Element element = elements.getQuick(i);
+                if (element.isOverflow() && rnd.nextBoolean()) {
+                    final long dayAfterToday = element.first().toEpochDay() - today.toEpochDay();
+                    int v;
+                    do {
+                        v = rnd.nextInt(VARIABLES.length);
+                    } while (dayAfterToday < VARIABLE_DAYS[v][0] || dayAfterToday > VARIABLE_DAYS[v][1]);
+                    elements.insert(rnd.nextInt(i + 1), 1, new Element(VARIABLES[v], today.plusDays(VARIABLE_DAYS[v][0]), today.plusDays(VARIABLE_DAYS[v][1]), null, false));
+                    i++;
+                }
+            }
+            int durationIndex = 0;
+            while (DURATION_SECONDS[durationIndex] < overflowSpacingSeconds) {
+                durationIndex++;
+            }
+            durationIndex += rnd.nextInt(DURATIONS.length - durationIndex);
+
+            sb.setLength(0);
+            sb.append('[');
+            extents.clear();
+            hasRepeatedHour = false;
+            hasSkippedHour = false;
+            boolean hasRange = false;
+            boolean isEarlierAfterLater = false;
+            boolean isFixedDateAfterRange = false;
+            for (int i = 0, n = elements.size(); i < n; i++) {
+                final Element element = elements.getQuick(i);
+                if (i > 0) {
+                    sb.append(", ");
+                }
+                sb.append(element.text());
+                if (element.slots() == null) {
+                    for (LocalDate day = element.first(); !day.isAfter(element.last()); day = day.plusDays(1)) {
+                        addDay(day, zone, extents);
+                    }
+                } else {
+                    for (int hour = element.slots().firstHour(); hour <= element.slots().lastHour(); hour++) {
+                        for (int minute = 0; minute < 60; minute += element.slots().minuteStep()) {
+                            addSlot(element.first(), hour * 60 + minute, zone, extents);
+                        }
+                    }
+                    isFixedDateAfterRange |= hasRange;
+                }
+                hasRange |= element.isRange();
+                for (int j = 0; j < i; j++) {
+                    isEarlierAfterLater |= element.first().isBefore(elements.getQuick(j).last());
+                }
+            }
+            sb.append(']').append(ZONES[zoneIndex]);
+            final String withoutCalendar = sb.toString();
+            final String text = sb.append('#').append(calendar).append(';').append(DURATIONS[durationIndex]).toString();
+            final String context = text + " at " + nowText + " [" + ColumnType.nameOf(driver.getTimestampType()) + (isDefaultLimit ? "]" : ", limit 16]");
+
+            final String limitError = "error: Bracket expansion produces too many intervals (max " + maxIntervals + ") @100";
+            final LongList united = union(extents);
+            final String runningError = runningLimitError(zone, threshold, maxIntervals);
+            final String expected = runningError != null ? runningError : model(united, calendar, driver.fromSeconds(DURATION_SECONDS[durationIndex]), maxIntervals, limitError);
+            final CairoConfiguration limits = isDefaultLimit ? configuration : smallLimits;
+            // the parser checks the model
+            final String unitedOrError = united.size() / 2 > maxIntervals ? limitError : intervalToString(driver, united);
+            Assert.assertEquals(context + " without its tick calendar and duration", runningError != null ? runningError : unitedOrError, parse(limits, withoutCalendar, now));
+            if (runningError != null) {
+                Assert.assertEquals(context + " as a bind variable", runningError, parse(limits, text, now));
+            }
+
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, limits, text, 0, text.length(), 100)) {
+                Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+                final long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+                final LongList out = new LongList();
+                String evaluated;
+                try {
+                    compiled.evaluate(out, now);
+                    evaluated = intervalToString(driver, out);
+                } catch (CairoException e) {
+                    evaluated = "error: " + e.getFlyweightMessage() + " @" + e.getPosition();
+                }
+                final long evaluateMergeCount = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before;
+                String validated = null;
+                try {
+                    compiled.validate(now);
+                } catch (SqlException e) {
+                    validated = "error: " + e.getFlyweightMessage() + " @" + e.getPosition();
+                }
+                Assert.assertEquals(context + " merges of validate()", evaluateMergeCount, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before - evaluateMergeCount);
+                Assert.assertEquals(context, expected, evaluated);
+                Assert.assertEquals(context + " validate()", isError(evaluated) ? evaluated : null, validated);
+            }
+
+            if (runningError != null) {
+                runningLimitCount++;
+                rangeLimitCount += runningError.startsWith("error: Date range expansion") ? 1 : 0;
+                defaultLimitFailureCount += isDefaultLimit ? 1 : 0;
+            } else if (isError(expected)) {
+                finalLimitCount++;
+            } else {
+                fitCount++;
+                fitApartCount += united.size() / 2 >= threshold ? 1 : 0;
+                defaultLimitFitCount += isDefaultLimit ? 1 : 0;
+            }
+            fixedDateAfterRangeCount += isFixedDateAfterRange ? 1 : 0;
+            twoOverflowCount += overflowCount == 2 ? 1 : 0;
+            earlierAfterLaterCount += isEarlierAfterLater ? 1 : 0;
+            namedZoneCount += zone instanceof ZoneOffset ? 0 : 1;
+            repeatedHourCount += hasRepeatedHour ? 1 : 0;
+            skippedHourCount += hasSkippedHour ? 1 : 0;
+            microCount += ColumnType.isTimestampNano(driver.getTimestampType()) ? 0 : 1;
+            nanoCount += ColumnType.isTimestampNano(driver.getTimestampType()) ? 1 : 0;
+        }
+
+        void log() {
+            LOG.info().$("compiled static date overflow parse fuzz [fit=").$(fitCount)
+                    .$(", fitApart=").$(fitApartCount)
+                    .$(", defaultLimitFit=").$(defaultLimitFitCount)
+                    .$(", runningLimit=").$(runningLimitCount)
+                    .$(", defaultLimitFailure=").$(defaultLimitFailureCount)
+                    .$(", rangeLimit=").$(rangeLimitCount)
+                    .$(", finalLimit=").$(finalLimitCount)
+                    .$(", fixedDateAfterRange=").$(fixedDateAfterRangeCount)
+                    .$(", twoOverflow=").$(twoOverflowCount)
+                    .$(", earlierAfterLater=").$(earlierAfterLaterCount)
+                    .$(", namedZone=").$(namedZoneCount)
+                    .$(", repeatedHour=").$(repeatedHourCount)
+                    .$(", skippedHour=").$(skippedHourCount)
+                    .$(", micro=").$(microCount)
+                    .$(", nano=").$(nanoCount)
+                    .I$();
+        }
+
+        private static boolean isError(String result) {
+            return result.startsWith("error: ");
+        }
+
+        /**
+         * Appends the own extent of a day of a date variable, which the timezone of the list reads as a
+         * local date.
+         */
+        private void addDay(LocalDate day, ZoneId zone, LongList out) {
+            out.add(
+                    driver.fromSeconds(day.atStartOfDay(zone).toEpochSecond()),
+                    driver.fromSeconds(day.plusDays(1).atStartOfDay(zone).toEpochSecond()) - 1
+            );
+        }
+
+        /**
+         * Appends the own extents of the slot at the minute of the day, at second 00: the second from each
+         * instant whose local time it is, none where the clocks skip it, two where they repeat it, and
+         * returns how many.
+         */
+        private int addSlot(LocalDate day, int minuteOfDay, ZoneId zone, LongList out) {
+            final LocalDateTime local = day.atTime(minuteOfDay / 60, minuteOfDay % 60);
+            final List<ZoneOffset> offsets = zone.getRules().getValidOffsets(local);
+            hasRepeatedHour |= offsets.size() == 2;
+            hasSkippedHour |= offsets.isEmpty();
+            for (int i = 0, n = offsets.size(); i < n; i++) {
+                final long lo = driver.fromSeconds(local.toEpochSecond(offsets.get(i)));
+                out.add(lo, lo + driver.fromSeconds(1) - 1);
+            }
+            return offsets.size();
+        }
+
+        /**
+         * Returns the documented semantics of a list whose own extents unite to the intervals: cut by the
+         * sessions of the calendar into pieces as long as the sessions hold them, each piece's end extended
+         * by the duration, and merged, or the error of the limit where that leaves more intervals than it.
+         */
+        private String model(LongList united, String calendar, long duration, int maxIntervals, String limitError) {
+            final LongList kept = union(intersect(united, sessions(driver, calendar)));
+            for (int i = 1, n = kept.size(); i < n; i += 2) {
+                kept.setQuick(i, kept.getQuick(i) + duration);
+            }
+            final LongList merged = union(kept);
+            return merged.size() / 2 > maxIntervals ? limitError : intervalToString(driver, merged);
+        }
+
+        /**
+         * Returns the intervals that the parser parses the expression to, as it parses a bind variable at
+         * position 100, or its error with its position.
+         */
+        private String parse(CairoConfiguration limits, String expression, long now) {
+            final LongList out = new LongList();
+            try {
+                IntervalUtils.parseTickExpr(driver, limits, expression, 0, expression.length(), 100, out, IntervalOperation.INTERSECT, sink, true, now, IntervalUtils.TICK_CHECK_ALL);
+                return intervalToString(driver, out);
+            } catch (SqlException e) {
+                return "error: " + e.getFlyweightMessage() + " @" + e.getPosition();
+            }
+        }
+
+        /**
+         * Returns the error of the interval limit that the parse of the elements raises before the tick
+         * calendar, with its position, or null. Once the list holds as many intervals as the merge
+         * threshold, the parse unites all intervals so far after each day of a range and after each slot of
+         * a fixed date, and fails where more of them remain than the limit. The list counts a slot as one
+         * until a merge or the end of its date converts it to UTC, and a day converts at once.
+         */
+        private String runningLimitError(ZoneId zone, int threshold, int maxIntervals) {
+            LongList merged = new LongList();
+            int count = 0;
+            for (int i = 0, n = elements.size(); i < n; i++) {
+                final Element element = elements.getQuick(i);
+                if (element.slots() == null) {
+                    for (LocalDate day = element.first(); !day.isAfter(element.last()); day = day.plusDays(1)) {
+                        addDay(day, zone, merged);
+                        count++;
+                        if (element.isRange() && count >= threshold) {
+                            merged = union(merged);
+                            count = merged.size() / 2;
+                            if (count > maxIntervals) {
+                                return "error: Date range expansion produces too many intervals (max " + maxIntervals + ") @100";
+                            }
+                        }
+                    }
+                    continue;
+                }
+                pendingSlots.clear();
+                for (int hour = element.slots().firstHour(); hour <= element.slots().lastHour(); hour++) {
+                    for (int minute = 0; minute < 60; minute += element.slots().minuteStep()) {
+                        pendingSlots.add(hour * 60 + minute);
+                        count++;
+                        if (count >= threshold) {
+                            for (int k = 0, m = pendingSlots.size(); k < m; k++) {
+                                addSlot(element.first(), pendingSlots.getQuick(k), zone, merged);
+                            }
+                            pendingSlots.clear();
+                            merged = union(merged);
+                            count = merged.size() / 2;
+                            if (count > maxIntervals) {
+                                return "error: Bracket expansion produces too many intervals (max " + maxIntervals + ") @100";
+                            }
+                        }
+                    }
+                }
+                for (int k = 0, m = pendingSlots.size(); k < m; k++) {
+                    count += addSlot(element.first(), pendingSlots.getQuick(k), zone, merged) - 1;
+                }
+            }
+            return null;
+        }
+
+        // an element of a list: a fixed date with its slots, which may overflow the limit alone, or a date
+        // variable of whole days without them
+        private record Element(String text, LocalDate first, LocalDate last, Slots slots, boolean isOverflow) {
+            boolean isRange() {
+                return slots == null && text.contains("..");
+            }
+        }
+
+        // the slots of a fixed date, as its text writes them: second 00 of every minuteStep-th minute of
+        // each hour from the first to the last
+        private record Slots(String text, int firstHour, int lastHour, int minuteStep) {
         }
     }
 
