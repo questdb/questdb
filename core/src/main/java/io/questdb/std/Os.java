@@ -231,7 +231,8 @@ public final class Os {
         try {
             File tempLib = null;
             try {
-                int dot = lib.indexOf('.');
+                // The extension starts at the file name's first dot: a directory may hold dots too.
+                int dot = lib.indexOf('.', Math.max(lib.lastIndexOf('/'), lib.lastIndexOf('\\')) + 1);
                 tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
                 // copy to tempLib
                 try (FileOutputStream out = new FileOutputStream(tempLib)) {
