@@ -59,10 +59,9 @@ public abstract class SynchronizedJob implements Job {
     protected abstract boolean runSerially();
 
     private boolean tryAcquireRunLock() {
-        // Read first, then attempt CAS: the CAS takes exclusive ownership of the
-        // locked's cache line, whether or not it succeeds. So without the read, every
-        // failed lock attempt would steal the cache line from the owner thread, as
-        // well as from any previous thread that failed to acquire it.
+        // Read first, then attempt the CAS: a CAS takes the `locked` field's cache line
+        // exclusively whether or not it succeeds. Without the read, every failed attempt
+        // would pull the line away from the lock holder and from every earlier poller.
         return locked == 0 && Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
     }
 }
