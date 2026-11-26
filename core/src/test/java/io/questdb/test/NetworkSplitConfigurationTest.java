@@ -276,6 +276,36 @@ public class NetworkSplitConfigurationTest {
         );
         Assert.assertEquals(4, network.getGroupCount());
         Assert.assertNull(network.getGroupCpus());
+
+        // the workers bind before the cap does
+        final WorkerPoolConfiguration fewWorkers = create(
+                singleSocket(),
+                properties(64, 20),
+                GROUPS_KEY + "=20 reduced to 8: 64 network workers fill 8 groups of 8"
+        );
+        Assert.assertEquals(8, fewWorkers.getGroupCount());
+
+        // the cap binds before the workers do
+        final WorkerPoolConfiguration manyWorkers = create(
+                singleSocket(),
+                properties(256, 20),
+                GROUPS_KEY + "=20 reduced to 16, the most groups a network pool splits into",
+                "network workers split into 16 groups without CPU pinning: the allowed CPUs 0-31 are all on socket 0"
+                        + " [layout=socket 0: CPUs 0-31 on node 0]"
+        );
+        Assert.assertEquals(16, manyWorkers.getGroupCount());
+        Assert.assertNull(manyWorkers.getGroupCpus());
+
+        // the cap applies to a dedicated pool too
+        final Properties properties = new Properties();
+        properties.setProperty(HTTP_GROUPS_KEY, "17");
+        properties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "256");
+        final PropServerConfiguration configuration = createConfiguration(
+                singleSocket(),
+                properties,
+                HTTP_GROUPS_KEY + "=17 reduced to 16, the most groups a network pool splits into"
+        );
+        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getGroupCount());
     }
 
     @Test

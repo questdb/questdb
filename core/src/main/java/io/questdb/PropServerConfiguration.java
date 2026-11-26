@@ -152,7 +152,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    // the fewest workers a group of the split shared network pool has
+    // the most worker groups a network pool splits into; it bounds the fiber runtimes, one per
+    // group, that the split network pools create
+    public static final int MAX_NETWORK_GROUP_COUNT = 16;
+    // the fewest workers a group of a split network pool has
     public static final int MIN_NETWORK_GROUP_WORKERS = 8;
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     // public so a downstream configuration can detect the secret-file channel a sensitive key may arrive
@@ -3493,7 +3496,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     // Splits a network pool into requestedGroupCount worker groups, so that each server on it gets
     // one dispatcher per group, and logs the outcome. Each group needs MIN_NETWORK_GROUP_WORKERS
-    // workers, so a pool too small for the requested count gets fewer groups. On a layout of several
+    // workers, so a pool too small for the requested count gets fewer groups, and no pool gets more
+    // than MAX_NETWORK_GROUP_COUNT. On a layout of several
     // CPU sockets that passes the checks of CpuTopology, groups that divide evenly over the CPU
     // sockets run on their CPU socket's CPUs. Groups on any other layout, one CPU socket included,
     // run on all the allowed CPUs: the gain comes from the extra dispatchers, which pay off on one
@@ -3514,17 +3518,24 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .$(" applies on Linux only, where SO_REUSEPORT spreads connections over the groups' listeners").$();
             return;
         }
-        final int groupCount = Math.min(requestedGroupCount, workerCount / MIN_NETWORK_GROUP_WORKERS);
+        final int fillableGroupCount = workerCount / MIN_NETWORK_GROUP_WORKERS;
+        final int groupCount = Math.min(Math.min(requestedGroupCount, MAX_NETWORK_GROUP_COUNT), fillableGroupCount);
         if (groupCount < 2) {
             log.advisory().$(label).$(" workers not split: ").$(workerCount).$(' ').$(label)
                     .$(" workers cannot fill 2 groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
             return;
         }
         if (groupCount < requestedGroupCount) {
-            log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
-                    .$(" reduced to ").$(groupCount)
-                    .$(": ").$(workerCount).$(' ').$(label).$(" workers fill ").$(groupCount)
-                    .$(" groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
+            if (groupCount == fillableGroupCount) {
+                log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
+                        .$(" reduced to ").$(groupCount)
+                        .$(": ").$(workerCount).$(' ').$(label).$(" workers fill ").$(groupCount)
+                        .$(" groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
+            } else {
+                log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
+                        .$(" reduced to ").$(groupCount)
+                        .$(", the most groups a network pool splits into").$();
+            }
         }
         pool.setGroups(groupCount, null);
         if (affinity != null) {
