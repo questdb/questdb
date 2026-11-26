@@ -3057,12 +3057,13 @@ public class SqlParser {
         // the flag is still false. Every other statement rejects the clause.
         expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
         securityContext = executionContext.getSecurityContext();
-        // The client's variables reach the statements that read: queries, and the query of an
-        // INSERT. Statements that keep their text for later never parse them, because the text
-        // is all that is parsed again: CREATE TABLE AS, views and materialized views keep it as
-        // their definition, and UPDATE as what the WAL applies. Parsing them for such a statement
-        // would fail it on variables it does not read, and would record the views their values
-        // read as views the statement reads.
+        // The client's variables reach the statements that read them: queries, and the query of
+        // an INSERT. Statements that keep their text for later never parse them, because the text
+        // is all that is parsed again: CREATE TABLE AS compiles its query again when it executes,
+        // views and materialized views keep their query as their definition, and the WAL applies
+        // an UPDATE from its text. Parsing them for such a statement would fail it on variables
+        // it does not read, and would record the views their values read as views the statement
+        // reads.
         queryVariablesModel = null;
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 

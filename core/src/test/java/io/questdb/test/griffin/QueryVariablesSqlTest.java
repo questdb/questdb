@@ -687,6 +687,113 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesQueriesReadVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // The shapes a notebook reads a time series with: a day and a list of symbols, a SAMPLE BY
+            // over a range, LATEST ON, a window frame and a negative LIMIT, on a WAL table. Each
+            // statement returns the rows worked out by hand, as it does with the assignments as a
+            // DECLARE block that opens it, and plans as it does with that block.
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('BTC-USD', 10.0, '2026-11-10T23:00:00.000000Z'),
+                    ('BTC-USD', 11.0, '2026-11-11T00:00:00.000000Z'),
+                    ('ETH-USD', 20.0, '2026-11-11T01:30:00.000000Z'),
+                    ('BTC-USD', 12.0, '2026-11-11T03:00:00.000000Z'),
+                    ('SOL-USD', 30.0, '2026-11-11T23:59:59.999999Z'),
+                    ('BTC-USD', 13.0, '2026-11-12T00:00:00.000000Z')""");
+            drainWalQueue();
+            final String variables = """
+                    @day := '2026-11-11', @syms := ('BTC-USD', 'ETH-USD'),
+                    @from := '2026-11-11T00:00:00.000000Z', @to := '2026-11-11T04:00:00.000000Z',
+                    @n := 1, @last := -2""";
+            // statement, result, whether its cursor knows its size and supports random access
+            final Object[][] cases = {
+                    // the day and the symbols
+                    {
+                            "SELECT sym, price, ts FROM trades WHERE ts IN @day AND sym IN @syms",
+                            """
+                            sym\tprice\tts
+                            BTC-USD\t11.0\t2026-11-11T00:00:00.000000Z
+                            ETH-USD\t20.0\t2026-11-11T01:30:00.000000Z
+                            BTC-USD\t12.0\t2026-11-11T03:00:00.000000Z
+                            """,
+                            false, true
+                    },
+                    // the hours from @from up to @to, the empty one filled
+                    {
+                            "SELECT ts, sum(price) s FROM trades WHERE sym IN @syms SAMPLE BY 1h FROM @from TO @to FILL(NULL)",
+                            """
+                            ts\ts
+                            2026-11-11T00:00:00.000000Z\t11.0
+                            2026-11-11T01:00:00.000000Z\t20.0
+                            2026-11-11T02:00:00.000000Z\tnull
+                            2026-11-11T03:00:00.000000Z\t12.0
+                            """,
+                            false, false
+                    },
+                    // the last trade of each symbol on the day
+                    {
+                            "SELECT sym, price, ts FROM trades WHERE ts IN @day LATEST ON ts PARTITION BY sym",
+                            """
+                            sym\tprice\tts
+                            ETH-USD\t20.0\t2026-11-11T01:30:00.000000Z
+                            BTC-USD\t12.0\t2026-11-11T03:00:00.000000Z
+                            SOL-USD\t30.0\t2026-11-11T23:59:59.999999Z
+                            """,
+                            true, true
+                    },
+                    // each price with the @n before it
+                    {
+                            "SELECT ts, price, sum(price) OVER (ORDER BY ts ROWS BETWEEN @n PRECEDING AND CURRENT ROW) s FROM trades WHERE sym = 'BTC-USD'",
+                            """
+                            ts\tprice\ts
+                            2026-11-10T23:00:00.000000Z\t10.0\t10.0
+                            2026-11-11T00:00:00.000000Z\t11.0\t21.0
+                            2026-11-11T03:00:00.000000Z\t12.0\t23.0
+                            2026-11-12T00:00:00.000000Z\t13.0\t25.0
+                            """,
+                            false, false
+                    },
+                    // the last two trades
+                    {
+                            "SELECT sym, price, ts FROM trades LIMIT @last",
+                            """
+                            sym\tprice\tts
+                            SOL-USD\t30.0\t2026-11-11T23:59:59.999999Z
+                            BTC-USD\t13.0\t2026-11-12T00:00:00.000000Z
+                            """,
+                            true, true
+                    },
+            };
+            for (Object[] c : cases) {
+                final String sql = (String) c[0];
+                final String result = (String) c[1];
+                final boolean isSizeKnown = (boolean) c[2];
+                final boolean isRandomAccess = (boolean) c[3];
+                final String declared = "DECLARE " + variables + ' ' + sql;
+                assertQuery(declared).noLeakCheck().timestamp("ts")
+                        .expectSize(isSizeKnown).supportsRandomAccess(isRandomAccess).returns(result);
+                withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck().timestamp("ts")
+                        .expectSize(isSizeKnown).supportsRandomAccess(isRandomAccess).returns(result));
+
+                final StringSink expected = new StringSink();
+                printSql("EXPLAIN " + declared, expected);
+                final StringSink actual = new StringSink();
+                final String explain = "EXPLAIN " + sql;
+                withVariables(variables, explain, () -> printSql(explain, actual));
+                TestUtils.assertEquals(expected, actual);
+            }
+
+            // the scan reads the day alone
+            final StringSink plan = new StringSink();
+            final String explain = "EXPLAIN " + cases[0][0];
+            withVariables(variables, explain, () -> printSql(explain, plan));
+            TestUtils.assertContains(plan, "intervals: [(\"2026-11-11T00:00:00.000000Z\",\"2026-11-11T23:59:59.999999Z\")]");
+        });
+    }
+
+    @Test
     public void testUnusedSubQueryValueIsCompiled() throws Exception {
         // As in a DECLARE block that opens the statement, a sub-query in a value compiles even
         // when the statement does not read its variable. nope sits 29 characters into
@@ -974,17 +1081,6 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         withVariables(variables, sql, () -> execute(sql));
     }
 
-    // runs the code with the variables a client sent with the statement's text, as /exec does
-    private static void withVariables(CharSequence variables, String sql, VariablesCode code) throws Exception {
-        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-        context.setQueryVariables(variables, sql);
-        try {
-            code.run();
-        } finally {
-            context.setQueryVariables(null, null);
-        }
-    }
-
     // The statement fails with the variables as it does without them. Returns the error message.
     private String assertFailsAsWithoutVariables(String sql, String variables) throws Exception {
         final int position;
@@ -1011,8 +1107,15 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         }
     }
 
-    @FunctionalInterface
-    private interface VariablesCode {
-        void run() throws Exception;
+    // Runs the code with the variables a client sent with the statement's text, as /exec does.
+    // DeclareListFuzzTest sends its declared lists this way too.
+    static void withVariables(CharSequence variables, String sql, TestUtils.LeakProneCode code) throws Exception {
+        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+        context.setQueryVariables(variables, sql);
+        try {
+            code.run();
+        } finally {
+            context.setQueryVariables(null, null);
+        }
     }
 }
