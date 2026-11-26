@@ -533,8 +533,9 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     @Test
     public void testConvertedColumnType() throws Exception {
         // ALTER COLUMN TYPE leaves a Parquet partition with the column's old type, which only a
-        // conversion reads right. COPY routes such queries through a temp table, which converts;
-        // the zero-copy reader does not convert, so it refuses a column whose type changed.
+        // conversion reads right. COPY streams such queries row by row through the cursor, whose
+        // accessors convert; the zero-copy reader does not convert, so it refuses a column whose
+        // type changed.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tv (a INT, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO tv SELECT x::INT, (x * 1_000_000)::TIMESTAMP, timestamp_sequence('2024-01-01', 28_800_000_000) FROM long_sequence(6)");
@@ -551,7 +552,7 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                             2024-01-02\tfalse
                             """);
 
-            copyToParquet("SELECT a, t, ts FROM tv", ParquetExportMode.TEMP_TABLE, "converted");
+            copyToParquet("SELECT a, t, ts FROM tv", ParquetExportMode.CURSOR_BASED, "converted");
             assertParquetFile("converted", "ts", """
                     a\tt\tts
                     1\t1970-01-01T00:00:01.000000000Z\t2024-01-01T00:00:00.000000Z

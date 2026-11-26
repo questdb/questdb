@@ -82,6 +82,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
         return false;
     }
 
+    @Override
+    public boolean isForwardScan() {
+        return cursor.getIndexDirection() == IndexReader.DIR_FORWARD;
+    }
+
     // Both selecting values must be stable: the deferred symbol key AND the residual index filter.
     @Override
     public boolean isStableWithinExecution() {

@@ -594,7 +594,8 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                         0,
                         0,
                         0,
-                        0.0
+                        0.0,
+                        false
                 );
                 try {
                     // The lists are checked before the source file or buffers they describe.
