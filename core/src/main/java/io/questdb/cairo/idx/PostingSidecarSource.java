@@ -53,6 +53,11 @@ final class PostingSidecarSource implements QuietCloseable {
         try {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             for (int i = 0; i < indices.size(); i++) {
+                // A removed cover has index -1 and no sidecar to read; the reader skips it without metadata.
+                // Two removed covers would otherwise clash on the same column name.
+                if (indices.getQuick(i) < 0) {
+                    continue;
+                }
                 metadata.add(new TableColumnMetadata("c" + indices.getQuick(i), types.getQuick(i),
                         IndexType.NONE, 0, false, null, indices.getQuick(i), false));
             }
