@@ -32,6 +32,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SetOperationClause;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.expr.ColumnRefExpr;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
@@ -89,6 +90,11 @@ import java.util.regex.Pattern;
  * and {@link #testIdentifierKeySlotLandsOnARealColumn} on what the expression
  * generator then fills that slot with. A predicate shape the corpus can spell
  * is worth nothing if no generated table or key slot ever reaches it.
+ * <p>
+ * The {@code testIntervalIn*} pins cover the interval IN the binder parses once
+ * for the Java filter, the JIT and the designated timestamp's interval scan: every
+ * tick expression form, bare, in parentheses and bound, beside point lists and
+ * NULL, over a column and its TIMESTAMP_NS and DATE casts.
  * <p>
  * The {@code testSetOperation*} pins cover {@link SetOperationClause}: set
  * operations whose branches give one column different types -- SYMBOL beside
@@ -440,6 +446,56 @@ public class FilterShapeCoverageTest {
                         + ", want at least " + MIN_IDENTIFIER_KEY_SLOT_FILL_PCT + "%",
                 100L * counts[1] >= (long) MIN_IDENTIFIER_KEY_SLOT_FILL_PCT * counts[0]
         );
+    }
+
+    @Test
+    public void testIntervalInBindsTheText() {
+        final Rnd rnd = new Rnd(0x5eed, 0xf117e5);
+        final StringSink corpus = new StringSink();
+        for (int i = 0; i < CORPUS_SIZE; i++) {
+            corpus.put(new PredicateGenerator(rnd, 2).generate(columns(), null, new BindContext(rnd, 50))).put('\n');
+        }
+        Assert.assertTrue(
+                "the generator bound no interval text in " + CORPUS_SIZE + " predicates",
+                Pattern.compile("ts(?:::(?:TIMESTAMP_NS|DATE))? (?:NOT )?IN :b\\d+").matcher(corpus).find()
+        );
+    }
+
+    @Test
+    public void testIntervalInRunsOverTheColumnAndItsCasts() {
+        assertCorpusMatches("interval IN over the column", Pattern.compile("ts (?:NOT )?IN '2024"));
+        assertCorpusMatches("interval IN over a TIMESTAMP_NS cast", Pattern.compile("ts::TIMESTAMP_NS (?:NOT )?IN '2024"));
+        assertCorpusMatches("interval IN over a DATE cast", Pattern.compile("ts::DATE (?:NOT )?IN '2024"));
+        assertCorpusMatches("NOT IN over interval text", Pattern.compile("NOT IN '2024"));
+    }
+
+    @Test
+    public void testIntervalInSpellsEveryTickExpressionForm() {
+        final String[][] forms = {
+                {"a year", "IN '2024'"},
+                {"a month", "IN '2024-0\\d'"},
+                {"a day", "IN '2024-0\\d-\\d\\d'"},
+                {"an hour", "IN '2024-0\\d-\\d\\dT\\d\\d'"},
+                {"a microsecond", "IN '2024-0\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.000000Z'"},
+                {"a duration", "IN '2024-0\\d-\\d\\dT\\d\\d:\\d\\d;\\d+[smhd]'"},
+                {"a repeating interval within the JIT IN list threshold", ";\\d+m;1d;[1-9]'"},
+                {"a repeating interval past the JIT IN list threshold", ";\\d+m;1d;1[1-4]'"},
+                {"a workday filter", "IN '2024-0\\d(?:-\\d\\d)?#workday'"},
+                {"a day-of-week filter", "IN '2024-0\\d(?:-\\d\\d)?#(?:Mon|Sat)'"},
+                {"a bracket range", "IN '2024-0\\d-\\[\\d\\d\\.\\.\\d\\d]'"},
+                {"a bracket list", "IN '2024-0\\d-\\[\\d\\d,\\d\\d]'"}
+        };
+        for (String[] form : forms) {
+            assertCorpusMatches("interval IN over " + form[0], Pattern.compile(form[1]));
+        }
+    }
+
+    @Test
+    public void testIntervalInSpellsTheListForms() {
+        assertCorpusMatches("parenthesised interval text", Pattern.compile("IN \\('2024[^',]*'\\)"));
+        assertCorpusMatches("list of quoted points", Pattern.compile("IN \\('2024[^']*', '2024[^']*'"));
+        assertCorpusMatches("interval IN over NULL", Pattern.compile("IN NULL"));
+        assertCorpusMatches("interval IN over a parenthesised NULL", Pattern.compile("IN \\(NULL\\)"));
     }
 
     @Test
