@@ -322,10 +322,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * The rows that the response reads from the query's cursor, Long.MAX_VALUE when it may read
-     * them all, as a row count does. A page without a row count reads the rows up to its last one
-     * and one more, which tells it whether more follow; a page that starts past its end reads the
-     * rows it skips, its first row and one more.
+     * Returns the number of rows the response reads from the query's cursor, or Long.MAX_VALUE when
+     * it may read them all, as it does when it counts rows. A page without a row count reads up to
+     * its last row plus one more, which tells it whether more rows follow. When the page's start is
+     * past its end, it reads the skipped rows, its first row, and one more.
      */
     public long getFirstReadRows() {
         if (countRows || stop == Long.MAX_VALUE) {

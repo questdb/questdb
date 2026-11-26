@@ -63,7 +63,7 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     @Nullable
     private HashJoinPayloadSource payloadSource;
     private long probeGeneration;
-    // The bytes of the snapshot's rows, which ofChain() asserts a chain head against.
+    // Size in bytes of the snapshot's rows; ofChain() asserts that a chain head falls within it.
     private long rowsBytes;
     private long rowsCount;
 
@@ -72,8 +72,8 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     }
 
     /**
-     * The link that the next {@link #next()} follows: the {@link #next} field itself, so a worker
-     * that defers a key's chain pays nothing to take its head.
+     * Returns the {@link #next} field as is, so a worker that defers a key's chain gets its head
+     * at no cost.
      */
     @Override
     public final long chainHead() {
@@ -82,9 +82,10 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     }
 
     /**
-     * Reads the length off the build's chain length index, see
-     * {@link HashJoinRowHeap#indexChainLengths}, which an unindexed heap has no block for: a read
-     * there would fault the JVM, so the read asserts the index along with the snapshot.
+     * Reads the length from the build's chain length index; see
+     * {@link HashJoinRowHeap#indexChainLengths}. A heap without the index has no memory allocated
+     * for it, and reading there would crash the JVM, so the method asserts that the index exists
+     * along with the snapshot.
      */
     @Override
     public final long chainLength(long link) {
@@ -145,13 +146,14 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     }
 
     /**
-     * Sets the {@link #next} field to the link: a link is a row's byte offset plus eight, and any
-     * probe of the snapshot reads the same rows at the same offsets.
+     * Sets the {@link #next} field to the link. A link is a row's byte offset plus eight, and every
+     * probe of the snapshot sees the same rows at the same offsets, so a link from any of them is
+     * valid here.
      */
     @Override
     public final void ofChain(long head) {
         assert isCurrent() && !rowHeap.hasChainLengths();
-        // A worker sets a chain per probe row, so the check divides by nothing: a row's size is a
+        // A worker calls this once per probe row, so the check avoids division: the row size is a
         // power of two.
         assert head == 0 || (head >= 8 && ((head - 8) & (rowHeap.getRowSize() - 1)) == 0 && head - 8 < rowsBytes);
         next = head;

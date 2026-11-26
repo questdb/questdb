@@ -50,8 +50,8 @@ import org.jetbrains.annotations.Nullable;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
-    // Tags the probe frame tasks of a parallel hash join, which use the task as a filter task does.
-    // A tag only: nothing branches on it.
+    // Marks the probe frame tasks of a parallel hash join, which use the task the same way a filter
+    // task does. Informational only: no code branches on it.
     public static final byte TYPE_HASH_JOIN = 4;
     public static final byte TYPE_HORIZON_JOIN = 3;
     public static final byte TYPE_TOP_K = 1;

@@ -67,8 +67,8 @@ public class VectorAggregateEntry implements Mutable {
     /**
      * Aggregates one page frame for one function.
      *
-     * @param nullKeyFrameCounter counts the calls of a keyed aggregation for frames whose key column holds
-     *                            no data, which aggregate without the map; see
+     * @param nullKeyFrameCounter in a keyed aggregation, incremented for each frame whose key column
+     *                            holds no data, since such a frame is aggregated without the map; see
      *                            {@link VectorAggregateFunction#initNullKeyRosti(long)}
      */
     public static void aggregateUnsafe(

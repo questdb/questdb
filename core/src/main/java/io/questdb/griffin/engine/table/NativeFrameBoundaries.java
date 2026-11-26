@@ -60,11 +60,10 @@ final class NativeFrameBoundaries {
     }
 
     /**
-     * The rows per frame of {@link #calculatePageFrameRowLimit(long, long, long, long, int)} under a
-     * cap that a consumer set below the maximum, see
-     * {@link io.questdb.cairo.sql.PageFrameCursor#setPageFrameMaxRows(long)}: the cap takes the
-     * maximum's place and bounds the minimum, and no frame grows past it to absorb a short last
-     * frame. A cap at or above the maximum changes nothing.
+     * Variant of {@link #calculatePageFrameRowLimit(long, long, long, long, int)} that honors a
+     * consumer's row cap; see {@link io.questdb.cairo.sql.PageFrameCursor#setPageFrameMaxRows(long)}.
+     * A cap below the maximum replaces the maximum and also bounds the minimum, and no frame grows
+     * past the cap to absorb a short last frame. A cap at or above the maximum has no effect.
      */
     static long calculatePageFrameRowLimit(
             long partitionLo,

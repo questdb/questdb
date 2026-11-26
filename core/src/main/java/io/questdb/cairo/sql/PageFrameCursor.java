@@ -176,21 +176,22 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
-     * Caps the rows of the native page frames that the cursor cuts from the partitions it enters
-     * from now on, below the {@code cairo.sql.page.frame.max.rows} that it took from the execution
-     * context when it opened; a cap at or above that limit changes nothing. A frame of a Parquet
-     * partition is one of its row groups, and a custom frame, one that only
-     * {@link PageFrameMemoryPool} materializes, is cut by its partition's sub-frame size; the cap
-     * cuts neither. Call it before the cursor
-     * yields its first frame, or after {@link #toTop()}, so that every frame follows it; the cap
-     * holds until the cursor opens again.
+     * Lowers the maximum number of rows in the native page frames that the cursor produces from
+     * partitions it enters after this call. The cap applies only below the
+     * {@code cairo.sql.page.frame.max.rows} limit that the cursor took from the execution context
+     * when it opened; a cap at or above that limit has no effect. The cap does not split Parquet
+     * row groups, nor custom frames, which only {@link PageFrameMemoryPool} materializes and whose
+     * size the partition's sub-frame size determines.
      * <p>
-     * A consumer that knows how much output each of its frames' rows yields, such as a hash join
-     * whose builds tell how many rows each key matches, lowers its frames' rows this way so that a
-     * frame's output fits what one of its tasks may write. The default ignores the cap, for cursors
-     * whose frames have no row limit to lower.
+     * Call this before the cursor returns its first frame, or right after {@link #toTop()}, so
+     * that it applies to every frame. The cap stays in effect until the cursor opens again.
+     * <p>
+     * A consumer that can predict how much output each row produces, such as a hash join that
+     * knows how many build rows each key matches, uses this to keep one frame's output within what
+     * a single task may write. The default implementation ignores the cap, for cursors whose frames
+     * have no row limit.
      *
-     * @param maxRows the most rows of a native frame, at least 1
+     * @param maxRows the maximum number of rows in a native frame, at least 1
      */
     default void setPageFrameMaxRows(long maxRows) {
         // no-op by default

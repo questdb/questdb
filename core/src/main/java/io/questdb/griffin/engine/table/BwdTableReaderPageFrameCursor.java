@@ -76,7 +76,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int highestOpenPartitionIndex = -1;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
-    // The cap a consumer set on the native frames' rows since the cursor opened; see
+    // Row cap that a consumer set on native frames since the cursor opened; see
     // setPageFrameMaxRows().
     private long pageFrameRowCap = Long.MAX_VALUE;
     private PartitionFrameCursor partitionFrameCursor;

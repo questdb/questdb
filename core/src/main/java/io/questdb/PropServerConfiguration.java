@@ -2695,17 +2695,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelHashJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, 100_000);
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, sqlParallelHashJoinPageFrameMaxRows);
-            // The most rows of a native probe frame of a parallel hash join.
+            // The maximum number of rows in a native probe frame of a parallel hash join.
             final int parallelHashJoinFrameMaxRows = Math.min(sqlPageFrameMaxRows, sqlParallelHashJoinPageFrameMaxRows);
             this.sqlParallelHashJoinTaskOutputMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, parallelHashJoinFrameMaxRows);
             if (sqlParallelHashJoinTaskOutputMaxRows < 1) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS.getPropertyPath(),
                         Integer.toString(sqlParallelHashJoinTaskOutputMaxRows));
             }
-            // As many full-size probe frames as the join can have in flight, each holding the tuples
-            // of a five-join stack in 8-byte slots: a probe row and one build locator per join, so
-            // that stacks of up to five joins keep the whole window in the wide layout, and of up to
-            // eleven in the narrow one of 4-byte slots, which most executions take.
+            // Room for every probe frame the join can have in flight, each at full size with six
+            // 8-byte slots per row: the probe row index plus one build locator per join. That fits
+            // stacks of up to five joins in the wide layout, or up to eleven in the narrow 4-byte
+            // layout that most executions use.
             final long parallelHashJoinRingFrames = Math.max(0, Math.min(sqlParallelFilterDispatchLimit, cairoPageFrameReduceQueueCapacity));
             this.sqlParallelHashJoinTupleRingMaxSize = getLongSize(
                     properties,

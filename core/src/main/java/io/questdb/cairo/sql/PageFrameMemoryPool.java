@@ -197,8 +197,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @Nullable
     private IntHashSet projection;
     private DirectLongList recordAtRows;
-    // The Parquet frames that navigateTo(int, PageFrameMemoryRecord) decoded on a cache miss since the
-    // pool was last bound; see getRecordFrameDecodeCount().
+    // Number of Parquet frames that navigateTo(int, PageFrameMemoryRecord) decoded on a cache miss
+    // since the last of() call; see getRecordFrameDecodeCount().
     private long recordFrameDecodeCount;
 
     public PageFrameMemoryPool(CairoConfiguration configuration, long maxCacheBytes) {
@@ -306,11 +306,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * The Parquet frames that {@link #navigateTo(int, PageFrameMemoryRecord)} decoded because its cache
-     * did not hold them, since the pool was last bound with {@code of()}: a frame counts once for each
-     * time the pool decodes it, again after it evicted it, and not for a navigation that its cache
-     * serves. The re-decode of a frame that a windowed frame memory navigation left decoded in part
-     * does not count; a pool that its owner navigates by records alone never holds such a frame.
+     * Returns the number of Parquet frames that {@link #navigateTo(int, PageFrameMemoryRecord)}
+     * decoded on a cache miss since the pool was last bound with {@code of()}. A frame counts each
+     * time the pool decodes it, so a frame decoded again after eviction counts twice, while a
+     * navigation served from the cache does not count.
+     * <p>
+     * Re-decoding a frame that a windowed navigation left partially decoded does not count either;
+     * a pool navigated only by records never holds such a frame.
      */
     @TestOnly
     public long getRecordFrameDecodeCount() {

@@ -73,8 +73,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final FiberLocal<int[]> UNTRACKED_SCOPE_DEPTH = new FiberLocal<>(() -> new int[1]);
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
-    // Makes every frame a task of its own, so that the dispatch limit bounds the frames in flight
-    // as well as the tasks; see buildAddressCache().
+    // When true, every frame is a task of its own, so the dispatch limit bounds the number of frames
+    // in flight, not just the number of tasks; see buildAddressCache().
     private final boolean isFramePerTask;
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
@@ -144,10 +144,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     /**
      * Constructs a page frame sequence instance. The returned instance takes ownership of the input atom.
      *
-     * @param isFramePerTask makes every frame a task of its own, for a caller that keeps per-frame state
-     *                       sized by the dispatch limit: the sequence otherwise joins the sub-frames of
-     *                       one custom-decode row group into one task, so that the frames in flight can
-     *                       outnumber the tasks that the limit bounds
+     * @param isFramePerTask when true, every frame becomes a task of its own. Without it, the sequence
+     *                       groups the sub-frames of a custom-decode row group into a single task, so
+     *                       the frames in flight can outnumber the tasks that the dispatch limit
+     *                       bounds. A caller that sizes per-frame state by the dispatch limit sets it
      */
     public PageFrameSequence(
             CairoEngine engine,
@@ -314,26 +314,27 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     /**
-     * Publishes the tasks that follow the dispatched ones, as tasks that are not count-only, as long
-     * as fewer tasks than the limit are in flight, the dispatched ones that the owner has not
-     * collected, the one it holds included, and the reduce queue has room. It collects no task,
-     * runs none, steals none and never waits, so it costs the owner only the publication. A task is
-     * one frame, or the run of sub-frames that {@link #buildAddressCache()} joins into one, unless
-     * the sequence makes every frame a task of its own.
+     * Publishes further tasks (not count-only) to the reduce queue while the number of tasks in
+     * flight stays below {@code dispatchLimit} and the queue has room. Tasks in flight are those
+     * dispatched but not yet collected by the owner, including the one the owner currently holds.
+     * The method never collects, runs, or steals a task and never waits, so its only cost to the
+     * owner is the publication itself. A task is either one frame or a run of sub-frames that
+     * {@link #buildAddressCache()} groups together, unless the sequence makes every frame a task of
+     * its own.
      * <p>
-     * {@link #next(int, boolean)} publishes tasks only when none is ready to collect, so an owner
-     * that reads each frame for about as long as a worker takes to reduce one lets the window drain,
-     * and then waits for a whole task at every refill. Such an owner calls this once next() handed
-     * it a frame, and the workers reduce the next tasks while it reads that one. The tasks in
-     * flight stay within the limit, as next()'s do, so a caller that passes the limit it passes to
-     * next(), or a smaller one, never has more tasks in flight than next() would allow.
+     * {@link #next(int, boolean)} publishes tasks only when none is ready to collect. When the owner
+     * spends about as long reading a frame as a worker spends reducing one, the window drains and
+     * the owner then waits for a whole task on every refill. To avoid that, such an owner calls
+     * this method after next() returns a frame, so the workers reduce the following tasks while the
+     * owner reads the current one. Passing the same limit as to next(), or a smaller one, keeps the
+     * tasks in flight within what next() would allow.
      * <p>
-     * Publishes nothing for a cancelled sequence, nor when the fiber dispatcher refuses the
-     * publication, and stops once the queue is full or another publisher takes the slot: the next
-     * call to next() then dispatches, steals, reduces locally or cancels, as it does on its own.
-     * This method is not thread safe; the query owner thread calls it, as it calls next().
+     * Publishes nothing if the sequence is cancelled or the fiber dispatcher refuses the
+     * publication, and stops early once the queue is full or another publisher takes the slot. In
+     * those cases, the next call to next() dispatches, steals, reduces locally or cancels, as usual.
+     * This method is not thread safe; only the query owner thread calls it, as it does next().
      *
-     * @param dispatchLimit a cap for the tasks in flight, the one the owner holds included
+     * @param dispatchLimit the maximum number of tasks in flight, including the one the owner holds
      */
     public void dispatchAhead(int dispatchLimit) {
         if (dispatchStartTaskIndex >= taskCount
@@ -351,9 +352,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     && dispatchStartTaskIndex - (collectedTaskIndex + 1) < dispatchLimit) {
                 final long cursor = reducePubSeq.next();
                 if (cursor < 0) {
-                    // The queue is full, -1, or another publisher took the slot, -2: the next frame
-                    // that the owner takes publishes again, and next() steals or waits, as it does
-                    // on its own.
+                    // The queue is full (-1) or another publisher took the slot (-2). The owner
+                    // publishes again when it takes its next frame, and next() steals or waits
+                    // as usual.
                     break;
                 }
                 reduceQueue.get(cursor).of(this, dispatchStartTaskIndex, false);
@@ -385,9 +386,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     /**
-     * The frames that the sequence handed out since it was bound or rewound: published to the
-     * reduce queue or reduced locally, whether or not their tasks have run. A task hands out all
-     * the frames of its run at once.
+     * Returns the number of frames the sequence handed out since it was bound or rewound, either
+     * published to the reduce queue or reduced locally, whether or not their tasks have run yet.
+     * A task hands out all frames of its run at once.
      */
     public int getDispatchedFrameCount() {
         return dispatchStartTaskIndex < taskCount ? runFirstFrames.getQuick(dispatchStartTaskIndex) : frameCount;
@@ -572,7 +573,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     /**
-     * Opens the base factory's page frame cursor in the given order and binds the sequence to it,
+     * Opens the base factory's page frame cursor in the given order and binds the sequence to it;
      * see {@link #of(PageFrameCursor, RecordMetadata, SqlExecutionContext, SCSequence)}.
      */
     public PageFrameSequence<T> of(
@@ -581,8 +582,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             SCSequence collectSubSeq,
             int order
     ) throws SqlException {
-        // The execution's tracker and start as they stood before the cursor opened: opening a
-        // query's outermost factory registers the query, which may bind a tracker of its own.
+        // Capture the memory tracker and start time before opening the cursor: opening the query's
+        // outermost factory registers the query, which may bind a tracker of its own.
         final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
         final long startTime = clock.getTicks();
         return of0(
@@ -596,16 +597,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     /**
-     * Binds the sequence to an execution over a page frame cursor that the caller opened, in the
-     * scan order its frames are to be dispatched and collected in, and initializes the atom. The
-     * sequence owns the cursor from here on, whether this returns or throws: {@link #reset()}
-     * closes it, and so does a failure here. A caller that has to read a cursor before it knows
-     * which role the cursor takes, such as a hash join that decides which input to build from by
-     * the inputs' sizes, opens the cursor itself and hands it over.
+     * Binds the sequence to an execution over a page frame cursor that the caller has already
+     * opened, and initializes the atom. The sequence dispatches and collects frames in the cursor's
+     * scan order.
+     * <p>
+     * The sequence takes ownership of the cursor whether this method returns or throws: on failure
+     * it closes the cursor right away, otherwise {@link #reset()} closes it. Callers that need to
+     * inspect a cursor before deciding its role use this overload; for example, a hash join opens
+     * its inputs' cursors to compare their sizes and then picks the build side.
      *
-     * @param frameCursor   the open page frame cursor, which the sequence adopts
+     * @param frameCursor   the open page frame cursor; the sequence takes ownership of it
      * @param metadata      the metadata of the factory that opened the cursor
-     * @param collectSubSeq the subscriber sequence the owner collects the reduced frames through
+     * @param collectSubSeq the subscriber sequence through which the owner collects reduced frames
      */
     public PageFrameSequence<T> of(
             PageFrameCursor frameCursor,
@@ -714,9 +717,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     /**
-     * Caps the rows of the native frames that {@link #prepareForDispatch()} reads from the bound
-     * page frame cursor; see {@link PageFrameCursor#setPageFrameMaxRows(long)}. Call it before
-     * {@link #prepareForDispatch()}, whose frames then hold for the rest of the execution.
+     * Lowers the maximum number of rows in the native frames that {@link #prepareForDispatch()}
+     * reads from the bound page frame cursor; see {@link PageFrameCursor#setPageFrameMaxRows(long)}.
+     * Call it before {@link #prepareForDispatch()}; the frames that method counts stay fixed for
+     * the rest of the execution.
      */
     public void setPageFrameMaxRows(long maxRows) {
         assert !readyToDispatch : "the frames are counted already";
@@ -782,8 +786,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         while ((frame = frameCursor.next()) != null) {
             // Only custom-decode sub-frames of one row group join one task, so the decoder prepares the
             // row group's window once. Other frames stay single-frame tasks: the collector reads their
-            // reduce output and never decodes them again. A sequence that makes every frame a task of
-            // its own joins none.
+            // reduce output and never decodes them again. With isFramePerTask set, no frames are
+            // grouped.
             final int rowGroup = frame.getParquetRowGroup();
             final int partitionIndex = frame.getPartitionIndex();
             final boolean customDecode = rowGroup >= 0

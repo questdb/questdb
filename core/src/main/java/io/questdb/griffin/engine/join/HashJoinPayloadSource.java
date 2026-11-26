@@ -45,10 +45,10 @@ import io.questdb.std.QuietCloseable;
  * closes. A reader belongs to one probe, so to one execution slot: it keeps per-slot positioning
  * state and symbol tables, and must not be shared across workers.
  * <p>
- * A reader names the row it is positioned at by a locator, which any reader of the same source
- * follows back to that row's payload: a thread that walks a build's matches hands them to another
- * thread as locators, and that thread positions a reader of its own at each, without the build's
- * row heap; see {@link Reader#locator()}.
+ * A reader identifies the row it is positioned at by a locator, which any reader of the same
+ * source can use to get back to that row's payload. This lets a thread that walks a build's
+ * matches pass them to another thread as locators; that thread then positions its own reader at
+ * each one without touching the build's row heap. See {@link Reader#locator()}.
  */
 public interface HashJoinPayloadSource {
 
@@ -64,16 +64,19 @@ public interface HashJoinPayloadSource {
     interface Reader extends Record, SymbolTableSource, QuietCloseable {
 
         /**
-         * The locator of the build row that the reader is positioned at: a non-negative value that
-         * {@link #positionLocator(long)} takes back to the same row's payload, on this reader or on
-         * any other reader of the same source, until the execution ends. A reader over a copy of the
-         * payload columns names the row by its ordinal, the copied row it reads, and a reader that
-         * reads the columns where they live by the build row's frame and its row within the frame,
-         * packed into as few bits as the execution's frames need, so a locator costs a shift to take
-         * and to follow. A source switches its readers to a copy only before any probe of the
-         * execution runs, so every locator that the probes take names its row the same way; a
-         * locator taken before the switch does not survive it. Defined once {@link #position} or
-         * {@link #positionLocator} positioned the reader in the execution.
+         * Returns the locator of the build row the reader is positioned at. A locator is a
+         * non-negative value that {@link #positionLocator(long)} turns back into the same row's
+         * payload, on this reader or any other reader of the same source, until the execution ends.
+         * <p>
+         * A reader over a copy of the payload columns uses the row's ordinal in the copy. A reader
+         * over the original columns packs the row's frame index and its row within the frame into as
+         * few bits as the execution's frames need, so creating and following a locator costs a
+         * shift. A source switches its readers to a copy only before any probe of the execution
+         * runs, so all locators the probes obtain use the same encoding; a locator obtained before
+         * the switch is not valid after it.
+         * <p>
+         * The value is defined once {@link #position} or {@link #positionLocator} has positioned the
+         * reader in the current execution.
          */
         long locator();
 
@@ -87,9 +90,10 @@ public interface HashJoinPayloadSource {
         void position(long rowIdAddress, long ordinal);
 
         /**
-         * Positions the reader at the build row that a {@link #locator()} of a reader of this source
-         * named in the current execution, as the call to {@link #position} that the locator came
-         * from did: the getters then read that row's payload.
+         * Positions the reader at the build row identified by a locator that {@link #locator()}
+         * returned, on any reader of this source, in the current execution. The effect is the same
+         * as the {@link #position} call that produced the locator: the getters then read that row's
+         * payload.
          */
         void positionLocator(long locator);
 

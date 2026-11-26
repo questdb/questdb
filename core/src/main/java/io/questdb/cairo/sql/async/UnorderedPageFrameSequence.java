@@ -65,8 +65,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * Completion is tracked via an {@link SOUnboundedCountDownLatch}.
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  * <p>
- * A sequence bound by {@link #ofRounds(SqlExecutionContext)} instead of {@link #of} has no frames:
- * it runs rounds of tasks of its own reducers alone, see {@link #dispatchRoundAndAwait}.
+ * A sequence bound with {@link #ofRounds(SqlExecutionContext)} instead of {@link #of} has no
+ * frames: it only runs rounds of tasks with their own reducers; see {@link #dispatchRoundAndAwait}.
  */
 public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable, PageFrameRoundDispatcher {
     private static final AtomicLong ID_SEQ = new AtomicLong();
@@ -93,7 +93,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private long id;
     private boolean isClosing;
     private boolean isReadyToDispatch;
-    // Set by ofRounds() until reset(): the sequence has no frames and runs rounds alone.
+    // Set by ofRounds() and cleared by reset(): the sequence has no frames and only runs rounds.
     private boolean isRoundsOnly;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
@@ -461,7 +461,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * The frames' symbol tables, or null for a sequence bound by {@link #ofRounds}, which has no frames.
+     * Returns the frames' symbol tables, or null for a sequence bound with {@link #ofRounds}, which
+     * has no frames.
      */
     public SymbolTableSource getSymbolTableSource() {
         return frameCursor;
@@ -527,13 +528,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Binds the sequence to an execution for rounds of tasks alone, as {@link #of} binds it, apart
-     * from the frames: it opens no page frame cursor, so the sequence has no frames and no symbol
-     * table source, and its reducers receive a record without one. It does not initialize the atom
-     * either, which has no frames to bind to. From here until {@link #reset()}, the sequence only
-     * runs rounds through {@link #dispatchRoundAndAwait}; an assertion guards its frame operations.
-     * A parallel hash join binds the sequence that builds its stages this way, since its frames
-     * belong to the build inputs rather than to the sequence.
+     * Binds the sequence to an execution for running rounds of tasks only. Unlike {@link #of}, it
+     * opens no page frame cursor, so the sequence has no frames and no symbol table source, and its
+     * reducers receive a record without one. It does not initialize the atom either, since there
+     * are no frames to bind it to.
+     * <p>
+     * Until {@link #reset()}, the sequence only runs rounds through
+     * {@link #dispatchRoundAndAwait}; assertions guard the frame operations. A parallel hash join
+     * binds the sequence that builds its stages this way, because the frames it processes belong to
+     * the build inputs rather than to the sequence.
      */
     public UnorderedPageFrameSequence<T> ofRounds(SqlExecutionContext executionContext) {
         assert frameCursor == null && frameCount == 0 : "a sequence bound to frames runs rounds only after reset()";

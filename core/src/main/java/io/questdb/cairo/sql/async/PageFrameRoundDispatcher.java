@@ -27,21 +27,22 @@ package io.questdb.cairo.sql.async;
 import io.questdb.std.LongList;
 
 /**
- * Runs rounds of tasks on the shared query workers, apart from any page frames: a parallel hash
- * join build dispatches its partition, build and copy rounds through one. The tasks of a round
- * run a reducer of their own, which receives the task index where a frame reducer receives the
+ * Runs rounds of tasks on the shared query workers, independently of any page frames. A parallel
+ * hash join build, for example, dispatches its partition, build and copy rounds through it. Each
+ * round has its own reducer, which receives the task index where a frame reducer would receive the
  * frame index.
  */
 public interface PageFrameRoundDispatcher {
 
     /**
-     * Dispatches one task per entry of {@code taskRowCounts}, which holds the rows each task
-     * processes, and waits for them, the owner thread work-stealing while it waits. Whether this
-     * returns or throws, no task of the round is still queued or running, so the caller may
-     * release what the round's tasks used.
+     * Dispatches one task per entry of {@code taskRowCounts} and waits for all of them to finish;
+     * the calling thread steals work while it waits. Whether this method returns or throws, no
+     * task of the round remains queued or running, so the caller may then release any resources
+     * the tasks used.
      *
-     * @param roundReducer  the reducer each task of the round runs
-     * @param taskRowCounts the rows of each task, borrowed for the round
+     * @param roundReducer  the reducer that each task of the round runs
+     * @param taskRowCounts the number of rows each task processes; borrowed for the duration of
+     *                      the round
      */
     void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts);
 }

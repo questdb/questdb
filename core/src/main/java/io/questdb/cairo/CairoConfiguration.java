@@ -1227,24 +1227,27 @@ public interface CairoConfiguration {
     double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio();
 
     /**
-     * The most rows of a native page frame that the probe scan of a parallel hash join cuts, below
-     * {@link #getSqlPageFrameMaxRows()} when that is more. A probe frame is the unit of a task's
-     * work and of the joined rows that the join holds in flight, so its rows bound what a short read
-     * waits for and the memory of the frames in flight. Parquet row groups keep their rows.
+     * Maximum number of rows in a native page frame of a parallel hash join's probe scan. The
+     * effective limit is the smaller of this value and {@link #getSqlPageFrameMaxRows()}.
+     * <p>
+     * Each probe frame is one task for the query workers and the unit of joined rows the join
+     * holds in flight, so smaller frames return the first rows sooner and use less memory.
+     * Parquet row groups are not split.
      */
     int getSqlParallelHashJoinPageFrameMaxRows();
 
     /**
-     * Joined rows one task of a parallel hash join emits for its probe frame before it hands the
-     * rest of the frame to a continuation. A task may always emit as many rows as its frame holds,
-     * so the effective cap is the larger of this value and the frame's row count.
+     * Maximum number of joined rows a parallel hash join task emits for its probe frame before it
+     * leaves the rest of the frame to a continuation task. A task may always emit at least as many
+     * rows as its frame holds, so the effective limit is the larger of this value and the frame's
+     * row count.
      */
     int getSqlParallelHashJoinTaskOutputMaxRows();
 
     /**
-     * Bytes the in-flight joined rows of one parallel hash join query may take: the budget that
-     * sets how many probe frames the join dispatches at once. The join dispatches at least one
-     * frame, whatever the budget.
+     * Memory budget, in bytes, for the joined rows a parallel hash join query holds in flight. The
+     * budget determines how many probe frames the join dispatches at once; the join always
+     * dispatches at least one frame, whatever the budget.
      */
     long getSqlParallelHashJoinTupleRingMaxSize();
 

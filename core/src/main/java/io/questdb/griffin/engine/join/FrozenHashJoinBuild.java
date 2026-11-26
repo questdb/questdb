@@ -63,9 +63,9 @@ public interface FrozenHashJoinBuild {
     long getKeyCount();
 
     /**
-     * The largest link that {@link Probe#chainHead()} of a probe of this execution's build may
-     * return, 0 for a build without rows: a thread that hands chain heads on to another in fewer
-     * bits than a LONG's checks that the largest one fits.
+     * Returns the largest link that {@link Probe#chainHead()} may return for this execution's
+     * build, or 0 for a build without rows. A caller that passes chain heads to another thread in
+     * fewer than 64 bits uses it to check that every head fits.
      */
     long getMaxChainHead();
 
@@ -84,22 +84,26 @@ public interface FrozenHashJoinBuild {
     long getSizeInBytes();
 
     /**
-     * True once {@link #indexChainLengths(SqlExecutionCircuitBreaker)} indexed the chain lengths of
-     * this execution's build.
+     * Returns true once {@link #indexChainLengths(SqlExecutionCircuitBreaker)} has indexed the
+     * chain lengths of this execution's build.
      */
     boolean hasChainLengthIndex();
 
     /**
-     * Indexes the length of every chain of rows beside the links, for a count of the joined pairs
-     * that the same execution may read afterwards: a probe then reads the matches that a walk from
-     * any link would visit through {@link Probe#chainLength(long)}, rather than walk them, while its
-     * lookups and {@link Probe#next()} walk the chains as before. The pass runs over the build's rows
-     * once, takes 4 bytes a row, which the execution's tracker charges, and checks the breaker that
-     * it is given once per MiB of rows: the caller's, rather than the one that the build was opened
-     * with, which belongs to the thread that built it. The owner calls it at most once per execution,
-     * after the build froze and before it publishes the build to the probes that read the index, and
-     * never after {@link #countKeyRows()}, which leaves no chain to index. A failure leaves the build
-     * as it was, without the index, for its owner to close.
+     * Records the length of every row chain alongside its links, so that probes in the same
+     * execution can count joined pairs without walking the chains: {@link Probe#chainLength(long)}
+     * then returns the number of matches reachable from any link in a single read. Lookups and
+     * {@link Probe#next()} still walk the chains as before.
+     * <p>
+     * The pass visits the build's rows once and takes 4 bytes per row, charged to the execution's
+     * memory tracker. It checks the given circuit breaker once per MiB of rows; that is the
+     * caller's breaker, not the one the build was opened with, which belongs to the thread that
+     * built it.
+     * <p>
+     * The owner calls this at most once per execution, after the build is frozen and before it
+     * publishes the build to the probes that read the index. It must not be called after
+     * {@link #countKeyRows()}, which leaves no chains to index. On failure, the build stays as it
+     * was, without the index, and its owner closes it.
      */
     void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker);
 
@@ -157,24 +161,30 @@ public interface FrozenHashJoinBuild {
      */
     interface Probe extends SymbolTableSource, QuietCloseable {
         /**
-         * The matches that a walk from this link visits: the {@link #next()} calls that
-         * {@link #ofChain(long)} with the link allows until {@link #hasNext()} turns false, 0 for a
-         * link of 0. Right after a lookup, {@code chainLength(chainHead())} is the key's row count,
-         * 0 on a miss, and after some {@link #next()} calls, the matches left. Only a build that
-         * indexed its chain lengths answers it, see
-         * {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}, with one read
-         * however long the chain. Positions neither the duplicate iterator nor the payload.
+         * Returns the number of matches a walk from the given link visits, i.e. how many
+         * {@link #next()} calls succeed after {@link #ofChain(long)} with that link before
+         * {@link #hasNext()} returns false; 0 for a link of 0. Right after a lookup,
+         * {@code chainLength(chainHead())} is the key's row count (0 on a miss); after some
+         * {@link #next()} calls, it is the number of matches left.
+         * <p>
+         * Only a build that indexed its chain lengths supports this call; see
+         * {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}. It takes a
+         * single read regardless of chain length and moves neither the duplicate iterator nor the
+         * payload.
          */
         long chainLength(long link);
 
         /**
-         * The link at which the duplicate iterator stands, the one that the next {@link #next()}
-         * follows, and 0 once the iterator is exhausted. Right after a lookup this is the lookup's
-         * first link, which heads its key's chain, and 0 on a miss; a unique lookup clears the
-         * iterator, so it leaves 0 too. A link is a positive value local to the build's execution,
-         * which any probe of the build takes back through {@link #ofChain(long)}: a thread that
-         * defers walking a key's matches hands the chain's head to another thread, whose own probe
-         * walks them later. A build that counted its key rows keeps no chain to stand in.
+         * Returns the link at the duplicate iterator's current position, i.e. the one the next
+         * {@link #next()} call follows, or 0 once the iterator is exhausted. Right after a lookup,
+         * this is the head of the key's chain, or 0 on a miss; a unique lookup clears the iterator,
+         * so it also leaves 0.
+         * <p>
+         * A link is a positive value, valid only within the build's current execution, that any
+         * probe of the build accepts through {@link #ofChain(long)}. This lets a thread defer
+         * walking a key's matches by handing the chain head to another thread, whose own probe
+         * walks them later. A build that counted its key rows keeps no chains, so it does not
+         * support this call.
          */
         long chainHead();
 
@@ -192,12 +202,12 @@ public interface FrozenHashJoinBuild {
         long next();
 
         /**
-         * Restarts duplicate iteration at a link that {@link #chainHead()} of any probe of this
-         * build returned in the current execution, and replaces the current iterator, as a lookup
-         * does: the following {@link #next()} calls walk the rest of that chain, in chain order,
-         * the matches that the probe the link came from would have walked from there. 0 leaves the
-         * iterator exhausted. Positions no payload. A build that counted its key rows keeps no
-         * chain to restart.
+         * Replaces the current duplicate iterator, as a lookup does, with one that starts at the
+         * given link. The link must come from {@link #chainHead()} of any probe of this build in
+         * the current execution. The following {@link #next()} calls then walk the rest of that
+         * chain in order, visiting the same matches the originating probe would have visited from
+         * there. A link of 0 leaves the iterator exhausted. Does not position the payload. A build
+         * that counted its key rows keeps no chains, so it does not support this call.
          */
         void ofChain(long head);
 

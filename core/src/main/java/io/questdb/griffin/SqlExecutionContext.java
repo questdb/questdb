@@ -164,11 +164,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * The rows that the client reads first from the cursor that the query's factory opens next, as
-     * its protocol bounds them: an HTTP page or CSV export without a row count, or a PostgreSQL
-     * Execute's row limit. Long.MAX_VALUE when nothing bounds them. A hint, not a limit: the client may read on,
-     * as a PostgreSQL portal does on its next Execute. The protocol sets it around the factory's
-     * {@code getCursor()} alone, see {@link #setFirstReadRows(long)}.
+     * Returns the number of rows the client is expected to read first from the cursor that the
+     * query's factory opens next, as bounded by the wire protocol: an HTTP page or CSV export
+     * without a row count, or a PostgreSQL Execute's row limit. Returns Long.MAX_VALUE when the
+     * protocol sets no bound.
+     * <p>
+     * This is a hint, not a limit: the client may read further, as a PostgreSQL portal does on its
+     * next Execute. The protocol sets the value only around the factory's {@code getCursor()} call;
+     * see {@link #setFirstReadRows(long)}.
      */
     default long getFirstReadRows() {
         return Long.MAX_VALUE;
@@ -631,10 +634,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * Sets the rows that the client reads first, see {@link #getFirstReadRows()}, a positive count,
-     * or Long.MAX_VALUE for none. A protocol sets it right before the query's factory opens its
-     * cursor and resets it to Long.MAX_VALUE right after, whether the open succeeds or fails, so
-     * that it reaches no other cursor. A context that does not serve a client ignores it.
+     * Sets the number of rows the client is expected to read first; see {@link #getFirstReadRows()}.
+     * The value is a positive count, or Long.MAX_VALUE for no bound. A protocol sets it right before
+     * the query's factory opens its cursor and resets it to Long.MAX_VALUE right after, whether the
+     * open succeeds or fails, so that the hint reaches no other cursor. A context that does not
+     * serve a client ignores it.
      */
     default void setFirstReadRows(long rows) {
     }

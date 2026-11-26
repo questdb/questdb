@@ -786,9 +786,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         final RecordCursor cursor;
         try {
-            // A page without a row count reads the cursor's first rows alone, up to the page's
-            // last one and one more, which tells whether rows follow; the cursor may then prepare
-            // no more rows than those first. See SqlExecutionContext.getFirstReadRows().
+            // A page without a row count reads only the cursor's first rows: up to the page's last
+            // row plus one more, which tells whether more rows follow. The cursor may use this hint
+            // to prepare no more than those rows up front. See SqlExecutionContext.getFirstReadRows().
             final long firstReadRows = state.getFirstReadRows();
             if (firstReadRows != Long.MAX_VALUE) {
                 sqlExecutionContext.setFirstReadRows(firstReadRows);

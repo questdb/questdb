@@ -92,8 +92,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PageFrameAddressCache frameAddressCache;
     private final int keyColumnIndex;
-    // Counts the calls, one per frame and function, that aggregate a frame whose key column holds no
-    // data; see VectorAggregateFunction.initNullKeyRosti().
+    // Number of (frame, function) aggregations over frames whose key column holds no data; see
+    // VectorAggregateFunction.initNullKeyRosti().
     private final AtomicLong nullKeyFrameCounter = new AtomicLong();
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
@@ -106,8 +106,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
-    // A map with the value columns of the per-worker maps that carries the NULL key of the frames whose
-    // key column holds no data into the result map; see RostiRecordCursor.initNullKeyRosti().
+    // A single-key map with the same value columns as the per-worker maps. It carries the NULL key
+    // values of frames whose key column holds no data into the result map; see
+    // RostiRecordCursor.initNullKeyRosti().
     private long pNullKeyRosti;
     private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
@@ -182,15 +183,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            // The map allocates directly, not through raf: it is not one of the per-worker maps, and it
-            // holds a single key, so it never grows.
+            // Allocate directly rather than through raf: this is not a per-worker map, and it holds a
+            // single key, so it never grows.
             pNullKeyRosti = Rosti.alloc(columnTypes, ROSTI_MINIMIZED_SIZE);
             if (pNullKeyRosti == 0) {
                 throw CairoException.nonCritical()
                         .put("could not allocate rosti hash table")
                         .setOutOfMemory(true);
             }
-            // The NULL key of the per-worker maps, which their wrap-ups read from the initial values too.
+            // Copy the NULL key value from the per-worker maps' initial values, where their wrap-ups
+            // also read it.
             Unsafe.putInt(Rosti.getInitialValueSlot(pNullKeyRosti, 0), Unsafe.getInt(Rosti.getInitialValueSlot(pRosti[0], 0)));
 
             // all maps are the same at this point
@@ -271,9 +273,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Returns the number of calls that the last execution made to aggregate a page frame whose key column
-     * holds no data, one per frame and function. Such a call runs the function's SIMD kernel, not the
-     * keyed natives.
+     * Returns how many times the last execution aggregated a page frame whose key column holds no
+     * data, counting once per frame and function. Such frames go through the function's SIMD kernel
+     * rather than the keyed natives.
      */
     @TestOnly
     public long getNullKeyFrameCount() {
@@ -792,8 +794,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // otherwise assume error and save CPU cycles
             pRostiBig = pRosti[0];
             try {
-                // The frames whose key column holds no data aggregated into the functions' accumulators,
-                // and the NULL key takes them before each function wraps up.
+                // Frames whose key column holds no data were aggregated into the functions'
+                // accumulators; move those values into the NULL key before each function wraps up.
                 final boolean hasNullKeyFrames = nullKeyFrameCounter.get() > 0;
                 if (hasNullKeyFrames) {
                     initNullKeyRosti();
@@ -890,23 +892,24 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        // Sets up the NULL key of pNullKeyRosti from what the functions accumulated over the frames whose
-        // key column holds no data: the SIMD kernels aggregated those frames, as in a non-keyed GROUP BY.
+        // Initializes the NULL key of pNullKeyRosti with what the functions accumulated over frames
+        // whose key column holds no data. The SIMD kernels aggregated those frames, as in a non-keyed
+        // GROUP BY.
         private void initNullKeyRosti() {
             Rosti.clear(pNullKeyRosti);
             for (int i = 0, n = vafList.size(); i < n; i++) {
                 vafList.getQuick(i).initNullKeyRosti(pNullKeyRosti);
             }
-            // The key column of the initial values holds the NULL key: the map takes it as its only key,
-            // which starts with the initial values that the functions have just set.
+            // The initial values' key column holds the NULL key. Inserting it makes it the map's only
+            // key, starting with the initial values that the functions have just set.
             final boolean isInserted = Rosti.keyedIntDistinct(pNullKeyRosti, Rosti.getInitialValueSlot(pNullKeyRosti, 0), 1);
             // An empty map takes its first key without growing, so it allocates nothing.
             assert isInserted;
         }
 
-        // Merges the function's values of the NULL key of pNullKeyRosti into the result map, which takes
-        // the NULL key if it does not have it yet, then clears the function's accumulators, so that its
-        // wrapUp() does not merge them into the NULL key a second time.
+        // Merges the function's NULL key values from pNullKeyRosti into the result map, inserting the
+        // NULL key if the map does not have it yet. Then clears the function's accumulators so that
+        // its wrapUp() does not merge them into the NULL key a second time.
         private void mergeNullKey(VectorAggregateFunction vaf) {
             final long oldSize = Rosti.getAllocMemory(pRostiBig);
             if (!vaf.merge(pRostiBig, pNullKeyRosti)) {
