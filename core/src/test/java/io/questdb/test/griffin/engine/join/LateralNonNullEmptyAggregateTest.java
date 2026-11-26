@@ -382,6 +382,32 @@ public class LateralNonNullEmptyAggregateTest extends AbstractCairoTest {
                             """);
             assertQuery("""
                     SELECT a.k, l.d FROM a, LATERAL (
+                        SELECT c + c d FROM (SELECT count() c FROM b WHERE b.k = a.k)
+                    ) l ORDER BY a.k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\td
+                            1\t4
+                            2\t0
+                            3\t2
+                            """);
+            assertQuery("""
+                    SELECT a.k, l.d, l.h FROM a, LATERAL (
+                        SELECT a.k + a.k d, h FROM (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k)
+                    ) l ORDER BY a.k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\td\th
+                            1\t2\t155.94336875296912
+                            2\t4\t0.0
+                            3\t6\t0.0
+                            """);
+            assertQuery("""
+                    SELECT a.k, l.d FROM a, LATERAL (
                         SELECT s + s d FROM (SELECT sum(v) s FROM b WHERE b.k = a.k)
                     ) l ORDER BY a.k
                     """)
