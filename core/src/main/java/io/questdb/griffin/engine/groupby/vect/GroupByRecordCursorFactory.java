@@ -149,6 +149,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.vafList = new ObjList<>(vafCount);
             this.vafList.addAll(vafList);
             raf = configuration.getRostiAllocFacade();
+            // Allocate directly rather than through raf: this is not a per-worker map, and it holds a
+            // single key, so it never grows. It goes before the per-worker maps: the RSS limit counts
+            // a map's slots without checking them, so after the much larger per-worker maps the
+            // limit would fail this map's small checked allocation.
+            pNullKeyRosti = Rosti.alloc(columnTypes, ROSTI_MINIMIZED_SIZE);
+            if (pNullKeyRosti == 0) {
+                throw CairoException.nonCritical()
+                        .put("could not allocate rosti hash table")
+                        .setOutOfMemory(true);
+            }
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
                 if (ptr == 0) {
@@ -183,14 +193,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            // Allocate directly rather than through raf: this is not a per-worker map, and it holds a
-            // single key, so it never grows.
-            pNullKeyRosti = Rosti.alloc(columnTypes, ROSTI_MINIMIZED_SIZE);
-            if (pNullKeyRosti == 0) {
-                throw CairoException.nonCritical()
-                        .put("could not allocate rosti hash table")
-                        .setOutOfMemory(true);
-            }
             // Copy the NULL key value from the per-worker maps' initial values, where their wrap-ups
             // also read it.
             Unsafe.putInt(Rosti.getInitialValueSlot(pNullKeyRosti, 0), Unsafe.getInt(Rosti.getInitialValueSlot(pRosti[0], 0)));

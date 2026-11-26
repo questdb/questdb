@@ -60,6 +60,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -394,6 +395,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return dispatchStartTaskIndex < taskCount ? runFirstFrames.getQuick(dispatchStartTaskIndex) : frameCount;
     }
 
+    @TestOnly
+    public int getDispatchedTaskCount() {
+        return dispatchStartTaskIndex;
+    }
+
+    @TestOnly
+    public int getReducedTaskCount() {
+        return reduceFinishedCounter.get();
+    }
+
     public int getFrameCount() {
         return frameCount;
     }
@@ -451,8 +462,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         } else {
             task = reduceQueue.get(cursor);
         }
-        // Present the current sub-frame of the run as a standalone frame to the unchanged collector.
-        task.positionAtSubFrame(collectSubFrame);
+        // Stream GROUP BY collects aggregate state without reading the input frame again.
+        if (taskType != PageFrameReduceTask.TYPE_GROUP_BY) {
+            task.positionAtSubFrame(collectSubFrame);
+        }
         return task;
     }
 
@@ -793,7 +806,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             final boolean customDecode = rowGroup >= 0
                     && frame.getPartitionFrameState() != 0
                     && PartitionFrameState.requiresMaterialization(frame.getPartitionFrameState(), rowGroup);
+            // Stream GROUP BY has one result slot per in-flight frame and keeps each frame as a task.
             final boolean isSameRun = !isFramePerTask
+                    && taskType != PageFrameReduceTask.TYPE_GROUP_BY
                     && frameCount > 0
                     && customDecode
                     && prevCustomDecode

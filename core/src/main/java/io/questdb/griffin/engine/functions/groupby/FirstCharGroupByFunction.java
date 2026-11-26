@@ -190,4 +190,9 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

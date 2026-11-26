@@ -528,11 +528,10 @@ public class GroupByVectorizedNullKeyTest extends AbstractCairoTest {
 
     @Test
     public void testNullKeyOverKeyAndShortValueColumnTops() throws Exception {
-        // The key and a SHORT value column are both column tops in the first partition. The
-        // vectorized GROUP BY reads a SHORT column top as no value under every key (the
-        // non-vectorized one reads it as 0, so it is no oracle here): the NULL key has two rows and
-        // no value, so its avg(s) is NULL, as it is in the twin table t2, whose first partition has
-        // an explicit NULL key over the same SHORT column top.
+        // The key and a SHORT value column are both column tops in the first partition. SHORT has
+        // no NULL, so both GROUP BYs read a SHORT column top as 0 under every key: the NULL key has
+        // two rows of 0, so its avg(s) is 0.0, as it is in the twin table t2, whose first partition
+        // has an explicit NULL key over the same SHORT column top.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + walSuffix());
             execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00Z'), (2, '2024-01-01T01:00:00Z')");
@@ -556,14 +555,14 @@ public class GroupByVectorizedNullKeyTest extends AbstractCairoTest {
             // Key 1: s 10 and 30.
             final String expected = """
                     k\ta
-                    null\tnull
+                    null\t0.0
                     1\t20.0
                     """;
             assertVectorized(sqlExecutionContext, "SELECT k, avg(s) a FROM t ORDER BY k", expected);
             assertVectorized(sqlExecutionContext, "SELECT k, avg(s) a FROM t2 ORDER BY k", expected);
             final String expectedWithCount = """
                     k\tc\ta
-                    null\t2\tnull
+                    null\t2\t0.0
                     1\t2\t20.0
                     """;
             assertVectorized(sqlExecutionContext, "SELECT k, count() c, avg(s) a FROM t ORDER BY k", expectedWithCount);
@@ -571,9 +570,17 @@ public class GroupByVectorizedNullKeyTest extends AbstractCairoTest {
             // hour() of a TIMESTAMP column top: kts 05:00 and 05:30 make hour 5.
             assertVectorized(sqlExecutionContext, "SELECT hour(kts) h, avg(s) a FROM t ORDER BY h", """
                     h\ta
-                    null\tnull
+                    null\t0.0
                     5\t20.0
                     """);
+            for (String sql : new String[]{
+                    "SELECT k, avg(s) a FROM t ORDER BY k",
+                    "SELECT k, avg(s) a FROM t2 ORDER BY k",
+                    "SELECT k, count() c, avg(s) a FROM t ORDER BY k",
+                    "SELECT hour(kts) h, avg(s) a FROM t ORDER BY h"
+            }) {
+                assertMatchesNonVectorized(sqlExecutionContext, sql);
+            }
         });
     }
 

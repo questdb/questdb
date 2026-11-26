@@ -205,6 +205,12 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *         rows, or the operator's own default).</li>
  *     <li>{@code -Dquestdb.fuzz.parquet.row.group=N} &mdash; the rows of a
  *         Parquet row group of the run's tables (default: the engine's).</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.stream=true|false} &mdash; run every
+ *         query whose plan uses the stream GROUP BY a second time with it
+ *         disabled and compare against the hash GROUP BY (default true). Inner
+ *         SAMPLE BY subqueries put the stream plan under LATEST ON, joins and
+ *         LIMIT. The run asserts that the axis compared at least one query
+ *         once SAMPLE BY reaches the sample floor.</li>
  *     <li>{@code -Dquestdb.fuzz.diff.mappage=true|false} &mdash; run every
  *         query once more, and an equi-join GROUP BY query several more times,
  *         with {@code cairo.sql.small.map.page.size} cut to between 8 and 512
@@ -307,7 +313,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 TestUtils.assertContains(plan, "stages: 2");
             }
             final SqlExecutionCircuitBreaker contextBreaker = sqlExecutionContext.getCircuitBreaker();
-            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, false, new ObjList<>(), null);
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, false, new ObjList<>(), null);
             Assert.assertTrue(runner.isFaultTypeAvailable(FaultType.CANCEL));
             final Rnd rnd = new Rnd(0x5eed, 0xca9ce1);
             for (int i = 0; i < 40; i++) {
@@ -376,7 +382,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -741,7 +747,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, null, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, false, null, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -771,7 +777,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 TestUtils.assertContains(plan, "Async Hash Join workers:");
                 TestUtils.assertContains(plan, "stages: 2");
             }
-            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, node1.getConfigurationOverrides(), false, new ObjList<>(), null);
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, node1.getConfigurationOverrides(), false, new ObjList<>(), null);
             Assert.assertTrue(runner.isFaultTypeAvailable(FaultType.QUERY_MEMORY_LIMIT));
             final Rnd rnd = new Rnd(0x5eed, 0x9e1);
             for (int i = 0; i < 40; i++) {
@@ -786,7 +792,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // The fault lifts the limit after each query.
             Assert.assertEquals(0, engine.getConfiguration().getQueryMemoryLimitBytes());
             // Without the configuration's overrides, the runner offers no such fault.
-            Assert.assertFalse(new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, false, new ObjList<>(), null)
+            Assert.assertFalse(new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, false, new ObjList<>(), null)
                     .isFaultTypeAvailable(FaultType.QUERY_MEMORY_LIMIT));
         });
     }
@@ -808,7 +814,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -919,8 +925,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "1082"},
-                        {"questdb.fuzz.s1", "33549"},
+                        {"questdb.fuzz.s0", "20"},
+                        {"questdb.fuzz.s1", "627"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
@@ -1018,8 +1024,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "600"},
-                        {"questdb.fuzz.s0", "502"},
-                        {"questdb.fuzz.s1", "15569"},
+                        {"questdb.fuzz.s0", "2"},
+                        {"questdb.fuzz.s1", "69"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
@@ -1066,8 +1072,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "604"},
-                        {"questdb.fuzz.s1", "18731"},
+                        {"questdb.fuzz.s0", "1"},
+                        {"questdb.fuzz.s1", "38"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "3"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "1"},
@@ -1100,8 +1106,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "600"},
-                        {"questdb.fuzz.s0", "308"},
-                        {"questdb.fuzz.s1", "9555"},
+                        {"questdb.fuzz.s0", "15"},
+                        {"questdb.fuzz.s1", "472"},
                         {FuzzConfig.STORAGE_PROP, "true"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "4"},
                 },
@@ -1139,7 +1145,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
             sqlExecutionContext.setParallelHashJoinEnabled(true);
             try {
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, true, false, false, true, null, false, new ObjList<>(), null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, true, false, false, true, false, null, false, new ObjList<>(), null);
                 final String pastTheCap = "SELECT l.v, r.w FROM t0 l JOIN t1 r ON l.k = r.k";
                 try (RecordCursorFactory factory = select(pastTheCap)) {
                     Assert.assertNotNull(pastTheCap, ParallelHashJoinTestUtils.find(factory));
@@ -1172,7 +1178,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
             sqlExecutionContext.setParallelHashJoinEnabled(true);
             try {
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, null, false, new ObjList<>(), null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, false, null, false, new ObjList<>(), null);
                 for (String sign : new String[]{"", "-"}) {
                     final String bindSql = "SELECT l.v AS c0, l.k + $1 AS c1 FROM t0 l JOIN t1 r ON l.k = r.k LIMIT " + sign + "$1";
                     // The bind form runs the parallel hash join.
@@ -1342,6 +1348,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             // Only an equi-join run has equi-join queries to compare, see
                             // generateConcurrentQuery().
                             isEquiJoinRun && config.isDiffParallelJoinEnabled(),
+                            config.isDiffStreamEnabled(),
                             null,
                             config.isVerifyCursorEnabled(),
                             tables,
@@ -1515,7 +1522,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     FuzzTableFactory.ParquetMode.NONE, null, null,
                     new FuzzTable("skip_shadow", new ObjList<>(), null)));
             QueryRunner runner = new QueryRunner(engine, sqlExecutionContext,
-                    false, true, false, false, null, true, tables, QUERY_POOL_NAME + '_');
+                    false, true, false, false, false, null, true, tables, QUERY_POOL_NAME + '_');
             QueryRunner.Result result = runner.run(new GeneratedQuery(
                     "SELECT missing_column FROM skip_primary", true));
             Assert.assertTrue("rejected storage comparisons must not count as coverage", result.isSkipped());
@@ -1725,8 +1732,21 @@ public class QueryFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
         LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
+        // The tables hold too few rows to pass the default sharding threshold.
+        if (rnd.nextBoolean()) {
+            final int shardingThreshold = 1 + rnd.nextInt(8);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, shardingThreshold);
+            LOG.info().$("sharding threshold coin [threshold=").$(shardingThreshold).I$();
+        }
+
+        if (config.getPageFrameMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, config.getPageFrameMaxRows());
+        }
+
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())
+                .$(", pageFrameMaxRows=").$(config.getPageFrameMaxRows())
                 .$(", queries=").$(config.getNumQueries())
                 .$(", diffJit=").$(config.isDiffJitEnabled())
                 .$(", diffShadow=").$(config.isDiffShadowEnabled())
@@ -1742,6 +1762,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", equiJoin=").$(config.isEquiJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
                 .$(", diffParallelJoin=").$(config.isDiffParallelJoinEnabled())
+                .$(", diffStream=").$(config.isDiffStreamEnabled())
                 .$(", diffMapPage=").$(config.isDiffMapPageEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())

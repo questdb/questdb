@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * of the map at wrap-up, through a map of one key and the functions' merge natives.
  */
 public class GroupByVectorizedNullKeyMergeTest extends AbstractCairoTest {
+    private static final String COLUMN_TOP_SQL = "SELECT k, sum(v) s FROM t ORDER BY k";
     // 2^62: four of them sum to 2^64, past the LONG range.
     private static final long TWO_TO_62 = 4_611_686_018_427_387_904L;
 
@@ -138,34 +139,63 @@ public class GroupByVectorizedNullKeyMergeTest extends AbstractCairoTest {
 
     @Test
     public void testNullKeyMapAllocationFails() throws Exception {
-        // The factory allocates the map of the NULL key after the per-worker maps; when its allocation
-        // fails, the factory frees the per-worker maps, which assertMemoryLeak checks, and the query
-        // compiles and runs once the allocation succeeds.
+        // The factory allocates the map of the NULL key before the per-worker maps; when its
+        // allocation fails, the factory allocates no per-worker map, and the query compiles and runs
+        // once the allocation succeeds.
+        final int workerCount = 4;
+        final AtomicInteger allocations = new AtomicInteger();
+        configOverrideRostiAllocFacade(new RostiAllocFacadeImpl() {
+            @Override
+            public long alloc(ColumnTypes types, long capacity) {
+                allocations.incrementAndGet();
+                return super.alloc(types, capacity);
+            }
+        });
+        assertMemoryLeak(() -> {
+            createColumnTopTable();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, workerCount)
+                    .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
+                Rosti.enableOOMOnMalloc();
+                try {
+                    engine.select(COLUMN_TOP_SQL, context).close();
+                    Assert.fail("expected the allocation of the NULL key's map to fail");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not allocate rosti hash table");
+                } finally {
+                    Rosti.disableOOMOnMalloc();
+                }
+                Assert.assertEquals(0, allocations.get());
+                assertColumnTopResult(context);
+            }
+        });
+    }
+
+    @Test
+    public void testPerWorkerMapAllocationFailsAfterNullKeyMap() throws Exception {
+        // The allocation of the last per-worker map fails after the map of the NULL key and the other
+        // per-worker maps succeeded: the factory frees them all, which assertMemoryLeak checks, and
+        // the query compiles and runs once the allocation succeeds.
         final int workerCount = 4;
         final AtomicInteger allocations = new AtomicInteger();
         final AtomicBoolean isFailing = new AtomicBoolean(true);
         configOverrideRostiAllocFacade(new RostiAllocFacadeImpl() {
             @Override
             public long alloc(ColumnTypes types, long capacity) {
-                final long pRosti = super.alloc(types, capacity);
                 if (isFailing.get() && allocations.incrementAndGet() == workerCount) {
                     // Rosti allocations fail from here on.
                     Rosti.enableOOMOnMalloc();
                 }
-                return pRosti;
+                return super.alloc(types, capacity);
             }
         });
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t SELECT x, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
-            execute("ALTER TABLE t ADD COLUMN k INT");
-            execute("INSERT INTO t (v, ts, k) VALUES (100, '2024-01-02T00:00:00Z', 1)");
-            final String sql = "SELECT k, sum(v) s FROM t ORDER BY k";
+            createColumnTopTable();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, workerCount)
                     .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
                 try {
-                    engine.select(sql, context).close();
-                    Assert.fail("expected the allocation of the NULL key's map to fail");
+                    engine.select(COLUMN_TOP_SQL, context).close();
+                    Assert.fail("expected the allocation of the last per-worker map to fail");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not allocate rosti hash table");
@@ -174,14 +204,7 @@ public class GroupByVectorizedNullKeyMergeTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(workerCount, allocations.get());
                 isFailing.set(false);
-                // The NULL key: v 1 to 10, sum 55.
-                try (RecordCursorFactory factory = engine.select(sql, context)) {
-                    assertCursor(factory, context, """
-                            k\ts
-                            null\t55
-                            1\t100
-                            """);
-                }
+                assertColumnTopResult(context);
             }
         });
     }
@@ -223,6 +246,13 @@ public class GroupByVectorizedNullKeyMergeTest extends AbstractCairoTest {
         });
     }
 
+    private static void createColumnTopTable() throws Exception {
+        execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t SELECT x, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
+        execute("ALTER TABLE t ADD COLUMN k INT");
+        execute("INSERT INTO t (v, ts, k) VALUES (100, '2024-01-02T00:00:00Z', 1)");
+    }
+
     private static GroupByRecordCursorFactory findGroupBy(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
             if (f instanceof GroupByRecordCursorFactory groupBy) {
@@ -230,6 +260,17 @@ public class GroupByVectorizedNullKeyMergeTest extends AbstractCairoTest {
             }
         }
         throw new AssertionError("no vectorized GROUP BY in the plan");
+    }
+
+    private void assertColumnTopResult(SqlExecutionContext context) throws Exception {
+        // The NULL key: v 1 to 10, sum 55.
+        try (RecordCursorFactory factory = engine.select(COLUMN_TOP_SQL, context)) {
+            assertCursor(factory, context, """
+                    k\ts
+                    null\t55
+                    1\t100
+                    """);
+        }
     }
 
     private void assertCursor(RecordCursorFactory factory, String expected) throws Exception {

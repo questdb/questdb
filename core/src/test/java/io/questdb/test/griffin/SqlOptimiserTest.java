@@ -1326,24 +1326,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     limit 10""")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                Encode sort
-                                  keys: [a desc]
-                                    SelectedRecord
-                                        Async Hash Join workers: 1
-                                          stages: 1
-                                            Probe
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab1
-                                            Build
-                                              joinType: inner
-                                              condition: tab2.id=tab1.id
-                                              inputSwap: when the left input is smaller
-                                              buildPayload: copied when the probe is large enough
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab2
+                            Encode sort lo: 10
+                              keys: [a desc]
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab1
+                                        Build
+                                          joinType: inner
+                                          condition: tab2.id=tab1.id
+                                          inputSwap: when the left input is smaller
+                                          buildPayload: copied when the probe is large enough
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab2
                             """);
         });
     }
@@ -1373,24 +1372,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                    Encode sort
-                                      keys: [a desc, ts]
-                                        SelectedRecord
-                                            Async Hash Join workers: 1
-                                              stages: 1
-                                                Probe
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab1
-                                                Build
-                                                  joinType: inner
-                                                  condition: tab2.id=tab1.id
-                                                  inputSwap: when the left input is smaller
-                                                  buildPayload: copied when the probe is large enough
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tab2
+                                Encode sort lo: 10
+                                  keys: [a desc, ts]
+                                    SelectedRecord
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab1
+                                            Build
+                                              joinType: inner
+                                              condition: tab2.id=tab1.id
+                                              inputSwap: when the left input is smaller
+                                              buildPayload: copied when the probe is large enough
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab2
                             """);
         });
     }
@@ -1709,22 +1707,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                          condition: t2.s=t1.s
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: t2.s=t1.s
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1753,23 +1751,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [ts, s]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                          condition: t2.s=t1.s
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000 partiallySorted: true
+                              keys: [ts, s]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: t2.s=t1.s
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .timestamp("ts")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1798,22 +1796,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts1]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                          condition: t2.s=t1.s
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts1]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: t2.s=t1.s
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1842,22 +1840,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s1, ts1]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                          condition: t2.s=t1.s
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s1, ts1]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: t2.s=t1.s
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1886,22 +1884,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                          condition: t2.s=t1.s
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                      condition: t2.s=t1.s
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1937,21 +1935,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1988,19 +1986,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .withPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """)
                     .returns("""
                             s\tts\ts1\tts1
@@ -2092,21 +2090,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts, ts1, s1]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts, ts1, s1]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2197,19 +2195,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .withPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """)
                     .returns("""
                             s\tts\ts1\tts1
@@ -2301,22 +2299,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [ts, s]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000 partiallySorted: true
+                              keys: [ts, s]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .timestamp("ts")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2407,22 +2405,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [ts, s1, s, ts1]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000 partiallySorted: true
+                              keys: [ts, s1, s, ts1]
+                                SelectedRecord
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .timestamp("ts")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2513,23 +2511,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts1]
-                                    SelectedRecord
-                                        Lt Join Light
-                                          condition: t2.s=t1.s
-                                          symbolKeyJoin: true
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts1]
+                                SelectedRecord
+                                    Lt Join Light
+                                      condition: t2.s=t1.s
+                                      symbolKeyJoin: true
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\t\t
@@ -2563,28 +2561,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts, ts1]
-                                    SelectedRecord
-                                        Async Hash Join workers: 1
-                                          stages: 1
-                                            Probe
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: t1
-                                                      intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            Build
-                                              joinType: inner
-                                              condition: t2.s=t1.s
-                                              symbolKeyJoin: true
-                                              buildPayload: copied when the probe is large enough
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
+                            Encode sort lo: 1000000
+                              keys: [s, ts, ts1]
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: t1
+                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        Build
+                                          joinType: inner
+                                          condition: t2.s=t1.s
+                                          symbolKeyJoin: true
+                                          buildPayload: copied when the probe is large enough
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -4256,7 +4254,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns(result);
         });
@@ -4277,7 +4275,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns(result);
         });
@@ -4459,17 +4457,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                      values: [avg(x),sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                  values: [avg(x),sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -4507,13 +4502,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Long Top K lo: 6
-                              keys: [ts asc]
-                                Async Group By workers: 1
+                            Limit value: 6 skip-rows-max: 0 take-rows-max: 6
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')
                                   keys: [ts,s]
                                   keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
                                   values: [count(*)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: fromto
@@ -4573,7 +4567,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     SAMPLE BY (1m);
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\textra_column\textra_column2\tfirst
@@ -4583,7 +4576,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select dateadd('d', 1, timestamp) timestamp, name, count() from t sample by 10m")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\tname\tcount
@@ -4593,7 +4586,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name, count() from t sample by 10m")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\ttimestamp2\tname\tcount
@@ -4604,7 +4597,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select timestamp + 60000000 as 'timestamp', timestamp, count() from t where name = 'a' sample by (1m)")
                     .noLeakCheck()
                     .timestamp("timestamp1")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             timestamp\ttimestamp1\tcount
                             2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1
@@ -4614,7 +4607,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select timestamp + 60000000 as 'timestamp1', timestamp, count() from t where name = 'a' sample by (1m)")
                     .noLeakCheck()
                     .timestamp("timestamp")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             timestamp1\ttimestamp\tcount
                             2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1
@@ -4624,7 +4617,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1', count() from t where name = 'a' sample by (1m)")
                     .noLeakCheck()
                     .timestamp("timestamp1")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             timestamp\ttimestamp1\tcount
                             2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1
@@ -4649,17 +4642,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                      values: [avg(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                  values: [avg(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -4694,17 +4684,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: value
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                      values: [avg(x),sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                  values: [avg(x),sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -4739,17 +4726,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: (,'2018-01-31')
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts)]
-                                      values: [avg(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("MIN","2018-01-30T23:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts)]
+                                  values: [avg(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("MIN","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -4782,17 +4766,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20',)
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                      values: [avg(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                  values: [avg(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -4831,33 +4812,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                 Hash
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
 
             assertQuery(exceptAllQuery)
@@ -4874,33 +4849,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                 Hash
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
 
             assertQuery(exceptQuery)
@@ -4933,33 +4902,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                 Hash
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
 
             assertQuery(intersectAllQuery)
@@ -4987,33 +4950,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                 Hash
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
 
             assertQuery(intersectQuery)
@@ -5112,32 +5069,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [five_days]
-                                            Async Group By workers: 1
-                                              keys: [five_days]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '10d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ten_days]
-                                            Async Group By workers: 1
-                                              keys: [ten_days]
-                                              keyFunctions: [timestamp_floor_utc('10d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('10d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -5177,82 +5128,82 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             final String shouldSucceedKeyedBoundedResult = """
                     ts\tavg\ts
-                    2017-12-20T00:00:00.000000Z\tnull\t1
-                    2017-12-20T00:00:00.000000Z\tnull\t2
-                    2017-12-20T00:00:00.000000Z\tnull\t3
                     2017-12-20T00:00:00.000000Z\tnull\t4
-                    2017-12-25T00:00:00.000000Z\tnull\t1
-                    2017-12-25T00:00:00.000000Z\tnull\t2
-                    2017-12-25T00:00:00.000000Z\tnull\t3
+                    2017-12-20T00:00:00.000000Z\tnull\t2
+                    2017-12-20T00:00:00.000000Z\tnull\t1
+                    2017-12-20T00:00:00.000000Z\tnull\t3
                     2017-12-25T00:00:00.000000Z\tnull\t4
-                    2017-12-30T00:00:00.000000Z\t1.0\t1
-                    2017-12-30T00:00:00.000000Z\t2.0\t2
-                    2017-12-30T00:00:00.000000Z\t3.0\t3
+                    2017-12-25T00:00:00.000000Z\tnull\t2
+                    2017-12-25T00:00:00.000000Z\tnull\t1
+                    2017-12-25T00:00:00.000000Z\tnull\t3
                     2017-12-30T00:00:00.000000Z\t4.0\t4
-                    2018-01-04T00:00:00.000000Z\tnull\t1
-                    2018-01-04T00:00:00.000000Z\tnull\t2
-                    2018-01-04T00:00:00.000000Z\tnull\t3
+                    2017-12-30T00:00:00.000000Z\t2.0\t2
+                    2017-12-30T00:00:00.000000Z\t1.0\t1
+                    2017-12-30T00:00:00.000000Z\t3.0\t3
                     2018-01-04T00:00:00.000000Z\tnull\t4
-                    2018-01-09T00:00:00.000000Z\tnull\t1
-                    2018-01-09T00:00:00.000000Z\tnull\t2
-                    2018-01-09T00:00:00.000000Z\tnull\t3
+                    2018-01-04T00:00:00.000000Z\tnull\t2
+                    2018-01-04T00:00:00.000000Z\tnull\t1
+                    2018-01-04T00:00:00.000000Z\tnull\t3
                     2018-01-09T00:00:00.000000Z\tnull\t4
-                    2018-01-14T00:00:00.000000Z\tnull\t1
-                    2018-01-14T00:00:00.000000Z\tnull\t2
-                    2018-01-14T00:00:00.000000Z\tnull\t3
+                    2018-01-09T00:00:00.000000Z\tnull\t2
+                    2018-01-09T00:00:00.000000Z\tnull\t1
+                    2018-01-09T00:00:00.000000Z\tnull\t3
                     2018-01-14T00:00:00.000000Z\tnull\t4
-                    2018-01-19T00:00:00.000000Z\tnull\t1
-                    2018-01-19T00:00:00.000000Z\tnull\t2
-                    2018-01-19T00:00:00.000000Z\tnull\t3
+                    2018-01-14T00:00:00.000000Z\tnull\t2
+                    2018-01-14T00:00:00.000000Z\tnull\t1
+                    2018-01-14T00:00:00.000000Z\tnull\t3
                     2018-01-19T00:00:00.000000Z\tnull\t4
-                    2018-01-24T00:00:00.000000Z\tnull\t1
-                    2018-01-24T00:00:00.000000Z\tnull\t2
-                    2018-01-24T00:00:00.000000Z\tnull\t3
+                    2018-01-19T00:00:00.000000Z\tnull\t2
+                    2018-01-19T00:00:00.000000Z\tnull\t1
+                    2018-01-19T00:00:00.000000Z\tnull\t3
                     2018-01-24T00:00:00.000000Z\tnull\t4
-                    2018-01-29T00:00:00.000000Z\tnull\t1
-                    2018-01-29T00:00:00.000000Z\tnull\t2
-                    2018-01-29T00:00:00.000000Z\tnull\t3
+                    2018-01-24T00:00:00.000000Z\tnull\t2
+                    2018-01-24T00:00:00.000000Z\tnull\t1
+                    2018-01-24T00:00:00.000000Z\tnull\t3
                     2018-01-29T00:00:00.000000Z\tnull\t4
+                    2018-01-29T00:00:00.000000Z\tnull\t2
+                    2018-01-29T00:00:00.000000Z\tnull\t1
+                    2018-01-29T00:00:00.000000Z\tnull\t3
                     """;
 
             final String shouldSucceedKeyedWithOffsetBoundedResult = """
                     ts\tavg\ts
-                    2017-12-20T10:00:00.000000Z\tnull\t1
-                    2017-12-20T10:00:00.000000Z\tnull\t2
-                    2017-12-20T10:00:00.000000Z\tnull\t3
                     2017-12-20T10:00:00.000000Z\tnull\t4
-                    2017-12-25T10:00:00.000000Z\tnull\t1
-                    2017-12-25T10:00:00.000000Z\tnull\t2
-                    2017-12-25T10:00:00.000000Z\tnull\t3
+                    2017-12-20T10:00:00.000000Z\tnull\t2
+                    2017-12-20T10:00:00.000000Z\tnull\t1
+                    2017-12-20T10:00:00.000000Z\tnull\t3
                     2017-12-25T10:00:00.000000Z\tnull\t4
-                    2017-12-30T10:00:00.000000Z\t1.0\t1
-                    2017-12-30T10:00:00.000000Z\t2.0\t2
-                    2017-12-30T10:00:00.000000Z\t3.0\t3
+                    2017-12-25T10:00:00.000000Z\tnull\t2
+                    2017-12-25T10:00:00.000000Z\tnull\t1
+                    2017-12-25T10:00:00.000000Z\tnull\t3
                     2017-12-30T10:00:00.000000Z\t4.0\t4
-                    2018-01-04T10:00:00.000000Z\tnull\t1
-                    2018-01-04T10:00:00.000000Z\tnull\t2
-                    2018-01-04T10:00:00.000000Z\tnull\t3
+                    2017-12-30T10:00:00.000000Z\t2.0\t2
+                    2017-12-30T10:00:00.000000Z\t1.0\t1
+                    2017-12-30T10:00:00.000000Z\t3.0\t3
                     2018-01-04T10:00:00.000000Z\tnull\t4
-                    2018-01-09T10:00:00.000000Z\tnull\t1
-                    2018-01-09T10:00:00.000000Z\tnull\t2
-                    2018-01-09T10:00:00.000000Z\tnull\t3
+                    2018-01-04T10:00:00.000000Z\tnull\t2
+                    2018-01-04T10:00:00.000000Z\tnull\t1
+                    2018-01-04T10:00:00.000000Z\tnull\t3
                     2018-01-09T10:00:00.000000Z\tnull\t4
-                    2018-01-14T10:00:00.000000Z\tnull\t1
-                    2018-01-14T10:00:00.000000Z\tnull\t2
-                    2018-01-14T10:00:00.000000Z\tnull\t3
+                    2018-01-09T10:00:00.000000Z\tnull\t2
+                    2018-01-09T10:00:00.000000Z\tnull\t1
+                    2018-01-09T10:00:00.000000Z\tnull\t3
                     2018-01-14T10:00:00.000000Z\tnull\t4
-                    2018-01-19T10:00:00.000000Z\tnull\t1
-                    2018-01-19T10:00:00.000000Z\tnull\t2
-                    2018-01-19T10:00:00.000000Z\tnull\t3
+                    2018-01-14T10:00:00.000000Z\tnull\t2
+                    2018-01-14T10:00:00.000000Z\tnull\t1
+                    2018-01-14T10:00:00.000000Z\tnull\t3
                     2018-01-19T10:00:00.000000Z\tnull\t4
-                    2018-01-24T10:00:00.000000Z\tnull\t1
-                    2018-01-24T10:00:00.000000Z\tnull\t2
-                    2018-01-24T10:00:00.000000Z\tnull\t3
+                    2018-01-19T10:00:00.000000Z\tnull\t2
+                    2018-01-19T10:00:00.000000Z\tnull\t1
+                    2018-01-19T10:00:00.000000Z\tnull\t3
                     2018-01-24T10:00:00.000000Z\tnull\t4
-                    2018-01-29T10:00:00.000000Z\tnull\t1
-                    2018-01-29T10:00:00.000000Z\tnull\t2
-                    2018-01-29T10:00:00.000000Z\tnull\t3
+                    2018-01-24T10:00:00.000000Z\tnull\t2
+                    2018-01-24T10:00:00.000000Z\tnull\t1
+                    2018-01-24T10:00:00.000000Z\tnull\t3
                     2018-01-29T10:00:00.000000Z\tnull\t4
+                    2018-01-29T10:00:00.000000Z\tnull\t2
+                    2018-01-29T10:00:00.000000Z\tnull\t1
+                    2018-01-29T10:00:00.000000Z\tnull\t3
                     """;
 
             assertQuery(shouldSucceedKeyedBounded)
@@ -5304,17 +5255,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20',)
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                      values: [avg(x),sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                  values: [avg(x),sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
                             """);
             assertQuery(shouldSucceedParallel)
                     .noLeakCheck()
@@ -5329,17 +5277,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20',)
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T10:00:00.000Z')]
-                                      values: [avg(x),sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T10:00:00.000Z')]
+                                  values: [avg(x),sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
                             """);
         });
     }
@@ -5402,32 +5347,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                 Sample By Fill
                                   range: ('2017-12-20','2018-01-31')
                                   stride: '5d'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto2
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
                     );
 
@@ -5467,32 +5406,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Encode sort light
+                                        Async Stream Group By workers: 1
                                           keys: [ts]
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                              values: [avg(x),sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto2
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                          values: [avg(x),sum(x)]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto2
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
                     );
 
@@ -5526,61 +5459,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
                             """);
             assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts)]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
                             """);
             assertQuery("select ts, avg(price) from tbl sample by 5m")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tbl
+                              keyFunctions: [timestamp_floor_utc('5m',ts)]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl
                             """);
         });
 
@@ -5600,17 +5521,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [five_days]
-                                    Async Group By workers: 1
-                                      keys: [five_days]
-                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                      values: [avg(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: fromto
-                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                  values: [avg(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -5691,17 +5609,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR""")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [timestamp]
-                                Async Group By workers: 1
-                                  keys: [symbol,timestamp]
-                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
-                                  values: [last(price)]
-                                  filter: symbol ~ BTC-USD [state-shared]
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trades
-                                          intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp_floor_utc('1m',timestamp)
+                              keys: [symbol,timestamp]
+                              keyFunctions: [timestamp_floor_utc('1m',timestamp)]
+                              values: [last(price)]
+                              filter: symbol ~ BTC-USD [state-shared]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
                             """);
         });
     }
@@ -6673,21 +6590,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertQuery(q1)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 40 skip-rows-max: 0 take-rows-max: 40
-                            Encode sort
-                              keys: [hostname, ts2]
-                                Window
-                                  functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
-                                    Encode sort light
-                                      keys: [ts2]
-                                        Async JIT Filter workers: 1
-                                          filter: ts2>=1970-01-01T00:00:00.000001Z
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cpu_ts
+                        Encode sort lo: 40
+                          keys: [hostname, ts2]
+                            Window
+                              functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
+                                Encode sort light
+                                  keys: [ts2]
+                                    Async JIT Filter workers: 1
+                                      filter: ts2>=1970-01-01T00:00:00.000001Z
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
                         """);
         assertQuery(q1)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         ts2\thostname\tusage_system\tmax_usage_system
                         1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0
@@ -6784,14 +6701,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Encode sort light
                           keys: [ts1 desc]
                             SelectedRecord
-                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
-                                    Encode sort
-                                      keys: [ts2]
-                                        Window
-                                          functions: [first_value(usage_system) over (partition by [hostname])]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cpu_ts
+                                Encode sort lo: 9223372036854775807L
+                                  keys: [ts2]
+                                    Window
+                                      functions: [first_value(usage_system) over (partition by [hostname])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
                         """);
         assertQuery(q4)
                 .noLeakCheck()
@@ -6822,22 +6738,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertQuery(q5)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 40 skip-rows-max: 0 take-rows-max: 40
-                            Encode sort
-                              keys: [ts2, hostname]
-                                Window
-                                  functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
-                                    Encode sort light
-                                      keys: [ts2]
-                                        Async JIT Filter workers: 1
-                                          filter: ts2>=1970-01-01T00:00:00.000001Z
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cpu_ts
+                        Encode sort lo: 40 partiallySorted: true
+                          keys: [ts2, hostname]
+                            Window
+                              functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
+                                Encode sort light
+                                  keys: [ts2]
+                                    Async JIT Filter workers: 1
+                                      filter: ts2>=1970-01-01T00:00:00.000001Z
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
                         """);
         assertQuery(q5)
                 .noLeakCheck()
                 .timestamp("ts2")
+                .expectSize()
                 .returns("""
                         ts2\thostname\tusage_system\tmax_usage_system
                         1970-01-01T00:00:06.000001Z\tA\t1.0\t1.0

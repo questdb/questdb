@@ -155,6 +155,7 @@ public final class QueryFuzzDriver {
                 config.isDiffShadowEnabled(),
                 config.isDiffFusedEnabled(),
                 config.isDiffParallelJoinEnabled(),
+                config.isDiffStreamEnabled(),
                 config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null,
                 AbstractCairoTest.staticOverrides,
                 config.isVerifyCursorEnabled(),
@@ -421,6 +422,7 @@ public final class QueryFuzzDriver {
                 .$(runner.getParallelJoinOverDroppedColumns()).$(" over tables with a dropped column")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
+        LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
         LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
                 .$();
@@ -540,6 +542,14 @@ public final class QueryFuzzDriver {
                         isStackedShareImplausible(parallelJoinStacked, parallelJoinSelected)
                 );
             }
+        }
+        // SAMPLE BY plans the stream GROUP BY by default, so the axis should run on a large enough sample.
+        final int sampleByGenerated = generatedByShape[QueryShape.SAMPLE_BY.ordinal()];
+        if (config.isDiffStreamEnabled() && sampleByGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "no SAMPLE BY of " + sampleByGenerated + " used the stream GROUP BY; the stream on/off axis looks vacuous",
+                    runner.getStreamAxisRuns() > 0
+            );
         }
         // Guard the reference axis against going vacuous. It compares only when a grouping sets
         // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave

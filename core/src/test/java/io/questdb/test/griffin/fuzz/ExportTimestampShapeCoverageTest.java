@@ -175,7 +175,7 @@ public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
                 tables.add(new FuzzTable(tableName, columns, "ts"));
             }
 
-            final Rnd rnd = new Rnd(0x5eed, 0x7135);
+            final Rnd rnd = new Rnd(0x5eed, 0x7142);
             // A Rnd of its own keeps the config's draws out of the generator's stream.
             final FuzzConfig config = new FuzzConfig(new Rnd(0x5eed, 0xc0f1));
             int forwardCount = 0;

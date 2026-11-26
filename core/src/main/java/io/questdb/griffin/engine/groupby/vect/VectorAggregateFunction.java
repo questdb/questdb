@@ -120,9 +120,8 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * <p>
      * The keyed GROUP BY does not rely on this merge: it merges the accumulated value through
      * {@link #initNullKeyRosti(long)} and {@link #merge(long, long)}, then calls {@link #clear()}
-     * before this method, so there is nothing left to merge here. The natives' null key merge is
-     * unsuitable because it adds onto values it has just set to NULL, and the avg() natives merge
-     * the value as the wrong type.
+     * before this method, so there is nothing left to merge here. The NULL key of the frames whose
+     * key column holds no data then merges the same way as the NULL key of a worker's map.
      *
      * @param pRosti pointer to rosti
      * @return true if wrapUp was fine and false if it failed on memory allocation

@@ -262,6 +262,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isStreamGroupByEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -393,6 +398,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public void setRandom(Rnd rnd) {
+    }
+
+    @Override
+    public void setStreamGroupByEnabled(boolean isEnabled) {
     }
 
     @Override

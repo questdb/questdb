@@ -41,7 +41,6 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 public class SumShortVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final int columnIndex;
     private final LongAdder count = new LongAdder();
-    private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
     private final LongAdder sum = new LongAdder();
     private int valueOffset;
@@ -50,32 +49,26 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     public SumShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
-            distinctFunc = Rosti::keyedMicroHourDistinct;
             keyValueFunc = Rosti::keyedMicroHourSumShort;
         } else if (keyKind == GKK_NANO_HOUR_INT) {
-            distinctFunc = Rosti::keyedNanoHourDistinct;
             keyValueFunc = Rosti::keyedNanoHourSumShort;
         } else {
-            distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumShort;
         }
     }
 
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
+        // a SHORT column top reads as 0
         if (address != 0) {
             sum.add(Vect.sumShort(address, frameRowCount));
-            count.increment();
         }
+        count.increment();
     }
 
     @Override
     public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
-        } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
-        }
+        return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
     }
 
     @Override
