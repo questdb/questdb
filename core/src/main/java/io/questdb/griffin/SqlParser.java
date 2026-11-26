@@ -5739,11 +5739,11 @@ public class SqlParser {
     /**
      * Parses a DECLARE block into the model.
      *
-     * @param isTopLevel whether the block opens a statement or a view body, rather than a
-     *                   sub-query, a CTE or a set operation branch. Only such a block may mark a
-     *                   variable {@code AUDITED}: a read of an audited view records the variables
-     *                   of its body's top-level block and no others, so a marking anywhere else
-     *                   would parse and never be recorded.
+     * @param isTopLevel       whether the block opens a statement or a view body, rather than a
+     *                         sub-query, a CTE or a set operation branch. Only such a block may mark a
+     *                         variable {@code AUDITED}: a read of an audited view records the variables
+     *                         of its body's top-level block and no others, so a marking anywhere else
+     *                         would parse and never be recorded.
      * @param isQueryVariables whether the block holds the variables a client declared outside the
      *                         statement's text, see {@link #parseQueryVariables}. It refuses the
      *                         {@code OVERRIDABLE} marker where it reads it: the marker lets a
