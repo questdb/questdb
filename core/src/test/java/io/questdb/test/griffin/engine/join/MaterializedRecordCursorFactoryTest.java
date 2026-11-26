@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.std.BytecodeAssembler;
@@ -184,7 +185,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 for (boolean isCopiedInBatches : new boolean[]{false, true}) {
                     final String label = rowCount + " rows, batches: " + isCopiedInBatches;
                     try (
-                            RecordCursorFactory copy = strictCopy(compiler, context, "SELECT x FROM long_sequence(" + rowCount + ")", isCopiedInBatches);
+                            RecordCursorFactory copy = copy(compiler, context, "SELECT x FROM long_sequence(" + rowCount + ")", true, isCopiedInBatches);
                             RecordCursor cursor = copy.getCursor(context)
                     ) {
                         final Record record = cursor.getRecord();
@@ -220,7 +221,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 256);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 10_000);
         run((engine, compiler, context) -> {
-            try (RecordCursorFactory copy = strictCopy(compiler, context, "SELECT x, x * 2 y, x * 3 z FROM long_sequence(1_000)", true)) {
+            try (RecordCursorFactory copy = copy(compiler, context, "SELECT x, x * 2 y, x * 3 z FROM long_sequence(1_000)", true, true)) {
                 long rowCount = 0;
                 try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
                     context.setMemoryTracker(tracker);
@@ -268,14 +269,74 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
             createTables(engine, context);
             final String[] subquery = withNegativeLimit(SUBQUERIES[1]);
             Assert.assertEquals(0, assertMaterialized(engine, context, CROSS_JOIN, subquery, null, true, true));
-            // The join reuses the copy under the limit rather than copying the rows of the limit again.
+            // The copy under the limit can give up under the memory limit and stream its base, so the join keeps its
+            // own copy of the limit's rows.
             final String plan = TestUtils.printSqlToString(
                     engine,
                     context,
                     "EXPLAIN " + CROSS_JOIN.replace("$sub", subquery[0]).replace("$keys", subquery[2]),
                     new StringSink()
             );
-            Assert.assertEquals(plan, plan.indexOf("Materialize"), plan.lastIndexOf("Materialize"));
+            Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n\\1  +Limit .*\n( *)Materialize\n.*"));
+        });
+    }
+
+    @Test
+    public void testCrossJoinCopiesNegativeLimitThatStreams() throws Exception {
+        // Under the query memory limit, the copy under LIMIT -100 gives up and streams its base, so each rewind runs
+        // the stream GROUP BY again. The join keeps its own copy of the limit's rows, so the stream runs as often
+        // under one outer row as under five, and every outer row joins the same 100 rows. Small pages let the
+        // copy of 100 rows fit the limit that the copy of 10,000 rows breaches.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 65_536);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 4096);
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            engine.execute(
+                    """
+                            CREATE TABLE big AS (
+                                SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, x v FROM long_sequence(10_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    context
+            );
+            final String sql = "SELECT count() n, sum(s.c) c, sum(s.s) s FROM %s o CROSS JOIN "
+                    + "(SELECT ts, count() c, sum(v) s FROM big WHERE test_latched_counter() GROUP BY ts LIMIT -100) s";
+            try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
+                context.setMemoryTracker(tracker);
+                try {
+                    // The last 100 buckets hold one row each, v = 9_901 to 10_000.
+                    final int oneRowReads = countFilterCalls(engine, context, sql.formatted("(SELECT * FROM m WHERE x = 1)"), """
+                            n\tc\ts
+                            100\t100\t995050
+                            """);
+                    final int fiveRowReads = countFilterCalls(engine, context, sql.formatted("m"), """
+                            n\tc\ts
+                            500\t500\t4975250
+                            """);
+                    Assert.assertEquals(oneRowReads, fiveRowReads);
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    context.setMemoryTracker(null);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLaxCopyRerunsRecomputingBase() throws Exception {
+        // A lax copy streams its base once it gives up, so a rewind reruns a stream GROUP BY under it, but not a table.
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            for (boolean isStrict : new boolean[]{true, false}) {
+                try (RecordCursorFactory copy = copy(compiler, context, "SELECT ts, sym, sum(v) s FROM t SAMPLE BY 1h", isStrict, false)) {
+                    Assert.assertTrue(copy.getBaseFactory().isRewindRecomputing());
+                    Assert.assertEquals(!isStrict, copy.isRewindRecomputing());
+                }
+                try (RecordCursorFactory copy = copy(compiler, context, "SELECT * FROM t", isStrict, false)) {
+                    Assert.assertFalse(copy.getBaseFactory().isRewindRecomputing());
+                    Assert.assertFalse(copy.isRewindRecomputing());
+                }
+            }
         });
     }
 
@@ -778,6 +839,15 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         }
     }
 
+    // Runs the query once and returns how often its filter ran, after checking the result.
+    private static int countFilterCalls(CairoEngine engine, SqlExecutionContext context, String sql, String expected) throws SqlException {
+        TestLatchedCounterFunctionFactory.reset(null);
+        final String actual = TestUtils.printSqlToString(engine, context, sql, new StringSink());
+        final int calls = TestLatchedCounterFunctionFactory.getCount();
+        TestUtils.assertEquals(sql, expected, actual);
+        return calls;
+    }
+
     private static void createTables(CairoEngine engine, SqlExecutionContext context) throws SqlException {
         // Every hour holds both symbols, so a limit with even bounds cuts the multi-key rows between hours.
         engine.execute(
@@ -799,10 +869,11 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         );
     }
 
-    private static RecordCursorFactory strictCopy(
+    private static RecordCursorFactory copy(
             SqlCompiler compiler,
             SqlExecutionContext context,
             String sql,
+            boolean isStrict,
             boolean isCopiedInBatches
     ) throws SqlException {
         final RecordCursorFactory base = compiler.compile(sql, context).getRecordCursorFactory();
@@ -815,7 +886,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
             Misc.free(base);
             throw th;
         }
-        return new MaterializedRecordCursorFactory(configuration, base, recordSink, true, false, isCopiedInBatches);
+        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, false, isCopiedInBatches);
     }
 
     private static String[] withNegativeLimit(String[] subquery) {

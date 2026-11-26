@@ -123,9 +123,11 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         return base.isNonDeterministic();
     }
 
+    // A strict copy replays its rows on every rewind. A lax one gives up under the memory limit and streams its base,
+    // so a rewind then runs the base again.
     @Override
     public boolean isRewindRecomputing() {
-        return false;
+        return !isStrict && base.isRewindRecomputing();
     }
 
     @Override
