@@ -629,8 +629,10 @@ mod tests {
         rgb.column_bufs[col]
             .data_vec
             .as_slice()
-            .chunks_exact(4)
-            .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| i32::from_ne_bytes(*c))
             .collect()
     }
 
@@ -638,8 +640,10 @@ mod tests {
         rgb.column_bufs[col]
             .data_vec
             .as_slice()
-            .chunks_exact(8)
-            .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| i64::from_ne_bytes(*c))
             .collect()
     }
 

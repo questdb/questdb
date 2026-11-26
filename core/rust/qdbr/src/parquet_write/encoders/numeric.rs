@@ -1040,4 +1040,74 @@ mod tests {
                 .expect("encode plain");
         assert!(plain.is_empty());
     }
+
+    /// The (min, max) of a page's statistics.
+    fn page_bounds<T: NativeType>(page: &Page) -> (T, T) {
+        let Page::Data(data) = page else {
+            panic!("expected data page");
+        };
+        let stats = data
+            .statistics()
+            .expect("statistics present")
+            .expect("statistics ok");
+        let stats = stats
+            .as_any()
+            .downcast_ref::<PrimitiveStatistics<T>>()
+            .expect("primitive statistics");
+        (stats.min_value.expect("min"), stats.max_value.expect("max"))
+    }
+
+    #[test]
+    fn test_float_page_statistics_write_zero_min_negative_and_zero_max_positive() {
+        // Values, then the (min, max) parquet.thrift asks for: a zero min as -0.0 and a zero
+        // max as +0.0. Without a null the page takes the RLE path, with one the bitpacked path.
+        let cases: [(&[f64], (f64, f64)); 4] = [
+            (&[0.0, 1.0], (-0.0, 1.0)),
+            (&[-1.0, -0.0], (-1.0, 0.0)),
+            (&[0.0, -0.0, 0.0], (-0.0, 0.0)),
+            (&[0.0], (-0.0, 0.0)),
+        ];
+        for (values, (min, max)) in cases {
+            for with_null in [false, true] {
+                let mut doubles = values.to_vec();
+                let mut floats: Vec<f32> = values.iter().map(|&v| v as f32).collect();
+                if with_null {
+                    doubles.push(f64::NAN);
+                    floats.push(f32::NAN);
+                }
+
+                let page = slice_to_page_simd(
+                    &doubles,
+                    0,
+                    write_options(),
+                    optional_type_for(ColumnTypeTag::Double),
+                    Encoding::Plain,
+                    None,
+                )
+                .expect("encode DOUBLE");
+                let (got_min, got_max) = page_bounds::<f64>(&page);
+                assert_eq!(
+                    (got_min.to_bits(), got_max.to_bits()),
+                    (min.to_bits(), max.to_bits()),
+                    "DOUBLE {doubles:?}: got ({got_min:?}, {got_max:?})"
+                );
+
+                let page = slice_to_page_simd(
+                    &floats,
+                    0,
+                    write_options(),
+                    optional_type_for(ColumnTypeTag::Float),
+                    Encoding::Plain,
+                    None,
+                )
+                .expect("encode FLOAT");
+                let (got_min, got_max) = page_bounds::<f32>(&page);
+                assert_eq!(
+                    (got_min.to_bits(), got_max.to_bits()),
+                    ((min as f32).to_bits(), (max as f32).to_bits()),
+                    "FLOAT {floats:?}: got ({got_min:?}, {got_max:?})"
+                );
+            }
+        }
+    }
 }
