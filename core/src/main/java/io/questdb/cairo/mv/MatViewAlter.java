@@ -92,8 +92,6 @@ public final class MatViewAlter {
         if (viewState == null || viewState.isDropped()) {
             throw SqlException.$(viewNamePosition, "materialized view does not exist or is not ready for refresh");
         }
-        // The mapping the validation built, for materialized_views() once the statement returns.
-        viewState.setColumnMappingSummary(columnMappingSummary);
         viewState.runAlterValidatedSeamForTesting();
 
         final long seqTxn;
@@ -104,6 +102,10 @@ public final class MatViewAlter {
                 seqTxn = MatViewCommitFence.appendMatViewDefinition(engine, walWriter, baseTableName, matViewSql, false);
             }
         }
+        // The mapping the validation built, for materialized_views() once the statement returns. It goes in only once
+        // the definition event is in the view's WAL, so that a statement refused on the way keeps the mapping of the
+        // view's SQL.
+        viewState.setColumnMappingSummary(columnMappingSummary);
         viewState.runDefinitionEventWrittenSeamForTesting();
         viewState.recordPendingDefinitionSeqTxn(seqTxn);
         viewState.alterSuccess(isBaseTableChange);

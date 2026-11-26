@@ -1861,6 +1861,98 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefusedAlterKeepsColumnMapping() throws Exception {
+        // An ALTER ... AS that passes its validation and is then refused leaves materialized_views() with the column
+        // mapping of the view's SQL: the view latch busy past the statement timeout, a cancel while the statement waits
+        // for the latch, a pending FULL refresh, and a definition event that fails to write, without and with a base
+        // change. The refused SQL maps the view's unmapped column amount and produces total, which the view lacks.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final StringSink failingPart = new StringSink();
+        assertMemoryLeak(newSeqPartFailingFacade(isFailArmed, failingPart, true), () -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "ADD COLUMN amount DOUBLE");
+            drainWalAndMatViewQueues();
+            assertMappingColumns("amount", "");
+            final String columns = "SELECT ts, sym, last(price) AS price, last(amount) AS amount, sum(amount) AS total FROM ";
+            final String sameBaseAlter = ALTER_PREFIX + "AS (" + columns + "base SAMPLE BY 1h)";
+            final String base2Alter = ALTER_PREFIX + "WITH BASE base2 AS (" + columns + "base2 SAMPLE BY 1h)";
+            final MatViewState state = viewState();
+            final long viewSeqTxn = viewSeqTxn();
+
+            // the latch stays busy past the statement timeout, or the user cancels the statement while it waits
+            for (int i = 0; i < 2; i++) {
+                final boolean isCancel = i == 1;
+                try (SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1);
+                     NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker()) {
+                    context.with(circuitBreaker);
+                    circuitBreaker.resetTimer();
+                    Assert.assertTrue(state.tryLock());
+                    try {
+                        state.setOnResumeLatchBusyForTesting(isCancel
+                                ? circuitBreaker::cancel
+                                : () -> circuitBreaker.setTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK));
+                        try {
+                            execute(base2Alter, context);
+                            Assert.fail("the statement must be refused");
+                        } catch (SqlException e) {
+                            Assert.assertFalse(isCancel);
+                            TestUtils.assertContains(e.getFlyweightMessage(), "materialized view is busy, retry later [view=price_1h]");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(isCancel);
+                            Assert.assertTrue(e.isCancellation());
+                        }
+                    } finally {
+                        MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken(), state, false);
+                    }
+                }
+                assertMappingColumns("amount", "");
+            }
+
+            // a FULL refresh parked on an invalid view
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "test invalidation");
+            drainMatViewQueue(engine);
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainMatViewQueue(engine);
+            assertExceptionNoLeakCheck(base2Alter, VIEW_NAME_POSITION, "materialized view full refresh is pending, retry later [view=price_1h]");
+            assertMappingColumns("amount", "");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertMappingColumns("amount", "");
+
+            // the definition event fails to write; with a base change, it is the second event, after the invalidation
+            for (int i = 0; i < 2; i++) {
+                final boolean isBaseChange = i == 1;
+                armViewTxnFailure(isFailArmed, failingPart, isBaseChange ? 1 : 0);
+                try {
+                    execute(isBaseChange ? base2Alter : sameBaseAlter);
+                    Assert.fail("the definition event write must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+                Assert.assertFalse(isFailArmed.get());
+                assertMappingColumns("amount", "");
+            }
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "base table changed");
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            assertMappingColumns("amount", "");
+            // the FULL refresh and the invalidation of the base change wrote the view's WAL, no definition did
+            Assert.assertEquals(-1, state.getPendingDefinitionSeqTxn());
+            Assert.assertTrue(viewSeqTxn() > viewSeqTxn);
+
+            // the same statement, accepted, describes its own mapping
+            execute(base2Alter);
+            assertMappingColumns("", "total");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(columns + "base2 SAMPLE BY 1h", viewDefinition().getMatViewSql());
+            assertMappingColumns("", "total");
+        });
+    }
+
+    @Test
     public void testReorderedMissingAndExtraColumns() throws Exception {
         // The view's columns map by name: a SQL that reorders them, stops producing one, or produces one the view
         // lacks keeps the view valid; the missing column gets NULL and the extra one is ignored.
