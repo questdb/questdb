@@ -2834,6 +2834,64 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * The security context revokes a's insert permission while a's frames wait in the
+     * commit batch. The batch's commit fails, and its NACK carries the frames' schema
+     * feedback as an invalidation, because the client may no longer see a.
+     */
+    @Test
+    public void testRevokedBatchCommitNacksWithSchemaInvalidation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a");
+            final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
+            final AtomicBoolean isRevoked = new AtomicBoolean();
+            final SecurityContext revocableContext = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    if (isRevoked.get()) {
+                        throw CairoException.authorization().put("test: insert revoked");
+                    }
+                }
+            };
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    // Each frame's preparation checks the gate: revoke once a joined the batch.
+                    final QwpIngressProcessorState state = stateRef.get();
+                    if (state != null && state.getCommitBatchTableCount() == 1) {
+                        isRevoked.set(true);
+                    }
+                    return false;
+                }
+            }) {
+                final long aBefore = lastTxn(hookEngine, "a");
+                final ObjList<WebSocketResponse> responses;
+                try (Connection connection = new Connection(
+                        hookEngine,
+                        httpConfig,
+                        revocableContext,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L))
+                )) {
+                    stateRef.set(connection.getState());
+                    connection.getState().setSchemaEnabled(true);
+                    connection.deliverFrames(2);
+                    responses = readResponses(connection.sentFrames());
+                }
+                Assert.assertTrue("test setup: a's permission must have been revoked mid-batch", isRevoked.get());
+                Assert.assertEquals("a commits nothing", aBefore, lastTxn(hookEngine, "a"));
+                Assert.assertEquals("one NACK answers the whole batch", 1, responses.size());
+                final WebSocketResponse nack = responses.getQuick(0);
+                Assert.assertEquals(WebSocketResponse.STATUS_SECURITY_ERROR, nack.getStatus());
+                Assert.assertEquals("the NACK names the batch's first frame", 0, nack.getSequence());
+                TestUtils.assertContains(nack.getErrorMessage(), "test: insert revoked");
+                Assert.assertTrue(nack.isSchemaInvalidation());
+                Assert.assertEquals(0, nack.getSchemaUpdateCount());
+            }
+        });
+    }
+
+    /**
      * Cap 4: three frames of a, then [b, a], whose block of a would reach the cap: b's row goes back out.
      */
     @Test

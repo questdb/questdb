@@ -930,18 +930,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         if (success) {
             if (committed) {
-                pendingAckSchemaFeedback.putAll(deferredSchemaFeedback);
-                pendingAckSchemaFeedback.putAll(messageSchemaFeedback);
-                deferredSchemaFeedback.clear();
+                moveFeedback(deferredSchemaFeedback, pendingAckSchemaFeedback);
+                moveFeedback(messageSchemaFeedback, pendingAckSchemaFeedback);
             } else {
-                deferredSchemaFeedback.putAll(messageSchemaFeedback);
+                moveFeedback(messageSchemaFeedback, deferredSchemaFeedback);
             }
         } else {
-            pendingErrorSchemaFeedback.putAll(deferredSchemaFeedback);
-            pendingErrorSchemaFeedback.putAll(messageSchemaFeedback);
-            deferredSchemaFeedback.clear();
+            moveFeedback(deferredSchemaFeedback, pendingErrorSchemaFeedback);
+            moveFeedback(messageSchemaFeedback, pendingErrorSchemaFeedback);
         }
-        messageSchemaFeedback.clear();
     }
 
     public int computeLocalDurableAckPayloadSize() {
@@ -1486,7 +1483,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         resumeAckSeqTxns.clear();
         resumeAckSeqTxns.putAll(pendingAckSeqTxns);
         pendingAckSeqTxns.clear();
-        pendingAckSchemaFeedback.clear();
+        clearFeedback(pendingAckSchemaFeedback);
     }
 
     /**
@@ -1495,7 +1492,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public void onAckSent(long sequence) {
         lastAckedSequence = sequence;
         pendingAckSeqTxns.clear();
-        pendingAckSchemaFeedback.clear();
+        clearFeedback(pendingAckSchemaFeedback);
     }
 
     /**
@@ -1733,7 +1730,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void onErrorSent() {
         clearDeferredError();
-        pendingErrorSchemaFeedback.clear();
+        clearFeedback(pendingErrorSchemaFeedback);
         sendState = SEND_STATE_READY;
     }
 
@@ -1856,7 +1853,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void onResumeErrorComplete() {
         clearDeferredError();
-        pendingErrorSchemaFeedback.clear();
+        clearFeedback(pendingErrorSchemaFeedback);
         sendState = SEND_STATE_READY;
     }
 
@@ -2226,18 +2223,32 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
-    private void failUncommittedSchemaFeedback() {
-        if (schemaEnabled) {
-            pendingErrorSchemaFeedback.putAll(deferredSchemaFeedback);
-            deferredSchemaFeedback.clear();
+    // clear() and putAll() walk every slot, and a map keeps the slots of the most tables
+    // it ever held, up to qwp.max.tables.per.connection. Most frames and acks carry no
+    // feedback, and these maps never remove entries: an empty one has nothing to move
+    // or clear.
+    private static void clearFeedback(LowerCaseCharSequenceObjHashMap<String> feedback) {
+        if (feedback.size() > 0) {
+            feedback.clear();
         }
     }
 
-    private void promoteUncommittedSchemaFeedback() {
-        if (schemaEnabled) {
-            pendingAckSchemaFeedback.putAll(deferredSchemaFeedback);
-            deferredSchemaFeedback.clear();
+    private static void moveFeedback(
+            LowerCaseCharSequenceObjHashMap<String> from,
+            LowerCaseCharSequenceObjHashMap<String> to
+    ) {
+        if (from.size() > 0) {
+            to.putAll(from);
+            from.clear();
         }
+    }
+
+    private void failUncommittedSchemaFeedback() {
+        moveFeedback(deferredSchemaFeedback, pendingErrorSchemaFeedback);
+    }
+
+    private void promoteUncommittedSchemaFeedback() {
+        moveFeedback(deferredSchemaFeedback, pendingAckSchemaFeedback);
     }
 
     private void captureSchemaFeedback(WalTableUpdateDetails tud) {
