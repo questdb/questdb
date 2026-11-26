@@ -53,10 +53,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
         if (rowCount > 0) {
             double batchSum = Vect.sumDoubleKahan(dataAddr, rowCount);
             if (!Numbers.isFinite(batchSum)) {
-                // Native sumDoubleKahan only filters NaN. A single +/-Inf row poisons the
-                // whole batch sum (sum stays Inf or collapses to NaN when +Inf and -Inf cancel).
-                // computeNext skips both NaN and Inf via Numbers.isFinite; re-sum in Java to
-                // match that semantics for the batched path.
+                // No finite rows, or a sum that overflowed in SIMD lanes: re-sum in row order as computeNext does.
                 batchSum = 0;
                 double bc = 0;
                 boolean hasFinite = false;
@@ -169,7 +166,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             final long destCount = destValue.getLong(valueIndex + 2);
             if (destCount > 0) {
                 final double destSum = destValue.getDouble(valueIndex);
-                final double y = srcSum - srcC;
+                final double y = srcSum - srcC - destValue.getDouble(valueIndex + 1);
                 final double t = destSum + y;
                 destValue.putDouble(valueIndex, t);
                 destValue.putDouble(valueIndex + 1, t - destSum - y);
@@ -202,5 +199,10 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
     }
 }

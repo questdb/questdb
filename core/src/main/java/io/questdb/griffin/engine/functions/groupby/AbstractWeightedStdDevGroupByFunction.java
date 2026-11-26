@@ -273,4 +273,9 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }
