@@ -89,6 +89,11 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            return ColumnType.isTimestampNano(leftTimestampType) && ColumnType.isTimestampMicro(getType());
+        }
+
+        @Override
         public int invertTimestampInterval(Interval io) {
             long lo = io.getLo();
             long hi = io.getHi();

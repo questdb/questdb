@@ -26,6 +26,8 @@ endif ()
 
 if (APPLE)
     set(OS_DARWIN 1)
+    # Apple clang outlines repeated instructions out of hot loops, which made keyed aggregates 2.2x slower.
+    add_compile_options(-mno-outline)
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         set(OS_FREEBSD 1)

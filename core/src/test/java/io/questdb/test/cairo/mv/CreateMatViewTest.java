@@ -2026,6 +2026,30 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewUnevenNanosecondStride() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2, true, "timestamp_ns");
+            final String message = "SAMPLE BY does not support this stride on a microsecond timestamp, use a whole number of microseconds";
+            for (String stride : new String[]{"3n", "999n", "1500n", "2001n"}) {
+                final String sampleBy = "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by " + stride + ") partition by day";
+                assertQuery(sampleBy).noLeakCheck().fails(sampleBy.indexOf(stride), message);
+                final String floor = "create materialized view test as (select timestamp_floor('" + stride + "', ts) ts, avg(v) from " + TABLE1 + ") partition by day";
+                assertQuery(floor).noLeakCheck().fails(floor.indexOf("'" + stride), message);
+            }
+            assertNull(getMatViewDefinition("test"));
+            final String[][] accepted = {{TABLE1, "500n"}, {TABLE1, "2000n"}, {TABLE2, "1500n"}};
+            for (String[] view : accepted) {
+                final String query = "select ts, count() c, sum(v) s from " + view[0] + " sample by " + view[1];
+                execute("create materialized view test as (" + query + ") partition by day");
+                drainQueues();
+                assertSqlCursors(query, "test");
+                execute("drop materialized view test");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithNonBaseTableKeys() throws Exception {
         testCreateMatViewWithNonBaseTableKeys("timestamp");
     }
