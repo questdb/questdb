@@ -1,0 +1,19 @@
+# case_id	input	bits	outcome	value_hex
+bit1_max	z	1	VALUE	1
+bit7_max	zz	7	VALUE	7f
+bit8_max	zz	8	VALUE	ff
+bit15_max	zzz	15	VALUE	7fff
+bit16_max	zzzz	16	VALUE	ffff
+bit31_max	zzzzzzz	31	VALUE	7fffffff
+bit32_max	zzzzzzz	32	VALUE	ffffffff
+bit60_max	zzzzzzzzzzzz	60	VALUE	fffffffffffffff
+uppercase	U	5	VALUE	1a
+zero	0	5	VALUE	0
+whole_prefix_consumed	10	5	VALUE	1
+suffix_after_cap	zzzzzzzzzzzz!	60	VALUE	fffffffffffffff
+unicode_after_cap	zzzzzzzzzzzzé	60	VALUE	fffffffffffffff
+source_null	<NULL>	8	NULL	
+empty	<EMPTY>	8	NULL	
+too_short	zzzzzzzzzzz	60	INVALID	
+invalid_consumed	a	5	INVALID	
+unicode_consumed	é	5	INVALID	

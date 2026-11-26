@@ -1460,6 +1460,19 @@ public class NumbersTest {
         assertEquals(0, Numbers.parseIPv4(new Utf8String("null")));
     }
 
+    @Test
+    public void testParseIPv4DotsOnly() throws NumericException {
+        for (String dots : new String[]{".", "..", "....", "......."}) {
+            try {
+                Numbers.parseIPv4(dots);
+                Assert.fail(dots);
+            } catch (NumericException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "IPv4 address must have 4 octets, found: 1");
+            }
+            assertEquals(Numbers.IPv4_NULL, Numbers.parseIPv4Quiet(dots));
+        }
+    }
+
     @Test(expected = NumericException.class)
     public void testParseIPv4Empty() {
         Numbers.parseIPv4("");

@@ -91,6 +91,15 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // tracker per table directory, and removes it only when the table's WAL is purged,
     // which waits for this entry's writer to go; a rename keeps the directory, and a drop
     // or a re-created table evicts the entry. QWP ingest path only.
+    /**
+     * Writer metadata version this connection last reported in QWP schema
+     * feedback, or {@link Long#MIN_VALUE} before the first report. Lives and
+     * dies with this per-connection TUD, so a reconnect reports again.
+     * <p>
+     * Read and written from the QWP ingest path only, which is single-threaded
+     * per cache, so it needs no synchronisation.
+     */
+    private long reportedSchemaVersion = Long.MIN_VALUE;
     private SeqTxnTracker seqTxnTracker;
 
     public WalTableUpdateDetails(
@@ -157,6 +166,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return qwpSchemaCacheEntry;
     }
 
+    public long getReportedSchemaVersion() {
+        return reportedSchemaVersion;
+    }
+
     /**
      * The table's sequencer txn tracker, fetched from {@code engine} on first use and kept
      * for the life of this entry.
@@ -199,6 +212,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
 
     public void setRenamedAtLookup(boolean isRenamed) {
         isRenamedAtLookup = isRenamed;
+    }
+
+    public void setReportedSchemaVersion(long version) {
+        reportedSchemaVersion = version;
     }
 
     QwpWalAppender.ColumnMapping getQwpColumnMapping() {
