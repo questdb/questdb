@@ -89,7 +89,12 @@ public class FilterOnOutputScanBenchmark {
             // a filter on a constant output named like no column of the table
             "SELECT count() FROM (SELECT k, 'c' z FROM (SELECT * FROM x)) WHERE z = 'c'",
             // a filter on a constant output named like a column, over a sub-query whose first column is a VARCHAR
-            "SELECT count() FROM (SELECT 'c' b FROM (SELECT v, b, c0 FROM x)) WHERE b = 'c'"
+            "SELECT count() FROM (SELECT 'c' b FROM (SELECT v, b, c0 FROM x)) WHERE b = 'c'",
+            // a filter on a constant output named like a column, over a sub-query whose first column is an array
+            "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, b, c0 FROM x)) WHERE b = 'c'",
+            // a filter on a constant output named like a BOOLEAN column, over a sub-query that selects the designated
+            // timestamp
+            "SELECT count() FROM (SELECT 'c' f FROM (SELECT ts, f FROM x)) WHERE f = 'c'"
     })
     public String query;
     private SqlCompiler compiler;
@@ -122,10 +127,10 @@ public class FilterOnOutputScanBenchmark {
                 null
         );
         compiler = engine.getSqlCompiler();
-        final StringBuilder ddl = new StringBuilder("CREATE TABLE x (ts TIMESTAMP, v VARCHAR, k SYMBOL, b LONG");
+        final StringBuilder ddl = new StringBuilder("CREATE TABLE x (ts TIMESTAMP, v VARCHAR, k SYMBOL, b LONG, f BOOLEAN, arr DOUBLE[]");
         final StringBuilder insert = new StringBuilder("INSERT INTO x SELECT timestamp_sequence('2024-01-01', ")
                 .append(86_400_000_000L / ROWS_PER_DAY)
-                .append("), rnd_varchar(8, 24, 0), rnd_symbol(100, 4, 8, 0), rnd_long()");
+                .append("), rnd_varchar(8, 24, 0), rnd_symbol(100, 4, 8, 0), rnd_long(), rnd_boolean(), rnd_double_array(1, 0, 0, 16)");
         for (int i = 0; i < EXTRA_COLUMN_COUNT; i++) {
             ddl.append(", c").append(i).append(" LONG");
             insert.append(", rnd_long()");

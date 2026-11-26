@@ -3260,10 +3260,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         });
     }
 
-    // Asserts the dependencies CREATE VIEW records for the SELECT of a view with 8 and with 16 LATERAL joins,
-    // and the ones ALTER VIEW and CREATE OR REPLACE VIEW record, and that the walks of the optimised SELECT
-    // reach about twice as many models with twice as many joins. A walk of every path to the models reaches
-    // 2^8 times as many with 16 joins as with 8.
     // Asserts that no object the references hold outlives a few garbage collections: nothing, such as a pooled
     // compiler, keeps it.
     private static void assertCollected(ObjList<WeakReference<Object>> references) {
@@ -3280,6 +3276,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         Assert.assertEquals("objects of the propagation that outlive it", 0, retainedCount);
     }
 
+    // Asserts the dependencies CREATE VIEW records for the SELECT of a view with 8 and with 16 LATERAL joins,
+    // and the ones ALTER VIEW and CREATE OR REPLACE VIEW record, and that the walks of the optimised SELECT
+    // reach about twice as many models with twice as many joins. A walk of every path to the models reaches
+    // 2^8 times as many with 16 joins as with 8.
     private static void assertLateralJoinDependencies(
             SqlCompilerImpl compiler,
             IntFunction<String> viewSql,

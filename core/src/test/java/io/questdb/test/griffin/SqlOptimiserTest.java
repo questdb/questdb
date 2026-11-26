@@ -633,11 +633,72 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnOutputThatReadsNoColumnScansNarrowestColumn() throws Exception {
+        // The column a sub-query keeps for its rows is the narrowest one it takes as is, not the first: the scan reads
+        // every value of it, and an array or VARCHAR value can cost many times what a LONG does, most of all in a
+        // parquet partition. A filter on a constant output named like a column of the sub-query once made the scan read
+        // that column, a LONG here, so the first column, an array, would make the query slower than it was.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (arr DOUBLE[], v VARCHAR, s STRING, bin BINARY, l256 LONG256, u UUID, l LONG, k SYMBOL, i INT, bo BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w VALUES
+                    (ARRAY[1.0, 2.0], 'v1', 's1', NULL, NULL, NULL, 1, 'k1', 1, true, '2024-01-01T00:00:00.000000Z'),
+                    (ARRAY[3.0], 'v2', 's2', NULL, NULL, NULL, 2, 'k2', 2, false, '2024-01-02T00:00:00.000000Z'),
+                    (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, '2024-01-03T00:00:00.000000Z')
+                    """);
+            // INT is narrower than LONG, and an array or a VARCHAR comes last
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, v, l, i FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [i] arr, v, l, i from (select [i] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the output is named like the LONG, which the scan reads rather than the VARCHAR before it
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' l FROM (SELECT v, l, l256 FROM w)) WHERE l = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' l] 'c' l from (select-choose [l] v, l, l256 from (select [l] from w timestamp (ts))) where l = 'c')",
+                    3
+            );
+            // the first of the columns that are as narrow: SYMBOL and INT take four bytes each
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT l256, k, i FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [k] l256, k, i from (select [k] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the first column when every column varies in size
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, v, s, bin FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [arr] arr, v, s, bin from (select [arr] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the designated timestamp when the sub-query selects it, even over a narrower column
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT bo, ts FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [ts] bo, ts from (select [ts] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the type of a column the sub-query takes from a sub-query of its own
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, u, l FROM (SELECT arr, v, u, l FROM w))) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [l] arr, u, l from (select-choose [l] arr, v, u, l from (select [l] from w timestamp (ts)))) where b = 'c')",
+                    3
+            );
+            // a column of a type the optimiser has not resolved, which a sub-query under a LIMIT computes, comes after
+            // one of a resolved type
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT x2, l FROM (SELECT i * 2 x2, l FROM w LIMIT 10))) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [l] x2, l from (select-virtual [l] i * 2 x2, l from (select [l] from w timestamp (ts)) limit 10)) where b = 'c')",
+                    3
+            );
+        });
+    }
+
+    @Test
     public void testFilterOnOutputThatReadsNoColumnScansOneColumn() throws Exception {
         // A filter on an output the SELECT computes from no column, such as a constant, stays with that SELECT, which
         // then gives the sub-query under it no column. The sub-query still has to produce its rows, which one of its
-        // columns does: the designated timestamp when it selects it, or else the first column it takes as is. The scan
-        // reads that column alone, and not every column of the table.
+        // columns does: the designated timestamp when it selects it, or else the narrowest column it takes as is, see
+        // testFilterOnOutputThatReadsNoColumnScansNarrowestColumn(). The scan reads that column alone, and not every
+        // column of the table.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a INT, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES (0, 'k1', 1, 1.5), (3_600_000_000, 'k1', 2, 2.5), (0, 'k2', 3, 3.5)");
@@ -693,7 +754,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] k, a, b, ts from (select [ts] from y timestamp (ts))) where b = 'c')",
                     2
             );
-            // the first column the SELECT takes as is, when it does not select the designated timestamp
+            // the narrowest column the SELECT takes as is, the first of k and a, when it does not select the designated
+            // timestamp
             assertOneColumnScan(
                     "SELECT count() FROM (SELECT 'c' b FROM (SELECT a * 2 a2, k, a FROM y)) WHERE b = 'c'",
                     "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual [k] a * 2 a2, k, a from (select [k] from y timestamp (ts))) where b = 'c')",
@@ -735,7 +797,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [x.ts ts] y.k k, x.ts ts from (select [ts, k] from x timestamp (ts) join select [k] from y timestamp (ts) on y.k = x.k)) where b = 'c')",
                     3
             );
-            // the first column the SELECT takes as is, when the table has no designated timestamp
+            // the narrowest column the SELECT takes as is, the first of k and a, when the table has no designated
+            // timestamp
             assertOneColumnScan(
                     "SELECT count() FROM (SELECT 'c' b FROM (SELECT * FROM z)) WHERE b = 'c'",
                     "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [k] k, a, b from (select [k] from z)) where b = 'c')",

@@ -1381,6 +1381,14 @@ public class SqlOptimiser implements Mutable {
         return column.getAst().type == LITERAL ? column.getAst().token : null;
     }
 
+    // The bytes a scan reads for each row of a column of the type, see addRowColumnIfNoTopDownColumns(), and
+    // Integer.MAX_VALUE for a type whose values vary in size, such as VARCHAR, STRING, BINARY or an array, or for a
+    // type the optimiser has not resolved.
+    private static int scannedBytesPerRow(int columnType) {
+        final int bytes = columnType < 0 || ColumnType.isVarSize(columnType) ? 0 : ColumnType.sizeOf(columnType);
+        return bytes > 0 ? bytes : Integer.MAX_VALUE;
+    }
+
     /**
      * Recurse down expression node tree looking for an alias.
      */
@@ -2106,8 +2114,9 @@ public class SqlOptimiser implements Mutable {
 
     // Gives a model that projects and has no top-down columns the one column its rows need, so that it keeps that
     // column rather than every column, see QueryModel.getColumns(): the designated timestamp of its source if it
-    // selects that as is, or else the first column it selects as is. A model that selects no column as is keeps every
-    // column, and so does a model that reads a SAMPLE BY with FILL, see hasSampleByFill().
+    // selects that as is, or else the narrowest column it selects as is, see scannedBytesPerRow(), the first of them
+    // when several are as narrow. A model that selects no column as is keeps every column, and so does a model that
+    // reads a SAMPLE BY with FILL, see hasSampleByFill().
     private void addRowColumnIfNoTopDownColumns(IQueryModel model) {
         if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
                 || model.getTopDownColumns().size() > 0
@@ -2122,6 +2131,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
         QueryColumn rowColumn = null;
+        int rowColumnBytes = Integer.MAX_VALUE;
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
@@ -2134,8 +2144,12 @@ public class SqlOptimiser implements Mutable {
                     rowColumn = column;
                     break;
                 }
-                if (rowColumn == null) {
+                // The scan reads every value of the column it keeps: one of an array or VARCHAR column can cost many
+                // times what a LONG does, most of all in a parquet partition, which the scan decodes.
+                final int bytes = scannedBytesPerRow(getQueryColumnType(model, column));
+                if (rowColumn == null || bytes < rowColumnBytes) {
                     rowColumn = column;
+                    rowColumnBytes = bytes;
                 }
             }
         }
