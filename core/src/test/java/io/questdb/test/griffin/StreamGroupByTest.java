@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -57,10 +58,12 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
@@ -1035,6 +1038,112 @@ public class StreamGroupByTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertEquals(union.indexOf("SPLICE"), e.getPosition());
                 TestUtils.assertEquals("right side of splice join doesn't support random access", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testPartlyReadCursorLeavesShardFree() throws Exception {
+        // With no workers the owners reduce every frame, so the count of frames a query reduces itself because its
+        // shard has no room for them is exact.
+        Assume.assumeTrue(parallel && workers == 0);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
+                    + 200 * frameRows + ")) TIMESTAMP(ts)", context);
+            final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s";
+            context.setStreamGroupByEnabled(false);
+            final String expected = compileAndRead(compiler, context, sql);
+            context.setStreamGroupByEnabled(true);
+            try (
+                    RecordCursorFactory holderFactory = compiler.compile(sql, context).getRecordCursorFactory();
+                    RecordCursor holder = holderFactory.getCursor(context);
+                    RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()
+            ) {
+                // The holder reads ahead, returns its first row and idles, as a client that fetches in batches does.
+                Assert.assertTrue(holder.hasNext());
+                Assert.assertEquals(expected, read(factory, context));
+                Assert.assertEquals(0, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount());
+            }
+        });
+    }
+
+    @Test
+    public void testReducerErrorKeepsItsType() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(" + 50 * frameRows
+                    + ")) TIMESTAMP(ts)", context);
+            assertFilterFailureMatchesHash(compiler, context, 40L * frameRows);
+        });
+    }
+
+    @Test
+    public void testPinnedShardLeavesFramesToOwner() throws Exception {
+        // A partly read parallel filter pins its shard, as it does on master. With no workers to take its frames, the
+        // stream GROUP BY reduces them on its own thread once nothing on the shard is left to steal.
+        Assume.assumeTrue(parallel && workers == 0);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
+        run((engine, compiler, context) -> {
+            final int rowCount = 200 * frameRows;
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(" + rowCount
+                    + ")) TIMESTAMP(ts)", context);
+            final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s";
+            context.setStreamGroupByEnabled(false);
+            final String expected = compileAndRead(compiler, context, sql);
+            context.setStreamGroupByEnabled(true);
+            try (
+                    RecordCursorFactory holderFactory = compiler.compile("SELECT * FROM t WHERE x > 0", context).getRecordCursorFactory();
+                    RecordCursor holder = holderFactory.getCursor(context);
+                    RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()
+            ) {
+                Assert.assertTrue(holder.hasNext());
+                Assert.assertEquals(expected, read(factory, context));
+                Assert.assertTrue(((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount() > 0);
+                // The failing row is the last one, so the owner reduces its frame.
+                assertFilterFailureMatchesHash(compiler, context, rowCount);
+            }
+        });
+    }
+
+    @Test
+    public void testFramesReducedOutOfOrderEmitInOrder() throws Exception {
+        // Whichever thread reduces frame 0 waits until a later frame is reduced. The first dispatch holds two frames,
+        // so the owner or a worker is free to reduce frame 1 meanwhile.
+        Assume.assumeTrue(parallel && workers > 0);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
+                    + 8 * frameRows + ")) TIMESTAMP(ts)", context);
+            final String sql = "SELECT ts, count() c, sum(x) s FROM t WHERE test_latched_counter() SAMPLE BY 3s";
+            TestLatchedCounterFunctionFactory.reset(null);
+            context.setStreamGroupByEnabled(false);
+            final String expected = compileAndRead(compiler, context, sql);
+            context.setStreamGroupByEnabled(true);
+            // The filter takes the callback when it compiles, before the factory it waits on exists.
+            final AtomicReference<AsyncStreamGroupByRecordCursorFactory> groupBy = new AtomicReference<>();
+            final AtomicBoolean isFrameHeld = new AtomicBoolean();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (rec.getLong(1) == 1 && isFrameHeld.compareAndSet(false, true)) {
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                        while (groupBy.get().getReducedFrameCount() == 0) {
+                            if (System.nanoTime() > deadline) {
+                                throw new AssertionError("no later frame was reduced");
+                            }
+                            Os.pause();
+                        }
+                    }
+                    return true;
+                }
+            });
+            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                groupBy.set((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory));
+                Assert.assertEquals(expected, read(factory, context));
+                Assert.assertTrue(isFrameHeld.get());
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
             }
         });
     }
@@ -3708,6 +3817,32 @@ public class StreamGroupByTest extends AbstractCairoTest {
         }
     }
 
+    // A filter that fails on row x = failingRow with a typed error makes the stream GROUP BY fail as the hash GROUP BY
+    // does: with the same type, position and message. The errors are flyweights, so each is read before the other is
+    // built.
+    private static void assertFilterFailureMatchesHash(SqlCompiler compiler, SqlExecutionContext context, long failingRow) throws Exception {
+        final String sql = "SELECT ts, sum(x) s FROM t WHERE test_latched_counter() SAMPLE BY 1s";
+        // The filter takes the callback when it compiles.
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                if (rec.getLong(1) == failingRow) {
+                    throw ImplicitCastException.instance().position(42).put("test failure at x=").put(failingRow);
+                }
+                return true;
+            }
+        });
+        try {
+            context.setStreamGroupByEnabled(false);
+            final String expected = readError(compiler, context, sql);
+            Assert.assertEquals("ImplicitCastException@42: test failure at x=" + failingRow, expected);
+            context.setStreamGroupByEnabled(true);
+            Assert.assertEquals(sql, expected, readError(compiler, context, sql));
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
+    }
+
     private static void assertRows(SqlCompiler compiler, SqlExecutionContext context, String sql, String expected) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
             TestUtils.assertEquals(sql, expected, read(factory, context));
@@ -3777,6 +3912,16 @@ public class StreamGroupByTest extends AbstractCairoTest {
             CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
         }
         return sink.toString();
+    }
+
+    private static String readError(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            read(factory, context);
+        } catch (ImplicitCastException | NumericException | CairoException e) {
+            final FlyweightMessageContainer error = (FlyweightMessageContainer) e;
+            return e.getClass().getSimpleName() + '@' + error.getPosition() + ": " + error.getFlyweightMessage();
+        }
+        throw new AssertionError("expected an error: " + sql);
     }
 
     private void assertFirstFrameCapacityMatchesGroups(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {

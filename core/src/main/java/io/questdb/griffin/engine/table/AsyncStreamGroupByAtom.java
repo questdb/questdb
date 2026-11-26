@@ -66,6 +66,14 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
 
 public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner, GroupByShardMerger {
+    // The span flags of a frame's segments, see frameSegments.
+    private static final long FIRST_KEY_IN_SPAN = 1;
+    private static final long LAST_KEY_IN_SPAN = 2;
+    private static final int SEGMENT_COUNT = 0;
+    private static final int SEGMENT_FIRST_KEY = 1;
+    private static final int SEGMENT_LAST_KEY = 2;
+    private static final int SEGMENT_SPAN_FLAGS = 3;
+    private static final int SEGMENT_STRIDE = 4;
     private final int[] batchColumnIndexes;
     private final StreamGroupByMap collectorMap;
     private final CairoConfiguration configuration;
@@ -74,6 +82,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     private final AsyncFilterContext filterContext;
     // A frame's segments, by frame index modulo the reduce queue capacity, from its reduce to its collection.
     private final ObjList<RecordChain> frameRecords;
+    // A frame's segments as its reduce found them, by frame index modulo the reduce queue capacity: their count, the
+    // first and the last key, and whether those keys went to span maps. The frame's completion mark publishes them.
+    private final long[] frameSegments;
     private final ObjList<DirectLongList> frameValues;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final int initialDispatchLimit;
@@ -129,6 +140,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         this.initialDispatchLimit = initialDispatchLimit;
         this.frameRecords = new ObjList<>(maxDispatchLimit);
         this.frameRecords.setPos(maxDispatchLimit);
+        this.frameSegments = new long[maxDispatchLimit * SEGMENT_STRIDE];
         this.frameValues = new ObjList<>(maxDispatchLimit);
         this.frameValues.setPos(maxDispatchLimit);
         this.keyFunction = keyFunction;
@@ -310,7 +322,15 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         return capacity;
     }
 
-    @TestOnly
+    public long getFirstSegmentKey(int frameIndex) {
+        return frameSegments[getSegmentOffset(frameIndex) + SEGMENT_FIRST_KEY];
+    }
+
+    public long getLastSegmentKey(int frameIndex) {
+        return frameSegments[getSegmentOffset(frameIndex) + SEGMENT_LAST_KEY];
+    }
+
+    // The chain rows of a reduced frame, which its reduce filled through getResultRecords(PageFrameReduceTask).
     public RecordChain getResultRecords(int frameIndex) {
         return frameRecords.getQuick(frameIndex % frameRecords.size());
     }
@@ -326,7 +346,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         return records;
     }
 
-    @TestOnly
+    // The group values of a reduced frame, which its reduce filled through getResultValues(PageFrameReduceTask).
     public DirectLongList getResultValues(int frameIndex) {
         return frameValues.getQuick(frameIndex % frameValues.size());
     }
@@ -340,6 +360,26 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         }
         values.setMemoryTracker(task.getMemoryTracker());
         return values;
+    }
+
+    public long getSegmentCount(int frameIndex) {
+        return frameSegments[getSegmentOffset(frameIndex) + SEGMENT_COUNT];
+    }
+
+    public boolean isFirstSegmentKeyInSpan(int frameIndex) {
+        return (frameSegments[getSegmentOffset(frameIndex) + SEGMENT_SPAN_FLAGS] & FIRST_KEY_IN_SPAN) != 0;
+    }
+
+    public boolean isLastSegmentKeyInSpan(int frameIndex) {
+        return (frameSegments[getSegmentOffset(frameIndex) + SEGMENT_SPAN_FLAGS] & LAST_KEY_IN_SPAN) != 0;
+    }
+
+    public void setSegments(int frameIndex, long count, long firstKey, boolean isFirstKeyInSpan, long lastKey, boolean isLastKeyInSpan) {
+        final int offset = getSegmentOffset(frameIndex);
+        frameSegments[offset + SEGMENT_COUNT] = count;
+        frameSegments[offset + SEGMENT_FIRST_KEY] = firstKey;
+        frameSegments[offset + SEGMENT_LAST_KEY] = lastKey;
+        frameSegments[offset + SEGMENT_SPAN_FLAGS] = (isFirstKeyInSpan ? FIRST_KEY_IN_SPAN : 0) | (isLastKeyInSpan ? LAST_KEY_IN_SPAN : 0);
     }
 
     @TestOnly
@@ -574,6 +614,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     }
 
     // Merges the second half of a bucket's span maps, which the caller sorts largest first, into the first half, a pair per task.
+    private int getSegmentOffset(int frameIndex) {
+        return (frameIndex % frameRecords.size()) * SEGMENT_STRIDE;
+    }
+
     private class SpanMapMerger implements GroupByShardMerger {
         private int half;
         private ObjList<StreamGroupByMap> maps;

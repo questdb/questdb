@@ -179,8 +179,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                     .$(", frameIndex=").$(orderedReduceTask.getFrameIndex())
                     .$(", frameCount=").$(orderedFrameSequence.getFrameCount())
                     .I$();
-            orderedReduceTask.setErrorMsg(th);
-            orderedFrameSequence.cancelOnReducerError(th);
+            orderedFrameSequence.onReducerError(orderedReduceTask, th);
         } else if (unorderedFrameSequence != null) {
             LOG.error()
                     .$("reduce error [error=").$(th)
@@ -308,7 +307,11 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         if (orderedFrameSequence != null) {
             final int shard = orderedFrameSequence.getShard();
             try {
-                orderedSubSeq.done(orderedCursor);
+                try {
+                    orderedFrameSequence.onTaskReduced(orderedReduceTask);
+                } finally {
+                    orderedSubSeq.done(orderedCursor);
+                }
             } finally {
                 orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
                 dispatcher.signalProgress(orderedFrameSequence, shard);
@@ -348,8 +351,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                         .$(", frameIndex=").$(reduceTask.getFrameIndex())
                         .$(", frameCount=").$(frameSequence.getFrameCount())
                         .I$();
-                reduceTask.setErrorMsg(th);
-                frameSequence.cancelOnReducerError(th);
+                frameSequence.onReducerError(reduceTask, th);
             }
             if (th instanceof Error error) {
                 throw error;
@@ -363,7 +365,11 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             } finally {
                 final int shard = frameSequence.getShard();
                 try {
-                    subSeq.done(cursor);
+                    try {
+                        frameSequence.onTaskReduced(reduceTask);
+                    } finally {
+                        subSeq.done(cursor);
+                    }
                 } finally {
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
                     dispatcher.signalProgress(frameSequence, shard);

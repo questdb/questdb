@@ -689,9 +689,13 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         final int shard = frameSequence.getShard();
         try {
             if (frameSequence.isReducerFailureReportable(failure)) {
-                reduceTask.setErrorMsg(failure);
-                frameSequence.cancelOnReducerError(failure);
+                frameSequence.onReducerError(reduceTask, failure);
             }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.onTaskReduced(reduceTask);
         } catch (Throwable cleanupFailure) {
             suppressCleanupFailure(failure, cleanupFailure);
         }
@@ -748,7 +752,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                             .$(frameSequence.getId()).I$();
                 }
                 try {
-                    subSeq.done(cursor);
+                    try {
+                        frameSequence.onTaskReduced(task);
+                    } finally {
+                        subSeq.done(cursor);
+                    }
                 } finally {
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
                     signalProgress(frameSequence, shard);

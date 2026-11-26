@@ -55,7 +55,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -70,7 +69,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final long CHAIN_SAMPLE_BYTES = 128 * 1024;
     private static final int GROUP_SAMPLE_SIZE = 4096;
-    private final SCSequence collectSubSeq = new SCSequence();
     private final int order;
     private final int workerCount;
     private RecordCursorFactory base;
@@ -150,6 +148,12 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         return frameSequence.getDispatchedTaskCount();
     }
 
+    // The frames the owner reduced itself because it could not publish them to its shard.
+    @TestOnly
+    public int getLocallyReducedFrameCount() {
+        return frameSequence.getLocalReduceCount();
+    }
+
     @TestOnly
     public int getReducedFrameCount() {
         return frameSequence.getReducedTaskCount();
@@ -158,7 +162,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        frameSequence.of(base, executionContext, collectSubSeq, order);
+        // Without a collect subscriber the sequence tracks completions, so a consumer that stops reading never holds
+        // the shard's queue. The atom keeps each frame's output until the cursor emits it.
+        frameSequence.of(base, executionContext, null, order);
         try {
             cursor.of(frameSequence, executionContext);
             return cursor;
@@ -251,6 +257,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
                 long segmentCount = 0;
+                long firstSegmentKey = 0;
+                long lastSegmentKey = 0;
+                boolean isFirstSegmentKeyInSpan = false;
+                boolean isLastSegmentKeyInSpan = false;
                 long sampleRows = 0;
                 long sampleStartKey = 0;
                 long sampleStartOffset = 0;
@@ -272,11 +282,11 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     // Span maps merge shard by shard on the workers, while the owner merges chain rows one by one.
                     final boolean isSpan = (isFirst && isLast) || ((isFirst || isLast) && end - start > atom.getSpanRowThreshold());
                     if (isFirst) {
-                        task.setGroupByFirstKey(key);
-                        task.setGroupByFirstKeyInSpan(isSpan);
+                        firstSegmentKey = key;
+                        isFirstSegmentKeyInSpan = isSpan;
                     }
                     if (isLast) {
-                        task.setGroupByLastKeyInSpan(isSpan);
+                        isLastSegmentKeyInSpan = isSpan;
                     }
                     if (isSpan) {
                         atom.acquireSpanMap(slot, key).aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);
@@ -301,9 +311,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                             }
                         }
                     }
-                    task.setGroupByLastKey(key);
+                    lastSegmentKey = key;
                 }
-                task.setGroupBySegmentCount(segmentCount);
+                atom.setSegments(task.getFrameIndex(), segmentCount, firstSegmentKey, isFirstSegmentKeyInSpan, lastSegmentKey, isLastSegmentKeyInSpan);
                 results.toTop();
                 return;
             }

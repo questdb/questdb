@@ -38,7 +38,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.AlwaysWorkStealingStrategy;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
@@ -85,7 +84,6 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private long chainFirstKey;
     private long chainLastKey;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private long cursor = -1;
     private boolean done;
     private MapRecordCursor emitCursor;
     private StreamGroupByMap emitMap;
@@ -96,6 +94,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private PageFrameSequence<AsyncStreamGroupByAtom> frameSequence;
     private boolean hasOpenKey;
     private boolean hasOpenSpans;
+    // The task whose frame the cursor reads, from nextFrame() to collect().
+    private int heldTaskIndex = -1;
     private boolean isChainLastKeyInSpan;
     private boolean isChainPending;
     private boolean isChainRowPending;
@@ -138,7 +138,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 if (!done) {
                     frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                 }
-                collect(true);
+                collect();
                 if (prepared) {
                     frameSequence.await();
                 }
@@ -192,7 +192,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        collect(false);
+        collect();
         frameSequence.toTop();
         frameSequence.getAtom().toTop();
         releaseSpanMaps();
@@ -206,7 +206,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         circuitBreaker = executionContext.getCircuitBreaker();
         prepared = done = false;
         frameIndex = frameLimit = -1;
-        cursor = -1;
+        heldTaskIndex = -1;
         results = null;
         resultRecords = null;
         emitCursor = null;
@@ -371,11 +371,12 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         return true;
     }
 
-    private void collect(boolean force) {
-        if (cursor >= 0) {
-            frameSequence.getAtom().releaseResults(frameSequence.getTask(cursor).getFrameIndex());
-            frameSequence.collect(cursor, force);
-            cursor = -1;
+    // Frees the atom slot of the frame that nextFrame() returned, once the cursor has read its output.
+    private void collect() {
+        if (heldTaskIndex >= 0) {
+            frameSequence.getAtom().releaseResults(frameIndex);
+            frameSequence.collectReduced(heldTaskIndex);
+            heldTaskIndex = -1;
         }
         results = null;
         resultRecords = null;
@@ -468,9 +469,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         if (results != null && resultOffset < results.size()) {
             return true;
         }
-        PageFrameReduceTask task;
-        while ((task = nextTask()) != null) {
-            results = frameSequence.getAtom().getResultValues(task);
+        while (nextFrame() >= 0) {
+            results = frameSequence.getAtom().getResultValues(frameIndex);
             resultOffset = 0;
             if (results.size() > 0) {
                 return true;
@@ -480,18 +480,17 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean nextSegments() {
-        PageFrameReduceTask task;
+        final AsyncStreamGroupByAtom atom = frameSequence.getAtom();
         do {
-            task = nextTask();
-            if (task == null) {
+            if (nextFrame() < 0) {
                 return false;
             }
-        } while (task.getGroupBySegmentCount() == 0);
-        final long first = task.getGroupByFirstKey();
+        } while (atom.getSegmentCount(frameIndex) == 0);
+        final long first = atom.getFirstSegmentKey(frameIndex);
         if (hasOpenKey && openKey != first) {
             closeOpenSegment();
         }
-        if (task.getGroupBySegmentCount() == 1) {
+        if (atom.getSegmentCount(frameIndex) == 1) {
             if (!hasOpenKey) {
                 hasOpenKey = true;
                 openKey = first;
@@ -499,11 +498,11 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             hasOpenSpans = true;
             return true;
         }
-        resultRecords = frameSequence.getAtom().getResultRecords(task);
-        chainLastKey = task.getGroupByLastKey();
-        isChainLastKeyInSpan = task.isGroupByLastKeyInSpan();
+        resultRecords = atom.getResultRecords(frameIndex);
+        chainLastKey = atom.getLastSegmentKey(frameIndex);
+        isChainLastKeyInSpan = atom.isLastSegmentKeyInSpan(frameIndex);
         isChainPending = true;
-        if (task.isGroupByFirstKeyInSpan()) {
+        if (atom.isFirstSegmentKeyInSpan(frameIndex)) {
             // The bucket closed above may still have rows to emit.
             chainFirstKey = first;
             isFirstKeyInSpanPending = true;
@@ -514,7 +513,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 segmentMap.clear(first);
                 isOpenCollected = true;
             }
-            final GroupByFunctionsUpdater updater = frameSequence.getAtom().getUpdater(-1);
+            final GroupByFunctionsUpdater updater = atom.getUpdater(-1);
             while (resultRecords.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final Record chainRecord = resultRecords.getRecord();
@@ -529,8 +528,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         return true;
     }
 
-    private PageFrameReduceTask nextTask() {
-        collect(false);
+    // Returns the next frame in scan order once it is reduced, or -1 after the last one. The frame stays held until
+    // the next call, toTop() or close().
+    private int nextFrame() {
+        collect();
         if (!prepared) {
             frameSequence.prepareForDispatch();
             final AsyncFilterContext filterContext = frameSequence.getAtom().getFilterContext();
@@ -542,33 +543,19 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         while (frameIndex < frameLimit) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            final int dispatchLimit = frameSequence.getAtom().getDispatchLimit(frameIndex + 1);
-            frameSequence.dispatchAhead(dispatchLimit);
-            cursor = frameSequence.next(dispatchLimit, false);
-            if (cursor >= 0) {
-                final PageFrameReduceTask task = frameSequence.getTask(cursor);
-                if (task.hasError()) {
-                    throw task.buildError();
-                }
-                frameIndex = task.getFrameIndex();
-                if (!frameSequence.isActive()) {
-                    if (frameSequence.getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
-                        throw frameSequence.buildInterruptionException();
-                    }
-                    collect(false);
-                    continue;
-                }
-                return task;
-            } else if (cursor == -2) {
-                break;
-            } else {
-                Os.pause();
+            final int taskIndex = frameSequence.nextReduced(frameSequence.getAtom().getDispatchLimit(frameIndex + 1));
+            if (taskIndex >= 0) {
+                heldTaskIndex = taskIndex;
+                // A stream GROUP BY task holds a single frame.
+                frameIndex = frameSequence.getTaskFirstFrame(taskIndex);
+                return frameIndex;
             }
+            Os.pause();
         }
         if (!frameSequence.isActive()) {
             throw frameSequence.buildInterruptionException();
         }
-        return null;
+        return -1;
     }
 
     private void releaseSpanMaps() {

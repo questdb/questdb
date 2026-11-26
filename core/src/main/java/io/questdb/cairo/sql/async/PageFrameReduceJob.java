@@ -251,8 +251,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                                 .$(", frameIndex=").$(task.getFrameIndex())
                                 .$(", frameCount=").$(frameSequence.getFrameCount())
                                 .I$();
-                        task.setErrorMsg(th);
-                        frameSequence.cancelOnReducerError(th);
+                        frameSequence.onReducerError(task, th);
                     }
                 } finally {
                     try {
@@ -274,7 +273,11 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                         } finally {
                             final int shard = frameSequence.getShard();
                             try {
-                                subSeq.done(cursor);
+                                try {
+                                    frameSequence.onTaskReduced(task);
+                                } finally {
+                                    subSeq.done(cursor);
+                                }
                             } finally {
                                 // Reduced counter has to be incremented only when we make
                                 // sure that the task is available for consumers.

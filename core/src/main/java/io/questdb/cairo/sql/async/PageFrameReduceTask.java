@@ -81,11 +81,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
-    private long groupByFirstKey;
-    private boolean groupByFirstKeyInSpan;
-    private long groupByLastKey;
-    private boolean groupByLastKeyInSpan;
-    private long groupBySegmentCount;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
     // and the collecting cursor must not read filteredRows: a filtered TYPE_HORIZON_JOIN reducer
@@ -231,26 +226,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public long getFrameSequenceId() {
         return frameSequenceId;
-    }
-
-    public long getGroupByFirstKey() {
-        return groupByFirstKey;
-    }
-
-    public long getGroupByLastKey() {
-        return groupByLastKey;
-    }
-
-    public long getGroupBySegmentCount() {
-        return groupBySegmentCount;
-    }
-
-    public boolean isGroupByFirstKeyInSpan() {
-        return groupByFirstKeyInSpan;
-    }
-
-    public boolean isGroupByLastKeyInSpan() {
-        return groupByLastKeyInSpan;
     }
 
     /**
@@ -467,26 +442,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         this.filteredRowCount = filteredRowCount;
     }
 
-    public void setGroupByFirstKey(long groupByFirstKey) {
-        this.groupByFirstKey = groupByFirstKey;
-    }
-
-    public void setGroupByFirstKeyInSpan(boolean groupByFirstKeyInSpan) {
-        this.groupByFirstKeyInSpan = groupByFirstKeyInSpan;
-    }
-
-    public void setGroupByLastKey(long groupByLastKey) {
-        this.groupByLastKey = groupByLastKey;
-    }
-
-    public void setGroupByLastKeyInSpan(boolean groupByLastKeyInSpan) {
-        this.groupByLastKeyInSpan = groupByLastKeyInSpan;
-    }
-
-    public void setGroupBySegmentCount(long groupBySegmentCount) {
-        this.groupBySegmentCount = groupBySegmentCount;
-    }
-
     public void setTaskType(byte taskType) {
         this.taskType = taskType;
     }
@@ -496,14 +451,22 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     void collected(boolean forceCollect) {
-        final long taskCount = frameSequence.getTaskCount();
-
         // tasks are published in ascending order, so when we see the last task index
         // we free up the remaining resources
-        if (taskIndex + 1 == taskCount) {
+        if (taskIndex + 1 == frameSequence.getTaskCount()) {
             frameSequence.markAsDone();
         }
+        release(forceCollect);
+    }
 
+    // The owner of a completion-tracked sequence reads none of the task once it is reduced, so the thread that ends
+    // the task releases it before it frees the queue slot.
+    void reduced() {
+        release(false);
+    }
+
+    private void release(boolean forceCollect) {
+        final long taskCount = frameSequence.getTaskCount();
         frameSequence = null;
         frameMemory = null;
 
