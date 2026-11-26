@@ -345,6 +345,15 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Sends a GET of {@code select 1} to {@code /exec} on {@code localhost:port}
+     * that carries the given header lines, each ending with CRLF, and returns
+     * the status line of the response, as {@link #statusLine(int, String)} does.
+     */
+    public static String execStatusLine(int port, String headers) throws Exception {
+        return statusLine(port, "GET /exec?query=select%201 HTTP/1.1\r\n" + headers + "Connection: close\r\n\r\n");
+    }
+
+    /**
      * Wraps {@code payload} in a masked client-to-server frame (FIN set) of the given
      * opcode. Client frames must be masked per RFC 6455.
      */
@@ -524,6 +533,21 @@ public final class QwpWireTestFixtures {
             read += n;
         }
         return payload;
+    }
+
+    /**
+     * Sends the raw {@code request} to {@code localhost:port} on a connection of
+     * its own and returns the status line of the response, or whatever arrived
+     * when the server closed the connection before sending a whole one.
+     */
+    public static String statusLine(int port, String request) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            final String response = readHttpHeaders(socket.getInputStream());
+            final int statusLineEnd = response.indexOf("\r\n");
+            return statusLineEnd < 0 ? response : response.substring(0, statusLineEnd);
+        }
     }
 
     private static String performHandshake(Socket socket, String path, String query, String extraHeaders) throws Exception {

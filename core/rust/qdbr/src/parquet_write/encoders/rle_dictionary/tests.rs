@@ -79,6 +79,18 @@ fn page_i32_min_max(page: &parquet2::page::DataPage) -> (i32, i32) {
     (stats.min_value.unwrap(), stats.max_value.unwrap())
 }
 
+fn page_min_max<T: parquet2::types::NativeType>(page: &parquet2::page::DataPage) -> (T, T) {
+    let arc = page
+        .statistics()
+        .expect("statistics present")
+        .expect("deserialized");
+    let stats = arc
+        .as_any()
+        .downcast_ref::<PrimitiveStatistics<T>>()
+        .expect("PrimitiveStatistics");
+    (stats.min_value.unwrap(), stats.max_value.unwrap())
+}
+
 fn page_v2_header(page: &parquet2::page::DataPage) -> &parquet_format_safe::DataPageHeaderV2 {
     match &page.header {
         DataPageHeader::V2(h) => h,
@@ -133,6 +145,41 @@ fn dict_chunk_stats_int() {
     assert_eq!(datas.len(), 1);
     let (min, max) = page_i32_min_max(datas[0]);
     assert_eq!((min, max), (1, 10_010));
+}
+
+#[test]
+fn dict_float_stats_write_zero_min_negative_and_zero_max_positive() {
+    // Values, then the (min, max) parquet.thrift asks for: a zero min as -0.0 and a zero max
+    // as +0.0. Both zeros are separate dictionary entries.
+    let cases: [(&[f64], (f64, f64)); 3] = [
+        (&[0.0, 1.0, 0.0], (-0.0, 1.0)),
+        (&[-1.0, -0.0], (-1.0, 0.0)),
+        (&[0.0, -0.0], (-0.0, 0.0)),
+    ];
+    for (values, (min, max)) in cases {
+        let col = make_column_with_top("col", ColumnTypeTag::Double, values, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Double);
+        let pages = encode_simd::<f64, false>(&[col], 0, values.len(), &pt, write_options(), None)
+            .expect("encode DOUBLE");
+        let (got_min, got_max) = page_min_max::<f64>(data_pages(&pages)[0]);
+        assert_eq!(
+            (got_min.to_bits(), got_max.to_bits()),
+            (min.to_bits(), max.to_bits()),
+            "DOUBLE {values:?}: got ({got_min:?}, {got_max:?})"
+        );
+
+        let floats: Vec<f32> = values.iter().map(|&v| v as f32).collect();
+        let col = make_column_with_top("col", ColumnTypeTag::Float, &floats, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Float);
+        let pages = encode_simd::<f32, false>(&[col], 0, floats.len(), &pt, write_options(), None)
+            .expect("encode FLOAT");
+        let (got_min, got_max) = page_min_max::<f32>(data_pages(&pages)[0]);
+        assert_eq!(
+            (got_min.to_bits(), got_max.to_bits()),
+            ((min as f32).to_bits(), (max as f32).to_bits()),
+            "FLOAT {floats:?}: got ({got_min:?}, {got_max:?})"
+        );
+    }
 }
 
 #[test]

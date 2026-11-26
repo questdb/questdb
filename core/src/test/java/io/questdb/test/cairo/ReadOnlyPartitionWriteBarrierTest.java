@@ -24,10 +24,14 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -148,6 +152,80 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3InsertDroppedRowsDoNotMoveTableBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            // the written row, then the table's bounds after it
+            final String[][] cases = {
+                    {"2020-01-03T00:30:00.000000Z", "2020-01-01T01:00:00.000000Z", "2020-01-03T01:00:00.000000Z"}, // merge
+                    {"2020-01-03T05:00:00.000000Z", "2020-01-01T01:00:00.000000Z", "2020-01-03T05:00:00.000000Z"}, // append
+                    {"2020-01-04T00:00:00.000000Z", "2020-01-01T01:00:00.000000Z", "2020-01-04T00:00:00.000000Z"}, // new last
+                    {"2019-12-31T00:00:00.000000Z", "2019-12-31T00:00:00.000000Z", "2020-01-03T01:00:00.000000Z"}, // new first
+            };
+            int tableId = 0;
+            for (String[] testCase : cases) {
+                for (boolean isWal : new boolean[]{false, true}) {
+                    for (boolean isMergeAppend : new boolean[]{false, true}) {
+                        for (boolean isParquet : new boolean[]{false, true}) {
+                            final String table = "t_rw_o3_bounds" + tableId++;
+                            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, Boolean.toString(isMergeAppend));
+                            execute("CREATE TABLE " + table + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"));
+                            execute("INSERT INTO " + table + " VALUES (1, '2020-01-01T01:00:00'), (2, '2020-01-02T01:00:00'), (3, '2020-01-03T00:00:00'), (4, '2020-01-03T01:00:00')");
+                            if (isParquet) {
+                                execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+                            }
+                            drainWalQueue();
+                            final TableToken tt = engine.verifyTableName(table);
+                            try (TableWriter writer = getWriter(tt)) {
+                                writer.getTxWriter().setPartitionReadOnly(0, true);
+                                writer.getTxWriter().setPartitionReadOnly(1, true);
+                                writer.bumpPartitionTableVersion();
+                            }
+
+                            execute("INSERT INTO " + table + " VALUES (10, '2020-01-01T00:30:00'), (20, '2020-01-02T00:30:00'), (30, '" + testCase[0] + "')");
+                            drainWalQueue();
+
+                            try (TableReader reader = engine.getReader(tt)) {
+                                Assert.assertEquals(table + ": wrong row count", 5, reader.size());
+                                Assert.assertEquals(table + ": wrong min timestamp", MicrosTimestampDriver.floor(testCase[1]), reader.getTxFile().getMinTimestamp());
+                                Assert.assertEquals(table + ": wrong max timestamp", MicrosTimestampDriver.floor(testCase[2]), reader.getTxFile().getMaxTimestamp());
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testO3InsertReadOnlyLastPartitionKeepsMaxTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_rw_o3_last (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_rw_o3_last VALUES (1, '2020-01-01T00:00:00'), (2, '2020-01-02T00:00:00')");
+            final TableToken tt = engine.verifyTableName("t_rw_o3_last");
+            try (TableWriter writer = getWriter(tt)) {
+                writer.getTxWriter().setPartitionReadOnly(1, true);
+                writer.bumpPartitionTableVersion();
+
+                // the late row starts the O3 batch, which then ends past the max of the read-only partition
+                TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2020-01-01T01:00:00.000000Z"));
+                row.putLong(0, 10L);
+                row.append();
+                row = writer.newRow(MicrosTimestampDriver.floor("2020-01-02T05:00:00.000000Z"));
+                row.putLong(0, 20L);
+                row.append();
+                writer.commit();
+                Assert.assertEquals(MicrosTimestampDriver.floor("2020-01-02T00:00:00.000000Z"), writer.getMaxTimestamp());
+            }
+            assertQuery("t_rw_o3_last").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    x\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    10\t2020-01-01T01:00:00.000000Z
+                    2\t2020-01-02T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testUpdateReadOnlyPartitionRejected() throws Exception {
         // UpdateOperatorImpl rejects updates that target a read-only
         // partition with a clear CairoException.
@@ -199,6 +277,69 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
                         writer.getTxWriter().isPartitionRemote(0));
                 Assert.assertTrue("read_only bit preserved",
                         writer.getTxWriter().isPartitionReadOnly(0));
+            }
+        });
+    }
+
+    @Test
+    public void testWalInOrderDedupInsertReadOnlyLastPartitionSuspends() throws Exception {
+        assertMemoryLeak(() -> {
+            int tableId = 0;
+            for (boolean isMergeAppend : new boolean[]{false, true}) {
+                for (InOrderApply apply : new InOrderApply[]{InOrderApply.SINGLE, InOrderApply.ONE_BY_ONE}) {
+                    final String table = "t_rw_wal_last_dedup" + tableId++;
+                    setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, Boolean.toString(isMergeAppend));
+                    final TableToken tt = createReadOnlyLastPartition(table, "SYMBOL", "TIMESTAMP", false, true);
+                    final long appliedSeqTxnBeforeInsert = engine.getTableSequencerAPI().getTxnTracker(tt).getWriterTxn();
+
+                    insertInOrder(tt, apply);
+
+                    Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt));
+                    Assert.assertEquals(appliedSeqTxnBeforeInsert, engine.getTableSequencerAPI().getTxnTracker(tt).getWriterTxn());
+                    // the first transaction fails on its own row, none waits in LAG for the next one
+                    assertQuery("SELECT errorMessage FROM wal_tables() WHERE name = '" + table + "'").noRandomAccess().noLeakCheck().returns(
+                            "errorMessage\ncannot insert into read-only partition [table=" + table
+                                    + ", partitionTimestamp=2020-01-01T00:00:00.000000Z, rowCount=1]\n");
+                    assertReadOnlyLastPartition(tt, table, "1\n2\n", "2020-01-01T02:00:00.000000Z");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalInOrderInsertReadOnlyLastPartitionDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            int tableId = 0;
+            for (String symbolType : new String[]{"SYMBOL", "SYMBOL INDEX", "SYMBOL INDEX TYPE POSTING INCLUDE (x)"}) {
+                for (String timestampType : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                    for (boolean isParquet : new boolean[]{false, true}) {
+                        for (boolean isMergeAppend : new boolean[]{false, true}) {
+                            for (InOrderApply apply : InOrderApply.values()) {
+                                final String table = "t_rw_wal_last" + tableId++;
+                                setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, Boolean.toString(isMergeAppend));
+                                final TableToken tt = createReadOnlyLastPartition(table, symbolType, timestampType, isParquet, false);
+
+                                insertInOrder(tt, apply);
+
+                                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+                                if (apply == InOrderApply.INTO_NEXT_PARTITION) {
+                                    assertReadOnlyLastPartition(tt, table, "1\n2\n30\n", "2020-01-03T00:00:00.000000Z");
+                                } else {
+                                    assertReadOnlyLastPartition(tt, table, "1\n2\n", "2020-01-01T02:00:00.000000Z");
+                                }
+
+                                execute("INSERT INTO " + table + " VALUES (4, 'a', '2020-01-04T00:00:00')");
+                                drainWalQueue();
+                                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+                                assertQuery("SELECT count() c, sum(x) total FROM " + table + " WHERE s = 'a'")
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns(apply == InOrderApply.INTO_NEXT_PARTITION ? "c\ttotal\n4\t37\n" : "c\ttotal\n3\t7\n");
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -414,5 +555,113 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
                             "1\t2020-01-01T00:00:00.000000Z\n" +
                             "2\t2020-01-03T00:00:00.000000Z\n");
         });
+    }
+
+    @Test
+    public void testWalWritableLastPartitionKeepsFastAppendsNextToReadOnlyPartition() throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t_rw_fast (x LONG, s SYMBOL INDEX TYPE POSTING INCLUDE (x), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // the empty table takes these as one block
+                for (int hour = 1; hour <= 3; hour++) {
+                    execute("INSERT INTO t_rw_fast VALUES (" + hour + ", 'a', '2020-01-01T0" + hour + ":00:00')");
+                }
+                drainWalQueue();
+                execute("INSERT INTO t_rw_fast VALUES (4, 'a', '2020-01-02T00:00:00')");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t_rw_fast");
+                try (TableWriter writer = getWriter(tt)) {
+                    writer.getTxWriter().setPartitionReadOnly(0, true);
+                    writer.bumpPartitionTableVersion();
+                }
+
+                PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
+                for (int hour = 1; hour <= 3; hour++) {
+                    execute("INSERT INTO t_rw_fast VALUES (" + (4 + hour) + ", 'a', '2020-01-02T0" + hour + ":00:00')");
+                }
+                drainWalQueue();
+                Assert.assertTrue("the block left the fast append", PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get() > 0);
+
+                PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
+                engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().setMaxBlockRowCount(1);
+                for (int hour = 4; hour <= 6; hour++) {
+                    execute("INSERT INTO t_rw_fast VALUES (" + (4 + hour) + ", 'a', '2020-01-02T0" + hour + ":00:00')");
+                }
+                drainWalQueue();
+                Assert.assertTrue("the single transaction left the fast append", PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.get() > 0);
+
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+                assertQuery("SELECT count() c, sum(x) total FROM t_rw_fast WHERE s = 'a'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("c\ttotal\n10\t55\n");
+            });
+        } finally {
+            PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
+        }
+    }
+
+    private static TableToken createReadOnlyLastPartition(
+            String table,
+            String symbolType,
+            String timestampType,
+            boolean isParquet,
+            boolean isDedup
+    ) throws Exception {
+        execute("CREATE TABLE " + table + " (x LONG, s " + symbolType + ", ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+                + (isDedup ? " DEDUP UPSERT KEYS(ts)" : ""));
+        execute("INSERT INTO " + table + " VALUES (1, 'a', '2020-01-01T01:00:00'), (2, 'a', '2020-01-01T02:00:00'), (3, 'a', '2020-01-02T00:00:00')");
+        if (isParquet) {
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+        }
+        drainWalQueue();
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableWriter writer = getWriter(tt)) {
+            writer.getTxWriter().setPartitionReadOnly(0, true);
+            writer.bumpPartitionTableVersion();
+        }
+        execute("ALTER TABLE " + table + " DROP PARTITION LIST '2020-01-02'");
+        drainWalQueue();
+        engine.releaseAllWriters();
+        return tt;
+    }
+
+    private static void insertInOrder(TableToken tt, InOrderApply apply) throws Exception {
+        final String insert = "INSERT INTO " + tt.getTableName() + " VALUES ";
+        execute(insert + "(10, 'a', '2020-01-01T03:00:00')");
+        if (apply != InOrderApply.SINGLE) {
+            execute(insert + "(20, 'a', '2020-01-01T04:00:00')");
+            execute(apply == InOrderApply.INTO_NEXT_PARTITION
+                    ? insert + "(30, 'a', '2020-01-03T00:00:00')"
+                    : insert + "(30, 'a', '2020-01-01T05:00:00')");
+        }
+        if (apply == InOrderApply.ONE_BY_ONE) {
+            engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().setMaxBlockRowCount(1);
+        }
+        drainWalQueue();
+    }
+
+    private void assertReadOnlyLastPartition(TableToken tt, String table, String expectedX, String expectedMaxTimestamp) throws Exception {
+        try (TableReader reader = engine.getReader(tt)) {
+            Assert.assertTrue(table, reader.getTxFile().isPartitionReadOnly(0));
+            Assert.assertEquals(table + ": LAG left in the read-only partition", 0, reader.getTxFile().getLagRowCount());
+            Assert.assertEquals(
+                    table + ": wrong max timestamp",
+                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
+                            .fromMicros(MicrosTimestampDriver.floor(expectedMaxTimestamp)),
+                    reader.getTxFile().getMaxTimestamp()
+            );
+        }
+        assertQuery("SELECT x FROM " + table).noLeakCheck().expectSize().returns("x\n" + expectedX);
+    }
+
+    private enum InOrderApply {
+        BLOCK,
+        INTO_NEXT_PARTITION,
+        ONE_BY_ONE,
+        SINGLE
     }
 }

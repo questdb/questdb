@@ -25,13 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.std.Files;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -110,20 +104,6 @@ public class MatViewExternalSourceRejectionTest extends AbstractCairoTest {
                 "ts > (SELECT DISTINCT value FROM read_parquet('ext.parquet'))",
                 "ts > (SELECT value FROM read_parquet('ext.parquet') WHERE value > 0)"
         );
-    }
-
-    private static void encodeTable(CharSequence tableName, CharSequence fileName) {
-        try (
-                Path path = new Path();
-                PartitionDescriptor descriptor = new PartitionDescriptor();
-                TableReader reader = engine.getReader(tableName)
-        ) {
-            path.of(root).concat(fileName);
-            engine.getConfiguration().getFilesFacade().remove(path.$());
-            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-            PartitionEncoder.encode(descriptor, path);
-            Assert.assertTrue(Files.exists(path.$()));
-        }
     }
 
     private void assertRejected(String... predicates) throws Exception {

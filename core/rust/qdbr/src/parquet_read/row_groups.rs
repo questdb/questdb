@@ -4762,8 +4762,10 @@ mod multi_dict_tests {
             assert_eq!(bufs.data_ptr, bufs.data_vec.as_ptr() as *mut u8);
             bufs.data_vec
                 .as_slice()
-                .chunks_exact(4)
-                .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| i32::from_ne_bytes(*c))
                 .collect()
         };
         let int = ColumnTypeTag::Int.into_type();
@@ -4803,8 +4805,10 @@ mod multi_dict_tests {
             assert_eq!(bufs.data_size, bufs.data_vec.len());
             bufs.data_vec
                 .as_slice()
-                .chunks_exact(8)
-                .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| i64::from_ne_bytes(*c))
                 .collect()
         };
         let ts_ns = ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
@@ -4922,7 +4926,7 @@ mod multi_dict_tests {
         };
         type Encode = fn(Option<i64>) -> Vec<u8>;
         let int: Encode = |v| v.map_or(nulls::INT, |v| v as i32).to_le_bytes().to_vec();
-        let long: Encode = |v| v.map_or(nulls::LONG, |v| v).to_le_bytes().to_vec();
+        let long: Encode = |v| v.unwrap_or(nulls::LONG).to_le_bytes().to_vec();
         let float: Encode = |v| v.map_or(f32::NAN, |v| v as f32).to_le_bytes().to_vec();
         let double: Encode = |v| v.map_or(f64::NAN, |v| v as f64).to_le_bytes().to_vec();
         let byte_bytes: Vec<u8> = stored.iter().map(|&v| v as i8 as u8).collect();
@@ -5131,8 +5135,10 @@ mod multi_dict_tests {
         let read = |bufs: &ColumnChunkBuffers| -> Vec<i64> {
             bufs.data_vec
                 .as_slice()
-                .chunks_exact(8)
-                .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| i64::from_ne_bytes(*c))
                 .collect()
         };
 
