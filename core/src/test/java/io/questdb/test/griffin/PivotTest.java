@@ -5090,6 +5090,57 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithIsOrderedAndHaversineEmptyCells() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, g INT, v LONG, ip IPV4, lat DOUBLE, lon DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 0, 5, '1.1.1.5', 10.0, 20.0, 1_000_000), ('a', 0, 3, '1.1.1.3', 11.0, 21.0, 2_000_000),
+                        ('b', 0, 1, '1.1.1.1', 10.0, 20.0, 3_000_000),
+                        ('b', 1, 2, '1.1.1.2', 10.0, 20.0, 4_000_000), ('b', 1, 4, '1.1.1.4', 11.0, 21.0, 5_000_000)
+                    """);
+            assertQuery("SELECT isOrdered(v) o, isOrdered(ip) i, haversine_dist_deg(lat, lon, ts) h FROM t WHERE k = 'a' AND g = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            o\ti\th
+                            true\ttrue\t0.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t PIVOT (
+                        isOrdered(v) o, isOrdered(ip) i, haversine_dist_deg(lat, lon, ts) h
+                        FOR k IN ('a', 'b')
+                        GROUP BY g
+                    ) ORDER BY g
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ta_o\ta_i\ta_h\tb_o\tb_i\tb_h
+                            0\tfalse\tfalse\t155.94336875296912\ttrue\ttrue\t0.0
+                            1\ttrue\ttrue\t0.0\ttrue\ttrue\t155.94336875296912
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (isOrdered(v) FOR k IN ('a', 'b') g IN (0, 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_0\ta_1\tb_0\tb_1
+                            false\ttrue\ttrue\ttrue
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (haversine_dist_deg(lat, lon, ts) FOR k IN ('a', 'b') g IN (0, 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_0\ta_1\tb_0\tb_1
+                            155.94336875296912\t0.0\t0.0\t155.94336875296912
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotWithJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);

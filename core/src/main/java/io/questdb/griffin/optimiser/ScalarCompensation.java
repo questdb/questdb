@@ -489,7 +489,7 @@ final class ScalarCompensation implements Mutable {
         final int index = markedScalars.indexOf(project);
         assert index > -1 : "the scalar projection carries no row marker";
         final ConstantExpression empty;
-        if (Chars.equalsIgnoreCase(name, "isOrdered")) {
+        if (SqlUtil.isTrueOnEmptyAggregate(name)) {
             empty = planNodes.constants.next().ofBoolean(true, position);
         } else {
             assert Chars.equalsIgnoreCase(name, "haversine_dist_deg") : "no value over no rows for " + name;
