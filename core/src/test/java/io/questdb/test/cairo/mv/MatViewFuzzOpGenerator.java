@@ -814,6 +814,12 @@ public final class MatViewFuzzOpGenerator {
         return op;
     }
 
+    // An INSERT of a few base rows, which the test runs right after an accepted ALTER ... AS, outside the draws of
+    // next(), see MatViewFuzzTest.runViewAndBaseOperations().
+    public Op nextInsert(Rnd rnd, Op op) {
+        return insteadInsert(rnd, op);
+    }
+
     // The test ran a view ADD or DROP COLUMN, which waits in the view's WAL.
     public void onColumnChangeIssued() {
         isColumnChangePending = true;

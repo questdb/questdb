@@ -2530,12 +2530,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             }
             case VIEW_SUSPEND_WAL -> execute("ALTER MATERIALIZED VIEW mv SUSPEND WAL");
             case VIEW_RESUME_WAL -> resumeOperationsFuzzViewWal(generator, op, oracle);
-            case RUN_REFRESH_JOB -> {
-                if (isTimerView) {
-                    fireOperationsFuzzTimer();
-                }
-                drainMatViewQueue(engine);
-            }
+            case RUN_REFRESH_JOB -> runOperationsFuzzRefreshJob(isTimerView);
             // under the ADAPTIVE commit mode, a save point of the view's applied transactions comes first, as the WAL
             // apply job takes one now and then, so that the purge deletes the view's txn-log parts below them
             case PURGE_WAL -> MatViewTxnLogParts.purge(engine, engine.verifyTableName("mv"));
@@ -2592,6 +2587,35 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // A run of the refresh job, after a firing of an EVERY view's timer. While the definition event of an ALTER ... AS
+    // waits in the view's WAL, every refresh of the view waits for it, so the job leaves the view's refresh position
+    // where it was: a refresh that ran would compute the base rows committed after the statement with the SQL before
+    // it. The generator draws the job in that window, and the test runs it with base rows to compute right after most
+    // accepted ALTER ... AS statements, see runViewAndBaseOperations().
+    private static void runOperationsFuzzRefreshJob(boolean isTimerView) {
+        final MatViewState state = opsViewState("mv");
+        final boolean isDefinitionPending = state.isDefinitionPending();
+        final long lastRefreshBaseTxn = state.getLastRefreshBaseTxn();
+        if (isDefinitionPending) {
+            final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("base")).getWriterTxn();
+            LOG.info().$("fuzz: refresh job while a definition event waits [lastRefreshBaseTxn=").$(lastRefreshBaseTxn)
+                    .$(", baseWriterTxn=").$(baseWriterTxn)
+                    .I$();
+        }
+        if (isTimerView) {
+            fireOperationsFuzzTimer();
+        }
+        drainMatViewQueue(engine);
+        if (isDefinitionPending) {
+            Assert.assertTrue("the refresh job resolved a definition event", state.isDefinitionPending());
+            Assert.assertEquals(
+                    "a refresh moved the view's refresh position while the definition event of an ALTER ... AS waited in the view's WAL",
+                    lastRefreshBaseTxn,
+                    state.getLastRefreshBaseTxn()
+            );
+        }
+    }
+
     // RESUME, or RESUME SKIP BACKLOG, of the view. Plain RESUME catches up on a tracked backlog and refuses a lost one;
     // either refuses while a FULL refresh is pending.
     private static void runOperationsFuzzResume(MatViewFuzzOracle oracle, String invalidationReason, boolean isSkipBacklog) throws SqlException {
@@ -2620,6 +2644,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             oracle.onResumed();
             if (isSkipBacklog) {
                 oracle.onGapAccepted();
+                // the view skipped the base rows committed while it was invalid, among them rows inserted after the
+                // last ALTER ... AS, whose buckets the view lacks until the RANGE that the gap triggers
+                oracle.onPostAlterRowsUnchecked();
             }
         }
     }
@@ -2699,6 +2726,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 runOperationsFuzzOp(generator, op, sqlColumnsBefore, oracle, timestampType, isTimerView);
             }
             isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
+            if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ALTER_AS && !op.isRefused && rnd.nextInt(4) > 0) {
+                // Most accepted ALTER ... AS statements meet a refresh with base rows to compute while their definition
+                // event waits: rows after the statement, the base's WAL applied alone, and the refresh job, which waits
+                // for the event, see runOperationsFuzzRefreshJob(). The generator's draws seldom bring the three
+                // before the view's WAL applies the event.
+                LOG.info().$("fuzz: step ").$(step).$(" base rows and a refresh after ALTER AS").$();
+                insertOperationsFuzzRows(generator.nextInsert(rnd, op), oracle);
+                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                    walApplyJob.applyWalDirect(engine.verifyTableName("base"), Job.RUNNING_STATUS);
+                }
+                runOperationsFuzzRefreshJob(isTimerView);
+            }
             // the queues drain after half of the operations, and after a third of them while a definition event waits,
             // so that the refresh job meets the event more often
             if (rnd.nextBoolean() && (!generator.isDefinitionPending() || rnd.nextInt(3) == 0)) {
