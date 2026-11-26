@@ -1468,7 +1468,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         final short typeTag = ColumnType.tagOf(function.getType());
         return switch (factory.getEmptyGroupValue()) {
             case NULL -> !function.hasNonNullEmptyValue();
-            case ZERO -> function.hasNonNullEmptyValue() && (typeTag == ColumnType.LONG || typeTag == ColumnType.DOUBLE);
+            case ZERO ->
+                    function.hasNonNullEmptyValue() && (typeTag == ColumnType.LONG || typeTag == ColumnType.DOUBLE);
             case TRUE -> function.hasNonNullEmptyValue() && typeTag == ColumnType.BOOLEAN;
         };
     }
