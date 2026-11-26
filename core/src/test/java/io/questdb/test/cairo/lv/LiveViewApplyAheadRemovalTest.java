@@ -24,12 +24,16 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
 
 /**
  * Base row removals - DROP / DETACH PARTITION, TRUNCATE and TTL eviction - that a live view's
@@ -657,7 +661,8 @@ public class LiveViewApplyAheadRemovalTest extends AbstractLiveViewTest {
                         2026-01-02T00:00:02.000000Z\t12\t23.0
                         2026-01-02T00:00:03.000000Z\t13\t36.0
                         2026-01-04T00:00:01.000000Z\t41\t41.0
-                        """
+                        """,
+                "removed output floor"
         );
     }
 
@@ -666,8 +671,123 @@ public class LiveViewApplyAheadRemovalTest extends AbstractLiveViewTest {
         assertLateInsertThenTtlEvictionKeepsEmittedRows(
                 COUNT_VIEW,
                 EMITTED_COUNT,
-                FROZEN_DAY1_REDERIVED_DAY2 + "2026-01-04T00:00:01.000000Z\t41\t4\n"
+                FROZEN_DAY1_REDERIVED_DAY2 + "2026-01-04T00:00:01.000000Z\t41\t4\n",
+                null
         );
+    }
+
+    @Test
+    public void testLateInsertThenTtlEvictionOfADayWithoutViewRowsKeepsTheSegmentRepair() throws Exception {
+        // The late row is day 1's only row, so the eviction froze no row the view holds: the
+        // repair of day 1's anchor segment, whose floor is the late row, has nothing of the
+        // view's to delete below the trigger, and stands.
+        assertMemoryLeak(() -> {
+            createBaseAndView(TTL_BASE_DDL, "NOW", ANCHOR_VIEW);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                emit(job, """
+                        INSERT INTO base (ts, x) VALUES
+                        ('2026-01-02T00:00:01.000000Z', 11),
+                        ('2026-01-02T00:00:03.000000Z', 13)""", """
+                        ts\tx\trn
+                        2026-01-02T00:00:01.000000Z\t11\t11.0
+                        2026-01-02T00:00:03.000000Z\t13\t24.0
+                        """);
+                execute(TRIGGER);
+                execute(LATE_DAY1_INSERT);
+                insertRowEvictingDay1();
+                refreshAll(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
+            }
+            assertBase(BASE_DAY2 + "2026-01-04T00:00:01.000000Z\t41\n");
+            assertLv("""
+                    ts\tx\trn
+                    2026-01-02T00:00:01.000000Z\t11\t11.0
+                    2026-01-02T00:00:02.000000Z\t12\t23.0
+                    2026-01-02T00:00:03.000000Z\t13\t36.0
+                    2026-01-04T00:00:01.000000Z\t41\t41.0
+                    """);
+            assertViewActive();
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLateInsertThenTtlEvictionOfADayWithoutViewRowsKeepsTheLocalizedRepair() throws Exception {
+        // The view's filter rejected every day-1 row, so the eviction froze no row the view
+        // holds: the localized repair, whose floor is the late day-1 row, has nothing of the
+        // view's to delete below the trigger, and stands.
+        assertMemoryLeak(() -> {
+            createBaseAndView(TTL_BASE_DDL, "NOW", RANGE_VIEW + " WHERE x < 100");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                emit(job, """
+                        INSERT INTO base (ts, x) VALUES
+                        ('2026-01-01T00:00:01.000000Z', 101),
+                        ('2026-01-01T00:00:03.000000Z', 103),
+                        ('2026-01-01T00:00:05.000000Z', 105),
+                        ('2026-01-02T00:00:01.000000Z', 11),
+                        ('2026-01-02T00:00:03.000000Z', 13)""", """
+                        ts\tx\trn
+                        2026-01-02T00:00:01.000000Z\t11\t11.0
+                        2026-01-02T00:00:03.000000Z\t13\t13.0
+                        """);
+                execute(TRIGGER);
+                execute(LATE_DAY1_INSERT);
+                insertRowEvictingDay1();
+                refreshAll(job);
+            }
+            assertBase(BASE_DAY2 + "2026-01-04T00:00:01.000000Z\t41\n");
+            assertLv("""
+                    ts\tx\trn
+                    2026-01-02T00:00:01.000000Z\t11\t11.0
+                    2026-01-02T00:00:02.000000Z\t12\t23.0
+                    2026-01-02T00:00:03.000000Z\t13\t25.0
+                    2026-01-04T00:00:01.000000Z\t41\t41.0
+                    """);
+            assertRepairOutcome("localized rebuild", "");
+            assertViewActive();
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLateInsertThenTtlEvictionKeepsEmittedRowsRange() throws Exception {
+        assertLateInsertThenTtlEvictionKeepsEmittedRows(
+                RANGE_VIEW,
+                RANGE_EMITTED,
+                RANGE_FROZEN_DAY1_REDERIVED_DAY2 + "2026-01-04T00:00:01.000000Z\t41\t41.0\n",
+                "removed output floor"
+        );
+    }
+
+    @Test
+    public void testLateInsertThenTtlEvictionKeepsEmittedRowsResume() throws Exception {
+        // The first commit holds day-1 00:00:01 alone and refreshes on its own, which seals a
+        // root there, under the late day-1 row, so the plan prices a resume from it against
+        // the localized rebuild. A resume replaces from the row above its root, which the
+        // eviction retired with the rest of day 1.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createBaseAndView(TTL_BASE_DDL, "NOW", RANGE_VIEW);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:01.000000Z', 1)");
+                refreshAll(job);
+                emit(job, """
+                        INSERT INTO base (ts, x) VALUES
+                        ('2026-01-01T00:00:03.000000Z', 3),
+                        ('2026-01-01T00:00:05.000000Z', 5),
+                        ('2026-01-02T00:00:01.000000Z', 11),
+                        ('2026-01-02T00:00:03.000000Z', 13)""", RANGE_EMITTED);
+                execute(TRIGGER);
+                execute(LATE_DAY1_INSERT);
+                insertRowEvictingDay1();
+                refreshAll(job);
+            }
+            assertBase(BASE_DAY2 + "2026-01-04T00:00:01.000000Z\t41\n");
+            assertLv(RANGE_FROZEN_DAY1_REDERIVED_DAY2 + "2026-01-04T00:00:01.000000Z\t41\t41.0\n");
+            assertRepairOutcome("boundary rebuild", "removed output floor");
+            assertViewActive();
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     @Test
@@ -776,14 +896,15 @@ public class LiveViewApplyAheadRemovalTest extends AbstractLiveViewTest {
         });
     }
 
-    // A RANGE view is left out. With only DATA commits ahead of the trigger its repair localizes,
-    // and the localized repair's output floor follows the lowest timestamp those commits carry -
-    // the late day-1 row - into the rows the eviction froze. That path is separate from the
-    // unlocalized repair these tests cover, and it loses those rows.
+    // Only DATA commits sit ahead of the trigger, so a RANGE or anchored repair localizes, or
+    // resumes from a root, with its output floor at the late day-1 row the eviction retired. The
+    // plan falls back to the boundary rebuild there, which keeps the rows the eviction froze:
+    // see LiveViewCheckpointRepairPlan#denyRemovedOutputFloor.
     private void assertLateInsertThenTtlEvictionKeepsEmittedRows(
             String viewSql,
             String expectedEmitted,
-            String expectedLv
+            String expectedLv,
+            String expectedDenial
     ) throws Exception {
         assertMemoryLeak(() -> {
             createBaseAndView(TTL_BASE_DDL, "NOW", viewSql);
@@ -796,6 +917,9 @@ public class LiveViewApplyAheadRemovalTest extends AbstractLiveViewTest {
             }
             assertBase(BASE_DAY2 + "2026-01-04T00:00:01.000000Z\t41\n");
             assertLv(expectedLv);
+            if (expectedDenial != null) {
+                assertRepairOutcome("boundary rebuild", expectedDenial);
+            }
             assertViewActive();
             execute("DROP LIVE VIEW lv");
         });
@@ -818,6 +942,16 @@ public class LiveViewApplyAheadRemovalTest extends AbstractLiveViewTest {
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(expected);
+    }
+
+    // The last repair's disposition and the reason it did not localize, empty when nothing
+    // denied it.
+    private void assertRepairOutcome(String expectedDisposition, String expectedDenial) throws Exception {
+        assertQuery("SELECT checkpoint_repair_last_disposition, checkpoint_repair_last_denial FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("checkpoint_repair_last_disposition\tcheckpoint_repair_last_denial\n"
+                        + expectedDisposition + "\t" + expectedDenial + "\n");
     }
 
     private void assertViewActive() throws Exception {

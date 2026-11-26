@@ -1601,6 +1601,47 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACorrectionAtTheViewFloorDeclinesItsSegment() throws Exception {
+        // Only rows under the view's START FROM boundary leave the change set, so a late row
+        // exactly at the boundary stays and its closed segment plans from a floor on the
+        // boundary, which DENIAL_VIEW_START_FLOOR refuses. The segment declines and the union
+        // range rebuilds the view from the boundary.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
+            execute("insert into tx values " + seedThreeDays());
+            drainWalQueue();
+            execute("create live view lv flush every 100ms start from '2026-01-02T00:00:00.000000Z' as "
+                    + "select created_at, account_id, "
+                    + "sum(amount) over w as cumulative_sum, "
+                    + "count(account_id) over w as cumulative_count "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+                final long segmentRepairsBefore = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
+
+                commit(row(2, 0, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the segment at the view's floor must decline",
+                        segmentRepairsBefore,
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
+                );
+                assertQuery("SELECT checkpoint_repair_last_disposition, checkpoint_repair_last_denial FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                checkpoint_repair_last_disposition\tcheckpoint_repair_last_denial
+                                boundary rebuild\tview start floor
+                                """);
+                assertViewMatchesRecompute("2026-01-02T00:00:00.000000Z");
+            }
+        });
+    }
+
+    @Test
     public void testRowsBelowTheViewFloorAreDiscardedRatherThanDenyingTheRepair() throws Exception {
         // The denial the cost model attributes 75.5% of all replay to: a correction reaching
         // below the view's own START FROM boundary clamps the correction floor onto that

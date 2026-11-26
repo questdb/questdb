@@ -57,7 +57,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         // no domain has no null key either, or a keyed scan would run over that one key
         // alone and repair nothing else.
         final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
-        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2, 50);
         loop.addSegment(10, 11, 12, 3, null, true);
 
         loop.removeFirstSegment();
@@ -70,12 +70,27 @@ public class LiveViewCheckpointSegmentLoopTest {
     }
 
     @Test
+    public void testTheTriggerLeavesWithItsChangeSet() {
+        // The residual repair of a parked loop keeps the view's output below the trigger,
+        // so a loop refilled for another change set, or cleared, must not carry the old one.
+        final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
+        Assert.assertEquals(Numbers.LONG_NULL, loop.getTriggerTs());
+        loop.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2, 25);
+        Assert.assertEquals(25, loop.getTriggerTs());
+        loop.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2, Numbers.LONG_NULL);
+        Assert.assertEquals(Numbers.LONG_NULL, loop.getTriggerTs());
+        loop.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2, 25);
+        loop.clear();
+        Assert.assertEquals(Numbers.LONG_NULL, loop.getTriggerTs());
+    }
+
+    @Test
     public void testTheRowCountLeavesWithItsSegment() {
         // The segment in flight is the one its keyed route reads the count of, so the count
         // must not outlive it: not past its repair, not past an empty queue's removal, and not
         // past a refill of the scratch for another change set.
         final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
-        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2, 50);
         loop.addSegment(10, 11, 12, 7, null, false);
         loop.addSegment(20, 21, 22, 8, null, false);
 
@@ -91,7 +106,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         loop.addSegment(30, 31, 32, 9, null, false);
         loop.removeFirstSegment();
         Assert.assertEquals(9, loop.getInFlightRowCount());
-        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2, 50);
         Assert.assertEquals("a refill clears the segment in flight", 0, loop.getInFlightRowCount());
     }
 
@@ -132,7 +147,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         // it does. Everything that walks the pool - the copy across the park, the clear
         // that precedes the next fill - walks all of it.
         final LiveViewCheckpointSegmentLoop parked = new LiveViewCheckpointSegmentLoop();
-        parked.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        parked.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2, 50);
         parked.addSegment(10, 11, 12, 1, null, false);
         parked.addSegment(20, 21, 22, 2, source, false);
         // The first segment is taken off the queue and parks mid-replay.
@@ -156,7 +171,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         // that turn collected. Clearing the source after the add is what a refill looks
         // like from here.
         final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
-        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
+        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2, 50);
         loop.addSegment(10, 11, 12, 1, source, true);
 
         source.clear();
@@ -181,7 +196,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         // worker plans, so a leg that referenced rather than copied would hand the resuming
         // turn a domain something else had since overwritten.
         final LiveViewCheckpointSegmentLoop scratch = new LiveViewCheckpointSegmentLoop();
-        scratch.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2);
+        scratch.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2, 30);
         scratch.addSegment(10, 11, 12, 4, first, false);
         scratch.addSegment(20, 21, 22, 5, second, true);
         scratch.removeFirstSegment();
@@ -189,11 +204,13 @@ public class LiveViewCheckpointSegmentLoopTest {
         final LiveViewCheckpointSegmentLoop session = new LiveViewCheckpointSegmentLoop();
         session.copyFrom(scratch);
         // The worker plans something else entirely against the same scratch.
-        scratch.ofChangeSet(0, 5, 6, 500, 600, Numbers.LONG_NULL, Numbers.LONG_NULL, false, 6);
+        scratch.ofChangeSet(0, 5, 6, 500, 600, Numbers.LONG_NULL, Numbers.LONG_NULL, false, 6, 550);
         scratch.addSegment(90, 91, 92, 9, other, false);
         scratch.removeFirstSegment();
         Assert.assertEquals(9, scratch.getInFlightRowCount());
+        Assert.assertEquals(550, scratch.getTriggerTs());
         scratch.copyFrom(session);
+        Assert.assertEquals("the trigger comes back with the residual it bounds", 30, scratch.getTriggerTs());
 
         Assert.assertEquals(10, scratch.getInFlightSegmentStart());
         Assert.assertEquals("the parked segment's row count comes back with it", 4, scratch.getInFlightRowCount());

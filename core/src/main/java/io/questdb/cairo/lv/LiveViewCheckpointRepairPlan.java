@@ -151,6 +151,13 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      */
     public static final int DENIAL_NO_RUNTIME_FRONTIER = 10;
     /**
+     * The pinned base no longer holds the rows at the output floor {@code R} a localized
+     * rebuild or a resume derived below the trigger, while the view still holds rows above
+     * {@code R} that it emitted from them, so the repair rebuilds from the
+     * {@code START FROM} boundary instead. See {@link #denyRemovedOutputFloor}.
+     */
+    public static final int DENIAL_REMOVED_OUTPUT_FLOOR = 18;
+    /**
      * The rebuild localized and was priced anyway: a resume from the sealed anchor below
      * the change reads no more base rows than {@code [L, H)}, so it ran instead. The one
      * denial that reports a cheaper repair rather than a lost bound.
@@ -277,6 +284,7 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
             case DENIAL_NO_DEPENDENCY -> "no dependency";
             case DENIAL_NO_DURABLE_OUTPUT -> "no durable output";
             case DENIAL_NO_RUNTIME_FRONTIER -> "no runtime frontier";
+            case DENIAL_REMOVED_OUTPUT_FLOOR -> "removed output floor";
             case DENIAL_RESUME_CHEAPER -> "resume cheaper";
             case DENIAL_RESUME_UNPRICED -> "resume unpriced";
             case DENIAL_SCAN_BUDGET -> "scan budget";
@@ -414,6 +422,47 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
         this.resumeScanRows = other.resumeScanRows;
         this.retireLowTs = other.retireLowTs;
         this.triggerSeqTxn = other.triggerSeqTxn;
+    }
+
+    /**
+     * Turns a localized rebuild or a resume into the boundary rebuild, because the pinned base
+     * no longer holds the rows its output floor {@code R} sits on.
+     * <p>
+     * A removal leaves the rows the view emitted for the removed base rows as they were, and
+     * a repair keeps them below the lower of the trigger's own timestamp and the lowest row
+     * it re-derives. {@code R} can sit below both: it follows the apply-ahead range and the
+     * view's durable output maximum as well as the trigger, and a resume takes it from the
+     * row above its anchor. Each of those rows was in the base when the view consumed it, so
+     * a base minimum above {@code R} says a removal retired it since. Over an insert-only
+     * change set that removal is a TTL eviction, which the apply of a DATA commit performs
+     * and neither change-set walk sees. Both dispositions replace their emit range from
+     * {@code R} up, and so would delete the rows the view holds below the lower of the
+     * trigger and the base minimum. The boundary rebuild replaces from the lower of the
+     * trigger and the lowest row its replay emits, which keeps them. The caller decides
+     * whether the view holds such rows; see {@link #isOutputFloorBelow}.
+     * <p>
+     * A boundary rebuild is left as it is.
+     *
+     * @param viewLowerBoundTimestamp START FROM boundary S
+     */
+    public void denyRemovedOutputFloor(long viewLowerBoundTimestamp) {
+        if (!localized && disposition != DISPOSITION_RESUME_FROM_ANCHOR) {
+            return;
+        }
+        denialReason = DENIAL_REMOVED_OUTPUT_FLOOR;
+        disposition = DISPOSITION_BOUNDARY_REBUILD;
+        anchorCheckpointId = Numbers.LONG_NULL;
+        anchorLogicalStateBytes = 0;
+        anchorMaxTs = Numbers.LONG_NULL;
+        outputLowTs = viewLowerBoundTimestamp;
+        replayLowTs = viewLowerBoundTimestamp;
+        localized = false;
+        isReplayStateKeyComplete = false;
+        hasOutputKeyDomain = false;
+        isOutputKeyDomainHeld = false;
+        highBoundTag = HighBoundTag.EOF;
+        highTsExclusive = Numbers.LONG_NULL;
+        rebuildScanRows = Numbers.LONG_NULL;
     }
 
     /**
@@ -662,6 +711,18 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      */
     public boolean isLocalized() {
         return localized;
+    }
+
+    /**
+     * Whether this repair replaces view rows from an output floor {@code R} below
+     * {@code ts}: a localized rebuild or a resume, whose emit range starts at {@code R}. A
+     * boundary rebuild replaces from the lowest row its replay emits and never answers yes.
+     *
+     * @param ts the lower of the pinned base's minimum timestamp and the trigger's own
+     *           timestamp, below which the rows the view holds stay as emitted
+     */
+    public boolean isOutputFloorBelow(long ts) {
+        return (localized || disposition == DISPOSITION_RESUME_FROM_ANCHOR) && outputLowTs < ts;
     }
 
     /**

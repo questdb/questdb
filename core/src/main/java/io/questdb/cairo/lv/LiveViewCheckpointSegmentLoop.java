@@ -97,6 +97,7 @@ public final class LiveViewCheckpointSegmentLoop {
     private long residualMinTs = Numbers.LONG_NULL;
     private long runtimeFrontierTs = Numbers.LONG_NULL;
     private int segmentsRepaired;
+    private long triggerTs = Numbers.LONG_NULL;
     private long viewLowerBoundTimestamp;
 
     /**
@@ -158,6 +159,7 @@ public final class LiveViewCheckpointSegmentLoop {
         residualAdvanceTo = Numbers.LONG_NULL;
         isResidualInsertOnly = false;
         segmentsRepaired = 0;
+        triggerTs = Numbers.LONG_NULL;
     }
 
     public void copyFrom(@NotNull LiveViewCheckpointSegmentLoop src) {
@@ -187,6 +189,7 @@ public final class LiveViewCheckpointSegmentLoop {
         residualAdvanceTo = src.residualAdvanceTo;
         isResidualInsertOnly = src.isResidualInsertOnly;
         segmentsRepaired = src.segmentsRepaired;
+        triggerTs = src.triggerTs;
     }
 
     /**
@@ -296,6 +299,15 @@ public final class LiveViewCheckpointSegmentLoop {
     }
 
     /**
+     * @return the lowest row of the commits the refresh drained, before any commit apply
+     * raced past it, which the residual repair keeps the view's output below when the base
+     * lost the rows under it
+     */
+    public long getTriggerTs() {
+        return triggerTs;
+    }
+
+    /**
      * @return the view's {@code START FROM} boundary, the floor every segment plan clamps
      * to
      */
@@ -343,7 +355,8 @@ public final class LiveViewCheckpointSegmentLoop {
             long residualMinTs,
             long residualMaxTs,
             boolean isResidualInsertOnly,
-            long residualAdvanceTo
+            long residualAdvanceTo,
+            long triggerTs
     ) {
         clear();
         this.isOpen = true;
@@ -356,6 +369,7 @@ public final class LiveViewCheckpointSegmentLoop {
         this.residualMaxTs = residualMaxTs;
         this.isResidualInsertOnly = isResidualInsertOnly;
         this.residualAdvanceTo = residualAdvanceTo;
+        this.triggerTs = triggerTs;
     }
 
     /**

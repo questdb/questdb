@@ -6271,6 +6271,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // corrections unrepaired: the union range is what covers both.
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
+        if (segmentCount > 0) {
+            // The oldest segment's floor may sit below the trigger in a part of the base a TTL
+            // eviction has since retired, together with base rows the view emitted output from
+            // and keeps. A segment replaces from its floor up and would delete that output, so
+            // the union range takes the change set, and its plan falls back to the boundary
+            // rebuild on the same grounds; see LiveViewCheckpointRepairPlan.denyRemovedOutputFloor.
+            // The oldest segment holds the lowest floor of them all, so no other segment sits
+            // below both bounds while it does not.
+            final long keptCeilingTs = Math.min(reader.getMinTimestamp(), lateRowTs);
+            final long oldestFloorTs = segmentChangeSet.getSegmentMinTs(0);
+            if (oldestFloorTs < keptCeilingTs && hasStoredOutputIn(instance, oldestFloorTs, keptCeilingTs)) {
+                return SEGMENT_REPAIR_NOT_TAKEN;
+            }
+        }
         priceKeyedSegmentScans(instance, compiledPlan, reader, segmentCount);
         final boolean isResidualEmpty = segmentChangeSet.getResidualMinTs() == Numbers.LONG_NULL;
         // The open segment's domain, for the resume the caller is about to plan. Complete
@@ -6311,7 +6325,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 segmentChangeSet.getResidualMinTs(),
                 segmentChangeSet.getResidualMaxTs(),
                 insertOnly,
-                advanceTo
+                advanceTo,
+                lateRowTs
         );
         for (int i = 0; i < segmentCount; i++) {
             // Q travels with the segment, for the segments the cost model priced a keyed
@@ -6430,6 +6445,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             keyedReplay.clear();
         }
         return settleRepairedSegment(instance, loop, segmentStart);
+    }
+
+    /**
+     * Whether the live-view table durably holds a row in {@code [lowTs, highTsExclusive)}.
+     * Two prefix counts, each a binary search into at most one partition. A count of -1, which
+     * says a partition is not native and which no live-view table produces, since nothing
+     * converts one, compares like any other count.
+     */
+    private boolean hasStoredOutputIn(LiveViewInstance instance, long lowTs, long highTsExclusive) {
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            return countDurableRowsBelow(lvReader, highTsExclusive) != countDurableRowsBelow(lvReader, lowTs);
+        }
     }
 
     private boolean isColdOpenSegmentKeyedHeadMissAvailable(
@@ -7315,6 +7342,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *                         raced past the trigger, rather than the raw trigger's
      * @param segmentsRepaired how many closed segments the loop published before this, for
      *                         the log
+     * @param triggerTs        the lowest row of the commits the refresh drained, which the
+     *                         residual's own bounds may sit below
      * @return true when the replay parked on the turn budget and owns the pinned reader
      */
     private boolean repairChangeSetResidual(
@@ -7328,9 +7357,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean insertOnly,
             long advanceTo,
             boolean isPreclassified,
-            int segmentsRepaired
+            int segmentsRepaired,
+            long triggerTs
     ) throws SqlException {
-        planO3Repair(instance, windowFactory, residualLateRowTs, residualChangeMaxTs, insertOnly, baseToken, advanceTo, reader, isPreclassified);
+        planO3Repair(instance, windowFactory, residualLateRowTs, residualChangeMaxTs, insertOnly, baseToken, advanceTo, reader, isPreclassified, triggerTs);
         LOG.info().$("live view O3 replay [view=").$(instance.getDefinition().getViewName())
                 .$(", lateRowTs=").$(residualLateRowTs)
                 .$(", segmentsRepaired=").$(segmentsRepaired)
@@ -7455,7 +7485,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 loop.isResidualInsertOnly(),
                 loop.getResidualAdvanceTo(),
                 true,
-                loop.getSegmentsRepaired()
+                loop.getSegmentsRepaired(),
+                loop.getTriggerTs()
         );
     }
 
@@ -7710,7 +7741,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         insertOnly,
                         advanceTo,
                         isPreclassified,
-                        isPreclassified ? segmentChangeSet.getClosedSegmentCount() : 0
+                        isPreclassified ? segmentChangeSet.getClosedSegmentCount() : 0,
+                        lateRowTs
                 );
             }
         } finally {
@@ -7916,6 +7948,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * apply-ahead commits and the base dedup setting. Runtime preservation additionally
      * requires checkpoint-state support. Scan pricing compares checkpoint resume with a
      * localized rebuild; ROWS discovery remains subject to its own scan budget.
+     *
+     * @param triggerTs the lowest row of the commits the refresh drained, which a
+     *                  preclassified residual's {@code lateRowTs} may sit above or below
      */
     private void planO3Repair(
             LiveViewInstance instance,
@@ -7926,7 +7961,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableToken baseToken,
             long advanceTo,
             TableReader reader,
-            boolean isChangeSetPreclassified
+            boolean isChangeSetPreclassified,
+            long triggerTs
     ) throws SqlException {
         final long pinnedSeqTxn = reader.getSeqTxn();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
@@ -8047,6 +8083,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 runtimeFrontierTs,
                 scanCost
         );
+        // A TTL eviction the apply of a DATA commit performed leaves the change set
+        // insert-only, yet it may have retired the rows at a floor below the trigger that a
+        // localized rebuild or a resume replaces from, together with base rows the view
+        // emitted output from and keeps. A change set that is not insert-only removed rows
+        // the walks saw, and its repair propagates what it removed.
+        if (effectiveInsertOnly) {
+            final long keptCeilingTs = Math.min(reader.getMinTimestamp(), triggerTs);
+            if (repairPlan.isOutputFloorBelow(keptCeilingTs)
+                    && hasStoredOutputIn(instance, repairPlan.getOutputLowTs(), keptCeilingTs)) {
+                repairPlan.denyRemovedOutputFloor(viewLowerBoundTimestamp);
+            }
+        }
         // The disposition this repair takes, and the reason it reads more than a
         // localized rebuild would - the runtime counterpart to the static
         // checkpoint_repair_plan, which names only what the SQL admits. A gate above
@@ -9974,7 +10022,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long pinSeqTxn = Math.max(advanceTo, rebuildSnapshotFloor(instance));
         final TableReader reader = waitForApply(baseToken, pinSeqTxn);
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, false, baseToken, pinSeqTxn, reader, false);
+            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, false, baseToken, pinSeqTxn, reader, false, lateRowTs);
             repairRoute.clear();
             decideRepairRoute(
                     instance,

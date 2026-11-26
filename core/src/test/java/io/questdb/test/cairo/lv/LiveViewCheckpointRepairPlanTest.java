@@ -1487,6 +1487,104 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testRemovedOutputFloorLeavesABoundaryRebuildAsItIs() throws SqlException {
+        // A boundary rebuild replaces from the lower of the trigger and the lowest row its
+        // replay emits, whatever the base lost below them, so its floor S is never one a
+        // removal can sit above.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+        Assert.assertFalse(plan.isOutputFloorBelow(Long.MAX_VALUE));
+
+        plan.denyRemovedOutputFloor(1_000);
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NO_DEPENDENCY, plan.getDenialReason());
+        Assert.assertEquals(1_000, plan.getOutputLowTs());
+        Assert.assertEquals(1_000, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testRemovedOutputFloorTurnsALocalizedRebuildIntoTheBoundaryRebuild() throws SqlException {
+        // The shape the denial exists for: the trigger at 800, a row apply raced past it at
+        // 600, so R = 600 sits below the trigger, and L = R - W = 500.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        plan.of(new TestAnchors(), 800, BEGINNING, 7, 10, 600, 100, NO_ROWS, NO_ANCHOR, true, 1_000, 850, 1_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(600, plan.getOutputLowTs());
+        Assert.assertEquals(500, plan.getReplayLowTs());
+        Assert.assertEquals(951, plan.getHighTsExclusive());
+        Assert.assertFalse(plan.isOutputFloorBelow(600));
+        Assert.assertTrue(plan.isOutputFloorBelow(601));
+
+        plan.denyRemovedOutputFloor(BEGINNING);
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD, plan.getDisposition());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_REMOVED_OUTPUT_FLOOR, plan.getDenialReason());
+        Assert.assertEquals("boundary rebuild",
+                LiveViewCheckpointRepairPlan.dispositionName(plan.getDisposition(), plan.getDenialReason()));
+        Assert.assertEquals("removed output floor",
+                LiveViewCheckpointRepairPlan.denialReasonName(plan.getDenialReason()));
+        Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
+        Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
+        Assert.assertTrue(plan.isHighBoundEof());
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getHighTsExclusive());
+        Assert.assertFalse(plan.isRuntimeStatePreserved());
+        Assert.assertFalse(plan.isReplayStateKeyComplete());
+        Assert.assertFalse(plan.isOutputFloorBelow(Long.MAX_VALUE));
+    }
+
+    @Test
+    public void testRemovedOutputFloorTurnsAPricedRowsRebuildIntoTheBoundaryRebuild() throws SqlException {
+        // A ROWS localization with a priced interval and a proven key domain, so every
+        // coordinate the denial has to put back is set. R = 5_000, L = 3_000, H = 7_000.
+        final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        plan.of(new TestAnchors().add(2_000, 11), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, new TestScanCost(1_000, 100_000));
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(5_000, plan.getOutputLowTs());
+        Assert.assertEquals(4_000, plan.getRebuildScanRows());
+        Assert.assertTrue(plan.hasOutputKeyDomain());
+        Assert.assertNotNull(plan.getOutputKeyDomain());
+
+        plan.denyRemovedOutputFloor(1_000);
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_REMOVED_OUTPUT_FLOOR, plan.getDenialReason());
+        Assert.assertEquals(1_000, plan.getOutputLowTs());
+        Assert.assertEquals(1_000, plan.getReplayLowTs());
+        Assert.assertEquals(HighBoundTag.EOF, plan.getHighBoundTag());
+        Assert.assertFalse(plan.hasOutputKeyDomain());
+        Assert.assertNull(plan.getOutputKeyDomain());
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getRebuildScanRows());
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getAnchorCheckpointId());
+    }
+
+    @Test
+    public void testRemovedOutputFloorTurnsAResumeIntoTheBoundaryRebuild() throws SqlException {
+        // A resume from the anchor at 300 reads and replaces from 301, below the trigger at
+        // 500.
+        final TestAnchors anchors = new TestAnchors().add(100, 11).add(300, 12);
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        plan.of(anchors, 500, BEGINNING, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, NOT_INSERT_ONLY, 900, NO_CHANGE_MAX_TS, NO_RUNTIME_FRONTIER, UNPRICED);
+        Assert.assertTrue(plan.isResumeFromAnchor());
+        Assert.assertEquals(301, plan.getOutputLowTs());
+        Assert.assertFalse(plan.isOutputFloorBelow(301));
+        Assert.assertTrue(plan.isOutputFloorBelow(302));
+
+        plan.denyRemovedOutputFloor(BEGINNING);
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD, plan.getDisposition());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_REMOVED_OUTPUT_FLOOR, plan.getDenialReason());
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getAnchorCheckpointId());
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getAnchorMaxTs());
+        Assert.assertEquals(0, plan.getAnchorLogicalStateBytes());
+        Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
+        Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
+        Assert.assertTrue(plan.isHighBoundEof());
+    }
+
+    @Test
     public void testResumeOutputFloorEqualsScanFloorAndNeverLocalizes() throws SqlException {
         // A resume restores the anchor's state instead of warming one up, so every row
         // it reads is a row it emits: L and R coincide. Localization is a property of
