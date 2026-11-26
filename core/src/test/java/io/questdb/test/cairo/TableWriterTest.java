@@ -131,6 +131,48 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testActivityStampCountsRowAfterAbandonedRow() throws Exception {
+        // A row left pending, neither appended nor cancelled, is cancelled by the next newRow(). ILP over UDP leaves
+        // one when a value fails to convert. The row after it must still count as activity in the live partition.
+        assertMemoryLeak(() -> {
+            final long liveDay = MicrosTimestampDriver.floor("2024-01-02");
+            setCurrentMicros(liveDay + 12 * Micros.HOUR_MICROS);
+            try {
+                execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO t VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+                final TableToken token = engine.verifyTableName("t");
+
+                final long commitMicros = liveDay + 13 * Micros.HOUR_MICROS;
+                setCurrentMicros(commitMicros);
+                try (TableWriter writer = getWriter(token)) {
+                    // Older than the max timestamp, so the writer goes O3 for this commit.
+                    appendRow(writer, "2024-01-01T02:00:00.000000Z", 3);
+                    writer.newRow(MicrosTimestampDriver.floor("2024-01-01T03:00:00.000000Z")).putLong(0, 4);
+                    // The commit's only row in the live partition.
+                    appendRow(writer, "2024-01-02T02:00:00.000000Z", 5);
+                    writer.commit();
+                }
+                try (TableReader reader = engine.getReader(token)) {
+                    Assert.assertEquals(commitMicros, reader.getTxFile().getActivePartitionLastCommitMicros());
+                }
+                assertQuery("t")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                x\tts
+                                1\t2024-01-01T01:00:00.000000Z
+                                3\t2024-01-01T02:00:00.000000Z
+                                2\t2024-01-02T01:00:00.000000Z
+                                5\t2024-01-02T02:00:00.000000Z
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnAndOpenWriterByDay() throws Exception {
         testAddColumnAndOpenWriter(PartitionBy.DAY, 1000);
     }

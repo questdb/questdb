@@ -4793,6 +4793,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private Row newRow0(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
+            // The new row's, for rowAppend(). Set ahead of the dispatch, which can cancel a row the caller
+            // left pending (bumpMasterRef()), so rowCancel() must leave it alone.
             pendingRowTimestamp = timestamp;
         }
         switch (rowAction) {
@@ -24327,7 +24329,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        pendingRowTimestamp = Long.MIN_VALUE;
         if (hasO3()) {
             final long o3RowCount = getO3RowCount0();
             if (o3RowCount > 0) {
