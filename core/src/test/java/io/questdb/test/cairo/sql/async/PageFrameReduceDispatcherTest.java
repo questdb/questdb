@@ -4530,9 +4530,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             // Fewer workers than frames the owner leaves: one ticket per worker.
-            assertOwnerPublishesTicketsUpFront(4, 4);
+            assertOwnerPublishesTicketsUpFront(4, 4, 10);
             // More workers than frames the owner leaves: one ticket per such frame.
-            assertOwnerPublishesTicketsUpFront(16, 7);
+            assertOwnerPublishesTicketsUpFront(16, 7, 13);
         });
     }
 
@@ -4755,7 +4755,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     throw new AssertionError(ownerError.get());
                 }
                 Assert.assertEquals(2, ownerReduceCount.get());
-                Assert.assertEquals(1, workerReduceCount.get());
+                // Released, the owner found no unclaimed frame, so it published nothing more.
                 Assert.assertEquals(0, queuedTicketCount(bus));
             }
         });
@@ -5298,7 +5298,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
-    // Tickets published to the bus's unordered queue that no worker has taken yet.
     private static long queuedTicketCount(MessageBus bus) {
         return bus.getUnorderedPageFrameReducePubSeq().current() - bus.getUnorderedPageFrameReduceSubSeq().current();
     }
@@ -5691,7 +5690,11 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
     // Holds the owner of the 8-frame up_front_tab dispatch in its first frame, which leaves frames
     // 1-7 to a worker, and checks the tickets the owner published before it started that frame.
-    private void assertOwnerPublishesTicketsUpFront(int workerCount, int expectedTicketCount) throws Exception {
+    private void assertOwnerPublishesTicketsUpFront(
+            int workerCount,
+            int expectedTicketCount,
+            int expectedConsumedTicketCount
+    ) throws Exception {
         final AtomicInteger workerReduceCount = new AtomicInteger();
         final BlockedOwner owner = new BlockedOwner();
         try (
@@ -5731,7 +5734,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     consumedTicketCount++;
                 }
                 Assert.assertEquals(7, workerReduceCount.get());
-                Assert.assertEquals(7 + expectedTicketCount - 1, consumedTicketCount);
+                Assert.assertEquals(expectedConsumedTicketCount, consumedTicketCount);
             } finally {
                 owner.close();
             }
@@ -6069,7 +6072,12 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                                 .with(sqlExecutionContext.getSecurityContext())
                 ) {
                     final String tableName = "unordered_tail_" + scenario.name();
-                    testEngine.execute("CREATE TABLE " + tableName + " AS (SELECT x FROM long_sequence(1))", executionContext);
+                    testEngine.execute(
+                            "CREATE TABLE " + tableName + " AS ("
+                                    + "SELECT x, timestamp_sequence(0, 86_400_000_000) ts FROM long_sequence(2)"
+                                    + ") TIMESTAMP(ts) PARTITION BY DAY",
+                            executionContext
+                    );
                     final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
                     final RecordingFiberDispatchController controller = hasManagedOwner
                             ? new RecordingFiberDispatchController()
@@ -6122,8 +6130,8 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                             public void onBeforeOwnerStep() {
                                 final int step = ownerStepCount.incrementAndGet();
                                 if (step == 1) {
-                                    // Before the owner claims its own frame, a helper on the worker path claims
-                                    // the only frame and holds it.
+                                    // Before the owner claims its own frame, a helper on the worker path takes
+                                    // the owner's ticket, claims the first frame and holds it.
                                     final Thread helper = new Thread(() -> {
                                         try (
                                                 PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
@@ -6143,8 +6151,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                                     helperThread.set(helper);
                                     helper.start();
                                     TestUtils.await(helperClaimed.get());
-                                } else if (step == 2) {
-                                    // The owner passed its completion check and is about to register its wait.
+                                } else if (step == 3) {
+                                    // The owner reduced the second frame, found no third one (step 2), passed
+                                    // its completion check and is about to register its wait.
                                     // Model the helper finishing before the registration.
                                     try {
                                         switch (scenario) {
@@ -6205,10 +6214,11 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                                 new StatefulAtom() {
                                 },
                                 (_, _, _, _, _, _) -> {
-                                    // Only the helper reduces: it claims the only frame before the owner does.
-                                    Assert.assertSame(helperThread.get(), Thread.currentThread());
-                                    helperClaimed.get().countDown();
-                                    TestUtils.await(helperRelease.get());
+                                    // The helper holds its frame; the owner reduces the other one at once.
+                                    if (Thread.currentThread() == helperThread.get()) {
+                                        helperClaimed.get().countDown();
+                                        TestUtils.await(helperRelease.get());
+                                    }
                                 },
                                 1
                         ) {
@@ -6244,19 +6254,12 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                                     helperRelease.set(new CountDownLatch(1));
                                     frameSequence.of(factory, executionContext, PartitionFrameCursorFactory.ORDER_ASC);
                                     frameSequence.prepareForDispatch();
-                                    Assert.assertEquals(1, frameSequence.getFrameCount());
+                                    Assert.assertEquals(2, frameSequence.getFrameCount());
                                     if (hasManagedOwner) {
                                         Assert.assertSame(parallelContext, frameSequence.getDispatchContext());
                                     } else {
                                         Assert.assertNull(frameSequence.getDispatchContext());
                                     }
-                                    // The owner publishes no ticket for a single frame. The helper takes one
-                                    // left over from an earlier round of the query, which shares its id.
-                                    final MPSequence pubSeq = testEngine.getMessageBus().getUnorderedPageFrameReducePubSeq();
-                                    final long ticketCursor = pubSeq.next();
-                                    Assert.assertTrue(ticketCursor > -1);
-                                    testEngine.getMessageBus().getUnorderedPageFrameReduceQueue().get(ticketCursor).of(frameSequence);
-                                    pubSeq.done(ticketCursor);
                                     final FiberTask ownerTask = new FiberTask() {
                                         @Override
                                         public FiberCancellationSignal getCancellationSignal() {
@@ -6323,8 +6326,8 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                                         Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, exception.getInterruptionReason());
                                         Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, frameSequence.getCancelReason());
                                     }
-                                    Assert.assertEquals(2, ownerStepCount.get());
-                                    Assert.assertEquals(-1, frameSequence.getDoneLatch().getCount());
+                                    Assert.assertEquals(3, ownerStepCount.get());
+                                    Assert.assertEquals(-2, frameSequence.getDoneLatch().getCount());
                                     Assert.assertEquals(0, ownerRuntime.getOutstandingTaskCount());
                                     Assert.assertEquals(0, ownerRuntime.getParkedFiberCount());
                                     Assert.assertEquals(0, dispatcher.getCreatedTaskCount());

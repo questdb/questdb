@@ -100,6 +100,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
+    // Tickets the owner published in the running dispatch. Only the owner thread touches it.
+    private int publishedTicketCount;
     // Set while a round of tasks other than the frames runs; see dispatchRoundAndAwait().
     private UnorderedPageFrameReducer roundReducer;
     // The running round's task sizes, borrowed from the caller for the round.
@@ -239,10 +241,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // until none is left unclaimed. A full queue takes fewer tickets: the owner tops them up
         // before each of its next frames, so the query does not run without helpers to its end.
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        int ticketCount = publishTickets(dispatcher, 0);
+        publishedTicketCount = 0;
+        // A dispatch that needs no ticket asks for the permit too: a quiescing dispatcher cancels it.
+        publishTickets(dispatcher);
         while (isActive() && reduceOwnFrame()) {
-            if (ticketCount < getTicketTarget()) {
-                ticketCount = publishTickets(dispatcher, ticketCount);
+            if (publishedTicketCount < getTicketTarget()) {
+                publishTickets(dispatcher);
             }
         }
 
@@ -547,8 +551,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
     }
 
-    // Tickets the owner wants out: one per unclaimed frame but the one it reduces next, up to one
-    // per worker.
+    // Tickets the dispatch needs: one per unclaimed frame, less the frame the owner reduces next,
+    // and at most one per worker.
     private int getTicketTarget() {
         final long state = claimState.get();
         return Math.min((int) (state >>> 32) - (int) state - 1, ticketLimit);
@@ -574,27 +578,26 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Publishes tickets until the dispatch has {@link #getTicketTarget()} of them, and returns how
-     * many it has. {@code ticketCount} is how many the owner published in the dispatch so far. Holds
-     * the publication permit only while publishing: quiesce waits for it. The owner calls this at
-     * the start of every dispatch, even one that needs no ticket, so that a quiescing dispatcher
-     * cancels the query. A full queue takes fewer tickets; the owner tries again before its next frame.
+     * Publishes the tickets that the dispatch still lacks, see {@link #getTicketTarget()}. Holds the
+     * publication permit only while publishing: quiesce waits for it. A quiescing dispatcher grants
+     * no permit: the owner then publishes nothing, and cancels the query unless it runs on a fiber
+     * of the quiescing runtime. A full queue takes fewer tickets; the owner tries again before its
+     * next frame.
      */
-    private int publishTickets(@Nullable PageFrameReduceDispatcher dispatcher, int ticketCount) {
+    private void publishTickets(@Nullable PageFrameReduceDispatcher dispatcher) {
         if (dispatcher != null && !dispatcher.tryAcquirePublication()) {
             // The dispatcher is quiescing. An owner on a fiber of the quiescing runtime reduces its
             // frames itself, unless the quiesce drain cancels it first; any other owner cancels.
             if (!dispatcher.isCurrentFiberOwned()) {
                 cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
             }
-            return ticketCount;
+            return;
         }
         try {
             final int targetCount = getTicketTarget();
-            while (ticketCount < targetCount && tryPublishTicket()) {
-                ticketCount++;
+            while (publishedTicketCount < targetCount && tryPublishTicket()) {
+                publishedTicketCount++;
             }
-            return ticketCount;
         } finally {
             if (dispatcher != null) {
                 dispatcher.releasePublication();
