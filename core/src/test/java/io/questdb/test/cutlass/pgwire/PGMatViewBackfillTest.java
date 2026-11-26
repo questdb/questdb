@@ -43,11 +43,18 @@ import java.sql.Statement;
  * statement compiles, and the commit-time check covers what a statement compiled before ALTER MATERIALIZED VIEW ...
  * SET REFRESH LIMIT 0 writes after it: a statement pg-wire keeps prepared or serves from its insert cache, and rows an
  * open transaction holds. Either refusal carries the gate's message; the commit-time one has no position in the SQL.
+ * The commit-time check also refuses rows in the view's managed zone, and it runs before any table of the transaction
+ * commits.
  * SQL COPY takes no backfill: its import writes outside the view's WAL, where the commit-time check runs.
  */
 public class PGMatViewBackfillTest extends BasePGTest {
     private static final String GATE_MESSAGE = "cannot modify materialized view [view=price_1h]";
     private static final String INSERT_SQL = "INSERT INTO price_1h VALUES (?, ?, ?)";
+    // base max 12:00, clock 12:30 and REFRESH LIMIT 1 HOUR put the view's boundary bucket floor at 11:00
+    private static final String MANAGED_ZONE_MESSAGE = "backfill row falls in or past the managed zone of materialized view [view=price_1h, "
+            + "maxRowTs=2024-09-10T12:00:00.000000Z, rowBucket=[2024-09-10T12:00:00.000000Z, 2024-09-10T13:00:00.000000Z), "
+            + "boundaryBucketFloor=2024-09-10T11:00:00.000000Z]; backfill bucket end must be at-or-before the boundary bucket floor";
+    private static final String PLAIN_INSERT_SQL = "INSERT INTO %s VALUES (%d, '2024-09-10T00:00:00.000000Z')";
     private static final String REFRESHED_VIEW_ROWS = """
             sym[VARCHAR],price[DOUBLE],ts[TIMESTAMP]
             a,8.0,2024-09-10 10:00:00.0
@@ -83,6 +90,94 @@ public class PGMatViewBackfillTest extends BasePGTest {
             connection.setAutoCommit(true);
             drainWalAndMatViewQueues();
             assertViewRows(connection, REFRESHED_VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testCommitWithManagedZoneRowCommitsNoTable() throws Exception {
+        // COMMIT refuses a transaction whose view rows reach the managed zone before any of its tables commits: the
+        // WAL table that commits before the view (lower table id) and the non-WAL table that commits after it keep no
+        // row, nor does the view keep the transaction's frozen-zone row. A repeated refusal behaves the same, and the
+        // connection then commits a valid transaction into all three tables.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE t_before (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createRefreshedView();
+            execute("CREATE TABLE t_after (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            connection.setAutoCommit(false);
+            for (int i = 0; i < 2; i++) {
+                try (Statement statement = connection.createStatement(); PreparedStatement insert = connection.prepareStatement(INSERT_SQL)) {
+                    Assert.assertEquals(1, statement.executeUpdate(PLAIN_INSERT_SQL.formatted("t_before", 1)));
+                    Assert.assertEquals(1, executeInsert(insert, 1.0, "2024-09-10T09:00:00.000000Z"));
+                    Assert.assertEquals(1, executeInsert(insert, 77.0, "2024-09-10T12:00:00.000000Z"));
+                    Assert.assertEquals(1, statement.executeUpdate(PLAIN_INSERT_SQL.formatted("t_after", 1)));
+                }
+                try {
+                    connection.commit();
+                    Assert.fail("COMMIT must fail on a managed-zone view row");
+                } catch (PSQLException e) {
+                    assertManagedZoneMessage(e);
+                }
+                connection.rollback();
+                drainWalAndMatViewQueues();
+                assertPlainRows(connection, "t_before", "");
+                assertPlainRows(connection, "t_after", "");
+                assertViewRows(connection, REFRESHED_VIEW_ROWS);
+            }
+
+            try (Statement statement = connection.createStatement(); PreparedStatement insert = connection.prepareStatement(INSERT_SQL)) {
+                Assert.assertEquals(1, statement.executeUpdate(PLAIN_INSERT_SQL.formatted("t_before", 2)));
+                Assert.assertEquals(1, executeInsert(insert, 1.0, "2024-09-10T09:00:00.000000Z"));
+                Assert.assertEquals(1, statement.executeUpdate(PLAIN_INSERT_SQL.formatted("t_after", 3)));
+            }
+            connection.commit();
+            connection.setAutoCommit(true);
+            drainWalAndMatViewQueues();
+            assertPlainRows(connection, "t_before", "2,2024-09-10 00:00:00.0\n");
+            assertPlainRows(connection, "t_after", "3,2024-09-10 00:00:00.0\n");
+            assertViewRows(connection, """
+                    sym[VARCHAR],price[DOUBLE],ts[TIMESTAMP]
+                    a,1.0,2024-09-10 09:00:00.0
+                    a,8.0,2024-09-10 10:00:00.0
+                    a,9.0,2024-09-10 12:00:00.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testImplicitCommitWithManagedZoneRowCommitsNoTable() throws Exception {
+        // Without BEGIN, the statements of one multi-statement query commit together at the end of the query, and a
+        // managed-zone view row among them fails that commit before any table commits.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE t_before (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createRefreshedView();
+            execute("CREATE TABLE t_after (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (Statement statement = connection.createStatement()) {
+                try {
+                    statement.execute(PLAIN_INSERT_SQL.formatted("t_before", 1)
+                            + "; INSERT INTO price_1h VALUES ('a', 77.0, '2024-09-10T12:00:00.000000Z'); "
+                            + PLAIN_INSERT_SQL.formatted("t_after", 1));
+                    Assert.fail("the query must fail on a managed-zone view row");
+                } catch (PSQLException e) {
+                    assertManagedZoneMessage(e);
+                }
+                drainWalAndMatViewQueues();
+                assertPlainRows(connection, "t_before", "");
+                assertPlainRows(connection, "t_after", "");
+                assertViewRows(connection, REFRESHED_VIEW_ROWS);
+
+                statement.execute(PLAIN_INSERT_SQL.formatted("t_before", 2)
+                        + "; INSERT INTO price_1h VALUES ('a', 1.0, '2024-09-10T09:00:00.000000Z'); "
+                        + PLAIN_INSERT_SQL.formatted("t_after", 3));
+            }
+            drainWalAndMatViewQueues();
+            assertPlainRows(connection, "t_before", "2,2024-09-10 00:00:00.0\n");
+            assertPlainRows(connection, "t_after", "3,2024-09-10 00:00:00.0\n");
+            assertViewRows(connection, """
+                    sym[VARCHAR],price[DOUBLE],ts[TIMESTAMP]
+                    a,1.0,2024-09-10 09:00:00.0
+                    a,8.0,2024-09-10 10:00:00.0
+                    a,9.0,2024-09-10 12:00:00.0
+                    """);
         });
     }
 
@@ -181,6 +276,19 @@ public class PGMatViewBackfillTest extends BasePGTest {
             Assert.fail("the INSERT must fail once the view has no REFRESH LIMIT [ts=" + ts + ']');
         } catch (PSQLException e) {
             assertGateMessage(e);
+        }
+    }
+
+    private static void assertManagedZoneMessage(PSQLException e) {
+        final ServerErrorMessage serverError = e.getServerErrorMessage();
+        Assert.assertNotNull(serverError);
+        TestUtils.assertEquals(MANAGED_ZONE_MESSAGE, serverError.getMessage());
+    }
+
+    private static void assertPlainRows(Connection connection, String table, String expectedRows) throws Exception {
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT * FROM " + table)) {
+            sink.clear();
+            assertResultSet("x[BIGINT],ts[TIMESTAMP]\n" + expectedRows, sink, rs);
         }
     }
 
