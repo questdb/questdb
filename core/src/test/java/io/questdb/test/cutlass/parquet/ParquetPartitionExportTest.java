@@ -738,7 +738,7 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     public void testDecodedFramesReleasedWhenSourceCloseFailsAfterWriteFailure() throws Exception {
         // The write of the export's file fails, then the source's cursor fails to close. The close failure
         // replaces the write failure in the export log, as it did before the export held decoded frames
-        // (bug-copy-export-close-failure-hides-export-failure.md).
+        // (https://github.com/questdb/questdb/issues/8653).
         assertExportFailsWhenSourceCloseFails(
                 "close_write",
                 "SELECT i, i + 1 ii, db * 2 dd, vc FROM " + readParquet("close_write_source"),
@@ -1842,7 +1842,7 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     // the munmap of the export's source cursor, which the export closes once it has written its file. The
     // read_parquet() factory closes the cursor again when it closes, and unmaps the file. With isWriteFailing,
     // that first write fails too. A table with Parquet partitions fails to close only when its reader fails to
-    // return to the pool, which leaves the reader busy (bug-reader-left-busy-when-return-to-pool-fails.md):
+    // return to the pool, which leaves the reader busy (https://github.com/questdb/questdb/issues/8627):
     // read_parquet() takes the export through the same cleanup.
     private void assertExportFailsWhenSourceCloseFails(
             String fileName,
