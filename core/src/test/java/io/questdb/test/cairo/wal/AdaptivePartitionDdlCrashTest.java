@@ -251,13 +251,19 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 if (history.killed()) {
                     if (operation.movesDirectory() && (history.killsAttach() || operation.detaches())) {
                         params.add(new Object[]{history, operation, OperationPath.WAL});
-                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                        if (operation != Operation.ATTACH_AFTER_RENAME_AWAY_AND_BACK) {
+                            params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                        }
                     }
                     continue;
                 }
                 switch (operation) {
                     // TRUNCATE is not forced through on a suspended table.
                     case TRUNCATE -> params.add(new Object[]{history, operation, OperationPath.WAL});
+                    // A rewind below the ATTACH loses the version it recorded for v, which the WAL replay must record
+                    // again.
+                    case ATTACH_AFTER_RENAME_AWAY_AND_BACK ->
+                            params.add(new Object[]{history, operation, OperationPath.WAL});
                     // These change the table outside the WAL by themselves.
                     case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN ->
                             params.add(new Object[]{history, operation, OperationPath.OWN});
@@ -334,6 +340,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     takeSavePoint(e);
                 }
                 e = apply(e);
+                if (operation == Operation.ATTACH_AFTER_RENAME_AWAY_AND_BACK) {
+                    assertRenamedColumnRows(e);
+                }
                 if (operation == Operation.RESUME_WAL_FROM_TXN) {
                     Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
                 }
@@ -417,6 +426,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         Assert.assertEquals("saved txn", image.getLong(base + (int) TableUtils.TX_OFFSET_TXN_64), image.getLong(32));
         Assert.assertEquals("saved column version", image.getLong(base + (int) TableUtils.TX_OFFSET_COLUMN_VERSION_64), image.getLong(40));
         Assert.assertEquals("saved metadata version", image.getInt(base + (int) TableUtils.TX_OFFSET_STRUCT_VERSION_64), image.getLong(96));
+    }
+
+    // v reads, in the rows the test partition was written with, the values it had when the partition was detached
+    private static void assertRenamedColumnRows(CairoEngine e) throws SqlException {
+        final StringSink sink = new StringSink();
+        e.print("SELECT s, v FROM t WHERE ts >= '" + PARTITION + "' AND ts < '" + PARTITION + "T03:00:00.000000Z'", sink);
+        TestUtils.assertEquals("s\tv\ns11\t11\ns12\t12\ns13\t13\n", sink);
     }
 
     private static void assertResumeFails(CairoEngine e, String resume) throws SqlException {
@@ -875,8 +891,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     private void prepare(CairoEngine e) throws SqlException {
         switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK,
-                 ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING -> {
+            case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS,
+                 ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING -> {
                 alter(e, "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'");
                 final FilesFacade ff = e.getConfiguration().getFilesFacade();
                 final TableToken token = e.verifyTableName("t");
@@ -901,6 +917,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 }
                 if (operation == Operation.ATTACH_WITH_COPY_SETTING) {
                     setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, "true");
+                }
+                if (operation == Operation.ATTACH_AFTER_RENAME_AWAY_AND_BACK) {
+                    // v comes from CREATE TABLE: its files carry no column name txn, and each rename moves its version on
+                    alter(e, "ALTER TABLE t RENAME COLUMN v TO v_away");
+                    alter(e, "ALTER TABLE t RENAME COLUMN v_away TO v");
                 }
                 if (operation == Operation.ATTACH_LIST_SECOND_FAILS) {
                     // Detached, not attachable.
@@ -927,8 +948,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     private String sql(CairoEngine e) throws Exception {
         return switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
-                 ATTACH_WITH_COPY_SETTING -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
+            case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR,
+                 ATTACH_SOFT_LINK,
+                 ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING ->
+                    "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
             case CONVERT_LIST_SECOND_FAILS, CONVERT_PARQUET_NO_OP_SECOND_FAILS ->
                     "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-09'";
@@ -1060,6 +1083,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     }
 
     public enum Operation {
+        // As ATTACH_MOVED_DIR, with v, from CREATE TABLE, renamed away and back while the partition is detached: the
+        // attach records the version of v the partition holds.
+        ATTACH_AFTER_RENAME_AWAY_AND_BACK,
         // The .attachable directory is a copy of .detached, renamed into place by the attach.
         ATTACH_COPIED_DIR,
         // As ATTACH_COPIED_DIR, with the partition directory on another device, so the attach cannot link.
@@ -1105,8 +1131,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
         boolean attaches() {
             return switch (this) {
-                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR,
-                     ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
+                case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE,
+                     ATTACH_LIST_SECOND_FAILS,
+                     ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
                      ATTACH_WITH_COPY_SETTING -> true;
                 default -> false;
             };
@@ -1145,8 +1172,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // The operation moves a partition directory to or from a name the WAL replay needs to find as it was.
         boolean movesDirectory() {
             return switch (this) {
-                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
-                     DETACH, DETACH_AFTER_O3, DETACH_CROSS_DEVICE -> true;
+                case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR,
+                     ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN, DETACH, DETACH_AFTER_O3, DETACH_CROSS_DEVICE -> true;
                 default -> false;
             };
         }
