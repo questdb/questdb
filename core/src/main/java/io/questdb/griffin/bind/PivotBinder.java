@@ -65,6 +65,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.bind.BindContext.sourceAlias;
 import static io.questdb.griffin.bind.TemporalJoinBinder.joinIndex;
@@ -142,6 +143,24 @@ final class PivotBinder implements Mutable {
         };
     }
 
+    /**
+     * The index of the inner aggregate that measure column {@code measureIndex} of {@code measured} reads alone, or -1
+     * for a measure that computes over aggregates and keys.
+     */
+    private static int measureAggregateIndex(LogicalPlan measured, AggregatePlan grouped, int measureIndex) {
+        final int keyCount = grouped.getGroupingExpressions().size();
+        if (measured == grouped) {
+            return measureIndex - keyCount;
+        }
+        if (!(((ProjectPlan) measured).getExpressions().getQuick(measureIndex) instanceof ColumnExpression column)) {
+            return -1;
+        }
+        final int index = grouped.getOutput().getColumnIndexById(column.getColumnId());
+        // SqlParser requires an aggregate in every measure, so a measure that binds to a lone column reads an aggregate.
+        assert index >= keyCount : "a PIVOT measure reads a grouping key alone";
+        return index - keyCount;
+    }
+
     private static CharSequence pivotAggregateName(ExpressionNode aggregate, ObjList<QueryColumn> measures) {
         for (int i = 0, n = measures.size(); i < n; i++) {
             if (measures.getQuick(i).getAst() == aggregate) {
@@ -149,6 +168,12 @@ final class PivotBinder implements Mutable {
             }
         }
         return aggregate.token;
+    }
+
+    private static FunctionExpression windowJoinAggregate(WindowJoinPlan plan, int columnId) {
+        final WindowJoinStep step = windowJoinAggregateStep(plan, columnId);
+        final IntList columnIds = step.getAggregateColumnIds();
+        return step.getAggregates().getQuick(columnIds.indexOf(columnId, 0, columnIds.size()));
     }
 
     private static WindowJoinStep windowJoinAggregateStep(WindowJoinPlan plan, int columnId) {
@@ -311,20 +336,30 @@ final class PivotBinder implements Mutable {
     }
 
     /**
-     * An aggregate over a window function ranks the pivot input first; the measure then
-     * aggregates the window output column.
+     * Binds the condition that selects the rows of {@code measured} in the cell of the current combination of IN
+     * values: each FOR key, which follows the GROUP BY keys, equals its IN value.
      */
+    private BoundExpression bindPivotCellCondition(ObjList<PivotForColumn> forColumns, OutputSchema measured, int groupByCount, int position,
+                                                   SqlExecutionContext executionContext) throws SqlException {
+        BoundExpression condition = null;
+        for (int i = 0, n = forColumns.size(); i < n; i++) {
+            final BoundExpression key = pivotForKey(measured, groupByCount + i, position);
+            final BoundExpression equals = ctx.functionBinder.bindCall("=", position, key, pivotInValue(forColumns, i, measured, executionContext),
+                    measured, executionContext);
+            condition = condition == null ? equals : ctx.functionBinder.bindCall("and", position, condition, equals, measured, executionContext);
+        }
+        return condition;
+    }
+
     /**
      * Binds whether a row of {@code measured} reaches the cell of the current combination of IN values, as an
      * aggregate of the PIVOT: false over a group with no such row, including the one group of a PIVOT without GROUP BY
      * over no rows.
      */
-    private FunctionExpression bindPivotCellPresence(ObjList<PivotForColumn> forColumns, OutputSchema measured, int position,
+    private FunctionExpression bindPivotCellPresence(ObjList<PivotForColumn> forColumns, OutputSchema measured, int groupByCount, int position,
                                                      SqlExecutionContext executionContext) throws SqlException {
-        final ExpressionNode presence = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "bool_or", 0, position);
-        presence.paramCount = 1;
-        presence.rhs = pivotCellCondition(forColumns, position);
-        return (FunctionExpression) ctx.functionBinder.bindGroupByExpression(presence, measured, null, executionContext);
+        final BoundExpression condition = bindPivotCellCondition(forColumns, measured, groupByCount, position, executionContext);
+        return (FunctionExpression) bindUnaryCall("bool_or", position, condition, measured, executionContext);
     }
 
     /**
@@ -332,8 +367,9 @@ final class PivotBinder implements Mutable {
      * {@code output}, the output of the PIVOT: each aggregate reads the value its factory declares over no rows, a
      * GROUP BY key reads the column of the PIVOT, and a FOR key the IN value of the current combination.
      */
-    private BoundExpression bindPivotFiller(QueryColumn measure, QueryModel input, AggregatePlan grouped, OutputSchema output,
-                                            ObjList<PivotForColumn> forColumns, int groupByCount, SqlExecutionContext executionContext) throws SqlException {
+    private BoundExpression bindPivotFiller(QueryColumn measure, QueryModel input, AggregatePlan grouped, @Nullable WindowJoinPlan windowJoin,
+                                            OutputSchema output, ObjList<PivotForColumn> forColumns, int groupByCount,
+                                            SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final ExpressionNode ast = measure.getAst();
         fillerNodes.clear();
@@ -352,7 +388,7 @@ final class PivotBinder implements Mutable {
                 fillerNodes.add(node);
                 fillerValues.add(index < keyCount
                         ? pivotKeySubstitute(index, type, node.position, output, forColumns, groupByCount, executionContext)
-                        : emptyGroupConstant(ctx.functionFactoryCache.getEmptyGroupValue(node.token), type, node.position, output, executionContext));
+                        : emptyGroupConstant(emptyGroupValue(grouped, index - keyCount, windowJoin), type, node.position, output, executionContext));
             }
         } finally {
             scope.substitutionNodes.clear();
@@ -361,6 +397,54 @@ final class PivotBinder implements Mutable {
         return ctx.functionBinder.bindValue(ast, output, null, fillerNodes, fillerValues, executionContext);
     }
 
+    /**
+     * Binds the aggregate of the PIVOT that merges {@code value}, the measure of the current combination of IN values,
+     * from the rows of {@code measured}: a cell matches at most one row, and the merge reads {@code emptyValue} where
+     * none does.
+     */
+    private FunctionExpression bindPivotMeasure(ObjList<PivotForColumn> forColumns, OutputSchema measured, int groupByCount, BoundExpression value,
+                                                FunctionFactory.EmptyGroupValue emptyValue, int position, SqlExecutionContext executionContext) throws SqlException {
+        final int valueType = value.getDataType();
+        final BoundExpression widened = widenNarrowMeasure(value, position, measured, executionContext);
+        final BoundExpression otherwise = switch (emptyValue) {
+            case NULL -> ctx.planNodes.constants.next().ofNull(position);
+            case ZERO -> ctx.planNodes.constants.next().ofInt(0, position);
+            case TRUE -> ctx.planNodes.constants.next().ofBoolean(true, position);
+        };
+        final BoundExpression choice;
+        if (forColumns.size() == 1) {
+            final BoundExpression key = pivotForKey(measured, groupByCount, position);
+            final BoundExpression inValue = pivotInValue(forColumns, 0, measured, executionContext);
+            final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+            arguments.clear();
+            arguments.add(key);
+            arguments.add(inValue);
+            arguments.add(widened);
+            arguments.add(otherwise);
+            choice = ctx.functionBinder.bindCall("switch", position, measured, executionContext);
+        } else {
+            final BoundExpression condition = bindPivotCellCondition(forColumns, measured, groupByCount, position, executionContext);
+            final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+            arguments.clear();
+            arguments.add(condition);
+            arguments.add(widened);
+            arguments.add(otherwise);
+            choice = ctx.functionBinder.bindCall("case", position, measured, executionContext);
+        }
+        // A cell matches at most one row, so sum and bool_and read the zero and the true of an absent cell; BOOLEAN has no
+        // NULL for first_not_null to skip, and bool_or reads an absent cell as false.
+        final CharSequence merge = switch (emptyValue) {
+            case ZERO -> "sum";
+            case TRUE -> "bool_and";
+            case NULL -> ColumnType.isBoolean(valueType) ? "bool_or" : "first_not_null";
+        };
+        return (FunctionExpression) bindUnaryCall(merge, position, choice, measured, executionContext);
+    }
+
+    /**
+     * An aggregate over a window function ranks the pivot input first; the measure then
+     * aggregates the window output column.
+     */
     private LogicalPlan bindPivotWindows(QueryModel pivot, QueryModel windowScope, LogicalPlan source, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         WindowPlan window = null;
@@ -379,6 +463,14 @@ final class PivotBinder implements Mutable {
                     measure.isIncludeIntoWildcard(), measure.getColumnType());
         }
         return window == null ? source : window;
+    }
+
+    private BoundExpression bindUnaryCall(CharSequence name, int position, BoundExpression argument, OutputSchema input,
+                                          SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+        arguments.clear();
+        arguments.add(argument);
+        return ctx.functionBinder.bindCall(name, position, input, executionContext);
     }
 
     private void bindWindowJoinPivotAggregates(QueryModel pivot, WindowJoinPlan plan, ExpressionNode windowAggregates,
@@ -412,38 +504,37 @@ final class PivotBinder implements Mutable {
 
     private FunctionExpression bindWindowJoinPivotMerge(ExpressionNode call, WindowJoinPivotAggregate aggregate, boolean isHidden,
                                                         OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = ctx.scope();
         final int position = call.position;
-        scope.substitutionNodes.clear();
-        scope.substitutionColumns.clear();
-        final ExpressionNode argument;
+        final BoundExpression argument;
         final CharSequence merge;
         switch (aggregate.kind) {
             case AVG -> {
                 merge = "sum";
-                argument = windowJoinPivotPlaceholder(isHidden ? aggregate.count : aggregate.value, position);
+                argument = copyColumn(isHidden ? aggregate.count : aggregate.value, position);
             }
             case FIRST, LAST -> {
                 merge = aggregate.kind == WindowJoinPivotKind.FIRST ? "first_not_null" : "last_not_null";
-                argument = isHidden ? windowJoinPivotNullFlag(aggregate, position) : windowJoinPivotFirstLastValue(aggregate, position);
+                argument = isHidden ? windowJoinPivotNullFlag(aggregate, position, input, executionContext)
+                        : windowJoinPivotFirstLastValue(aggregate, position, input, executionContext);
             }
             default -> {
                 merge = Chars.equalsIgnoreCase(call.token, "count") ? "sum" : call.token;
-                argument = windowJoinPivotPlaceholder(aggregate.value, position);
+                argument = copyColumn(aggregate.value, position);
             }
         }
-        final ExpressionNode node = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, merge, 0, position);
-        node.paramCount = 1;
-        node.rhs = argument;
-        final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(node, input, scope.substitutionNodes, scope.substitutionColumns, executionContext);
+        final BoundExpression bound = bindUnaryCall(merge, position, argument, input, executionContext);
         if (!(bound instanceof FunctionExpression function) || !function.isAggregate()) {
             throw SqlException.$(position, "expected aggregate function [col=").put(call).put(']');
         }
         return function;
     }
 
-    private ExpressionNode castToInt(ExpressionNode value, int position) {
-        return ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, value, ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "int", 0, position), position);
+    private BoundExpression castToInt(BoundExpression value, int position, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        return ctx.functionBinder.bindCall("cast", position, value, ctx.planNodes.types.next().of(ColumnType.INT, position), input, executionContext);
+    }
+
+    private ColumnExpression copyColumn(ColumnExpression column, int position) {
+        return ctx.planNodes.columns.next().of(column.getColumnId(), column.getDataType(), position);
     }
 
     /**
@@ -459,6 +550,17 @@ final class PivotBinder implements Mutable {
                     ? ctx.planNodes.constants.next().ofDouble(0.0, position) : ctx.planNodes.constants.next().ofLong(0, position);
             case TRUE -> ctx.planNodes.constants.next().ofBoolean(true, position);
         };
+    }
+
+    /**
+     * The value aggregate {@code index} of the inner aggregation reports over no rows, as its resolved overload declares
+     * it; over a WINDOW JOIN, the value of the window aggregate it merges, as the merge of a count sums it.
+     */
+    private FunctionFactory.EmptyGroupValue emptyGroupValue(AggregatePlan grouped, int index, @Nullable WindowJoinPlan windowJoin) {
+        if (windowJoin != null) {
+            return windowJoinAggregate(windowJoin, ctx.scope().windowJoinPivotAggregates.getQuick(index).value.getColumnId()).getEmptyGroupValue();
+        }
+        return grouped.getAggregates().getQuick(index).getEmptyGroupValue();
     }
 
     /**
@@ -484,22 +586,6 @@ final class PivotBinder implements Mutable {
         return alias;
     }
 
-    /**
-     * The condition that selects the rows of the cell of the current combination of IN values: each FOR key equals
-     * its IN value.
-     */
-    private ExpressionNode pivotCellCondition(ObjList<PivotForColumn> forColumns, int position) {
-        final BindScope scope = ctx.scope();
-        ExpressionNode condition = null;
-        for (int i = 0, n = forColumns.size(); i < n; i++) {
-            final ExpressionNode equals = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
-                    ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(i)), 0, position),
-                    forColumns.getQuick(i).getValueList().getQuick(scope.pivotIndexes.getQuick(i)), position);
-            condition = condition == null ? equals : ctx.binaryNode(ExpressionNode.OPERATION, "and", 0, condition, equals, 0);
-        }
-        return condition;
-    }
-
     private ExpressionNode pivotFilter(QueryModel pivot) {
         ExpressionNode filter = null;
         final ObjList<PivotForColumn> forColumns = pivot.getPivotForColumns();
@@ -521,6 +607,19 @@ final class PivotBinder implements Mutable {
         return filter;
     }
 
+    private ColumnExpression pivotForKey(OutputSchema measured, int index, int position) {
+        return ctx.planNodes.columns.next().of(measured.getColumnId(index), measured.getColumnType(index), position);
+    }
+
+    /**
+     * Binds the IN value of FOR column {@code forColumn} in the current combination of IN values.
+     */
+    private BoundExpression pivotInValue(ObjList<PivotForColumn> forColumns, int forColumn, OutputSchema input,
+                                         SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode value = forColumns.getQuick(forColumn).getValueList().getQuick(ctx.scope().pivotIndexes.getQuick(forColumn));
+        return ctx.functionBinder.bindValue(value, input, null, executionContext);
+    }
+
     /**
      * The value grouping key {@code index} of the inner aggregate reads in a cell no row reaches, over {@code output}:
      * the column of a GROUP BY key, or the IN value of the current combination for a FOR key, as a value of the key's
@@ -534,53 +633,9 @@ final class PivotBinder implements Mutable {
         if (key < groupByCount) {
             return ctx.planNodes.columns.next().of(output.getColumnId(key), output.getColumnType(key), position);
         }
-        final int forColumn = key - groupByCount;
-        final BoundExpression value = ctx.functionBinder.bindValue(
-                forColumns.getQuick(forColumn).getValueList().getQuick(scope.pivotIndexes.getQuick(forColumn)), output, null, executionContext);
+        final BoundExpression value = pivotInValue(forColumns, key - groupByCount, output, executionContext);
         return value.getDataType() == type ? value
                 : ctx.functionBinder.bindCall("cast", position, value, ctx.planNodes.types.next().of(type, position), output, executionContext);
-    }
-
-    /**
-     * The aggregate of the PIVOT that merges the measure of the current combination of IN values from the rows of
-     * {@code measured}: a cell matches at most one row, and the merge reads {@code emptyValue} where none does.
-     */
-    private ExpressionNode pivotMeasure(ObjList<PivotForColumn> forColumns, ExpressionNode measured, int measuredType,
-                                        FunctionFactory.EmptyGroupValue emptyValue, int position) {
-        final BindScope scope = ctx.scope();
-        final CharSequence emptyToken = switch (emptyValue) {
-            case NULL -> "null";
-            case ZERO -> "0";
-            case TRUE -> "true";
-        };
-        final ExpressionNode otherwise = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, emptyToken, 0, position);
-        final ExpressionNode value = widenNarrowMeasure(measured, measuredType, position);
-        final ExpressionNode choice;
-        if (forColumns.size() == 1) {
-            choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "switch", 0, position);
-            choice.paramCount = 4;
-            choice.args.add(otherwise);
-            choice.args.add(value);
-            choice.args.add(forColumns.getQuick(0).getValueList().getQuick(scope.pivotIndexes.getQuick(0)));
-            choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(0)), 0, position));
-        } else {
-            choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
-            choice.paramCount = 3;
-            choice.args.add(otherwise);
-            choice.args.add(value);
-            choice.args.add(pivotCellCondition(forColumns, position));
-        }
-        // A cell matches at most one row, so sum and bool_and read the zero and the true of an absent cell; BOOLEAN has no
-        // NULL for first_not_null to skip, and bool_or reads an absent cell as false.
-        final CharSequence merge = switch (emptyValue) {
-            case ZERO -> "sum";
-            case TRUE -> "bool_and";
-            case NULL -> ColumnType.isBoolean(measuredType) ? "bool_or" : "first_not_null";
-        };
-        final ExpressionNode aggregate = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, merge, 0, position);
-        aggregate.paramCount = 1;
-        aggregate.rhs = choice;
-        return aggregate;
     }
 
     private int preparePivotValues(QueryModel pivot, SqlExecutionContext executionContext) throws SqlException {
@@ -656,15 +711,6 @@ final class PivotBinder implements Mutable {
         return project;
     }
 
-    private CharSequence quotedPivotName(CharSequence name) {
-        if (Chars.indexOf(name, '.') < 0 || SqlUtil.isQuoteProtectedAlias(name)) {
-            return name;
-        }
-        final CharacterStoreEntry quoted = ctx.characterStore.newEntry();
-        quoted.put('"').put(name).put('"');
-        return quoted.toImmutable();
-    }
-
     private ExpressionNode replacePivotWindows(ExpressionNode node, LogicalPlan source, WindowPlan window, QueryModel pivot, QueryModel windowScope,
                                                SqlExecutionContext executionContext) throws SqlException {
         if (node == null) {
@@ -734,9 +780,10 @@ final class PivotBinder implements Mutable {
      * A PIVOT merge marks an absent measure with NULL, which BYTE and SHORT cannot hold, so such a measure widens
      * to INT, the type the merge returns.
      */
-    private ExpressionNode widenNarrowMeasure(ExpressionNode measure, int type, int position) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BYTE, ColumnType.SHORT -> castToInt(measure, position);
+    private BoundExpression widenNarrowMeasure(BoundExpression measure, int position, OutputSchema input, SqlExecutionContext executionContext)
+            throws SqlException {
+        return switch (ColumnType.tagOf(measure.getDataType())) {
+            case ColumnType.BYTE, ColumnType.SHORT -> castToInt(measure, position, input, executionContext);
             default -> measure;
         };
     }
@@ -752,21 +799,21 @@ final class PivotBinder implements Mutable {
      * The window value a first or last measure merges; a BYTE, SHORT or BOOLEAN value widens to INT, which reads NULL
      * for an empty window.
      */
-    private ExpressionNode windowJoinPivotFirstLastValue(WindowJoinPivotAggregate aggregate, int position) {
-        final ExpressionNode value = windowJoinPivotPlaceholder(aggregate.value, position);
-        final int type = aggregate.value.getDataType();
-        final ExpressionNode widened = aggregate.carriedType != type ? castToInt(value, position) : widenNarrowMeasure(value, type, position);
+    private BoundExpression windowJoinPivotFirstLastValue(WindowJoinPivotAggregate aggregate, int position, OutputSchema input,
+                                                          SqlExecutionContext executionContext) throws SqlException {
+        final ColumnExpression value = copyColumn(aggregate.value, position);
+        final BoundExpression widened = aggregate.carriedType != value.getDataType()
+                ? castToInt(value, position, input, executionContext) : widenNarrowMeasure(value, position, input, executionContext);
         if (widened == value) {
             return value;
         }
-        final ExpressionNode isEmpty = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.count, position),
-                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "0", 0, position), position);
-        final ExpressionNode choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
-        choice.paramCount = 3;
-        choice.args.add(widened);
-        choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position));
-        choice.args.add(isEmpty);
-        return choice;
+        final BoundExpression isEmpty = windowJoinPivotIsEmpty(aggregate, position, input, executionContext);
+        final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+        arguments.clear();
+        arguments.add(isEmpty);
+        arguments.add(ctx.planNodes.constants.next().ofNull(position));
+        arguments.add(widened);
+        return ctx.functionBinder.bindCall("case", position, input, executionContext);
     }
 
     private ExpressionNode windowJoinPivotInputs(QueryModel pivot) throws SqlException {
@@ -798,47 +845,46 @@ final class PivotBinder implements Mutable {
         return aggregates;
     }
 
-    private ExpressionNode windowJoinPivotNullFlag(WindowJoinPivotAggregate aggregate, int position) {
-        final ExpressionNode isEmpty = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.count, position),
-                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "0", 0, position), position);
-        final ExpressionNode isNull = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.value, position),
-                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position), position);
-        final ExpressionNode flag = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
-        flag.paramCount = 5;
-        flag.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "0", 0, position));
-        flag.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "1", 0, position));
-        flag.args.add(isNull);
-        flag.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position));
-        flag.args.add(isEmpty);
-        return flag;
+    private BoundExpression windowJoinPivotIsEmpty(WindowJoinPivotAggregate aggregate, int position, OutputSchema input,
+                                                   SqlExecutionContext executionContext) throws SqlException {
+        return ctx.functionBinder.bindCall("=", position, copyColumn(aggregate.count, position), ctx.planNodes.constants.next().ofInt(0, position),
+                input, executionContext);
     }
 
-    private ExpressionNode windowJoinPivotPlaceholder(ColumnExpression column, int position) {
-        final BindScope scope = ctx.scope();
-        final ExpressionNode placeholder = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, "merged", 0, position);
-        scope.substitutionNodes.add(placeholder);
-        scope.substitutionColumns.add(column);
-        return placeholder;
+    private BoundExpression windowJoinPivotNullFlag(WindowJoinPivotAggregate aggregate, int position, OutputSchema input,
+                                                    SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression isEmpty = windowJoinPivotIsEmpty(aggregate, position, input, executionContext);
+        final BoundExpression isNull = ctx.functionBinder.bindCall("=", position, copyColumn(aggregate.value, position),
+                ctx.planNodes.constants.next().ofNull(position), input, executionContext);
+        final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+        arguments.clear();
+        arguments.add(isEmpty);
+        arguments.add(ctx.planNodes.constants.next().ofNull(position));
+        arguments.add(isNull);
+        arguments.add(ctx.planNodes.constants.next().ofInt(1, position));
+        arguments.add(ctx.planNodes.constants.next().ofInt(0, position));
+        return ctx.functionBinder.bindCall("case", position, input, executionContext);
     }
 
-    private ExpressionNode windowJoinPivotValue(WindowJoinPivotAggregate aggregate, OutputSchema measured, int measureIndex, int position) {
-        final ExpressionNode value = windowJoinPivotPlaceholder(
-                ctx.planNodes.columns.next().of(measured.getColumnId(measureIndex), measured.getColumnType(measureIndex), position), position);
+    private BoundExpression windowJoinPivotValue(WindowJoinPivotAggregate aggregate, OutputSchema measured, int measureIndex, int position,
+                                                 SqlExecutionContext executionContext) throws SqlException {
+        final ColumnExpression value = pivotForKey(measured, measureIndex, position);
         switch (aggregate.kind) {
             case AVG -> {
-                return ctx.binaryNode(ExpressionNode.OPERATION, "/", 0, value, windowJoinPivotPlaceholder(aggregate.merged, position), position);
+                return ctx.functionBinder.bindCall("/", position, value, copyColumn(aggregate.merged, position), measured, executionContext);
             }
             case FIRST, LAST -> {
-                final ExpressionNode isNull = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, windowJoinPivotPlaceholder(aggregate.merged, position),
-                        ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "1", 0, position), position);
-                final ExpressionNode choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
-                choice.paramCount = 3;
-                choice.args.add(value);
-                choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, position));
-                choice.args.add(isNull);
+                final BoundExpression isNull = ctx.functionBinder.bindCall("=", position, copyColumn(aggregate.merged, position),
+                        ctx.planNodes.constants.next().ofInt(1, position), measured, executionContext);
+                final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+                arguments.clear();
+                arguments.add(isNull);
+                arguments.add(ctx.planNodes.constants.next().ofNull(position));
+                arguments.add(value);
+                final BoundExpression choice = ctx.functionBinder.bindCall("case", position, measured, executionContext);
                 // "= 1" reads a BOOLEAN back from its INT, and the NULL of all-empty windows as false.
-                return aggregate.carriedType != aggregate.value.getDataType() ? ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, choice,
-                        ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "1", 0, position), position) : choice;
+                return aggregate.carriedType != aggregate.value.getDataType() ? ctx.functionBinder.bindCall("=", position, choice,
+                        ctx.planNodes.constants.next().ofInt(1, position), measured, executionContext) : choice;
             }
             default -> {
                 return value;
@@ -983,12 +1029,12 @@ final class PivotBinder implements Mutable {
                 final ExpressionNode ast = measure.getAst();
                 final int position = ast.position;
                 // Only a lone aggregate in a group, which always has rows, merges its value over no rows without a presence test.
-                final boolean isAggregateCall = ctx.isAggregate(ast);
-                final FunctionFactory.EmptyGroupValue emptyValue = isAggregateCall
-                        ? ctx.functionFactoryCache.getEmptyGroupValue(ast.token) : FunctionFactory.EmptyGroupValue.NULL;
+                final int aggregateIndex = measureAggregateIndex(measured, grouped, measureIndex);
+                final FunctionFactory.EmptyGroupValue emptyValue = aggregateIndex >= 0
+                        ? emptyGroupValue(grouped, aggregateIndex, windowJoin) : FunctionFactory.EmptyGroupValue.NULL;
                 BoundExpression filler = null;
-                if (!isAggregateCall) {
-                    filler = bindPivotFiller(measure, input, grouped, pivoted.getOutput(), forColumns, groupBy.size(), executionContext);
+                if (aggregateIndex < 0) {
+                    filler = bindPivotFiller(measure, input, grouped, windowJoin, pivoted.getOutput(), forColumns, groupBy.size(), executionContext);
                 } else if (groupBy.size() == 0 && emptyValue != FunctionFactory.EmptyGroupValue.NULL) {
                     filler = emptyGroupConstant(emptyValue, measuredOutput.getColumnType(measureIndex), position, pivoted.getOutput(), executionContext);
                 }
@@ -999,21 +1045,15 @@ final class PivotBinder implements Mutable {
                 if (filler != null) {
                     hasFiller = true;
                     if (presence == null) {
-                        presence = bindPivotCellPresence(forColumns, measuredOutput, pivot.getModelPosition(), executionContext);
+                        presence = bindPivotCellPresence(forColumns, measuredOutput, groupBy.size(), pivot.getModelPosition(), executionContext);
                     }
                 }
-                scope.substitutionNodes.clear();
-                scope.substitutionColumns.clear();
                 final WindowJoinPivotAggregate aggregate = windowJoin != null && isDirect ? scope.windowJoinPivotAggregates.getQuick(k) : null;
-                final ExpressionNode value = aggregate != null
-                        ? windowJoinPivotValue(aggregate, measuredOutput, measureIndex, position)
-                        : ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(measuredOutput.getColumnName(measureIndex)), 0, position);
-                final int valueType = aggregate != null && aggregate.carriedType != aggregate.value.getDataType()
-                        ? aggregate.value.getDataType() : measuredOutput.getColumnType(measureIndex);
-                final ExpressionNode call = pivotMeasure(forColumns, value, valueType,
-                        filler != null ? FunctionFactory.EmptyGroupValue.NULL : emptyValue, position);
-                final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, measuredOutput, scope.substitutionNodes, scope.substitutionColumns, executionContext);
-                pivoted.getAggregates().add((FunctionExpression) bound);
+                final BoundExpression value = aggregate != null
+                        ? windowJoinPivotValue(aggregate, measuredOutput, measureIndex, position, executionContext)
+                        : pivotForKey(measuredOutput, measureIndex, position);
+                pivoted.getAggregates().add(bindPivotMeasure(forColumns, measuredOutput, groupBy.size(), value,
+                        filler != null ? FunctionFactory.EmptyGroupValue.NULL : emptyValue, position, executionContext));
             }
             cellPresences.add(presence);
             nextPivotCombination(forColumns);

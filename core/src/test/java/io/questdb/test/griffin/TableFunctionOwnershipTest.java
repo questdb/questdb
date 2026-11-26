@@ -469,7 +469,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                     assertEachClosedOnce(factories, factoryCount + 1);
 
                     // The pivoted source is owned_cursor(). It has no rows to aggregate, so
-                    // each produced column is NULL.
+                    // each produced column reads 0, the value count() takes over no rows.
                     factoryCount = factories.size();
                     assertQuery("""
                             SELECT * FROM owned_cursor()
@@ -483,7 +483,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     a\tb
-                                    null\tnull
+                                    0\t0
                                     """);
                     assertEachClosedOnce(factories, factoryCount + 1);
                 }

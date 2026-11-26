@@ -49,51 +49,13 @@ import java.util.TreeSet;
 public class EmptyGroupValueTest extends AbstractCairoTest {
 
     @Test
-    public void testCacheReadsTheValueEveryGroupByOverloadOfANameDeclares() {
-        final FunctionFactoryCache cache = engine.getFunctionFactoryCache();
-        final HashMap<String, EmptyGroupValue> declared = new HashMap<>();
-        final TreeMap<String, EmptyGroupValue> nonNull = new TreeMap<>();
-        cache.getFactories().forEach((name, descriptors) -> {
-            for (int i = 0, n = descriptors.size(); i < n; i++) {
-                final FunctionFactoryDescriptor descriptor = descriptors.getQuick(i);
-                final FunctionFactory factory = descriptor.getFactory();
-                if (!factory.isGroupBy()) {
-                    Assert.assertEquals(descriptor.getName(), EmptyGroupValue.NULL, factory.getEmptyGroupValue());
-                    continue;
-                }
-                final EmptyGroupValue previous = declared.put(descriptor.getName(), factory.getEmptyGroupValue());
-                Assert.assertTrue(factory.getSignature(), previous == null || previous == factory.getEmptyGroupValue());
-                if (factory.getEmptyGroupValue() != EmptyGroupValue.NULL) {
-                    nonNull.put(descriptor.getName(), factory.getEmptyGroupValue());
-                }
-            }
-        });
-        declared.forEach((name, value) -> Assert.assertEquals(name, value, cache.getEmptyGroupValue(name)));
-        Assert.assertEquals(
-                "{approx_count_distinct=ZERO, count=ZERO, count_distinct=ZERO, haversine_dist_deg=ZERO, isOrdered=TRUE}",
-                nonNull.toString()
-        );
-    }
-
-    @Test
-    public void testCacheReadsNullForANameWithoutGroupByOverload() {
-        final FunctionFactoryCache cache = engine.getFunctionFactoryCache();
-        Assert.assertEquals(EmptyGroupValue.NULL, cache.getEmptyGroupValue(null));
-        Assert.assertEquals(EmptyGroupValue.NULL, cache.getEmptyGroupValue("no_such_function"));
-        Assert.assertEquals(EmptyGroupValue.NULL, cache.getEmptyGroupValue("abs"));
-        Assert.assertEquals(EmptyGroupValue.NULL, cache.getEmptyGroupValue("row_number"));
-        Assert.assertEquals(EmptyGroupValue.NULL, cache.getEmptyGroupValue("sum"));
-        Assert.assertEquals(EmptyGroupValue.ZERO, cache.getEmptyGroupValue("COUNT"));
-        Assert.assertEquals(EmptyGroupValue.TRUE, cache.getEmptyGroupValue("ISORDERED"));
-    }
-
-    @Test
     public void testEveryGroupByFunctionReportsTheDeclaredValueOverNoRows() throws Exception {
         Assert.assertTrue("the check that a built function agrees with its factory needs -ea", FunctionParser.class.desiredAssertionStatus());
         assertMemoryLeak(() -> {
             execute("CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES + ", timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3)");
             final FunctionFactoryCache cache = engine.getFunctionFactoryCache();
+            final HashMap<String, EmptyGroupValue> declared = declaredValues(cache);
             final TreeSet<String> calls = new TreeSet<>();
             final TreeSet<String> functionNames = new TreeSet<>();
             GroupByCallSweep.collectCalls(cache, "", FunctionFactory::isGroupBy, calls, functionNames);
@@ -101,7 +63,7 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
             int nonNullCount = 0;
             for (String call : calls) {
                 final String name = call.substring(0, call.indexOf('('));
-                final EmptyGroupValue value = cache.getEmptyGroupValue(name);
+                final EmptyGroupValue value = declared.get(name);
                 try (
                         RecordCursorFactory factory = select("SELECT " + call + " v FROM czw_prices WHERE sym = 'z'");
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -138,5 +100,40 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
             Assert.assertEquals("[grouping, grouping_id]", functionNames.toString());
             Assert.assertTrue("too few calls of aggregates with a value other than NULL over no rows: " + nonNullCount, nonNullCount >= 40);
         });
+    }
+
+    @Test
+    public void testEveryGroupByOverloadOfANameDeclaresOneValue() {
+        final TreeMap<String, EmptyGroupValue> nonNull = new TreeMap<>();
+        declaredValues(engine.getFunctionFactoryCache()).forEach((name, value) -> {
+            if (value != EmptyGroupValue.NULL) {
+                nonNull.put(name, value);
+            }
+        });
+        Assert.assertEquals(
+                "{approx_count_distinct=ZERO, count=ZERO, count_distinct=ZERO, haversine_dist_deg=ZERO, isOrdered=TRUE}",
+                nonNull.toString()
+        );
+    }
+
+    /**
+     * Reads the value each aggregate name declares over no rows, checking that every group by overload of the name
+     * declares the same one and that no other factory declares any value but NULL.
+     */
+    private static HashMap<String, EmptyGroupValue> declaredValues(FunctionFactoryCache cache) {
+        final HashMap<String, EmptyGroupValue> declared = new HashMap<>();
+        cache.getFactories().forEach((name, descriptors) -> {
+            for (int i = 0, n = descriptors.size(); i < n; i++) {
+                final FunctionFactoryDescriptor descriptor = descriptors.getQuick(i);
+                final FunctionFactory factory = descriptor.getFactory();
+                if (!factory.isGroupBy()) {
+                    Assert.assertEquals(descriptor.getName(), EmptyGroupValue.NULL, factory.getEmptyGroupValue());
+                    continue;
+                }
+                final EmptyGroupValue previous = declared.put(descriptor.getName(), factory.getEmptyGroupValue());
+                Assert.assertTrue(factory.getSignature(), previous == null || previous == factory.getEmptyGroupValue());
+            }
+        });
+        return declared;
     }
 }
