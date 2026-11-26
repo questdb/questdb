@@ -31,6 +31,22 @@ import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
+    /**
+     * The host names this server serves when it runs without authentication;
+     * custom configurations serve the ones public DNS cannot point at it.
+     */
+    default HttpAllowedHosts getAllowedHosts() {
+        return HttpAllowedHosts.DEFAULT;
+    }
+
+    /**
+     * The browser origins whose cross-site requests this server serves, on every
+     * endpoint that rejects cross-site requests; custom configurations serve none.
+     */
+    default BrowserAllowedOrigins getBrowserAllowedOrigins() {
+        return BrowserAllowedOrigins.EMPTY;
+    }
+
     default ObjHashSet<String> getContextPathLifecycle() {
         return new ObjHashSet<>() {{
             add("/lifecycle");
@@ -56,6 +72,16 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
     byte getRequiredAuthType();
 
     WaitProcessorConfiguration getWaitProcessorConfiguration();
+
+    /**
+     * Returns true when browsers reach this server over https through a TLS-terminating
+     * proxy, while the connection to the server is plaintext. The https origin of Host
+     * then counts as same-origin, and its http origin does not, wherever the server
+     * compares a browser's Origin with Host; custom configurations return false.
+     */
+    default boolean isBrowserTlsTerminationEnabled() {
+        return false;
+    }
 
     /**
      * Enables fiber execution for this HTTP server when its resolved worker pool also

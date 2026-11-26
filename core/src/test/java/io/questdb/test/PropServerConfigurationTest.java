@@ -40,6 +40,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
@@ -660,6 +661,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testBrowserTlsTerminationEnabled() throws Exception {
+        // both HTTP servers compare the Origin of a browser with Host, so both read the setting
+        assertBrowserTlsTerminationEnabled(false, new Properties(), null);
+
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        assertBrowserTlsTerminationEnabled(true, properties, null);
+
+        // the deprecated name still enables it, and the new name wins over it
+        final Properties deprecated = new Properties();
+        deprecated.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        assertBrowserTlsTerminationEnabled(true, deprecated, null);
+        deprecated.setProperty(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "false");
+        assertBrowserTlsTerminationEnabled(false, deprecated, null);
+
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getEnvVarName(), "true");
+        assertBrowserTlsTerminationEnabled(true, new Properties(), env);
+        env.clear();
+        env.put(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getEnvVarName(), "true");
+        assertBrowserTlsTerminationEnabled(true, new Properties(), env);
+    }
+
+    @Test
     public void testConfigKeysAreValidInDefaultConfs() throws Exception {
         String[] configFiles = {
                 "../core/src/main/resources/io/questdb/site/conf/server.conf",
@@ -1020,6 +1045,22 @@ public class PropServerConfigurationTest {
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
         Assert.assertEquals(64L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
+    }
+
+    @Test
+    public void testDeprecatedQwpBrowserTlsTerminationKey() throws Exception {
+        // qwp.browser.tls.termination.enabled shipped before the setting applied to every HTTP
+        // endpoint, so a server.conf that carries it still starts under strict validation
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CONFIG_VALIDATION_STRICT.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError());
+        TestUtils.assertContains(result.message(), "Deprecated settings");
+        TestUtils.assertContains(result.message(), "qwp.browser.tls.termination.enabled: Replaced by `browser.tls.termination.enabled`");
     }
 
     @Test
@@ -1413,6 +1454,83 @@ public class PropServerConfigurationTest {
         properties = new Properties();
         propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         Assert.assertEquals(300_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+    }
+
+    @Test
+    public void testHttpAllowedHosts() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // both HTTP servers serve the names public DNS cannot point at them, and no other
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("localhost:9000")));
+            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
+        }
+
+        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com");
+        configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
+            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("rebind.example.com:9000")));
+        }
+    }
+
+    @Test
+    public void testHttpAllowedHostsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com:9000");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals(
+                    "http.allowed.hosts: expected comma-separated host names, domains written with a leading dot such as .example.com, or *; host names are listed without a port: questdb.example.com:9000",
+                    e.getMessage()
+            );
+        }
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOrigins() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
+        }
+
+        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
+        configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
+            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://other.example.com")));
+        }
+        // the QWP WebSocket allowlist is a separate setting
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "http.browser.allowed.origins: expected comma-separated http(s) origins");
+            TestUtils.assertContains(e.getMessage(), ": https://app.example.com/");
+        }
     }
 
     @Test
@@ -2349,17 +2467,6 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/*");
         newPropServerConfiguration(properties);
-    }
-
-    @Test
-    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertFalse(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
-
-        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertTrue(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
     }
 
     @Test
@@ -3674,6 +3781,12 @@ public class PropServerConfigurationTest {
                 )
         );
         return pathsThatCanBePinned;
+    }
+
+    private void assertBrowserTlsTerminationEnabled(boolean expected, Properties properties, Map<String, String> env) throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+        Assert.assertEquals(expected, configuration.getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+        Assert.assertEquals(expected, configuration.getHttpMinServerConfiguration().isBrowserTlsTerminationEnabled());
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {
