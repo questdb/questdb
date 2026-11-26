@@ -132,7 +132,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 task.clear();
                 subSeq.done(cursor);
                 if (dispatcher != null) {
-                    dispatcher.signalProgress(frameSequence);
+                    dispatcher.signalRingProgress(dispatcher.getUnorderedRing());
                 }
 
                 // A ticket from a previous dispatch cycle, or one left over after the owner
@@ -164,7 +164,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                         }
                         if (frameSequence.isActive()) {
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
-                            reduce(workerId, record, circuitBreaker, frameIndex, frameSequence);
+                            reduce(workerId, record, circuitBreaker, frameIndex, frameSequence, null);
                         }
                     } catch (Throwable th) {
                         if (frameSequence.isReducerFailureReportable(th)) {
@@ -221,7 +221,8 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             int frameIndex,
-            UnorderedPageFrameSequence<?> frameSequence
+            UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
         final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
@@ -231,7 +232,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
         );
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource());
-            frameSequence.getReducer().reduce(workerId, record, frameIndex, circuitBreaker, frameSequence, null);
+            frameSequence.getReducer().reduce(workerId, record, frameIndex, circuitBreaker, frameSequence, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);
         }

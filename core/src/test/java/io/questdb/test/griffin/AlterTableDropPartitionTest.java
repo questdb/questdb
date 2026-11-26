@@ -60,6 +60,36 @@ import java.nio.file.Paths;
 
 public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
+    /**
+     * FORCE DROP of the first partition must leave _txn's min timestamp on the partition that now
+     * holds it. The min is read after the removal, so it comes from partition index 0.
+     */
+    @Test
+    public void testForceDropFirstPartitionKeepsMinTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO p VALUES" +
+                    " (1,'2020-01-01T05:00:00.000000')," +
+                    " (2,'2020-01-02T06:00:00.000000')," +
+                    " (3,'2020-01-03T07:00:00.000000')");
+            drainWalQueue();
+
+            execute("ALTER TABLE p FORCE DROP PARTITION LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("p")) {
+                Assert.assertEquals(
+                        "_txn min timestamp must name the first surviving partition",
+                        MicrosTimestampDriver.floor("2020-01-02T06:00:00.000000"),
+                        reader.getMinTimestamp()
+                );
+            }
+            assertQuery("SELECT min(ts)::varchar lo, count() c FROM p")
+                    .noRandomAccess().expectSize()
+                    .returns("lo\tc\n2020-01-02T06:00:00.000000Z\t2\n");
+        });
+    }
+
     @Test
     public void testAddColumnAndDropPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -1241,8 +1271,38 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDropMinimum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2020-01-01T00:05'),
+                        ('2020-01-02T00:05'),
+                        ('2020-01-02T12:00'),
+                        ('2020-01-03T00:05')
+                    """);
+
+            // Leave two partitions so reading the wrong minimum can silently skip the new oldest day.
+            execute("ALTER TABLE x FORCE DROP PARTITION LIST '2020-01-01'");
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals("2020-01-02T00:05:00.000000Z", Micros.toUSecString(reader.getMinTimestamp()));
+            }
+            assertQuery("SELECT ts FROM x WHERE ts IN '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            2020-01-02T00:05:00.000000Z
+                            2020-01-02T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testForceDropPartitionExpectDrop() throws Exception {
-        createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' expected");
+        createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' or 'reindex' expected");
     }
 
     @Test

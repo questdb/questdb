@@ -196,6 +196,16 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     return ftruncate((int) fd, len) == 0;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    if (len <= offset) {
+        // Never a shrink: allocate() below sets the file's size to len.
+        return JNI_TRUE;
+    }
+    // allocate() already grows only from the end of what the file has allocated, so there is no range to pass.
+    return Java_io_questdb_std_Files_allocate(e, cl, fd, len);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
     const char *from = (const char *) lpszFrom;
@@ -227,20 +237,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         // the path, which is usually passed here is 256 chars
         // the FS name is 16
         strcpy((char *) lpszName, sb.f_fstypename);
-        switch (sb.f_type) {
-            // known apfs types
-            case 0x1C: // apfs
-            case 0x1a: // apfs too
-            case 0x19: // apfs, since MacOS 15.0.z Sequoia
-                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
-            default:
-                // new MacOS releases change apfs f_type, so we need to check the name
-                // to prevent false negatives and scary messages in the logs and web console
-                if (strncmp((const char *) lpszName, "apfs", 4) == 0) {
-                    return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
-                }
-                return sb.f_type;
+        // macOS numbers file system types in the order it loads them, so a number names no file system: APFS has had
+        // 0x1a, 0x1c and 0x19, and HFS+ has 0x19 on macOS 26. Only the name tells APFS apart.
+        if (strncmp(sb.f_fstypename, "apfs", 4) == 0) {
+            return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
         }
+        return sb.f_type;
     }
     return 0;
 }
@@ -265,6 +267,35 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
             if (rc != 0) {
                 return JNI_FALSE;
             }
+        }
+        return JNI_TRUE;
+    }
+
+    errno = rc; // communicate errno to caller
+    return JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    // Grows the file to len, allocating only [offset, len): the caller knows the file already holds offset bytes.
+    // posix_fallocate() is not free over a range that is already allocated - XFS opens a transaction for every
+    // extent in it - so growing a fragmented file from offset 0 costs time in proportion to the whole file, rather
+    // than to the growth.
+    if (len <= offset) {
+        return JNI_TRUE;
+    }
+    int rc = posix_fallocate(fd, offset, len - offset);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    if (rc == EINVAL) {
+        // Some file systems (such as ZFS) do not support posix_fallocate
+        struct stat st;
+        if (fstat((int) fd, &st) != 0) {
+            return JNI_FALSE;
+        }
+        if (st.st_size < len && ftruncate(fd, len) != 0) {
+            return JNI_FALSE;
         }
         return JNI_TRUE;
     }

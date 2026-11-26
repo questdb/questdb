@@ -100,6 +100,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
+    // Set while a round of tasks other than the frames runs; see dispatchRoundAndAwait().
+    private UnorderedPageFrameReducer roundReducer;
+    // The running round's task sizes, borrowed from the caller for the round.
+    private LongList roundTaskRowCounts;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
     // at workload start. Null when no per-query limit is configured. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
@@ -182,14 +186,54 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
+        dispatchAndAwait(frameCount);
+    }
+
+    /**
+     * Dispatches a round of tasks of a reducer other than the frames' one and waits for them, the
+     * way {@link #dispatchAndAwait()} dispatches the frames. An atom that prepares shared state on
+     * the workers runs such rounds from {@code init()}, or before the frames are dispatched. The
+     * round has one task per entry of {@code taskRowCounts}, which holds the rows each task
+     * processes: while the round runs, {@link #getFrameRowCount(int)} answers from it, since the
+     * fiber dispatcher batches tasks by their rows as it batches frames. The reducer receives the
+     * task index where a frame reducer receives the frame index. Whether this returns or throws, no
+     * task of the round is still queued or running, so the caller may release what the round's
+     * tasks used.
+     */
+    public void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts) {
+        assert this.roundReducer == null && !hasUnclaimedFrames();
+        this.roundReducer = roundReducer;
+        this.roundTaskRowCounts = taskRowCounts;
+        try {
+            dispatchAndAwait(taskRowCounts.size());
+        } catch (Throwable th) {
+            // The dispatch can throw with tasks still claimed by workers; they must not outlive the round.
+            try {
+                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                await();
+            } catch (Throwable drainFailure) {
+                th.addSuppressed(drainFailure);
+            }
+            this.roundReducer = null;
+            this.roundTaskRowCounts = null;
+            throw th;
+        }
+        // Every task counted down, so the next round or the frames start from a clean latch.
+        this.roundReducer = null;
+        this.roundTaskRowCounts = null;
+        doneLatch.reset();
+        claimState.set(0);
+    }
+
+    private void dispatchAndAwait(int taskCount) {
         hasTailSpun = false;
-        if (frameCount == 0) {
+        if (taskCount == 0) {
             return;
         }
 
         // Initialize the circuit breaker for local reduces.
         workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-        claimState.set((long) frameCount << 32);
+        claimState.set((long) taskCount << 32);
 
         // Phase 1: reduce own frames until none is left unclaimed, keeping at least one ticket out.
         // The owner publishes a single ticket; workers fan it out while they are free to help, see
@@ -232,8 +276,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         return frameCount;
     }
 
+    /**
+     * Rows of the frame, or, while a round runs, of the round's task with this index.
+     */
     public long getFrameRowCount(int frameIndex) {
-        return frameRowCounts.getQuick(frameIndex);
+        final LongList roundTaskRowCounts = this.roundTaskRowCounts;
+        return roundTaskRowCounts != null ? roundTaskRowCounts.getQuick(frameIndex) : frameRowCounts.getQuick(frameIndex);
     }
 
     public long getId() {
@@ -249,7 +297,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     public UnorderedPageFrameReducer getReducer() {
-        return reducer;
+        final UnorderedPageFrameReducer roundReducer = this.roundReducer;
+        return roundReducer != null ? roundReducer : reducer;
     }
 
     public long getStartTime() {
@@ -289,7 +338,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             id = ID_SEQ.incrementAndGet();
             resetCancellation();
@@ -323,6 +372,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         assert doneLatch.done(claimedCount);
 
         frameCount = 0;
+        roundReducer = null;
+        roundTaskRowCounts = null;
         isReadyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
@@ -486,10 +537,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     private void awaitClaimedFrames(int claimedCount, PageFrameReduceDispatcher dispatcher, boolean isDraining) {
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (doneLatch.done(claimedCount)) {
                 break;
             }
@@ -497,14 +548,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 workStealingStrategy.onBeforeOwnerStep();
             }
             if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining || !isActive());
+                awaitProgress(dispatcher, observedProgress, isDraining || !isActive());
             } else {
                 // awaitProgress() watches for cancellation while parked; a thread that cannot park
                 // checks the breaker itself, or a cancellation during the last worker frames is lost.
                 if (!isDraining && !isUninterruptible && isActive()) {
                     hasCircuitBreakerInterruptionBeenSuperseded(getCircuitBreaker(), true);
                 }
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
     }
@@ -610,8 +661,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
         try {
             if (isActive()) {
-                localRecord.of(getSymbolTableSource());
-                reducer.reduce(-1, localRecord, frameIndex, workStealCircuitBreaker, this, this);
+                UnorderedPageFrameReduceJob.reduce(-1, localRecord, workStealCircuitBreaker, frameIndex, this, this);
             }
         } catch (Throwable th) {
             if (isReducerFailureReportable(th)) {

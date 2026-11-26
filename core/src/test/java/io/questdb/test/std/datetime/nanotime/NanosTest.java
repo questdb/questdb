@@ -364,6 +364,74 @@ public class NanosTest {
     }
 
     @Test
+    public void testFloorMMWithOffsetNearLongMax() {
+        // The bucket in the value's month would start after Long.MAX_VALUE (2262-04-11T23:47:16.854775807Z). Its
+        // start must not wrap around to 1677 and end up in the result.
+        final long offset = parseNSecUTC("2024-01-15T00:00:00.000000000Z");
+        assertNanos("2262-03-15T00:00:00.000000000Z", Nanos.floorMM(Nanos.toNanos(2262, 4, 10), 1, offset));
+        assertNanos("2262-03-15T00:00:00.000000000Z", Nanos.floorMM(Long.MAX_VALUE, 1, offset));
+        assertNanos("2262-02-15T00:00:00.000000000Z", Nanos.floorMM(Long.MAX_VALUE, 2, parseNSecUTC("2024-02-15T00:00:00.000000000Z")));
+        assertNanos(
+                "2262-03-31T23:59:59.999999999Z",
+                Nanos.floorMM(Nanos.toNanos(2262, 4, 11), 1, parseNSecUTC("1970-01-31T23:59:59.999999999Z"))
+        );
+        // the bucket that starts exactly at Long.MAX_VALUE
+        final long sameTimeOfMonth = Nanos.toNanos(2262, 1, 11) + (Long.MAX_VALUE - Nanos.toNanos(2262, 4, 11));
+        assertNanos("2262-04-11T23:47:16.854775807Z", Nanos.floorMM(Long.MAX_VALUE, 1, sameTimeOfMonth));
+    }
+
+    @Test
+    public void testFloorMMWithOffsetOnLastDayOfMonth() {
+        // Regression test for #7798. Buckets start on the offset's day, or on the last day of shorter months. A value
+        // after the start of such a bucket, but earlier in its month than the offset in its own, used to go into the
+        // previous bucket.
+        final long offset = parseNSecUTC("1969-12-31T23:00:00.000000000Z");
+        assertNanos("2024-04-30T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-04-30T23:45:00.000000000Z"), 1, offset));
+        assertNanos("2024-03-31T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-04-30T22:59:59.999999999Z"), 1, offset));
+        assertNanos("2024-02-29T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-02-29T23:30:00.000000000Z"), 1, offset));
+        assertNanos("2025-02-28T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2025-03-01T00:00:00.000000000Z"), 1, offset));
+        assertNanos("2024-03-31T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-06-30T22:00:00.000000000Z"), 3, offset));
+        assertNanos("2024-06-30T23:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-06-30T23:00:00.000000000Z"), 3, offset));
+
+        final long from = parseNSecUTC("2024-01-31T00:00:00.000000000Z");
+        assertNanos("2024-04-30T00:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-04-30T12:00:00.000000000Z"), 1, from));
+        assertNanos("2024-03-31T00:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-04-29T23:59:59.999999999Z"), 1, from));
+        assertNanos("2024-01-31T00:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-01-31T00:00:00.000000000Z"), 1, from));
+        // a value before the offset goes into the first bucket
+        assertNanos("2024-01-31T00:00:00.000000000Z", Nanos.floorMM(parseNSecUTC("2024-01-15T00:00:00.000000000Z"), 1, from));
+    }
+
+    @Test
+    public void testFloorMMWithOffsetStaysOnGrid() {
+        // The value's bucket must start at or before the value, on the grid that addMonths() steps from the offset,
+        // and the next bucket on that grid must start after the value
+        final String[] offsets = {
+                "1969-12-31T23:00:00.000000000Z",
+                "1970-01-01T10:00:00.000000000Z",
+                "2000-01-29T00:00:00.000000000Z",
+                "2000-01-30T12:00:00.000000000Z",
+                "2000-03-31T23:59:59.999999999Z",
+                "2000-08-15T06:00:00.000000000Z",
+        };
+        final int[] strides = {1, 2, 3, 5, 12};
+        final long hi = parseNSecUTC("2010-01-01T00:00:00.000000000Z");
+        final long step = 3 * Nanos.HOUR_NANOS + 17 * Nanos.MINUTE_NANOS + 13;
+        for (String offsetStr : offsets) {
+            final long offset = parseNSecUTC(offsetStr);
+            for (int stride : strides) {
+                for (long value = offset; value < hi; value += step) {
+                    final long floor = Nanos.floorMM(value, stride, offset);
+                    Assert.assertTrue(floor <= value);
+                    final int months = (int) (monthIndex(floor) - monthIndex(offset));
+                    Assert.assertEquals(0, months % stride);
+                    Assert.assertEquals(Nanos.addMonths(offset, months), floor);
+                    Assert.assertTrue(value < Nanos.addMonths(offset, months + stride));
+                }
+            }
+        }
+    }
+
+    @Test
     public void testFloorMS() {
         testFloorMS("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.999000000Z");
         testFloorMS("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
@@ -476,6 +544,31 @@ public class NanosTest {
                 "1973-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1975-05-12T23:45:51.045789123Z"), 3)
         );
+    }
+
+    @Test
+    public void testFloorYYYYWithOffsetNearLongMax() {
+        // same as testFloorMMWithOffsetNearLongMax(), for years
+        final long offset = parseNSecUTC("2024-06-01T00:00:00.000000000Z");
+        assertNanos("2261-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Nanos.toNanos(2262, 3, 1), 1, offset));
+        assertNanos("2261-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, offset));
+        assertNanos("2260-06-01T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 2, offset));
+        assertNanos("2261-04-12T00:00:00.000000000Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, parseNSecUTC("2001-04-12T00:00:00.000000000Z")));
+        // the bucket that starts exactly at Long.MAX_VALUE
+        final long sameTimeOfYear = Nanos.toNanos(2000, 4, 11) + (Long.MAX_VALUE - Nanos.toNanos(2262, 4, 11));
+        assertNanos("2262-04-11T23:47:16.854775807Z", Nanos.floorYYYY(Long.MAX_VALUE, 1, sameTimeOfYear));
+    }
+
+    @Test
+    public void testFloorYYYYWithOffsetOnLeapDay() {
+        // same as testFloorMMWithOffsetOnLastDayOfMonth(), for a Feb 29 offset and a non-leap year
+        final long offset = parseNSecUTC("2024-02-29T00:00:00.000000000Z");
+        assertNanos("2025-02-28T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2025-02-28T12:00:00.000000000Z"), 1, offset));
+        assertNanos("2024-02-29T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2025-02-27T23:59:59.999999999Z"), 1, offset));
+        assertNanos("2028-02-29T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2028-02-29T00:00:00.000000000Z"), 1, offset));
+        assertNanos("2027-02-28T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2028-02-28T23:59:59.999999999Z"), 1, offset));
+        assertNanos("2026-02-28T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2026-02-28T00:00:00.000000000Z"), 2, offset));
+        assertNanos("2024-02-29T00:00:00.000000000Z", Nanos.floorYYYY(parseNSecUTC("2026-02-27T00:00:00.000000000Z"), 2, offset));
     }
 
     @Test
@@ -897,6 +990,11 @@ public class NanosTest {
                 Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_NANOS
         );
+    }
+
+    private static long monthIndex(long nanos) {
+        final int y = Nanos.getYear(nanos);
+        return 12L * y + Nanos.getMonthOfYear(nanos, y, CommonUtils.isLeapYear(y)) - 1;
     }
 
     private void assertNanos(CharSequence expected, long nanosActual) {

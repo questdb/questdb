@@ -26,19 +26,14 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableReader;
-import io.questdb.griffin.LoopingRecordToRowCopier;
-import io.questdb.griffin.RecordToRowCopier;
-import io.questdb.griffin.RecordToRowCopierUtils;
-import io.questdb.std.BytecodeAssembler;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.RecordToRowCopierTestUtils.CopierMode;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -76,7 +71,7 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierMode.copierType);
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierMode.getCopierType());
     }
 
     @Test
@@ -401,23 +396,6 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Reports which implementation {@code generateCopier} returned. The single-method and the chunked
-     * copiers are both generated under the same class name, but only the chunked one splits the column
-     * copies into private {@code copy0..copyN} sub-methods.
-     */
-    private static CopierMode copierModeOf(RecordToRowCopier copier) {
-        if (copier instanceof LoopingRecordToRowCopier) {
-            return CopierMode.LOOPING;
-        }
-        for (Method method : copier.getClass().getDeclaredMethods()) {
-            if (method.getName().startsWith("copy") && !"copy".equals(method.getName())) {
-                return CopierMode.CHUNKED;
-            }
-        }
-        return CopierMode.SINGLE_METHOD;
-    }
-
     private static String everyWidthNulls(int rowCount) {
         return "d0\td1\td2\td3\td4\td5\n" + "\t\t\t\t\t\n".repeat(rowCount);
     }
@@ -443,16 +421,10 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
                 TableReader src = getReader("src");
                 TableReader dst = getReader("dst")
         ) {
-            EntityColumnFilter columnFilter = new EntityColumnFilter();
-            columnFilter.of(dst.getMetadata().getColumnCount());
-            RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                    new BytecodeAssembler(),
-                    src.getMetadata(),
-                    dst.getMetadata(),
-                    columnFilter,
-                    configuration
+            Assert.assertEquals(
+                    copierMode,
+                    RecordToRowCopierTestUtils.copierModeOf(RecordToRowCopierTestUtils.generateInsertSelectCopier(src, dst, configuration))
             );
-            Assert.assertEquals(copierMode, copierModeOf(copier));
         }
     }
 
@@ -514,20 +486,5 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
 
     private void insertWalRows(String... values) throws Exception {
         execute(insertSql(true, values));
-    }
-
-    /**
-     * The copier implementation this parameter forces through {@code debug.cairo.copier.type}.
-     */
-    public enum CopierMode {
-        CHUNKED(RecordToRowCopierUtils.COPIER_TYPE_CHUNKED),
-        LOOPING(RecordToRowCopierUtils.COPIER_TYPE_LOOPING),
-        SINGLE_METHOD(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
-
-        private final int copierType;
-
-        CopierMode(int copierType) {
-            this.copierType = copierType;
-        }
     }
 }

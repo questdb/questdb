@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -51,6 +52,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -1333,6 +1335,94 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateDoesNotRegisterPageFrameSequences() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE up AS (
+                        SELECT x, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(100)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            final ObjList<PageFrameSequence<?>> registered = new ObjList<>();
+            try (
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 2) {
+                        @Override
+                        public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+                            registered.add(frameSequence);
+                            super.registerPageFrameSequence(frameSequence);
+                        }
+                    }.with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                TestUtils.printSql(engine, context, "EXPLAIN UPDATE up SET x = 0 WHERE x % 2 = 0", sink);
+                TestUtils.assertContains(sink, "Async Filter");
+                Assert.assertEquals(1, registered.size());
+                registered.clear();
+
+                execute("UPDATE up SET x = 0 WHERE x % 2 = 0", context);
+                Assert.assertEquals(0, registered.size());
+            }
+            assertQuery("SELECT count() FROM up WHERE x = 0")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            50
+                            """);
+        });
+    }
+
+    @Test
+    // Fixed-width (LONG) and var-size (STRING, VARCHAR) columns, all added after the table's first 75
+    // rows (so each carries a column top), then an O3 insert lands inside the already-committed first
+    // (hour 0) partition and forces a merge-append there - see testSymbolIndexRebuiltOnColumnWithTopOverwrittenInO3
+    // for the same shape. The update touches every row, including the original 75 that predate every one
+    // of these columns, so a wrong column top or a piece written to the wrong physical slot would show up
+    // as a mismatched value anywhere in the table, not just in the composite partition.
+    public void testUpdateFixedAndVarColumnsOnCompositePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table cu as" +
+                            " (select timestamp_sequence(0, 2*60*1000000L) ts, x from long_sequence(75))" +
+                            " timestamp(ts) partition by hour" + (walEnabled ? " WAL" : "")
+            );
+
+            execute("alter table cu add column lv long");
+            execute("alter table cu add column str1 string");
+            execute("alter table cu add column varc1 varchar");
+
+            // More data in order
+            execute(
+                    "insert into cu select" +
+                            " timestamp_sequence('1970-01-01T02:30', 60*1000000L) ts, x," +
+                            " x, 's' || x, 'v' || x" +
+                            " from long_sequence(45)"
+            );
+
+            // O3 data landing inside the first (already committed) partition - forces a merge-append there
+            execute(
+                    "insert into cu select" +
+                            " timestamp_sequence(1, 2*60*1000000L) ts, x," +
+                            " x, 's' || x, 'v' || x" +
+                            " from long_sequence(20)"
+            );
+
+            update("update cu set lv = x, str1 = 's' || x, varc1 = 'v' || x");
+
+            assertQuery("select count() from cu where lv != x or str1 != 's' || x or varc1 != 'v' || x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+
+            assertQuery("select count() from cu")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n140\n");
+        });
+    }
+
+    @Test
     public void testUpdateFromFailedOnBusyWriterClosesPlan() throws Exception {
         assertMemoryLeak(() -> {
             createUpdateFromTables();
@@ -1873,6 +1963,62 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    // The composite partition is also the ACTIVE (last, still open for append) one, so
+    // TableWriter#compactPartitionNoCommit's compaction has to reopen the writer's own column handles
+    // against the freshly compacted directory before the update can write to it - see
+    // TableWriter#compactPartitionNoCommit. Appending one more row after the update, into the same
+    // partition, checks that the reopen actually left the writer usable rather than just leaving the
+    // update's own read/write happy by coincidence.
+    public void testUpdateOnActiveCompositePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // A single PARTITION BY DAY partition is, by construction, the ACTIVE one throughout this
+            // test - see O3PartitionPreSplitTest#testMergeAppendsActivePartition for the same shape and
+            // the same defensive property set (a small backdated batch inside a much bigger partition
+            // only ever qualifies for REWRITE, never a CUT, once that floor is in play).
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+
+            execute(
+                    "create table ac as" +
+                            " (select timestamp_sequence(0, 15*1000000L) ts, x from long_sequence(400))" +
+                            " timestamp(ts) partition by day" + (walEnabled ? " WAL" : "")
+            );
+
+            execute("alter table ac add column v long");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+
+            // A small batch landing well inside the day's own range - forces a merge-append there,
+            // leaving the ACTIVE partition composite.
+            execute(
+                    "insert into ac (ts, x) select" +
+                            " timestamp_sequence('1970-01-01T00:20:07', 1000000L) ts, x + 10000" +
+                            " from long_sequence(3)"
+            );
+            if (walEnabled) {
+                drainWalQueue();
+            }
+
+            update("update ac set v = x * 10");
+
+            // The writer must still be usable for ordinary appends after the update reopened it.
+            execute("insert into ac values('1970-01-01T02:00:00.000000Z', 999, 9990)");
+
+            assertQuery("select count() from ac where v != x * 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+
+            assertQuery("select count() from ac")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n404\n");
+        });
+    }
+
+    @Test
     public void testUpdateNonWalTableWithParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE up (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -1921,6 +2067,48 @@ public class UpdateTest extends AbstractCairoTest {
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t44
                             """);
+        });
+    }
+
+    @Test
+    // A WHERE-filtered update, so only some of a composite partition's rows are touched - both the
+    // untouched LIVE rows (the rest of the merge-appended piece) and the compacted-away DEAD rows must
+    // come through unharmed, not just the ones the update actually writes.
+    public void testUpdatePartialRowsOnCompositePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table pu as" +
+                            " (select timestamp_sequence(0, 2*60*1000000L) ts, x from long_sequence(75))" +
+                            " timestamp(ts) partition by hour" + (walEnabled ? " WAL" : "")
+            );
+
+            execute("alter table pu add column v long");
+
+            // More data in order
+            execute(
+                    "insert into pu (ts, x) select timestamp_sequence('1970-01-01T02:30', 60*1000000L) ts, x" +
+                            " from long_sequence(45)"
+            );
+
+            // O3 data landing inside the first (already committed) partition - forces a merge-append there
+            execute(
+                    "insert into pu (ts, x) select timestamp_sequence(1, 2*60*1000000L) ts, x" +
+                            " from long_sequence(20)"
+            );
+
+            update("update pu set v = x * 100 where x <= 10");
+
+            assertQuery("select count() from pu where (x <= 10 and v != x * 100) or (x > 10 and v is not null)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+
+            assertQuery("select count() from pu where v is not null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n30\n");
         });
     }
 
@@ -3125,6 +3313,67 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2
                             1970-01-08T22:40:00.000000Z\trdgb\t15\t
                             """);
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharColumnWithColumnTopLoweredByLaterUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            final String wal = walEnabled ? " WAL" : "";
+            execute("""
+                    CREATE TABLE up AS (
+                        SELECT timestamp_sequence(0, 4 * 60 * 60 * 1_000_000L) ts,
+                            x lng2,
+                            rnd_bin(10, 20, 2) b0,
+                            rnd_double_array(1) a0
+                        FROM long_sequence(12)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""" + wal);
+            drainWalQueue();
+            // The reference table has every column from the start, so it has no column tops.
+            execute("""
+                    CREATE TABLE ref (
+                        ts TIMESTAMP, lng2 LONG, b0 BINARY, a0 DOUBLE[],
+                        v VARCHAR, s STRING, b BINARY, a DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY""" + wal);
+            execute("INSERT INTO ref(ts, lng2, b0, a0) SELECT ts, lng2, b0, a0 FROM up");
+
+            execute("ALTER TABLE up ADD COLUMN v VARCHAR");
+            execute("ALTER TABLE up ADD COLUMN s STRING");
+            execute("ALTER TABLE up ADD COLUMN b BINARY");
+            execute("ALTER TABLE up ADD COLUMN a DOUBLE[]");
+            drainWalQueue();
+
+            // The last partition gets two rows above its column top; a later update has to copy them.
+            for (String table : new String[]{"ref", "up"}) {
+                execute("INSERT INTO " + table + """
+                         SELECT dateadd('h', x::INT, ts), 12 + x, b0, a0,
+                            'pre-existing varchar value ' || x, 'pre-existing string value ' || x, b0, a0
+                        FROM up CROSS JOIN long_sequence(2)
+                        WHERE lng2 = 12""");
+                drainWalQueue();
+            }
+
+            final String[] updates = {
+                    // Create the column files in the first partition. In the second, lower the column top from row 6 to
+                    // row 4 and write row 6, so the update copies row 7 while the new column top is still above row 0.
+                    "SET v = 'long varchar value ' || lng2, s = 'long string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (5, 11, 13)",
+                    // Lower the column top of both partitions; the values above it move up the new files.
+                    "SET v = 'another varchar value ' || lng2, s = 'another string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (2, 8)",
+                    // Write on both sides of the column top, adjacent rows and row 0 included, with NULL and empty values.
+                    """
+                    SET v = CASE lng2 % 3 WHEN 0 THEN NULL WHEN 1 THEN '' ELSE 'third varchar value ' || lng2 END,
+                        s = CASE lng2 % 3 WHEN 0 THEN NULL WHEN 1 THEN '' ELSE 'third string value ' || lng2 END,
+                        b = NULL, a = NULL
+                    WHERE lng2 IN (1, 3, 4, 6, 7, 10, 13)""",
+                    // The columns now start at row 0 of both partitions.
+                    "SET v = 'final varchar value ' || lng2, s = 'final string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (1, 9, 12, 14)",
+            };
+            for (String update : updates) {
+                update("UPDATE ref " + update);
+                update("UPDATE up " + update);
+                drainWalQueue();
+                assertSqlCursors("ref", "up");
+            }
         });
     }
 

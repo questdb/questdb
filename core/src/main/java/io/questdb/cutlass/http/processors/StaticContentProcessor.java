@@ -144,7 +144,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
             if (headers.getQuery() != null) {
                 utf8Sink.putAscii('?').put(headers.getQuery());
             }
-            utf8Sink.putAscii(Misc.EOL);
             context.simpleResponse().sendStatusNoContent(HTTP_MOVED_PERM, utf8Sink);
             return;
         }

@@ -31,28 +31,53 @@ import io.questdb.cairo.TableToken;
  * the configured object store) for each WAL table. Used by QWP to emit a second
  * "durable" acknowledgment frame to clients that opt in.
  * <p>
- * The OSS server ships a no-op implementation ({@link DefaultDurableAckRegistry})
- * that reports nothing as durable; enterprise installations with primary
- * replication enabled install a real implementation backed by the upload
- * pipeline.
+ * The OSS server ships {@link LocalDurableAckRegistry} as the default, which tracks the local-fsync
+ * tier (ADAPTIVE commit mode). Enterprise installations with primary replication enabled override this
+ * via {@link io.questdb.cairo.CairoEngine#setDurableAckRegistry} with an upload-pipeline-backed one.
  */
 public interface DurableAckRegistry {
 
     /**
-     * Returns the highest seqTxn that has been durably uploaded for the given
-     * table, or -1 if no upload has completed yet, the table is unknown to the
-     * registry, or durable-ack tracking is not enabled on this server.
+     * Frontier answer for a table directory that no longer resolves to a live table: the table is dropped,
+     * {@code REBASE WAL} retired the directory, or the dropped token is purged. The name registry syncs the drop
+     * to {@code tables.d} before the directory stops resolving, so the directory stays retired across a power
+     * loss. What a client committed to it went with it, and a replay could only re-create the table or
+     * duplicate rows, so QWP treats this answer as covering every seqTxn the connection committed to the
+     * directory and never forwards the value itself.
+     * <p>
+     * {@link Long#MIN_VALUE} keeps it below every real frontier, so a caller that does not know about
+     * it still reads "nothing durable yet".
+     */
+    long TABLE_GONE = Long.MIN_VALUE;
+
+    /**
+     * Returns the highest seqTxn durably replicated (uploaded to the configured object store) for
+     * the given table, or -1 if nothing has been replicated yet, the table is unknown to the
+     * registry, or durable-ack tracking is not enabled on this server. This is the
+     * {@link DurabilityTier#REPLICATED} (failover-safe) frontier.
      *
      * @param tableDirName the directory name of the table (matches
      *                     {@code TableToken.getDirName()})
-     * @return the highest durably-uploaded seqTxn, or -1
+     * @return the highest durably-replicated seqTxn, or -1
      */
-    long getDurablyUploadedSeqTxn(CharSequence tableDirName);
+    long getReplicatedDurableSeqTxn(CharSequence tableDirName);
 
     /**
-     * Returns true when durable-ack tracking is wired up on this server (i.e.
-     * primary replication to an object store is enabled). When false, QWP
-     * silently ignores the {@code X-QWP-Request-Durable-Ack} opt-in header.
+     * Returns the highest seqTxn whose WAL commit was fdatasync'd locally for the given table,
+     * {@link #TABLE_GONE} if the directory no longer resolves to a live table, or -1 if no
+     * local-fsync guarantee has been established (e.g. NOSYNC tables, or a registry that does not
+     * track local durability).
+     *
+     * @param tableDirName the directory name of the table (matches
+     *                     {@code TableToken.getDirName()})
+     * @return the highest locally-fdatasync'd seqTxn, {@link #TABLE_GONE}, or -1
+     */
+    long getLocalDurableSeqTxn(CharSequence tableDirName);
+
+    /**
+     * Returns true when this server can serve at least one durability tier. When false, QWP
+     * denies every {@code X-QWP-Request-Durable-Ack} opt-in at the handshake (no confirmation
+     * header), so the client fails the connect instead of waiting for frames that never arrive.
      */
     boolean isEnabled();
 
@@ -63,6 +88,14 @@ public interface DurableAckRegistry {
      * that orphan is bounded by the uploader's in-flight queue depth at drop
      * time and is acceptable.
      */
-    default void onTableDropped(TableToken tableToken) {
-    }
+    void onTableDropped(TableToken tableToken);
+
+    /**
+     * True when this registry can serve every tier in the requested set. The
+     * QWP handshake grants all-or-nothing: a request naming a tier this
+     * server cannot serve is denied in full, never partially granted. The empty
+     * set is available; bits outside {@link DurabilityTier#TIERS_MASK} are ignored.
+     * This does not enable new handshakes when {@link #isEnabled()} is false.
+     */
+    boolean isTierSetAvailable(int tiers);
 }

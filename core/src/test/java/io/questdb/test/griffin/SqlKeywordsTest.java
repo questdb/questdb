@@ -52,6 +52,20 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsClockFunctionKeyword() {
+        Assert.assertTrue(isClockFunctionKeyword("now"));
+        Assert.assertTrue(isClockFunctionKeyword("NOW_NS"));
+        Assert.assertTrue(isClockFunctionKeyword("Now_Ns"));
+        Assert.assertTrue(isClockFunctionKeyword("sysdate"));
+        Assert.assertTrue(isClockFunctionKeyword("SysTimestamp"));
+        Assert.assertTrue(isClockFunctionKeyword("systimestamp_NS"));
+        Assert.assertFalse(isClockFunctionKeyword("now_n"));
+        Assert.assertFalse(isClockFunctionKeyword("now_nss"));
+        Assert.assertFalse(isClockFunctionKeyword("systimestamp_ms"));
+        Assert.assertFalse(isClockFunctionKeyword("today"));
+    }
+
+    @Test
     public void testIsFloat4KeywordIsCaseInsensitive() {
         Assert.assertTrue(isFloat4Keyword("float4"));
         Assert.assertTrue(isFloat4Keyword("floaT4"));
@@ -263,6 +277,9 @@ public class SqlKeywordsTest {
         specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
         specialCases.put("isBloomFilterKeyword", "bloom_filter");
         specialCases.put("isBloomFilterColumnsKeyword", "bloom_filter_columns");
+        specialCases.put("isClockFunctionKeyword", "now");
+        specialCases.put("isNowNsKeyword", "now_ns");
+        specialCases.put("isSystimestampNsKeyword", "systimestamp_ns");
 
         excludedCases.add("isPublicKeyword");
     }

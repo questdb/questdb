@@ -98,7 +98,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
     /**
      * Returns full (physical) key capacity of the map ignoring the load factor.
      */
-    @TestOnly
     int getKeyCapacity();
 
     MapRecord getRecord();

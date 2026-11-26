@@ -240,6 +240,43 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testApproxPercentileSampleByFillPrevAlignToFirstObservation() throws Exception {
+        // The keyed fill cursor seeds every key with setNull() before the first bucket. 'c' has no
+        // rows until 02:45, so it must read as null rather than as the histogram of the first key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 1, '2024-01-01T00:40:00.000000Z'),
+                    ('a', 1, '2024-01-01T02:00:00.000000Z'),
+                    ('c', 1, '2024-01-01T02:45:00.000000Z')
+                    """);
+            // p and m use the default precision, p4 and m4 the packed histogram
+            assertQuery("""
+                    SELECT ts, k, approx_percentile(v, 0.5) p, approx_percentile(v, 0.5, 4) p4, approx_median(v) m, approx_median(v, 4) m4
+                    FROM t
+                    SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tp\tp4\tm\tm4
+                            2024-01-01T00:00:00.000000Z\ta\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T00:00:00.000000Z\tb\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T00:00:00.000000Z\tc\tnull\tnull\tnull\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T01:00:00.000000Z\tb\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T01:00:00.000000Z\tc\tnull\tnull\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T02:00:00.000000Z\tb\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T02:00:00.000000Z\tc\t1.0\t1.0\t1.0\t1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testApproxPercentileSomeNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
@@ -251,6 +288,45 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
                     .returns("""
                             approx_percentile
                             1.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testApproxPercentileWindowJoinEmptyWindow() throws Exception {
+        // WINDOW JOIN resets the value with setEmpty() for every master row. The 00:10 trade has no
+        // price in its window, so it must read as null rather than as the histogram of the first row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T00:10:00.000000Z'),
+                    (3.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                    (1, '2024-01-01T00:00:30.000000Z'),
+                    (1, '2024-01-01T00:00:40.000000Z'),
+                    (1, '2024-01-01T00:20:10.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT t.ts, approx_percentile(p.v, 0.5) p, approx_percentile(p.v, 0.5, 4) p4, approx_median(p.v) m, approx_median(p.v, 4) m4
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp\tp4\tm\tm4
+                            2024-01-01T00:00:00.000000Z\t1.0\t1.0\t1.0\t1.0
+                            2024-01-01T00:10:00.000000Z\tnull\tnull\tnull\tnull
+                            2024-01-01T00:20:00.000000Z\t1.0\t1.0\t1.0\t1.0
                             """);
         });
     }

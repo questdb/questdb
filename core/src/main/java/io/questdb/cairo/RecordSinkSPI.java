@@ -105,4 +105,15 @@ public interface RecordSinkSPI {
     }
 
     void skip(int bytes);
+
+    /**
+     * Steps past a variable-size column that the sink does not copy, the way
+     * {@link #skip(int)} steps past a fixed-size one. {@link RecordChain} gives each
+     * var-size column a positional slot, so its implementation has to consume one.
+     * Only window cursors build sinks that skip columns: they write the window outputs
+     * into the chain themselves, after the copy.
+     */
+    default void skipVarSize() {
+        throw new UnsupportedOperationException();
+    }
 }

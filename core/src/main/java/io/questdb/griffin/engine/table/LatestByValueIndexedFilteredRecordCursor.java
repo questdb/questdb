@@ -30,6 +30,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -74,6 +75,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         filter.init(pageFrameCursor, executionContext);
         isRecordFound = false;
         isFindPending = false;
@@ -113,19 +115,29 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
-            frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            final int frameIndex = frameCount++;
+            frameAddressCache.add(frameIndex, frame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            recordA.init(frameMemory);
 
-            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+            try (RowCursor cursor = indexReader.getCursor(
+                    symbolKey,
+                    indexRowLo,
+                    indexRowHi,
+                    null,
+                    frameMemory.getSourceRowResolver()
+            )) {
                 while (cursor.hasNext()) {
                     // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
-                    // already relative to minValue == partitionLo here, so cursor.next() is already
-                    // frame-relative. Subtracting partitionLo again here positioned the record partitionLo
-                    // rows too early whenever the match fell in a page frame with partitionLo > 0,
-                    // returning a neighbouring row (often a different symbol).
+                    // already relative to minValue == indexRowLo here, so cursor.next() is already
+                    // frame-relative. Subtracting indexRowLo again here positioned the record indexRowLo
+                    // rows too early whenever the match fell in a page frame with indexRowLo > 0,
+                    // returning a neighbouring row (often a different symbol). For a COMPOSITE partition
+                    // indexRowLo carries the piece's file-row shift, the same shift the frame's page
+                    // addresses carry, so the un-subtracted row lines up there too.
                     recordA.setRowIndex(cursor.next());
                     if (filter.getBool(recordA)) {
                         isRecordFound = true;

@@ -59,6 +59,14 @@ public interface PlanSink {
 
     int getLineCount();
 
+    /**
+     * Returns the metadata that {@link #putColumnName(int)} resolves column indexes against, or
+     * null when it resolves them against the factory being printed. A factory that sets its own
+     * metadata reads this first to restore it afterwards, since its plan can nest inside another
+     * factory's attribute, e.g. as a scalar sub-query.
+     */
+    RecordMetadata getMetadata();
+
     int getOrder();
 
     @TestOnly

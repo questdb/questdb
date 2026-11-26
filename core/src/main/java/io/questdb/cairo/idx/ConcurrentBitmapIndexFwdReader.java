@@ -68,7 +68,14 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
             c = new Cursor();
         }
         c.isPooled = false;
-        return initCursor(c, key, minValue, maxValue);
+        final RowCursor cursor = initCursor(c, key, minValue, maxValue);
+        if (cursor != c) {
+            // initCursor() found nothing to read and returned the shared empty cursor. Return c to
+            // the pool: the caller never sees it, so it would never close it, and the next call
+            // would have to allocate a replacement.
+            c.close();
+        }
+        return cursor;
     }
 
     /**
@@ -145,9 +152,11 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 if (cellIndex == blockValueCountMod && position < valueCount) {
                     // We are at edge of block right now, next value will be in next block.
                     if (!jumpToNextValueBlock()) {
-                        // We've reached the memory boundary which means that no values left.
+                        // The next block lies past this reader's mapping: a writer added it after
+                        // the reader mapped the value file, and valueCount, which the key file
+                        // holds, already counts it. The value just read sits in the mapped region
+                        // and passed the maxValue check, so hand it out and end the iteration.
                         valueCount = 0;
-                        return false;
                     }
                 }
 
@@ -199,7 +208,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 // should these values do not match.
                 long valueCount;
                 long valueBlockOffset;
-                final long deadline = clock.getTicks() + spinLockTimeoutMs;
+                long deadline = DEADLINE_UNARMED;
                 while (true) {
                     valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
@@ -213,7 +222,9 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
                         }
                     }
 
-                    if (clock.getTicks() > deadline) {
+                    if (deadline == DEADLINE_UNARMED) {
+                        deadline = clock.getTicks() + spinLockTimeoutMs;
+                    } else if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
                         throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }

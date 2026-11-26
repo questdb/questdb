@@ -56,6 +56,30 @@ public class ExpressionNodeTest {
     }
 
     @Test
+    public void testClearResetsOptimiserAndOffset() {
+        // WhereClauseParser rebuilds an and_offset wrapper that SqlOptimiser marked over any column,
+        // and rejects an unmarked one over a non-timestamp column as a hand-written call. ExpressionNode
+        // instances are pooled, so a mark surviving clear() would let a later hand-written and_offset
+        // that lands on a recycled node be rebuilt instead of rejected.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 1);
+        final ExpressionNode node = pool.next().of(ExpressionNode.FUNCTION, "and_offset", 0, 0);
+        Assert.assertFalse(node.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = true;
+        node.clear();
+        Assert.assertFalse(node.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = true;
+        node.of(ExpressionNode.FUNCTION, "and_offset", 0, 0);
+        Assert.assertFalse(node.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = true;
+        pool.clear();
+        Assert.assertSame(node, pool.next());
+        Assert.assertFalse(node.isOptimiserAndOffset);
+    }
+
+    @Test
     public void testDeepCloneAndCopyFromCarryInheritedTimestampOrder() {
         final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
         final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "ts", 0, 0);
@@ -91,6 +115,29 @@ public class ExpressionNodeTest {
 
         final ExpressionNode copy = pool.next().copyFrom(node);
         Assert.assertEquals(2, copy.lateralDepth);
+    }
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryOptimiserAndOffset() {
+        // A copy of an and_offset wrapper that SqlOptimiser marked is still the optimiser's wrapper, so
+        // deepClone() and copyFrom() carry the mark; without it, WhereClauseParser would reject a copy
+        // over a non-timestamp column as a hand-written call
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+        final ExpressionNode node = pool.next().of(ExpressionNode.FUNCTION, "and_offset", 0, 0);
+        node.isOptimiserAndOffset = true;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertNotSame(node, clone);
+        Assert.assertTrue(clone.isOptimiserAndOffset);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertTrue(copy.isOptimiserAndOffset);
+
+        node.isOptimiserAndOffset = false;
+        Assert.assertTrue(clone.isOptimiserAndOffset);
+        copy.copyFrom(node);
+        Assert.assertFalse(copy.isOptimiserAndOffset);
+        Assert.assertFalse(ExpressionNode.deepClone(pool, node).isOptimiserAndOffset);
     }
 
     @Test

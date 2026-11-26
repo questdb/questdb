@@ -81,6 +81,12 @@ import org.jetbrains.annotations.NotNull;
  *     / (sum(weight) - 1)
  *   ) FROM my_table;
  * </pre>
+ * <p>
+ * A row whose sample or weight is NULL, NaN or infinite, or whose weight is zero, does not
+ * contribute. A negative weight makes the group's result NULL: neither kind of weight can be
+ * negative, and the incremental algorithm divides by running weight sums, which mixed-sign
+ * weights can bring to zero. Rejecting negative weights keeps every weight sum positive, so the
+ * result does not depend on row order or on how rows split into partial results.
  *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Weighted_incremental_algorithm">
  * Weighted incremental algorithm
@@ -110,6 +116,10 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
             mapValue.putDouble(valueIndex + 3, 0.0); // S
             return;
         }
+        if (weight < 0.0) {
+            setNull(mapValue);
+            return;
+        }
         mapValue.putDouble(valueIndex, weight); // w_sum
         mapValue.putDouble(valueIndex + 1, weight * weight); // w_sum2
         mapValue.putDouble(valueIndex + 2, sample); // mean
@@ -124,7 +134,12 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
         if (!Numbers.isFinite(sample) || !Numbers.isFinite(weight) || weight == 0.0) {
             return;
         }
-        // Acquire current computation state
+        if (weight < 0.0) {
+            setNull(mapValue);
+            return;
+        }
+        // Acquire current computation state. After a negative weight the state is NULL (NaN), and the
+        // update below keeps it NaN.
         double wSum = mapValue.getDouble(valueIndex);
         double wSum2 = mapValue.getDouble(valueIndex + 1);
         double mean = mapValue.getDouble(valueIndex + 2);
@@ -190,31 +205,34 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        // Acquire source computation state
+        // Weights are positive, so w_sum is 0.0 only when a value has no data. A NaN w_sum means a
+        // negative weight, which makes the merged value NULL.
         double srcWsum = srcValue.getDouble(valueIndex);
+        double destWsum = destValue.getDouble(valueIndex);
+        if (srcWsum == 0.0 || Double.isNaN(destWsum)) {
+            // srcValue has no data, or destValue is NULL -- return with destValue untouched
+            return;
+        }
+
+        // Acquire source computation state
         double srcWsum2 = srcValue.getDouble(valueIndex + 1);
         double srcMean = srcValue.getDouble(valueIndex + 2);
         double srcS = srcValue.getDouble(valueIndex + 3);
 
-        if (srcWsum == 0.0) {
-            // srcValue has no data -- return with destValue untouched
-            return;
-        }
-
-        // Acquire destination computation state
-        double destWsum = destValue.getDouble(valueIndex);
-        double destWsum2 = destValue.getDouble(valueIndex + 1);
-        double destMean = destValue.getDouble(valueIndex + 2);
-        double destS = destValue.getDouble(valueIndex + 3);
-
-        if (destWsum == 0.0) {
-            // srcValue has data, destValue doesn't. Copy entire srcValue to destValue.
+        if (destWsum == 0.0 || Double.isNaN(srcWsum)) {
+            // destValue has no data, or srcValue is NULL. Copy entire srcValue to destValue.
             destValue.putDouble(valueIndex, srcWsum);
             destValue.putDouble(valueIndex + 1, srcWsum2);
             destValue.putDouble(valueIndex + 2, srcMean);
             destValue.putDouble(valueIndex + 3, srcS);
             return;
         }
+
+        // Acquire destination computation state
+        double destWsum2 = destValue.getDouble(valueIndex + 1);
+        double destMean = destValue.getDouble(valueIndex + 2);
+        double destS = destValue.getDouble(valueIndex + 3);
+
         // Both srcValue and destValue have data -- merge them
 
         // Compute interim results

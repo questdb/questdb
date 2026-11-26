@@ -49,13 +49,16 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.AssociativeCache;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zstd;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -437,6 +440,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             long requestId,
             RecordCursorFactory factory,
             PageFrameCursor pageFrameCursor,
+            @Nullable MemoryTracker memoryTracker,
             int columnCount,
             long initialCredit,
             CharSequence sqlText,
@@ -451,11 +455,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
-        pageFrameAddressCache.of(
-                factory.getMetadata(),
-                pageFrameCursor.getColumnMapping(),
-                pageFrameCursor.isExternal()
-        );
+        pageFrameAddressCache.of(factory.getMetadata(), pageFrameCursor);
+        pageFrameMemoryPool.setMemoryTracker(memoryTracker);
         pageFrameMemoryPool.of(pageFrameAddressCache);
         pageFrameMemoryRecord.of(pageFrameCursor);
         this.streamingRequestId = requestId;
@@ -613,21 +614,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
-     * Removes the current streaming factory reference from this state and
-     * returns it. {@link #endStreaming} will no longer free it -- ownership
-     * transfers to the caller, typically to put the factory back into the
-     * compile cache for reuse.
-     * <p>
-     * Returns {@code null} if streaming isn't active or the factory has
-     * already been detached; callers should null-check before caching.
-     */
-    public RecordCursorFactory detachStreamingFactory() {
-        RecordCursorFactory detached = streamingFactory;
-        streamingFactory = null;
-        return detached;
-    }
-
-    /**
      * Releases the in-flight cursor + factory and marks streaming inactive.
      * A page-frame query may have transferred opaque decode resources (for
      * example, an enterprise cold-storage chunk lease) into the memory pool's
@@ -644,6 +630,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public void endStreaming() {
+        endStreaming(null);
+    }
+
+    /**
+     * Ends streaming like {@link #endStreaming()}, but puts a cacheable streaming factory into
+     * {@code selectCache}, keyed by the query's SQL text, instead of freeing it. The factory goes
+     * there only after the cursor is closed and the execution owner has ended: ending the owner
+     * releases the execution's resources, which include state of the factory's functions, and
+     * another connection can take the factory from the shared cache as soon as it is there.
+     * <p>
+     * The caller passes its own cache on every call rather than the state keeping one: a
+     * connection can outlive the processor that started its query (a fiber-limit reload closes
+     * processors while connections are parked), and a factory put into a closed cache leaks.
+     * A null {@code selectCache} frees the factory.
+     */
+    public void endStreaming(@Nullable AssociativeCache<RecordCursorFactory> selectCache) {
         streamingActive = false;
         streamingCurrentPageFrame = null;
         final RecordCursor streamingCursor = this.streamingCursor;
@@ -652,6 +654,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingPageFrameCursor = null;
         final RecordCursorFactory streamingFactory = this.streamingFactory;
         this.streamingFactory = null;
+        final AssociativeCache<RecordCursorFactory> streamingFactoryCache =
+                streamingFactoryCacheable && streamingFactory != null ? selectCache : null;
+        final String streamingSqlText = this.streamingSqlText;
 
         Throwable cleanupFailure = null;
         if (pageFrameMemoryRecord != null) {
@@ -679,7 +684,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPageFrameCursor);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+        if (streamingFactoryCache == null) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+        }
 
         streamingColumnCount = 0;
         streamingBatchSeq = 0;
@@ -692,11 +699,25 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
-        streamingSqlText = null;
+        this.streamingSqlText = null;
+        boolean isOwnerEnded = false;
         try {
             endSqlExecutionOwner();
+            isOwnerEnded = true;
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        if (streamingFactoryCache != null) {
+            // Only after the owner has ended: see endStreaming(AssociativeCache).
+            if (isOwnerEnded && streamingSqlText != null) {
+                try {
+                    streamingFactoryCache.put(streamingSqlText, streamingFactory);
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
+            } else {
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+            }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }

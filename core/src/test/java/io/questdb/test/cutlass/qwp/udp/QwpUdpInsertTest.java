@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.qwp.udp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
@@ -32,9 +34,14 @@ import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
 import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
+import io.questdb.griffin.SqlException;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -46,6 +53,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RunWith(Parameterized.class)
 public class QwpUdpInsertTest extends AbstractCairoTest {
@@ -120,6 +128,54 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
         }
         return params;
+    }
+
+    // QWP UDP writes through the WAL, so on an ADAPTIVE instance the rows the receiver committed survive a clean
+    // restart, whose close takes a save point, and a crash, which rewinds the table to its last save point and
+    // replays them from the WAL. Each time the last batch is beyond the periodic save point.
+    @Test
+    public void testAdaptiveCommittedRowsSurviveRestartAndCrash() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // After the first apply batch of a start, no periodic save point.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        assertMemoryLeak(() -> {
+            CairoEngine e = engine;
+            try {
+                e.execute("create table qwp_adaptive (ts timestamp, v long) timestamp(ts) partition by DAY WAL");
+                for (int restart = 0; restart < 2; restart++) {
+                    final boolean crash = restart == 1;
+                    sendAdaptiveBatch(e, 2 * restart);
+                    sendAdaptiveBatch(e, 2 * restart + 1);
+                    final String expected = adaptiveRows(e);
+                    final SeqTxnTracker tracker = adaptiveTracker(e);
+                    Assert.assertTrue("the last batch must be beyond the save point", tracker.getDurableEpochSeqTxn() < tracker.getSeqTxn());
+                    // A crash: the close takes no save point.
+                    setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, crash ? "false" : "true");
+                    e = restartAdaptive(e);
+                    Assert.assertEquals(crash ? 1 : 0, adaptiveTracker(e).getRecoveryIncarnation());
+                    Assert.assertEquals(expected, adaptiveRows(e));
+                }
+                Assert.assertEquals(
+                        """
+                                ts\tv
+                                2024-01-01T00:00:00.000000Z\t0
+                                2024-01-01T01:00:00.000000Z\t1
+                                2024-01-02T00:00:00.000000Z\t10
+                                2024-01-02T01:00:00.000000Z\t11
+                                2024-01-03T00:00:00.000000Z\t20
+                                2024-01-03T01:00:00.000000Z\t21
+                                2024-01-04T00:00:00.000000Z\t30
+                                2024-01-04T01:00:00.000000Z\t31
+                                """,
+                        adaptiveRows(e)
+                );
+            } finally {
+                if (e != engine) {
+                    e.close();
+                }
+            }
+        });
     }
 
     @Test
@@ -1823,6 +1879,59 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUdpSegmentRollFailureOnIdleTableHeals() throws Exception {
+        // A failed segment roll distresses the cached writer while it holds no rows.
+        // The next lookup evicts it, so only two datagrams are lost.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        final AtomicBoolean isMkdirsFailing = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, "udp_roll_fail") && isMkdirsFailing.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                // Datagram 1 creates the table and commits; the commit fills the
+                // one-row segment, so the writer rolls it on its next row.
+                sendRollFailRow(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+                final long parseErrorsBefore = receiver.getDroppedParseErrorCount();
+                final long staleBefore = receiver.getDroppedStaleTableCount();
+
+                // Datagram 2 fails the segment roll and distresses the writer.
+                isMkdirsFailing.set(true);
+                sendRollFailRow(receiver, 2);
+                Assert.assertFalse("test setup: the segment roll must fail", isMkdirsFailing.get());
+                Assert.assertEquals(parseErrorsBefore + 1, receiver.getDroppedParseErrorCount());
+
+                // Datagram 3 finds the distressed writer: the lookup evicts it
+                // and refuses the datagram.
+                sendRollFailRow(receiver, 3);
+                Assert.assertEquals(staleBefore + 1, receiver.getDroppedStaleTableCount());
+                Assert.assertEquals(0, receiver.getCachedTableCount());
+
+                // Datagram 4 lands through a fresh writer.
+                sendRollFailRow(receiver, 4);
+                Assert.assertEquals(parseErrorsBefore + 1, receiver.getDroppedParseErrorCount());
+                Assert.assertEquals(staleBefore + 1, receiver.getDroppedStaleTableCount());
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM udp_roll_fail")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
         // M4: end-to-end through processDatagram. A datagram buffers rows for a
         // table that is then DROPped WITHOUT a commit, so the cached TUD still
@@ -1927,6 +2036,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     // the boolean could report "received" before any datagram was handled.
     // processedCount + totalDroppedCount increases exactly once per handled
     // datagram, making progress unambiguous.
+    private static String adaptiveRows(CairoEngine e) throws SqlException {
+        final StringSink sink = new StringSink();
+        e.print("select * from qwp_adaptive", sink);
+        return sink.toString();
+    }
+
+    private static SeqTxnTracker adaptiveTracker(CairoEngine e) {
+        return e.getTableSequencerAPI().getTxnTracker(e.verifyTableName("qwp_adaptive"));
+    }
+
     private static void drainReceiver(QwpUdpReceiver receiver) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         long handledBefore = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
@@ -1965,12 +2084,33 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         );
     }
 
+    private static void sendRollFailRow(QwpUdpReceiver receiver, long value) {
+        try (QwpUdpSender sender = newSender()) {
+            sender.table("udp_roll_fail").longColumn("v", value).at(value * 1_000_000L, ChronoUnit.MICROS);
+            sender.flush();
+        }
+        drainReceiver(receiver);
+    }
+
     private static QwpUdpSender newSender(int maxDatagramSize) {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0, maxDatagramSize);
     }
 
     private static QwpUdpSender newSender() {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0);
+    }
+
+    // A start in a fresh engine, which runs startup recovery, then applies the WAL.
+    private static CairoEngine restartAdaptive(CairoEngine e) {
+        e.releaseAllReaders();
+        e.releaseAllWriters();
+        e.releaseInactive();
+        if (e != engine) {
+            e.close();
+        }
+        final CairoEngine restarted = new CairoEngine(configuration);
+        TestUtils.drainWalQueue(restarted);
+        return restarted;
     }
 
     private static void sendSingleRow(long value, long timestampMicros) {
@@ -1980,6 +2120,22 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     .at(timestampMicros, ChronoUnit.MICROS);
             sender.flush();
         }
+    }
+
+    // Two rows on day 1 + batch in one datagram, committed by the receiver, then applied.
+    private void sendAdaptiveBatch(CairoEngine e, int batch) {
+        try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, e)) {
+            try (QwpUdpSender sender = newSender()) {
+                for (int i = 0; i < 2; i++) {
+                    sender.table("qwp_adaptive")
+                            .longColumn("v", batch * 10L + i)
+                            .at(1_704_067_200_000_000L + batch * 86_400_000_000L + i * 3_600_000_000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+            drainReceiver(receiver);
+        }
+        TestUtils.drainWalQueue(e);
     }
 
     @FunctionalInterface

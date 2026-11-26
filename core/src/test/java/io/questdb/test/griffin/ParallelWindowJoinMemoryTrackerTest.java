@@ -217,7 +217,6 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // A tiny limit breaches on the keyed atom's first tracked allocation, which is one of the
         // maps initTimeFrameCursors() charges at the head of the first drain; the loop verifies reuse.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -225,6 +224,8 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
@@ -338,7 +339,6 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // Non-keyed variant of testKeyedWindowJoinOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -346,6 +346,8 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
@@ -425,16 +427,6 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // group-by allocator chunk the reducers charge next, so every row still faults inside a
         // reducer holding a slot.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 8 * 1024L);
-        // The owner defers to a worker on the reducer's slot-acquire latch only when it reaches the
-        // latch-gated steal branch, and it reaches that branch only once the reduce queue is full.
-        // A queue deeper than the master's page-frame count lets the owner publish every frame and
-        // then drain them itself through the ungated gang-steal loop, so it can reduce the breaching
-        // frame on the owner path - which takes no per-worker slot - before any worker acquires one,
-        // and assertNoSlotLeakOnBreach then fails with "no worker acquired a slot". The native master
-        // fans out into ~40 frames and fills the 32-deep default queue, but the parquet master cuts on
-        // row-group boundaries into only ~8, well under it. Cap the queue below both frame counts so
-        // the gate engages for either master.
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(

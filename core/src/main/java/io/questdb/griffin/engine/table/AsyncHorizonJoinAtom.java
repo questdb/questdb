@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -72,8 +73,8 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -94,8 +95,8 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 masterTimestampColumnIndex,
                 offsets,
                 asOfJoinKeyTypes,
-                masterAsOfJoinMapSinkClass,
-                slaveAsOfJoinMapSinkClass,
+                masterAsOfJoinMapSinkTemplate,
+                slaveAsOfJoinMapSinkTemplate,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,

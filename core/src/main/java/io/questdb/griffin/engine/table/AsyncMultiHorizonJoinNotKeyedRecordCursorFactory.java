@@ -97,8 +97,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -125,8 +123,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     configuration,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
                     masterTimestampColumnIndex,
                     offsets,
                     valueCount,
@@ -315,7 +311,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 if (frameMemoryPool != null) {
-                    frameMemoryPool.releaseParquetBuffers();
+                    frameMemoryPool.releaseDecodedFrameBuffers();
                 }
             } finally {
                 atom.release(slotId);
@@ -387,7 +383,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                 final RecordSink masterSink = atom.getMasterAsOfJoinSink(slotId, s);
                 final RecordSink slaveSink = atom.getSlaveAsOfJoinMapSink(slotId, s);
 
-                if (asOfJoinMap != null && masterSink != null && slaveSink != null) {
+                if (asOfJoinMap != null) {
                     final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
                     final SymbolTranslatingRecord symbolTranslatingRecord =
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
@@ -471,7 +467,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 if (frameMemoryPool != null) {
-                    frameMemoryPool.releaseParquetBuffers();
+                    frameMemoryPool.releaseDecodedFrameBuffers();
                 }
             } finally {
                 atom.release(slotId);

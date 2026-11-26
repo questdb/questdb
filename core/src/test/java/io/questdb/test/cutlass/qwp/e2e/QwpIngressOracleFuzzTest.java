@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.LineSenderServerException;
@@ -42,6 +44,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.load.QwpRow;
 import io.questdb.test.cutlass.qwp.load.QwpTable;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -115,11 +118,14 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             "🎉",   // U+1F389 (4-byte, surrogate pair in Java)
     };
     // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
-    // does not override these, so the actual buffers are this size.
+    // keeps them unless a test passes its own send buffer size.
     private static final int RECV_BUFFER_SIZE = 131_072;
     private static final int SEND_BUFFER_SIZE = 131_072;
     private static final String TABLE_NAME = "qwp_oracle_fuzz";
     private static final String TS_COLUMN = "ts";
+    // Replays carry the same column values as the original rows, so UPSERT and SKIP
+    // collapse them into the same table content.
+    private String dedupMode;
     private int recvChunk;
     private int sendChunk;
 
@@ -134,8 +140,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // the buffer is effectively no fragmentation.
         recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
         sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
         LOG.info().$("QwpIngressOracleFuzzTest fragmentation recvChunk=").$(recvChunk)
-                .$(", sendChunk=").$(sendChunk).$();
+                .$(", sendChunk=").$(sendChunk)
+                .$(", dedupMode=").$(dedupMode).$();
     }
 
     @Test
@@ -432,6 +440,159 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
 
                 assertOracle(oracle);
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
+            }
+        });
+    }
+
+    /**
+     * Producers interleave 3-26 DEDUP tables, some add a column, the server bounces, and half the runs use a
+     * 512-1023 byte send buffer, which acks of 11 or more tables can outgrow, making the server stage them.
+     */
+    @Test
+    public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
+        // Without fsync: the tiny frames make many tiny commits, and syncing each one
+        // can outlast the client's drain timeout on a slow disk.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            Assert.assertEquals("test setup: commits must not sync", CommitMode.NOSYNC, configuration.getCommitMode());
+            Rnd master = TestUtils.generateRandom(LOG);
+            final String[] tableNames = new String[3 + master.nextInt(24)];
+            for (int t = 0; t < tableNames.length; t++) {
+                tableNames[t] = TABLE_NAME + '_' + (char) ('a' + t) + "_with_a_name_this_long";
+            }
+            // An ack takes 15 bytes and 49 per table it names: 1_289 for all 26.
+            final int sendBufferSize = master.nextBoolean() ? SEND_BUFFER_SIZE : 512 + master.nextInt(512);
+            LOG.info().$("multi-table test tables=").$(tableNames.length).$(", sendBufferSize=").$(sendBufferSize).$();
+            final QwpTable[] oracles = new QwpTable[tableNames.length];
+            for (int t = 0; t < tableNames.length; t++) {
+                createTargetTable(tableNames[t]);
+                oracles[t] = new QwpTable(tableNames[t]);
+            }
+            int port = RestartableQwpServer.pickFreePort();
+
+            int producerCount = 2 + master.nextInt(2);              // 2..3
+            int rowsPerProducer = 900 + master.nextInt(1_200);      // 900..2099
+            int bounces = 2 + master.nextInt(3);                    // 2..4
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("multi-table test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
+
+            // Row r of every producer goes to table (r + producer) % tableCount, so the tables
+            // interleave within every flush. ids and timestamps are globally unique. From its
+            // middle row on, an even producer writes column mid_p<producer> to table
+            // producer % tableCount, the table its rows r = 0, tableCount, ... go to.
+            long baseTsMicros = 1_700_000_000_000_000L;
+            QwpRow[][] perProducerRows = new QwpRow[producerCount][rowsPerProducer];
+            int[] batchSizes = new int[producerCount];
+            int[] autoFlushRows = new int[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                batchSizes[p] = 1 + master.nextInt(40);
+                autoFlushRows[p] = 1 + master.nextInt(100);
+            }
+            Rnd bouncerRnd = new Rnd(master.nextLong(), master.nextLong());
+            long globalIdx = 0;
+            for (int p = 0; p < producerCount; p++) {
+                Rnd genRnd = new Rnd(master.nextLong(), master.nextLong());
+                for (int r = 0; r < rowsPerProducer; r++) {
+                    QwpRow row = generateRow(genRnd, globalIdx, baseTsMicros + globalIdx);
+                    if (p % 2 == 0 && r >= rowsPerProducer / 2 && r % tableNames.length == 0) {
+                        row.setLong("mid_p" + p, globalIdx);
+                    }
+                    perProducerRows[p][r] = row;
+                    oracles[(r + p) % tableNames.length].addRow(row);
+                    globalIdx++;
+                }
+            }
+
+            String[] sfDirs = new String[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                sfDirs[p] = freshSfDir("oracle-multi-table-p" + p);
+            }
+
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk, sendBufferSize)) {
+                server.start();
+
+                AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
+                CountDownLatch producersDone = new CountDownLatch(producerCount);
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+
+                Thread[] producers = new Thread[producerCount];
+                for (int p = 0; p < producerCount; p++) {
+                    final int pp = p;
+                    final QwpRow[] myRows = perProducerRows[pp];
+                    final String mySfDir = sfDirs[pp];
+                    final int batchSize = batchSizes[pp];
+                    final int autoFlush = autoFlushRows[pp];
+                    producers[p] = new Thread(() -> {
+                        try {
+                            String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
+                                    + ";initial_connect_retry=async"
+                                    + ";reconnect_max_duration_millis=120000"
+                                    + ";close_flush_timeout_millis=120000"
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
+                                    + ";auto_flush_rows=" + autoFlush + ";";
+                            try (Sender sender = Sender.fromConfig(connect)) {
+                                int written = 0;
+                                while (written < myRows.length) {
+                                    int end = Math.min(written + batchSize, myRows.length);
+                                    for (int i = written; i < end; i++) {
+                                        myRows[i].publishTo(sender, tableNames[(i + pp) % tableNames.length], ID_COLUMN);
+                                    }
+                                    sender.flush();
+                                    written = end;
+                                }
+                            }
+                        } catch (Throwable t) {
+                            producerErrors.set(pp, t);
+                        } finally {
+                            producersDone.countDown();
+                            Path.clearThreadLocals();
+                        }
+                    }, "qwp-oracle-multi-table-producer-" + pp);
+                }
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        Os.sleep(150); // let producers warm up
+                        for (int i = 0; i < bounces; i++) {
+                            LOG.info().$("oracle multi-table bounce ").$(i + 1).$('/').$(bounces).$();
+                            server.stop();
+                            Os.sleep(40 + bouncerRnd.nextInt(60));
+                            server.start();
+                            Os.sleep(150 + bouncerRnd.nextInt(250));
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-oracle-multi-table-bouncer");
+
+                for (Thread t : producers) t.start();
+                bouncer.start();
+
+                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                    throw new AssertionError("bouncer timed out");
+                }
+                if (bouncerError.get() != null) {
+                    throw new AssertionError("bouncer failed", bouncerError.get());
+                }
+                if (!producersDone.await(240, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producers timed out");
+                }
+                for (int p = 0; p < producerCount; p++) {
+                    Throwable t = producerErrors.get(p);
+                    if (t != null) {
+                        throw new AssertionError("producer " + p + " failed", t);
+                    }
+                }
+
+                drainWalQueue();
+                for (int t = 0; t < tableNames.length; t++) {
+                    engine.awaitTable(tableNames[t], 60, TimeUnit.SECONDS);
+                    assertOracle(oracles[t]);
+                }
                 assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
             }
         });
@@ -907,9 +1068,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * protocol switch in {@code resumeSend} after the framework's park-on-write
      * resumes the residual flush.
      * <p>
-     * Both the master {@link Rnd} seed AND the fragmentation chunks are pinned so
-     * this regression case is bit-for-bit reproducible -- changing the chunks back
-     * to wide (or symmetric) values would mask the bug. The asymmetry
+     * The test pins the fragmentation chunks and takes the master {@link Rnd} from
+     * {@link TestUtils#generateRandom}, so each run varies the producer, row and
+     * bounce counts but always exercises the fragmented 101 response; the logged
+     * seeds reproduce a failing run. Changing the chunks back to wide (or
+     * symmetric) values would mask the bug. The asymmetry
      * ({@code recvChunk=460}, {@code sendChunk=125}) is the load-bearing detail:
      * symmetric fragmentation at the same chunk doesn't always hit the second-send
      * branch.
@@ -920,8 +1083,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // setUp() so the random pick can't mask the regression.
         final int regressionRecvChunk = 460;
         final int regressionSendChunk = 125;
+        // Frozen like the chunks, the dedup mode keeps the regression bit-for-bit reproducible.
+        dedupMode = "UPSERT";
         assertMemoryLeak(() -> {
-            Rnd master = TestUtils.generateRandom(LOG, 1951343273690333L, 1779330804963L);
+            Rnd master = TestUtils.generateRandom(LOG);
             createTargetTable();
             int port = RestartableQwpServer.pickFreePort();
 
@@ -1530,9 +1695,13 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     private void createTargetTable() {
+        createTargetTable(TABLE_NAME);
+    }
+
+    private void createTargetTable(String tableName) {
         try {
             execute(
-                    "CREATE TABLE " + TABLE_NAME + " ("
+                    "CREATE TABLE " + tableName + " ("
                             + "id LONG, "
                             + "b BOOLEAN, "
                             + "b8 BYTE, "
@@ -1562,7 +1731,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             + "dec256 DECIMAL(50,6), "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
-                            + "DEDUP UPSERT KEYS(ts, id)"
+                            + "DEDUP " + dedupMode + " KEYS(ts, id)"
             );
         } catch (Exception e) {
             throw new AssertionError("failed to create target table", e);

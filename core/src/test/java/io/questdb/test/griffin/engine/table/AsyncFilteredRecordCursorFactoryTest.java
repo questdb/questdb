@@ -1660,6 +1660,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isExpiryReadFilterEnabled() {
+            return sqlExecutionContext.isExpiryReadFilterEnabled();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1667,6 +1672,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelGroupByEnabled() {
             return sqlExecutionContext.isParallelGroupByEnabled();
+        }
+
+        @Override
+        public boolean isParallelHashJoinGroupByEnabled() {
+            return sqlExecutionContext.isParallelHashJoinGroupByEnabled();
         }
 
         @Override
@@ -1781,6 +1791,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setExpiryReadFilterEnabled(boolean enabled) {
+            sqlExecutionContext.setExpiryReadFilterEnabled(enabled);
+        }
+
+        @Override
         public void setIntervalFunctionType(int intervalType) {
             sqlExecutionContext.setIntervalFunctionType(intervalType);
         }
@@ -1808,6 +1823,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
             sqlExecutionContext.setParallelGroupByEnabled(parallelGroupByEnabled);
+        }
+
+        @Override
+        public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(isEnabled);
         }
 
         @Override

@@ -25,6 +25,8 @@
 #ifndef QUESTDB_DEDUP_H
 #define QUESTDB_DEDUP_H
 
+#include <cstring>
+
 // This struct represents repated pointers in dedup_column
 // Sometimes it's better to view dedup_column struct as if it has an array of 2 column_pointer(s)
 #pragma pack (push, 1)
@@ -89,9 +91,18 @@ public:
         return reinterpret_cast<const T **>(column_var_data);
     }
 
+    // null_value sits at an unaligned offset of this packed struct. Copy it out rather than dereference
+    // it in place as T: the compiler may load a 16-byte T (__int128, int256) with aligned SIMD loads,
+    // which fault on an unaligned address.
     template<typename T>
-    inline const T& get_null_value() const{
-        return *reinterpret_cast<const T *>(&null_value);
+    inline T get_null_value() const {
+        T value;
+        std::memcpy(&value, null_value, sizeof(T));
+        return value;
+    }
+
+    [[nodiscard]] inline const uint8_t *get_null_value_ptr() const {
+        return null_value;
     }
 
     [[nodiscard]]

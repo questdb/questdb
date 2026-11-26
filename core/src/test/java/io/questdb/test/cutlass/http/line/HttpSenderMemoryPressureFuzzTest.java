@@ -37,6 +37,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -66,10 +67,13 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
 
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "4096",
-                // let's make CAIRO_WAL_MAX_LAG_SIZE a fraction of our max RSS
-                // it's 75MB by default and that's fraction of RSS in the real world
-                // this test has max RSS in 10s of MB, so let's make the MAX LAG size a fraction of that
+                // let's make CAIRO_WAL_MAX_LAG_SIZE and CAIRO_WAL_APPLY_BLOCK_SIZE a fraction of our max RSS
+                // they're 75MB by default and that's fraction of RSS in the real world
+                // this test has max RSS in 10s of MB, so let's make them a fraction of that
                 PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "10",
+                PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE.getEnvVarName(), "10",
+                // the server sets an RSS limit, under which the block's row limit keeps doubling; cap it
+                PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS.getEnvVarName(), String.valueOf(AbstractFuzzTest.getRndWalApplyBlockMaxRows(rnd)),
                 PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1")
         ) {
             serverMain.start();

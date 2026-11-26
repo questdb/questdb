@@ -36,12 +36,19 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DeltaCheckpoint;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -50,7 +57,12 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
+
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -61,11 +73,17 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -86,6 +104,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -96,6 +115,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestServerMain;
@@ -116,8 +136,11 @@ import java.lang.reflect.Field;
 import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
@@ -1141,6 +1164,153 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreCompletesWhereSyncIsUnavailable() throws Exception {
+        // Windows has no sync(2), and its Files.sync() always returns -1. This suite does not run on Windows,
+        // so the facade plays that platform. Restore must complete and consume the trigger: treating the
+        // missing primitive as a failed flush halts the server, and the trigger it keeps repeats that on
+        // every start.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAfterCheckpoint("t");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.isWindowsSyncSimulated = true;
+            try {
+                engine.checkpointRecover();
+            } finally {
+                testFilesFacade.isWindowsSyncSimulated = false;
+                // A regression poisons the shared engine; keep the failure in this test.
+                engine.resetDurabilityFailure();
+            }
+
+            Assert.assertFalse("restore must consume the trigger", testFilesFacade.exists(triggerFilePath.$()));
+            Assert.assertFalse("restore must remove the checkpoint", testFilesFacade.exists(path.trimTo(rootLen).$()));
+            assertQuery("select count() from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsAndKeepsTriggerOnSyncfsError() throws Exception {
+        // A restore whose flush fails has not reached the device. Recovery must fail loudly and keep the
+        // trigger and the checkpoint, so that the next start restores again instead of trusting the files.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAfterCheckpoint("t");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.isSyncfsForced = true;
+            try {
+                testFilesFacade.errorOnSyncfs = true;
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail("a failed flush of the restored files must fail recovery");
+                } catch (CairoException | CairoError e) {
+                    Assert.assertTrue(CairoException.isDataSyncFailure(e));
+                    TestUtils.assertContains(e.getMessage(), "could not syncfs");
+                    // The engine stops only in a mode that promises durability; elsewhere the restore fails alone.
+                    final boolean durable = CommitMode.isPowerLossDurable(engine.getConfiguration().getCommitMode());
+                    Assert.assertEquals(durable, e instanceof CairoError);
+                    Assert.assertEquals(durable, engine.isDurabilityFailed());
+                } finally {
+                    testFilesFacade.errorOnSyncfs = false;
+                    engine.resetDurabilityFailure();
+                }
+                Assert.assertTrue("the trigger must survive a failed flush", testFilesFacade.exists(triggerFilePath.$()));
+                Assert.assertTrue("the checkpoint must survive a failed flush", testFilesFacade.exists(path.trimTo(rootLen).$()));
+
+                // The next start repeats the restore and completes it.
+                engine.clear();
+                engine.checkpointRecover();
+            } finally {
+                testFilesFacade.isSyncfsForced = false;
+            }
+
+            Assert.assertFalse(testFilesFacade.exists(triggerFilePath.$()));
+            assertQuery("select count() from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFlushesEachVolumeOnce() throws Exception {
+        assertCheckpointRestoreFlushesEachVolumeOnce(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreFlushesEachVolumeOnceWhenEntryTypesAreUnknown() throws Exception {
+        // A file system that reports no entry types (XFS without ftype, some FUSE and network file systems) lists
+        // the soft link of a table IN VOLUME as unknown: the flush has to ask, or it flushes no volume.
+        assertCheckpointRestoreFlushesEachVolumeOnce(true);
+    }
+
+    // A table created IN VOLUME lives on another filesystem behind a soft link, so flushing the database root's
+    // filesystem does not cover it. Two tables share one volume, and so one flush.
+    private void assertCheckpointRestoreFlushesEachVolumeOnce(boolean isEntryTypeUnknown) throws Exception {
+        assertMemoryLeak(() -> {
+            final File volume = temp.newFolder(isEntryTypeUnknown ? "checkpoint_volume_unknown_types" : "checkpoint_volume");
+            final String volumeAlias = "checkpoint_vol";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                for (String tableName : new String[]{"v1", "v2"}) {
+                    execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by day bypass wal in volume '" + volumeAlias + "'");
+                    execute("insert into " + tableName + " select x, x::timestamp from long_sequence(3)");
+                }
+                execute("checkpoint create");
+                execute("insert into v1 select x + 3, (x + 3)::timestamp from long_sequence(2)");
+
+                engine.clear();
+                createTriggerFile();
+                testFilesFacade.isSyncfsForced = true;
+                testFilesFacade.isEntryTypeUnknown = isEntryTypeUnknown;
+                testFilesFacade.unknownTypes = 0;
+                try {
+                    engine.checkpointRecover();
+                } finally {
+                    testFilesFacade.isSyncfsForced = false;
+                    testFilesFacade.isEntryTypeUnknown = false;
+                }
+                if (isEntryTypeUnknown) {
+                    Assert.assertTrue("the volume flush must list entries of unknown type", testFilesFacade.unknownTypes > 0);
+                }
+
+                final String volumePath = volume.getCanonicalPath();
+                final String dbRootPath = new File(configuration.getDbRoot().toString()).getCanonicalPath();
+                int volumeFlushes = 0;
+                int dbRootFlushes = 0;
+                for (int i = 0, n = testFilesFacade.syncfsDirs.size(); i < n; i++) {
+                    final String dir = new File(testFilesFacade.syncfsDirs.getQuick(i)).getCanonicalPath();
+                    if (dir.equals(volumePath)) {
+                        volumeFlushes++;
+                    } else if (dir.equals(dbRootPath)) {
+                        dbRootFlushes++;
+                    }
+                }
+                Assert.assertEquals("flushed dirs: " + testFilesFacade.syncfsDirs, 1, volumeFlushes);
+                Assert.assertEquals("flushed dirs: " + testFilesFacade.syncfsDirs, 1, dbRootFlushes);
+                assertQuery("select count() from v1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n3\n");
+                engine.checkpointRelease();
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreFailsOnMissingParquetFile() throws Exception {
         // When both _pm and data.parquet are missing, rebuildTableFiles()
         // should throw CairoException from generateMissingParquetMetaFiles().
@@ -1352,6 +1522,95 @@ public class CheckpointTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns(expectedCount);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreKeepsTableActiveOnShorterInPlaceParquetUpdate() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 200);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT dateadd('s', x::int, '2024-01-01T00:00:00')::timestamp, rnd_symbol('a', 'b', 'c'), x FROM long_sequence(2000)");
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:01', 'a', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String dbRoot = engine.getConfiguration().getDbRoot();
+            final File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+
+            final File dataParquet = new File(partDir, "data.parquet");
+            final long committedSize = dataParquet.length();
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(dataParquet, true)) {
+                fos.write(new byte[1 << 20]);
+            }
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+            Assert.assertEquals(committedSize + (1 << 20), dataParquet.length());
+
+            execute("INSERT INTO t VALUES ('2024-01-01T00:32:30.500000Z', 'b', 42)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2002\n");
+            assertQuery("SELECT v FROM t WHERE s = 'b' AND v = 42")
+                    .noLeakCheck()
+                    .returns("v\n42\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuiltPmClearsSealStampAndRemote() throws Exception {
+        // A _pm rebuilt from data.parquet takes the footer's stamp, not the one a seal wrote or an
+        // upload keyed, so the restore clears both marks: the partition falls back to released
+        // behaviour and uploads or dedups again. A partition whose _pm survives keeps them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-02T00:00:00.000000Z'),
+                    (3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            try (TableWriter writer = getWriter("t")) {
+                for (int i = 0; i < 2; i++) {
+                    writer.getTxWriter().setPartitionSealStamped(i, true);
+                    writer.getTxWriter().setPartitionRemote(i, true);
+                }
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String dbRoot = engine.getConfiguration().getDbRoot();
+            final File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            Assert.assertTrue("failed to delete _pm", new File(partDir, "_pm").delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("a rebuilt _pm loses the seal stamp", tx.isPartitionSealStamped(0));
+                Assert.assertFalse("and the upload", tx.isPartitionRemote(0));
+                Assert.assertTrue("an untouched _pm keeps the seal stamp", tx.isPartitionSealStamped(1));
+                Assert.assertTrue(tx.isPartitionRemote(1));
+            }
+            assertQuery("SELECT count() FROM t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
         });
     }
 
@@ -2003,6 +2262,177 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRecoverClearsStaleAdaptiveEpochAnchor() throws Exception {
+        // Pinned rather than skipped, so it runs under every sweep: only a writer on an adaptive instance enrols
+        // the restored table.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // A checkpoint restore over an existing table rewrites _txn and _cv but does not capture the save point. A
+        // save point left in place would let recovery rewind the restored files to a cut of another lineage, so
+        // checkpoint recover removes it. The restored table then has no save point, so it is not enrolled: the
+        // restore syncs its files, and its next writer enrols it.
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            execute("checkpoint create");
+
+            final TableToken token = engine.getTableTokenIfExists("test");
+            Assert.assertNotNull(token);
+
+            // Fabricate a stale save point at the table root (a table that had run in adaptive commit mode). The
+            // checkpoint does not carry it, so a restore-over-existing leaves it.
+            fabricateStaleEpochTrio(token);
+            Assert.assertTrue("precondition: fabricated epoch trio must exist", staleSavePointExists(token));
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+            } finally {
+                execute("checkpoint release");
+            }
+
+            Assert.assertFalse("checkpoint recover must remove the stale save point", staleSavePointExists(token));
+            try (Path tablePath = new Path()) {
+                tablePath.of(configuration.getDbRoot()).concat(token);
+                Assert.assertFalse(
+                        "the restored table has no save point until its next writer",
+                        DurableEpochManifest.exists(ff, tablePath, tablePath.size())
+                );
+                assertQuery("select * from test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tname\tval
+                                2023-09-20T12:00:00.000000Z\ta\t10
+                                """);
+
+                execute("insert into test values ('2023-09-21T12:00:00.000000Z', 'b', 20);");
+                drainWalQueue();
+                Assert.assertTrue(
+                        "the next writer enrols the restored table with a valid save point",
+                        DurableEpochManifest.loadCandidates(ff, tablePath, tablePath.size(), token.getTableId()).length > 0
+                );
+                assertQuery("select * from test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tname\tval
+                                2023-09-20T12:00:00.000000Z\ta\t10
+                                2023-09-21T12:00:00.000000Z\tb\t20
+                                """);
+            }
+        });
+    }
+
+    // Restore resets a saved lag, and the apply job re-applies the lag's transactions from the copied WAL.
+    private void assertCheckpointRestoreReappliesSavedLag(boolean negativeLagChecksum) throws Exception {
+        // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+        setProperty(CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        execute("create table t (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+        drainWalQueue();
+        final TableToken token = engine.verifyTableName("t");
+        if (negativeLagChecksum) {
+            // A table with many commits: every txn from 73,046 to 145,130 has a negative empty-lag checksum.
+            engine.releaseInactive();
+            try (TxWriter txWriter = new TxWriter(configuration.getFilesFacade(), configuration)) {
+                txWriter.ofRW(Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$());
+                final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+                while (txWriter.getTxn() < 73_100) {
+                    txWriter.commit(symbolCounts);
+                }
+            }
+        }
+        execute("insert into t values (1, '2022-02-24T00:00:00.000000Z')");
+        execute("insert into t values (2, '2022-02-24T01:00:00.000000Z')");
+        execute("insert into t values (3, '2022-02-24T02:00:00.000000Z')");
+        execute("insert into t values (4, '2022-02-24T03:00:00.000000Z')");
+        // Out of order: the transaction before it stays in the lag.
+        execute("insert into t values (5, '2022-02-24T02:30:00.000000Z')");
+
+        // One transaction per pass, until a pass ends with a lag saved in _txn, as the apply job leaves it when
+        // its time quota runs out.
+        setProperty(CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20 && readSavedLagTxnCount(token, negativeLagChecksum) == 0; i++) {
+                engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl().setMaxBlockRowCount(1);
+                applyJob.run();
+            }
+        }
+        engine.releaseInactive();
+        Assert.assertTrue("the checkpoint must hold a saved lag", readSavedLagTxnCount(token, negativeLagChecksum) > 0);
+
+        execute("checkpoint create");
+        engine.clear();
+        createTriggerFile();
+        engine.checkpointRecover();
+
+        setProperty(CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+        drainWalQueueBounded();
+        assertQuery("t")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        x\tts
+                        1\t2022-02-24T00:00:00.000000Z
+                        2\t2022-02-24T01:00:00.000000Z
+                        3\t2022-02-24T02:00:00.000000Z
+                        5\t2022-02-24T02:30:00.000000Z
+                        4\t2022-02-24T03:00:00.000000Z
+                        """);
+        assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables() where name = 't'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("suspended\tcaught_up\nfalse\ttrue\n");
+        engine.checkpointRelease();
+    }
+
+    private void fabricateStaleEpochTrio(TableToken token) {
+        try (Path src = new Path(); Path dst = new Path()) {
+            final String dbRoot = configuration.getDbRoot();
+            final int s = src.of(dbRoot).concat(token).size();
+            final int d = dst.of(dbRoot).concat(token).size();
+            // A generation-one save point file; its content is irrelevant to the clear.
+            Assert.assertTrue(ff.copy(
+                    src.trimTo(s).concat(TableUtils.TXN_FILE_NAME).$(),
+                    dst.trimTo(d).concat(DurableEpochManifest.FILE_NAME).put(".1").$()) >= 0);
+        }
+    }
+
+
+    private int readSavedLagTxnCount(TableToken token, boolean negativeLagChecksum) {
+        try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            txReader.ofRO(Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue(txReader.unsafeLoadAll());
+            final int emptyLagChecksum = TableUtils.calculateTxnLagChecksum(txReader.getTxn(), 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+            Assert.assertEquals("txn=" + txReader.getTxn(), negativeLagChecksum, emptyLagChecksum < 0);
+            return txReader.getLagTxnCount();
+        }
+    }
+
+    // The fresh baseline that checkpoint recovery publishes is generation zero; generation one is the stale one.
+    private boolean staleSavePointExists(TableToken token) {
+        try (Path p = new Path()) {
+            return ff.exists(p.of(configuration.getDbRoot()).concat(token).concat(DurableEpochManifest.FILE_NAME).put(".1").$());
+        }
+    }
+
+    @Test
+    public void testCheckpointRestoreReappliesSavedLag() throws Exception {
+        assertMemoryLeak(() -> assertCheckpointRestoreReappliesSavedLag(false));
+    }
+
+    @Test
+    public void testCheckpointRestoreReappliesSavedLagNegativeLagChecksum() throws Exception {
+        assertMemoryLeak(() -> assertCheckpointRestoreReappliesSavedLag(true));
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexes() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
         final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
@@ -2337,6 +2767,684 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsIndexOverCompositePartitionExtent() throws Exception {
+        // A COMPOSITE partition's column files reach E, and a merge-append relocates a live piece
+        // into [liveRows, E). TableSnapshotRestore used to size its index rebuild by the LIVE row
+        // count, so every row of the relocated piece got no index entry and index-driven queries
+        // quietly returned a subset after a restore. The oracle is a twin table built from the same
+        // statements without the index: it answers by full scan and therefore cannot be wrong.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174003";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            // The rebuild is off by default; the defect only exists on the rebuild path.
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            // A production-sized partition pre-splits on its own at the 50MB default; shrink the
+            // threshold so a fixture small enough to read still ends up composite.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s CAPACITY 8)");
+            createCompositeIndexedDay("ci_plain", "");
+
+            // The fixture is only worth anything while the day's files really do reach past its
+            // live rows - that gap is exactly what the rebuild used to leave unindexed.
+            try (TableReader reader = engine.getReader(engine.verifyTableName("ci_indexed"))) {
+                final long liveRows = reader.getTxFile().getPartitionSize(0);
+                final long e = reader.getGeometry().getE(0);
+                Assert.assertTrue("fixture needs a piece above the live rows, got E=" + e + " live=" + liveRows, e > liveRows);
+            }
+
+            // 'kz' is carried only by the two backdated strides, so every one of its rows is a
+            // relocated row - a row whose file row differs from its partition row.
+            final String countQuery = "SELECT count(), sum(v) FROM %s WHERE s = 'kz'";
+            printSql(String.format(countQuery, "ci_plain"));
+            final String expected = sink.toString();
+
+            assertQuery(String.format(countQuery, "ci_indexed"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan")
+                    .returns(expected);
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            drainWalQueue();
+
+            // The unindexed twin is the oracle: it never had an index to rebuild.
+            assertQuery(String.format(countQuery, "ci_plain"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(String.format(countQuery, "ci_indexed"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan")
+                    .returns(expected);
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreAutoSealMissingValueFile() throws Exception {
+        testCheckpointRestoreAutoSealValueFile(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreAutoSealShortValueFile() throws Exception {
+        testCheckpointRestoreAutoSealValueFile(true);
+    }
+
+    @Test
+    public void testCheckpointRestorePostingIndexOpenFailureDoesNotRebuild() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING, v INT)");
+            execute("INSERT INTO t VALUES ('a', 1), (null, 2)");
+            final TableToken token = engine.verifyTableName("t");
+            engine.clear();
+            final AtomicInteger removedIndexFiles = new AtomicInteger();
+            final FilesFacade failingFacade = new TestFilesFacadeImpl() {
+                // Restore reads the chain head before it opens the writer; fail both opens
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, "s.pk")) {
+                        return -1;
+                    }
+                    return super.openRO(name);
+                }
+
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    if (Utf8s.endsWithAscii(name, "s.pk")) {
+                        return -1;
+                    }
+                    return super.openRW(name, opts);
+                }
+
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.containsAscii(name, "s.p")) {
+                        removedIndexFiles.incrementAndGet();
+                    }
+                    return super.removeQuiet(name);
+                }
+            };
+            final CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFacade;
+                }
+            };
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+                    Assert.fail("expected posting index open failure");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "s.pk");
+                }
+            }
+            Assert.assertEquals("an unrelated I/O error must not trigger a destructive rebuild", 0, removedIndexFiles.get());
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n1\t1\n");
+            execute("INSERT INTO t VALUES ('a', 3)");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n2\t4\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDropsPostingIndexGenerationNewerThanCheckpoint() throws Exception {
+        // A small commit appends a generation to the head entry instead of a new entry. A commit after the
+        // checkpoint leaves a head whose own txn is old and whose last generation is newer than the checkpoint.
+        // Restore must drop that generation, though the head entry itself is old enough to keep.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "checkpoint");
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            for (int i = 1; i <= 3; i++) {
+                execute("INSERT INTO t VALUES ('a', " + i + ", '2024-01-01'::TIMESTAMP + " + i + ")");
+                drainWalQueue();
+            }
+            final File keyFile = new File(new File(new File(configuration.getDbRoot(), token.getDirName()), "2024-01-01"), "s.pk");
+            execute("CHECKPOINT CREATE");
+            final long[] checkpointHead = readPostingHead(keyFile);
+            execute("INSERT INTO t VALUES ('a', 4, '2024-01-01'::TIMESTAMP + 4)");
+            drainWalQueue();
+            engine.clear();
+            final long[] liveHead = readPostingHead(keyFile);
+            // The commit extended the head: same entry, one more generation
+            Assert.assertEquals(checkpointHead[0], liveHead[0]);
+            Assert.assertEquals(checkpointHead[1] + 1, liveHead[1]);
+            Assert.assertTrue(liveHead[2] > checkpointHead[2]);
+
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "restored");
+            engine.checkpointRecover();
+            Assert.assertArrayEquals(checkpointHead, readPostingHead(keyFile));
+
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().withPlanContaining("Index forward scan on: s")
+                    .returns("count\tsum\n3\t6\n");
+            execute("INSERT INTO t VALUES ('b', 5, '2024-01-01'::TIMESTAMP + 5)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n3\t6\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'b'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n1\t5\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDoesNotOpenUnchangedPostingIndexesForWriting() throws Exception {
+        // Opening a writer per POSTING index per partition made restore time grow with partitions times
+        // columns. An index with nothing newer than the checkpoint needs only a read of its head.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING INCLUDE(v), q SYMBOL INDEX TYPE POSTING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'x', 1, '2024-01-01'),
+                    ('b', 'y', 2, '2024-01-01T01:00:00'),
+                    ('a', null, 3, '2024-01-02'),
+                    (null, 'x', 4, '2024-01-03')
+                    """);
+            execute("INSERT INTO t VALUES ('a', 'y', 5, '2024-01-03T01:00:00')");
+            final TableToken token = engine.verifyTableName("t");
+            engine.clear();
+            final AtomicInteger keyFileWriteOpens = new AtomicInteger();
+            final AtomicInteger keyFileReadOpens = new AtomicInteger();
+            final FilesFacade countingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.containsAscii(name, ".pk")) {
+                        keyFileReadOpens.incrementAndGet();
+                    }
+                    return super.openRO(name);
+                }
+
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    if (Utf8s.containsAscii(name, ".pk")) {
+                        keyFileWriteOpens.incrementAndGet();
+                    }
+                    return super.openRW(name, opts);
+                }
+            };
+            final CairoConfiguration countingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return countingFacade;
+                }
+            };
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(countingConfig)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            Assert.assertEquals(0, keyFileWriteOpens.get());
+            // 3 partitions x 2 columns
+            Assert.assertEquals(6, keyFileReadOpens.get());
+            assertQuery("SELECT v FROM t WHERE s = 'a'").noRandomAccess().expectSize().returns("v\n1\n3\n5\n");
+            assertQuery("SELECT v FROM t WHERE q = 'y'").returns("v\n2\n5\n");
+            execute("INSERT INTO t VALUES ('a', 'y', 6, '2024-01-03T02:00:00')");
+            assertQuery("SELECT v FROM t WHERE s = 'a' AND q = 'y'").returns("v\n5\n6\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsOnCorruptPostingKeyFile() throws Exception {
+        // The head check reads what it can and leaves every unreadable .pk to the writer, which names the problem
+        testCheckpointRestoreCorruptPostingKeyFile(100, "Index file too short");
+        testCheckpointRestoreCorruptPostingKeyFile(-1, "Unsupported Posting index version");
+    }
+
+    @Test
+    public void testCheckpointRestorePostingIndexRebuildMarkerCreateFailure() throws Exception {
+        testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(false, "s.pk.rebuild", "could not create posting index rebuild marker");
+    }
+
+    @Test
+    public void testCheckpointRestoreRepeatsParquetPostingIndexRebuildStoppedAtKeyFile() throws Exception {
+        testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(true, "s.pk", "could not open");
+    }
+
+    @Test
+    public void testCheckpointRestoreRepeatsParquetPostingIndexRebuildStoppedAtValueFile() throws Exception {
+        testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(true, "s.pv.0", "could not create index");
+    }
+
+    @Test
+    public void testCheckpointRestoreRepeatsPostingIndexRebuildStoppedAtColumnData() throws Exception {
+        testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(false, "s.d", "could not open");
+    }
+
+    @Test
+    public void testCheckpointRestoreRepeatsPostingIndexRebuildStoppedAtKeyFile() throws Exception {
+        testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(false, "s.pk", "could not open");
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingCompositeValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s TYPE POSTING)");
+            createCompositeIndexedDay("ci_plain", "");
+            final TableToken token = engine.verifyTableName("ci_indexed");
+            final File partDir;
+            try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+                TableUtils.setPathForNativePartition(partitionPath, reader.getMetadata().getTimestampType(), PartitionBy.DAY,
+                        reader.getTxFile().getPartitionTimestampByIndex(0), reader.getTxFile().getPartitionNameTxn(0));
+                partDir = new File(partitionPath.toString());
+            }
+            engine.clear();
+            removePostingValueFiles(partDir);
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT v, ts FROM ci_plain WHERE s = 'kz'", "SELECT v, ts FROM ci_indexed WHERE s = 'kz'", LOG);
+            replaceRangeOfCompositeDay("ci_indexed");
+            replaceRangeOfCompositeDay("ci_plain");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT v, ts FROM ci_plain WHERE s = 'kz'", "SELECT v, ts FROM ci_indexed WHERE s = 'kz'", LOG);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingNonPartitionedKeyFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexNonPartitioned(true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingNonPartitionedValueFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexNonPartitioned(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexShortKeyFile() throws Exception {
+        // A .pk that ends before its chain region lost the head entry. Restore must not read past the end of the
+        // file, and must rebuild the index from the column data.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final int rowCount = 400;
+            long sumA = 0;
+            for (int i = 1; i <= rowCount; i++) {
+                final boolean isA = i % 2 == 1;
+                execute("INSERT INTO t VALUES ('" + (isA ? "a" : "b") + "', " + i + ", '2024-01-01'::TIMESTAMP + " + i + ")");
+                if (isA) {
+                    sumA += i;
+                }
+            }
+            execute("INSERT INTO t VALUES ('b', 0, '2024-01-02')");
+            final TableToken token = engine.verifyTableName("t");
+            engine.clear();
+            final File keyFile = new File(new File(new File(configuration.getDbRoot(), token.getDirName()), "2024-01-01"), "s.pk");
+            final long headEntryOffset;
+            try (
+                    Path path = new Path().of(keyFile.getAbsolutePath());
+                    MemoryCMR keyMem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), keyFile.length(), MemoryTag.MMAP_DEFAULT)
+            ) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                headEntryOffset = chain.getHeadEntryOffset();
+            }
+            final long truncatedLength = PostingIndexUtils.KEY_FILE_RESERVED * 2L;
+            Assert.assertTrue("the head entry must lie past the truncated length", headEntryOffset >= truncatedLength);
+            try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(keyFile, "rw")) {
+                file.setLength(truncatedLength);
+            }
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().withPlanContaining("Index forward scan on: s")
+                    .returns("count\tsum\n" + rowCount / 2 + "\t" + sumA + "\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'b'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n" + (rowCount / 2 + 1) + "\t" + (rowCount * (rowCount + 1L) / 2 - sumA) + "\n");
+            execute("INSERT INTO t VALUES ('a', 1000, '2024-01-01T01:00:00')");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n" + (rowCount / 2 + 1) + "\t" + (sumA + 1000) + "\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingCommittedValueFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(false, false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexShortCommittedValueFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(false, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingCommittedKeyFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(false, false, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingParquetKeyFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(true, false, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingParquetValueFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(true, false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexShortParquetValueFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(true, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreDropsPostingIndexEntriesNewerThanCheckpoint() throws Exception {
+        // A composite partition takes merge-appends in place, so a commit that runs while a checkpoint is
+        // copied rewrites the posting index .pk of a partition the checkpoint also holds. A copy taken
+        // after the .pk changed but before the new value file appeared restored a chain whose head named
+        // a missing .pv, and the first commit to touch that partition after the restore suspended the table.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174005";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s TYPE POSTING)");
+            createCompositeIndexedDay("ci_plain", "");
+
+            final TableToken token = engine.verifyTableName("ci_indexed");
+            final String dayDir;
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+                final Path p = Path.getThreadLocal(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(p, reader.getMetadata().getTimestampType(), PartitionBy.DAY,
+                        reader.getTxFile().getPartitionTimestampByIndex(0), reader.getTxFile().getPartitionNameTxn(0));
+                dayDir = p.toString();
+            }
+            Assert.assertFalse(new File(dayDir, "s.pv.1").exists());
+
+            execute("checkpoint create");
+
+            // The day is not the last partition and the commit shrinks it, so the posting seal
+            // rebuilds the chain in place into a new value file
+            replaceRangeOfCompositeDay("ci_indexed");
+            replaceRangeOfCompositeDay("ci_plain");
+            drainWalQueue();
+
+            // The copy captured the rewritten .pk, but not the value file the commit added
+            Assert.assertTrue(new File(dayDir, "s.pv.1").delete());
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // The restore rewound both tables to the checkpoint; this commit opens the day's posting index
+            replaceRangeOfCompositeDay("ci_indexed");
+            replaceRangeOfCompositeDay("ci_plain");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("ci_indexed")));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("ci_plain")));
+            // The range [01:00, 03:00) lost both 'kz' strides and holds the 3 rows the commit wrote
+            final String expected = """
+                    count\tsum
+                    3\t2490003
+                    """;
+            for (String table : new String[]{"ci_plain", "ci_indexed"}) {
+                assertQuery("SELECT count(), sum(v) FROM " + table + " WHERE s = 'kz'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns(expected);
+            }
+            assertQuery("SELECT count(), sum(v) FROM ci_indexed WHERE s = 'kz'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Index forward scan");
+            printSql("SELECT count(), sum(v), min(ts), max(ts) FROM ci_plain WHERE s = 'k1'");
+            assertQuery("SELECT count(), sum(v), min(ts), max(ts) FROM ci_indexed WHERE s = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sink.toString());
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDropsPostingIndexEntriesSkipsTablesWithoutIndexFiles() throws Exception {
+        // The restore walks every posting index the checkpoint holds and passes over what has none:
+        // a table without partitions, a non-partitioned table, a BITMAP index, a dropped indexed
+        // column, a column added after a partition was written, a parquet partition and a column
+        // with no rows in a partition that has no index files for it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_empty (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_none (s SYMBOL, d SYMBOL, b SYMBOL, v INT), INDEX(s TYPE POSTING), INDEX(d TYPE POSTING), INDEX(b)");
+            execute("INSERT INTO t_none VALUES ('a', 'x', 'm', 1), ('b', 'y', 'n', 2), ('a', 'z', 'm', 3)");
+            execute("ALTER TABLE t_none DROP COLUMN d");
+            execute("CREATE TABLE t_add (s SYMBOL, v INT, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t_add VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t_add ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            // A parquet partition keeps its posting index files next to data.parquet
+            execute("CREATE TABLE t_pq (s SYMBOL, v INT, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t_pq VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t_pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            // A column with no rows in a partition need not have a .pk there, so restore must not build one
+            execute("CREATE TABLE t_nopk (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_nopk VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('b', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE t_nopk ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            final File noPkDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("t_nopk").getDirName()), "2024-01-02");
+            engine.clear();
+            removeFiles(noPkDir, "q.p");
+
+            for (String table : new String[]{"t_empty", "t_none", "t_add", "t_pq", "t_nopk"}) {
+                final TableToken token = engine.verifyTableName(table);
+                try (
+                        Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                        TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+                ) {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+                }
+            }
+            Assert.assertEquals(0, removeFiles(noPkDir, "q.p"));
+
+            execute("INSERT INTO t_empty VALUES ('a', '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO t_none VALUES ('a', 'n', 4)");
+            execute("INSERT INTO t_add VALUES ('a', 3, '2024-01-02T01:00:00.000000Z', 'k')");
+            execute("INSERT INTO t_nopk VALUES ('c', '2024-01-02T01:00:00.000000Z', 'k')");
+            assertQuery("SELECT s, ts FROM t_nopk WHERE q = 'k'")
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts
+                            c\t2024-01-02T01:00:00.000000Z
+                            """);
+            assertQuery("SELECT count() FROM t_empty WHERE s = 'a'")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT v FROM t_none WHERE s = 'a'")
+                    .returns("v\n1\n3\n4\n");
+            assertQuery("SELECT v FROM t_none WHERE b = 'n'")
+                    .returns("v\n2\n4\n");
+            assertQuery("SELECT v, ts FROM t_add WHERE s = 'a'")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T01:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM t_add WHERE q = 'k'")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            3\t2024-01-02T01:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM t_pq WHERE s = 'a'")
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsIndexesOfMultiByteNames() throws Exception {
+        // The restore logs the table whose symbol maps it rebuilds and each column whose index it rebuilds, from native
+        // and parquet partitions alike. Names with 2-, 3- and 4-byte UTF-8 characters must reach the log as valid UTF-8:
+        // test log paranoia fails the restore on any other record.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174004";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            execute("""
+                    CREATE TABLE "cotações_日本" (
+                        "prix_unité" SYMBOL INDEX,
+                        "код" SYMBOL INDEX TYPE POSTING,
+                        "符号😀" SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO "cotações_日本" VALUES
+                    ('a', 'x', 'p', 1, '2024-01-01T00:00'),
+                    ('b', 'y', 'q', 2, '2024-01-01T12:00'),
+                    ('a', 'x', 'q', 3, '2024-01-02T00:00'),
+                    ('b', 'y', 'p', 4, '2024-01-02T12:00')
+                    """);
+            // The restore rebuilds the indexes of 2024-01-01 from parquet, and those of 2024-01-02 from native files.
+            execute("ALTER TABLE \"cotações_日本\" CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            execute("CHECKPOINT CREATE");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            assertQuery("SELECT v FROM \"cotações_日本\" WHERE \"prix_unité\" = 'a'")
+                    .noLeakCheck()
+                    .withPlanContaining("on: prix_unité")
+                    .returns("""
+                            v
+                            1
+                            3
+                            """);
+            assertQuery("SELECT v FROM \"cotações_日本\" WHERE \"код\" = 'y'")
+                    .noLeakCheck()
+                    .withPlanContaining("on: код")
+                    .returns("""
+                            v
+                            2
+                            4
+                            """);
+            assertQuery("SELECT v FROM \"cotações_日本\" WHERE \"符号😀\" = 'p'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: 符号😀")
+                    .returns("""
+                            v
+                            1
+                            4
+                            """);
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsIndexesOfParquetPartitionWithIndexRowMap() throws Exception {
+        // An in-place O3 update moves the row groups it rewrites to fresh index rows, so the footer carries an
+        // index row map. The restore must build the indexes in index rows, not in partition rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val LONG,
+                        s1 SYMBOL INDEX,
+                        s2 SYMBOL INDEX TYPE POSTING,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT
+                        x,
+                        CASE x % 3 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        CASE x % 4 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        dateadd('h', x::INT, '2024-01-01')
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO t VALUES (100, 'a', 'a', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            // Rewrites the first and the second row group in place.
+            execute("INSERT INTO t VALUES (-1, 'b', 'c', '2024-01-01T00:30:00.000000Z'), (-2, 'a', 'b', '2024-01-01T06:30:00.000000Z')");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tableToken)) {
+                reader.openPartition(0);
+                Assert.assertTrue("the footer must carry an index row map", reader.getAndInitParquetPartitionDecoder(0).metadata().hasIndexRowMap());
+            }
+
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            // Delete the index files so the restore has to build them.
+            deleteFilesWithPrefix(partDir, "s1.k");
+            deleteFilesWithPrefix(partDir, "s1.v");
+            deleteFilesWithPrefix(partDir, "s2.p");
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            for (String column : new String[]{"s1", "s2"}) {
+                for (String key : new String[]{"a", "b", "c"}) {
+                    final String select = "SELECT val, ts FROM t WHERE ts IN '2024-01-01' AND " + column;
+                    printSql(select + "::STRING = '" + key + "'");
+                    assertQuery(select + " = '" + key + "'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .withPlanContaining("on: " + column)
+                            .returns(sink.toString());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndex() throws Exception {
         // Regression: TableSnapshotRestore must produce sealed posting index
         // generations and covering sidecars after rebuild, parallel to how it
@@ -2571,10 +3679,7 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01"));
-            Assert.assertNotNull("parquet partition dir missing", partDirs);
-            Assert.assertTrue("parquet partition dir missing", partDirs.length > 0);
-            File partDir = partDirs[0];
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
             File[] pciBefore = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("setup: sym.pci must exist after parquet conversion", pciBefore);
@@ -2612,6 +3717,65 @@ public class CheckpointTest extends AbstractCairoTest {
             // Covering query must keep returning the same rows.
             assertQuery("SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts")
                     .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexOnParquetPartitionKeepsCoveredValues() throws Exception {
+        // A parquet partition has no native column files, so the restore rebuild of its POSTING index must decode
+        // the covered values from the parquet file. Read from the missing .d files instead, every covered value,
+        // the auto-included designated timestamp too, came back as NULL through the covering index.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pi_parquet_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pi_parquet_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-01T03:00:00', 'A', 4.0),
+                    ('2024-01-02T00:00:00', 'A', 5.0)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pi_parquet_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final String query = "SELECT ts, price FROM t_pi_parquet_cov WHERE sym = 'A' AND ts IN '2024-01-01'";
+            final String expected = """
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    2024-01-01T03:00:00.000000Z\t4.0
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns(expected);
+
+            final TableToken tableToken = engine.verifyTableName("t_pi_parquet_cov");
+            engine.clear();
+            try (
+                    Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
                     .returns(expected);
         });
     }
@@ -2694,6 +3858,19 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.checkpointRelease();
         });
+    }
+
+    @Test
+    public void testCheckpointRestoreRefusesDeltaFlaggedOnlyInCheckpoint() throws Exception {
+        // The partition was Delta at the capture and dropped before the copy: only the checkpoint
+        // _txn flags it, and restore must still find its Delta files.
+        assertRestoreRefusesDelta(true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRefusesDeltaFlaggedOnlyInLiveTxn() throws Exception {
+        // The partition switched to Delta after the capture: only the live _txn flags it.
+        assertRestoreRefusesDelta(false);
     }
 
     @Test
@@ -3146,6 +4323,126 @@ public class CheckpointTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreReportsIndexRebuildFailureOfMultiByteColumn() throws Exception {
+        // The restore logs the column of an index it cannot rebuild, then fails with the rebuild's error. A column name
+        // with multi-byte characters must leave that log record valid UTF-8, or test log paranoia raises an error of
+        // its own in place of the rebuild's.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        "prix_unité" SYMBOL INDEX,
+                        "符号😀" SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 'p', 1, '2024-01-01T00:00'),
+                    ('b', 'q', 2, '2024-01-01T12:00'),
+                    ('a', 'q', 3, '2024-01-02T00:00'),
+                    ('b', 'p', 4, '2024-01-02T12:00')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final File tableDir = new File(configuration.getDbRoot(), tableToken.getDirName());
+            final String parquetDir = findParquetPartitionDir(tableDir, "2024-01-01").getName();
+            final String nativeDir = findNativePartitionDir(tableDir, "2024-01-02", "prix_unité.d").getName();
+            final IndexFileFailingFacade failingFf = new IndexFileFailingFacade();
+            final CairoConfiguration failingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFf;
+                }
+            };
+            // The partition directory and the file that cannot be created or opened, whether its creation (touch) fails
+            // rather than its open, and the error the restore reports.
+            final Object[][] failures = {
+                    // the key file of a native partition's index
+                    {nativeDir, "prix_unité.k", false, "could not open read-write [file="},
+                    // the value file of a native partition's index
+                    {nativeDir, "prix_unité.v", true, "could not create index value file [path="},
+                    // the writer of a native partition's index
+                    {nativeDir, "prix_unité.v", false, "could not open read-write [file="},
+                    // the writer of a parquet partition's index
+                    {parquetDir, "prix_unité.v", false, "could not open read-write [file="},
+                    // the writer of a parquet partition's covering index
+                    {parquetDir, "符号😀.pv.0", false, "could not open read-write [file="}
+            };
+            for (Object[] failure : failures) {
+                final String file = Files.SEPARATOR + (String) failure[0] + Files.SEPARATOR + failure[1];
+                engine.clear();
+                failingFf.arm(file, (Boolean) failure[2]);
+                try {
+                    rebuildIndexesOnRestore(failingConfiguration, tableToken);
+                    Assert.fail("the restore must fail on " + file);
+                } catch (CairoException e) {
+                    // The rebuild's own error, not one that a log record raised.
+                    TestUtils.assertContains(e.getFlyweightMessage(), "error in parallel task: [");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "] " + failure[3]);
+                    TestUtils.assertContains(e.getFlyweightMessage(), file + ']');
+                } finally {
+                    failingFf.disarm();
+                }
+
+                // Once the file can be created and opened again, the restore rebuilds every index.
+                engine.clear();
+                rebuildIndexesOnRestore(configuration, tableToken);
+                assertQuery("SELECT v FROM x WHERE \"prix_unité\" = 'a'")
+                        .noLeakCheck()
+                        .withPlanContaining("on: prix_unité")
+                        .returns("""
+                                v
+                                1
+                                3
+                                """);
+                assertQuery("SELECT v FROM x WHERE \"符号😀\" = 'p'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("CoveringIndex on: 符号😀")
+                        .returns("""
+                                v
+                                1
+                                4
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreSkipsDeltaProbeWithoutDeltaState() throws Exception {
+        // Neither the checkpoint nor the live _txn flags Delta state, so restore looks into no
+        // partition directory for Delta files.
+        final AtomicInteger deltaProbes = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Utf8s.endsWithAscii(path, Files.SEPARATOR + DeltaCheckpoint.DIRECTORY_NAME)) {
+                    deltaProbes.incrementAndGet();
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("create table test (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into test select timestamp_sequence('2023-09-20', 86400000000L), x from long_sequence(5)");
+            execute("checkpoint create");
+            execute("insert into test values ('2023-09-30', 6)");
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            deltaProbes.set(0);
+            engine.checkpointRecover();
+            Assert.assertEquals(0, deltaProbes.get());
+
+            assertQuery("select count() from test").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
+            engine.checkpointRelease();
         });
     }
 
@@ -3627,6 +4924,181 @@ public class CheckpointTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("count\n1\n");
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRollsBackV1TxnLog() throws Exception {
+        // Recovery rolls the V1 txnlog's tail back to the checkpoint and leaves the dropped record past the
+        // tail. The txn number it held must go to the next commit, with the next commit's content.
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("INSERT INTO test VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO test VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertEquals(WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1, readSeqFileInt(tableToken, WalUtils.TXNLOG_FILE_NAME, 0));
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            Assert.assertEquals(2, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            engine.checkpointRelease();
+
+            execute("INSERT INTO test VALUES ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            Assert.assertEquals(3, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            assertQuery("SELECT val FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\n1\n2\n4\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreLeavesNoRolledBackRecordUnderTheNextAppend() throws Exception {
+        // The restore lowers the V1 tail and leaves the rolled-back record past it. The next append writes over
+        // it; a power loss that persists the header but not that record's sector must show zeros there.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO test VALUES (100, 100)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("test");
+            final java.nio.file.Path txnLog = java.nio.file.Paths.get(configuration.getDbRoot(), tableToken.getDirName(), WalUtils.SEQ_DIR, WalUtils.TXNLOG_FILE_NAME);
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            engine.checkpointRecover();
+            final long keptTxn = readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final int recordSize = (int) TableTransactionLogV1.RECORD_SIZE;
+            final int offset = (int) (TableTransactionLogFile.HEADER_SIZE + keptTxn * recordSize);
+            Assert.assertTrue("the record must not share the header's sector", offset >= 512);
+            final byte[] rolledBack = Arrays.copyOfRange(java.nio.file.Files.readAllBytes(txnLog), offset, offset + recordSize);
+            Assert.assertFalse("precondition: the restore leaves the rolled-back record", Arrays.equals(rolledBack, new byte[recordSize]));
+
+            // The record's bytes as of the last flush of the log, which is what a power loss leaves. NOSYNC
+            // flushes the log only with fdatasync here.
+            final byte[][] onDisk = {rolledBack};
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                private final Set<Long> fds = new HashSet<>();
+
+                @Override
+                public boolean close(long fd) {
+                    fds.remove(fd);
+                    return super.close(fd);
+                }
+
+                @Override
+                public void fdatasync(long fd) {
+                    super.fdatasync(fd);
+                    onFlush(fd);
+                }
+
+                @Override
+                public void fsync(long fd) {
+                    super.fsync(fd);
+                    onFlush(fd);
+                }
+
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    final long fd = super.openRW(name, opts);
+                    if (fd > -1 && Utf8s.containsAscii(name, tableToken.getDirName()) && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME)) {
+                        fds.add(fd);
+                    }
+                    return fd;
+                }
+
+                private void onFlush(long fd) {
+                    if (fds.contains(fd)) {
+                        try {
+                            onDisk[0] = Arrays.copyOfRange(java.nio.file.Files.readAllBytes(txnLog), offset, offset + recordSize);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
+            };
+            final byte[] image;
+            final byte[] recordOnDisk;
+            try {
+                // The first open after the restore, and the append over the rolled-back record.
+                execute("INSERT INTO test VALUES (200, 200)");
+                Assert.assertEquals(keptTxn + 1, engine.getTableSequencerAPI().lastTxn(tableToken));
+                // The power loss comes before the sequencer's clean close, whose flush covers the appended record.
+                image = java.nio.file.Files.readAllBytes(txnLog);
+                recordOnDisk = onDisk[0];
+                engine.releaseInactive();
+                engine.getTableSequencerAPI().releaseAll();
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+            }
+            engine.checkpointRelease();
+
+            System.arraycopy(recordOnDisk, 0, image, offset, recordSize);
+            java.nio.file.Files.write(txnLog, image);
+            Assert.assertEquals("the rolled-back record came back after a torn append", keptTxn, engine.getTableSequencerAPI().lastTxn(tableToken));
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreLowersTheV2FieldAndSlotWithTheMaxTxn() throws Exception {
+        // The restore lowers a V2 log's max txn under records an ADAPTIVE run flushed. The flushed-through field and
+        // the slot next to it go down with it, in the same sector: the records an older binary appends after a
+        // downgrade then sit above the slot and are trusted at the next open, instead of being cut as torn.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+            setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 4);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 10; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            for (int i = 10; i < 13; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertEquals(13, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals(14, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64));
+            Assert.assertEquals(13, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64));
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            engine.checkpointRecover();
+            Assert.assertEquals(10, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals("the field follows the max txn", 11, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64));
+            Assert.assertEquals("the slot follows the max txn", 10, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64));
+            engine.checkpointRelease();
+
+            execute("INSERT INTO test VALUES (100, 100)");
+            Assert.assertEquals(11, engine.getTableSequencerAPI().lastTxn(tableToken));
         });
     }
 
@@ -4421,6 +5893,43 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreOntoAnotherColdRootKeepsTxnVerifying() throws Exception {
+        // A restore onto another cold storage root clears REMOTE in _txn's live record in place, with no commit.
+        // The next open must still verify that record.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE remote_cleared (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO remote_cleared VALUES (1, '2020-01-01T00:00'), (2, '2020-01-02T00:00')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("remote_cleared");
+            try (TableWriter writer = engine.getWriter(token, "upload")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.getTxWriter().bumpPartitionTableVersion();
+                writer.commit();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration);
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash()
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false, true);
+            }
+            TxReader.resetBodyChecksumFallbackCount();
+            try (
+                    Path txnPath = new Path().of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                    TxReader reader = new TxReader(configuration.getFilesFacade())
+            ) {
+                reader.ofRO(txnPath.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                Assert.assertTrue(reader.unsafeLoadAll());
+                Assert.assertFalse(reader.unsafeIsLiveAreaTorn());
+                Assert.assertFalse(reader.isPartitionRemote(0));
+            }
+            Assert.assertEquals(0, TxReader.getBodyChecksumFallbackCount());
+            assertQuery("SELECT x FROM remote_cleared").expectSize().returns("x\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
@@ -4557,6 +6066,14 @@ public class CheckpointTest extends AbstractCairoTest {
                             4\t2022-02-24T00:00:03.000000Z
                             5\t2022-02-24T00:00:04.000000Z
                             """);
+
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back
+                // to; one more save point at the applied cut leaves only the checkpoint holding the segment.
+                try (TableWriter writer = getWriter(tableName)) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
             final WalPurgeJob job = new WalPurgeJob(engine);
@@ -4841,9 +6358,22 @@ public class CheckpointTest extends AbstractCairoTest {
 
             @Override
             public @NotNull FileVisitResult visitFile(java.nio.file.@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
-                java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                try {
+                    java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (java.nio.file.NoSuchFileException ignore) {
+                    // The source is a live server: a background job's table lock file can vanish between the
+                    // listing and the copy. A checkpoint does not carry lock files.
+                }
                 return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public @NotNull FileVisitResult visitFileFailed(java.nio.file.@NotNull Path file, @NotNull IOException exc) throws IOException {
+                if (exc instanceof java.nio.file.NoSuchFileException) {
+                    return FileVisitResult.CONTINUE;
+                }
+                throw exc;
             }
         });
     }
@@ -4878,8 +6408,63 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private void assertRestoreRefusesDelta(boolean flaggedAtCapture) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("create table test (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into test select timestamp_sequence('2023-09-20', 86400000000L), x from long_sequence(3)");
+            final TableToken tableToken = engine.verifyTableName("test");
+            final long partitionTimestamp = MicrosTimestampDriver.floor("2023-09-21");
+            if (flaggedAtCapture) {
+                setPartitionDeltaActive(partitionTimestamp);
+            }
+            final File partitionDir = findNativePartitionDir(
+                    new File(configuration.getDbRoot(), tableToken.getDirName()), "2023-09-21", "x.d");
+            execute("checkpoint create");
+            try {
+                if (flaggedAtCapture) {
+                    execute("alter table test drop partition list '2023-09-21'");
+                } else {
+                    setPartitionDeltaActive(partitionTimestamp);
+                }
+                Assert.assertTrue(new File(partitionDir, DeltaCheckpoint.DIRECTORY_NAME).mkdirs());
+
+                engine.clear();
+                setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Delta checkpoint recovery is not supported");
+                }
+            } finally {
+                engine.checkpointRelease();
+            }
+        });
+    }
+
+    private static void createTableWithRowsAfterCheckpoint(String tableName) throws SqlException {
+        execute("create table " + tableName + " as (select x from long_sequence(3))");
+        execute("checkpoint create");
+        execute("insert into " + tableName + " select x + 3 from long_sequence(2)");
+    }
+
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    // drainWalQueue() with a bound: a writer that never reaches the sequencer txn re-queues its table on every
+    // apply pass, so an unbounded drain would never return.
+    private static void drainWalQueueBounded() {
+        final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20; i++) {
+                if (!applyJob.run() && !checkJob.run()) {
+                    return;
+                }
+            }
+        }
+        Assert.fail("WAL apply did not go idle in 20 passes");
     }
 
     private static File findNativePartitionDir(File tableDir, String partitionPrefix, String requiredFile) {
@@ -4915,6 +6500,42 @@ public class CheckpointTest extends AbstractCairoTest {
         }
         Assert.fail("Table not found in callback map: " + tableNamePrefix);
         return -1; // unreachable
+    }
+
+    private static int readSeqFileInt(TableToken tableToken, String fileName, long offset) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(fileName);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                return ff.readNonNegativeInt(fd, offset);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    private static long readSeqFileLong(TableToken tableToken, String fileName, long offset) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(fileName);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                return ff.readNonNegativeLong(fd, offset);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    // Runs the restore's rebuild of the table's files, the indexes of every partition included.
+    private static void rebuildIndexesOnRestore(CairoConfiguration restoreConfiguration, TableToken tableToken) {
+        try (
+                Path tablePath = new Path().of(restoreConfiguration.getDbRoot()).concat(tableToken).slash();
+                TableSnapshotRestore restoreAgent = new TableSnapshotRestore(restoreConfiguration)
+        ) {
+            restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+        }
     }
 
     private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {
@@ -4970,6 +6591,16 @@ public class CheckpointTest extends AbstractCairoTest {
             out[i] = buf.getInt();
         }
         return out;
+    }
+
+    private static void setPartitionDeltaActive(long partitionTimestamp) {
+        try (TableWriter writer = getWriter("test")) {
+            // The Delta switch stamps a native base, and a checkpoint keeps only stamped native words.
+            writer.getTxWriter().setPartitionSeqTxn(writer.getPartitionIndexByTimestamp(partitionTimestamp), 1);
+            writer.getTxWriter().setPartitionDeltaActiveByTimestamp(partitionTimestamp);
+            writer.bumpPartitionTableVersion();
+            writer.commit();
+        }
     }
 
     private static TestServerMain startServerMain(String root, String... envKeyValues) {
@@ -5214,6 +6845,342 @@ public class CheckpointTest extends AbstractCairoTest {
 
                 execute("checkpoint release");
             }
+        });
+    }
+
+    /**
+     * A day of one row a minute, then two backdated strides rewritten at the shared files' tail. The
+     * strides carry a key of their own, 'kz', and land at :30 seconds so no two 'kz' rows share a
+     * timestamp. Same shape as {@code CompositeIndexedAsOfJoinTest.createCompositeQuotes}: the day ends
+     * up several pieces over one set of column files, with the relocated pieces above the live rows.
+     */
+    private static void createCompositeIndexedDay(String table, String index) throws Exception {
+        execute("CREATE TABLE " + table + " AS (" +
+                " SELECT x::INT v, ('k' || ((x % 2) + 1))::SYMBOL s," +
+                " timestamp_sequence('2024-01-01', 60_000_000L) ts" +
+                " FROM long_sequence(240))" + index + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A later day, so 2024-01-01 is never the active partition and the batches below are O3.
+        execute("INSERT INTO " + table + " VALUES (90_000, 'k1', '2024-01-03T00:00:00.000000Z')");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " SELECT x::INT + 800_000, 'kz'," +
+                " timestamp_sequence('2024-01-01T02:00:30', 60_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " SELECT x::INT + 810_000, 'kz'," +
+                " timestamp_sequence('2024-01-01T01:00:30', 60_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
+    }
+
+    // Removes the files of partitionDir whose names start with prefix and returns how many it removed
+    private static int removeFiles(File partitionDir, String prefix) throws IOException {
+        try (var files = java.nio.file.Files.list(partitionDir.toPath())) {
+            final AtomicInteger removed = new AtomicInteger();
+            files.filter(file -> file.getFileName().toString().startsWith(prefix))
+                    .forEach(file -> {
+                        Assert.assertTrue(file.toFile().delete());
+                        removed.incrementAndGet();
+                    });
+            return removed.get();
+        }
+    }
+
+    private static void removePostingValueFiles(File partitionDir) throws IOException {
+        Assert.assertTrue("partition must have a posting value file", removeFiles(partitionDir, "s.pv.") > 0);
+    }
+
+    // Returns the head entry txn, its generation count and the txn of its last generation
+    private static long[] readPostingHead(File keyFile) {
+        try (
+                Path path = new Path().of(keyFile.getAbsolutePath());
+                MemoryCMR keyMem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), keyFile.length(), MemoryTag.MMAP_DEFAULT)
+        ) {
+            final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            chain.openExisting(keyMem);
+            Assert.assertTrue(chain.hasHead());
+            final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+            chain.loadHeadEntry(keyMem, head);
+            final long lastGenTxn = keyMem.getLong(PostingIndexChainEntry.resolveGenDirOffset(
+                    chain.getHeadEntryOffset(), head.genCount - 1, head.coveringFormat, head.coverCount
+            ) + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            return new long[]{head.txnAtSeal, head.genCount, lastGenTxn};
+        }
+    }
+
+    private static void replaceRangeOfCompositeDay(String table) {
+        try (WalWriter ww = engine.getWalWriter(engine.verifyTableName(table))) {
+            final long lo = MicrosTimestampDriver.floor("2024-01-01T01:00:00.000000Z");
+            for (int i = 0; i < 3; i++) {
+                final TableWriter.Row row = ww.newRow(lo + 15 * 60_000_000L + 30_000_000L + i * 30 * 60_000_000L);
+                row.putInt(0, 830_000 + i);
+                row.putSym(1, "kz");
+                row.append();
+            }
+            ww.commitWithParams(lo, MicrosTimestampDriver.floor("2024-01-01T03:00:00.000000Z"), WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+    }
+
+    private void testCheckpointRestoreAutoSealValueFile(boolean isValueFileShort) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "checkpoint");
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING INCLUDE(v), v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final File partDir = new File(new File(configuration.getDbRoot(), token.getDirName()), "2024-01-01");
+            for (int i = 1; i <= 127; i++) {
+                execute("INSERT INTO t VALUES (" + (i % 2 == 0 ? "null" : "'a'") + ", " + i + ", '2024-01-01'::TIMESTAMP + " + i + ")");
+                drainWalQueue();
+            }
+            Assert.assertTrue(new File(partDir, "s.pv.0").exists());
+            final File newValueFile = new File(partDir, "s.pv.1");
+            Assert.assertFalse(newValueFile.exists());
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO t VALUES (null, 128, '2024-01-01'::TIMESTAMP + 128)");
+            drainWalQueue();
+            engine.clear();
+            Assert.assertTrue(newValueFile.exists());
+            // The live copy captured .pk after the seal but missed all or part of its new value file.
+            if (isValueFileShort) {
+                try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(newValueFile, "rw")) {
+                    file.setLength(1);
+                }
+            } else {
+                Assert.assertTrue(newValueFile.delete());
+            }
+            Assert.assertTrue(new File(partDir, "s.pv.0").exists());
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "restored");
+            engine.checkpointRecover();
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s")
+                    .returns("count\tsum\n64\t4096\n");
+            assertQuery("SELECT count() FROM t WHERE s IS NULL")
+                    .noRandomAccess().expectSize().returns("count\n63\n");
+            execute("INSERT INTO t VALUES ('a', 129, '2024-01-01'::TIMESTAMP + 129)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n65\t4225\n");
+            // Recovery discards the post-checkpoint WAL transaction; only the new insert survives.
+            assertQuery("SELECT count() FROM t WHERE s IS NULL")
+                    .noRandomAccess().expectSize().returns("count\n63\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    // Corrupts the .pk of the first partition: truncates it to keyFileLength, or with -1 overwrites its
+    // format version, then expects restore to fail with expectedError.
+    private void testCheckpointRestoreCorruptPostingKeyFile(long keyFileLength, String expectedError) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-02')");
+            final TableToken token = engine.verifyTableName("t");
+            engine.clear();
+            final File keyFile = new File(new File(new File(configuration.getDbRoot(), token.getDirName()), "2024-01-01"), "s.pk");
+            try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(keyFile, "rw")) {
+                if (keyFileLength >= 0) {
+                    file.setLength(keyFileLength);
+                } else {
+                    // Both header pages carry the format version
+                    for (long page : new long[]{PostingIndexUtils.PAGE_A_OFFSET, PostingIndexUtils.PAGE_B_OFFSET}) {
+                        file.seek(page + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION);
+                        file.writeLong(-1L);
+                    }
+                }
+            }
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+                    Assert.fail("expected the restore to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+                }
+            }
+            execute("DROP TABLE t");
+        });
+    }
+
+    // The first restore fails on failingFile while it rebuilds the index of a partition that lost its value
+    // file, as a crash or an I/O error would stop it. The failure can leave an index that opens without
+    // error and misses rows; the repeated restore must rebuild it again.
+    private void testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(
+            boolean isParquet,
+            String failingFile,
+            String expectedError
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING INCLUDE(v), v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01'), (null, 2, '2024-01-01T01:00:00'), ('b', 3, '2024-01-02')");
+            if (isParquet) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            final TableToken token = engine.verifyTableName("t");
+            final File partDir;
+            try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
+                TableUtils.setPathForNativePartition(partitionPath, reader.getMetadata().getTimestampType(), PartitionBy.DAY,
+                        reader.getTxFile().getPartitionTimestampByIndex(0), reader.getTxFile().getPartitionNameTxn(0));
+                partDir = new File(partitionPath.toString());
+            }
+            engine.clear();
+            Assert.assertTrue(new File(partDir, "s.pv.0").delete());
+            final File markerFile = new File(partDir, "s.pk.rebuild");
+
+            // The marker is created before the rebuild starts; every other failure waits for the rebuild
+            // to remove the old .pk
+            final boolean isMarkerFailure = failingFile.endsWith(".rebuild");
+            // The restore checks the other partition on a parallel worker, which opens its own .pk while
+            // this one rebuilds; only the files of the partition under rebuild arm and fail
+            final String keyFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + "s.pk";
+            final String failingFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + failingFile;
+            final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
+            final AtomicInteger failures = new AtomicInteger();
+            final FilesFacade failingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    return fails(name) ? -1 : super.openRO(name);
+                }
+
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    return fails(name) ? -1 : super.openRW(name, opts);
+                }
+
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, keyFileSuffix)) {
+                        isArmed.set(true);
+                    }
+                    return super.removeQuiet(name);
+                }
+
+                @Override
+                public boolean touch(LPSZ name) {
+                    return !fails(name) && super.touch(name);
+                }
+
+                private boolean fails(LPSZ name) {
+                    if (isArmed.get() && Utf8s.endsWithAscii(name, failingFileSuffix)) {
+                        failures.incrementAndGet();
+                        return true;
+                    }
+                    return false;
+                }
+            };
+            final CairoConfiguration failingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFacade;
+                }
+            };
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(failingConfig)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+                    Assert.fail("expected the rebuild to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+                    TestUtils.assertContains(e.getFlyweightMessage(), failingFile);
+                }
+            }
+            Assert.assertEquals(1, failures.get());
+            // A failed marker leaves the old index files alone; a failed rebuild leaves its marker
+            Assert.assertEquals(!isMarkerFailure, markerFile.exists());
+            Assert.assertEquals(!"s.pk".equals(failingFile), new File(partDir, "s.pk").exists());
+
+            // The repeated restore
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            Assert.assertFalse(markerFile.exists());
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s")
+                    .returns("count\tsum\n1\t1\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s IS NULL")
+                    .noRandomAccess().expectSize().returns("count\tsum\n1\t2\n");
+            execute("INSERT INTO t VALUES ('a', 4, '2024-01-02T01:00:00')");
+            assertQuery("SELECT v FROM t WHERE s = 'a' ORDER BY v").expectSize().returns("v\n1\n4\n");
+        });
+    }
+
+    private void testCheckpointRestoreRebuildsPostingIndexNonPartitioned(boolean isKeyFileMissing) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO t VALUES (3, 'a'), (4, null)");
+            final TableToken token = engine.verifyTableName("t");
+            engine.clear();
+            final File partDir = new File(new File(configuration.getDbRoot(), token.getDirName()), "default");
+            removePostingValueFiles(partDir);
+            if (isKeyFileMissing) {
+                Assert.assertEquals(1, removeFiles(partDir, "s.pk"));
+            }
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s IS NULL")
+                    .noRandomAccess().expectSize().returns("count\tsum\n3\t7\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n1\t3\n");
+            execute("INSERT INTO t VALUES (5, 'a')");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n2\t8\n");
+        });
+    }
+
+    private void testCheckpointRestoreRebuildsPostingIndexValueFile(boolean isParquet, boolean isValueFileShort) throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(isParquet, isValueFileShort, false);
+    }
+
+    private void testCheckpointRestoreRebuildsPostingIndexValueFile(boolean isParquet, boolean isValueFileShort, boolean isKeyFileMissing) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING INCLUDE(v), v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '2024-01-01'), (null, 2, '2024-01-01T01:00:00'), ('b', 3, '2024-01-02')");
+            if (isParquet) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            final TableToken token = engine.verifyTableName("t");
+            final File partDir;
+            try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
+                TableUtils.setPathForNativePartition(partitionPath, reader.getMetadata().getTimestampType(), PartitionBy.DAY,
+                        reader.getTxFile().getPartitionTimestampByIndex(0), reader.getTxFile().getPartitionNameTxn(0));
+                partDir = new File(partitionPath.toString());
+            }
+            engine.clear();
+            final File valueFile = new File(partDir, "s.pv.0");
+            Assert.assertTrue(valueFile.exists());
+            if (isValueFileShort) {
+                try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(valueFile, "rw")) {
+                    file.setLength(1);
+                }
+            } else {
+                Assert.assertTrue(valueFile.delete());
+            }
+            final File keyFile = new File(partDir, "s.pk");
+            if (isKeyFileMissing) {
+                Assert.assertTrue(keyFile.delete());
+            }
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            Assert.assertTrue(keyFile.exists());
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s").returns("count\tsum\n1\t1\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s IS NULL")
+                    .noRandomAccess().expectSize().returns("count\tsum\n1\t2\n");
+            execute("INSERT INTO t VALUES ('a', 4, '2024-01-02T01:00:00')");
+            assertQuery("SELECT v FROM t WHERE s = 'a' ORDER BY v").expectSize().returns("v\n1\n4\n");
         });
     }
 
@@ -5768,12 +7735,57 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    // While armed, fails the open of one file, or its creation with touch().
+    private static class IndexFileFailingFacade extends TestFilesFacadeImpl {
+        private volatile Utf8String failingFile;
+        private volatile boolean isTouchFailing;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final Utf8String file = failingFile;
+            if (file != null && !isTouchFailing && Utf8s.endsWith(name, file)) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public boolean touch(LPSZ path) {
+            final Utf8String file = failingFile;
+            if (file != null && isTouchFailing && Utf8s.endsWith(path, file)) {
+                return false;
+            }
+            return super.touch(path);
+        }
+
+        private void arm(String file, boolean isTouchFailing) {
+            this.isTouchFailing = isTouchFailing;
+            failingFile = new Utf8String(file);
+        }
+
+        private void disarm() {
+            failingFile = null;
+        }
+    }
+
     private static class TestFilesFacade extends TestFilesFacadeImpl {
 
+        // Names the dir each fd was opened for, while isSyncfsForced records syncfs targets.
+        private final LongObjHashMap<String> openedPaths = new LongObjHashMap<>();
+        final ObjList<String> syncfsDirs = new ObjList<>();
         boolean errorOnRegistryFileCopy = false;
         boolean errorOnRegistryFileRemoval = false;
         boolean errorOnSync = false;
+        boolean errorOnSyncfs = false;
         boolean errorOnTriggerFileRemoval = false;
+        // Reports every entry the volume flush lists as of unknown type, as a file system without entry types does.
+        boolean isEntryTypeUnknown = false;
+        // Takes the syncfs(2) path on any OS, and records the dir behind every syncfs call.
+        boolean isSyncfsForced = false;
+        // Plays Windows: no filesystem-wide syncfs, a restricted file system, and a sync() that returns -1.
+        boolean isWindowsSyncSimulated = false;
+        // The unknown types findType returned, so a test can see that the method it selects still lists.
+        int unknownTypes = 0;
 
         @Override
         public int copy(LPSZ from, LPSZ to) {
@@ -5784,6 +7796,16 @@ public class CheckpointTest extends AbstractCairoTest {
                 return -1;
             }
             return super.copy(from, to);
+        }
+
+        @Override
+        public int findType(long findPtr) {
+            if (isEntryTypeUnknown && StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> frame.getClassName().endsWith(".DatabaseCheckpointAgent") && frame.getMethodName().equals("syncVolumes")))) {
+                unknownTypes++;
+                return Files.DT_UNKNOWN;
+            }
+            return super.findType(findPtr);
         }
 
         @Override
@@ -5798,18 +7820,57 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isRestrictedFileSystem() {
+            return isWindowsSyncSimulated || super.isRestrictedFileSystem();
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            if (isWindowsSyncSimulated) {
+                return false;
+            }
+            return isSyncfsForced || super.isSyncfsFileSystemWide();
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (isSyncfsForced && fd > -1) {
+                openedPaths.put(fd, Utf8s.stringFromUtf8Bytes(name));
+            }
+            return fd;
+        }
+
+        @Override
         public int sync() {
-            if (!errorOnSync) {
+            if (!errorOnSync && !isWindowsSyncSimulated) {
                 return super.sync();
             }
             return -1;
         }
 
+        @Override
+        public void syncfs(long fd) {
+            if (isSyncfsForced) {
+                syncfsDirs.add(openedPaths.get(fd));
+            }
+            if (errorOnSyncfs) {
+                throw CairoException.dataSyncFailure(this, 5, "syncfs", "could not syncfs [fd=" + fd + ']');
+            }
+            super.syncfs(fd);
+        }
+
         void reset() {
             errorOnSync = false;
+            errorOnSyncfs = false;
             errorOnTriggerFileRemoval = false;
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
+            isEntryTypeUnknown = false;
+            isSyncfsForced = false;
+            isWindowsSyncSimulated = false;
+            openedPaths.clear();
+            syncfsDirs.clear();
         }
     }
 }
