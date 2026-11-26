@@ -30,9 +30,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
@@ -84,15 +87,18 @@ import java.util.concurrent.locks.LockSupport;
 public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
 
     /**
-     * On a PRIMARY node the async-enqueue branch must remain reachable: the read-only re-check passes and
-     * the branch proceeds to enqueue (it does not refuse a legitimate writer-busy fallback). The enqueue
-     * itself is exercised by the protocol/integration tests; here we assert the fence does not turn the
-     * non-WAL writer-busy fallback into a refusal on a primary node.
+     * On a PRIMARY node the async-enqueue fallback stays reachable for a non-WAL table whose TableWriter
+     * another thread holds: the read-only re-checks pass, the dispatcher queues the operation on that
+     * writer and returns a future that reports QUERY_NO_RESPONSE until the writer responds. On a primary
+     * node too, a WAL UPDATE that finds its WAL writer pool exhausted never reaches the fallback, which
+     * would apply it outside the WAL: the dispatcher reports the table busy and queues nothing. The busy
+     * report leaves the dispatcher usable: the non-WAL statement that follows queues its command.
      */
     @Test
     public void testAsyncEnqueueBranchProceedsOnPrimary() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false)) {
+            final AtomicInteger publishedCommands = new AtomicInteger();
+            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false, publishedCommands)) {
                 OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
                     @Override
                     protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
@@ -100,37 +106,37 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     }
                 };
                 try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
-                } catch (Throwable e) {
-                    // The enqueue itself does not complete against a fake table on a bare engine (the
-                    // table-name registry is not built), so the branch fails after the read-only re-check
-                    // passes. The failure must NOT be the read-only refusal -- the point is the primary
-                    // node reached the enqueue rather than refusing it.
-                    final boolean readOnlyRefusal = e instanceof CairoException ce
-                            && ce.isAuthorizationError()
-                            && ce.getMessage() != null
-                            && ce.getMessage().contains("replica access is read-only");
-                    Assert.assertFalse(
-                            "a primary node must not refuse the async-enqueue branch with the read-only error",
-                            readOnlyRefusal
-                    );
+                    dispatcher.execute(fakeOperation(true), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
+                    Assert.fail("a WAL UPDATE must not reach the async-enqueue fallback");
+                } catch (EntryUnavailableException e) {
+                    TestUtils.assertEquals("table busy [reason=pool size exceeded]", e.getFlyweightMessage());
                 }
+                Assert.assertEquals("a WAL UPDATE must not queue a writer command", 0, publishedCommands.get());
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
+
+                try (OperationFuture future = dispatcher.execute(fakeOperation(false), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false)) {
+                    Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, future.getStatus());
+                }
+                Assert.assertEquals("a primary node must queue the non-WAL UPDATE on the busy writer", 1, publishedCommands.get());
+                Assert.assertEquals(0, primaryEngine.getRoleSwitchReadLockCount());
             }
         });
     }
 
     /**
-     * The async-enqueue fallback fence: when the WAL writer acquire throws EntryUnavailableException (the
-     * pool is exhausted), the catch branch must re-check read-only BEFORE enqueuing the operation. On a
-     * read-only (demoting) node the branch must refuse with the standard authorization error rather than
-     * route the WAL UPDATE through the legacy non-WAL writer pool, which would physical-commit it without
-     * minting a replicated sequencer txn (a silent acked-loss). A non-null event sub-sequence is supplied
-     * so the branch is the async-enqueue path, not the re-throw.
+     * The read-only fence of the async-enqueue fallback. When another thread holds the TableWriter of a
+     * non-WAL table, the dispatcher queues the operation on that writer. On a read-only node (a lockdown,
+     * or a demote that flipped the flag) the fallback must refuse with the standard authorization error
+     * and queue nothing. A non-null event sub-sequence selects the fallback; with a null one the
+     * dispatcher rethrows the busy error. A WAL UPDATE that finds its WAL writer pool exhausted never
+     * reaches the fallback, which would apply it outside the WAL: the dispatcher reports the table busy
+     * and queues nothing.
      */
     @Test
     public void testAsyncEnqueueBranchRefusesOnReadOnlyReplica() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true)) {
+            final AtomicInteger publishedCommands = new AtomicInteger();
+            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true, publishedCommands)) {
                 OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
                     @Override
                     protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
@@ -138,11 +144,22 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     }
                 };
                 try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    dispatcher.execute(fakeOperation(false), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
                     Assert.fail("the async-enqueue branch must refuse on a read-only node before enqueuing");
                 } catch (CairoException e) {
                     assertReadOnlyRefusal(e);
                 }
+                Assert.assertEquals("a read-only node must not queue a writer command", 0, publishedCommands.get());
+                Assert.assertEquals(0, readOnlyEngine.getRoleSwitchReadLockCount());
+
+                try {
+                    dispatcher.execute(fakeOperation(true), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("a WAL UPDATE must not reach the async-enqueue fallback");
+                } catch (EntryUnavailableException e) {
+                    TestUtils.assertEquals("table busy [reason=pool size exceeded]", e.getFlyweightMessage());
+                }
+                Assert.assertEquals("a WAL UPDATE must not queue a writer command", 0, publishedCommands.get());
+                Assert.assertEquals(0, readOnlyEngine.getRoleSwitchReadLockCount());
             }
         });
     }
@@ -162,7 +179,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                         return 0;
                     }
                 };
-                dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), null, false);
+                dispatcher.execute(fakeOperation(true), TestUtils.createSqlExecutionCtx(primaryEngine), null, false);
                 Assert.assertEquals("apply() must run once on a primary node", 1, applyCalled.get());
             }
         });
@@ -189,7 +206,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     }
                 };
                 try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(flipEngine), null, false);
+                    dispatcher.execute(fakeOperation(true), TestUtils.createSqlExecutionCtx(flipEngine), null, false);
                     Assert.fail("dispatcher.execute() must throw authorization when the in-lock re-check sees read-only");
                 } catch (CairoException e) {
                     assertReadOnlyRefusal(e);
@@ -217,7 +234,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     }
                 };
                 try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), null, false);
+                    dispatcher.execute(fakeOperation(true), TestUtils.createSqlExecutionCtx(readOnlyEngine), null, false);
                     Assert.fail("dispatcher.execute() must throw authorization on a read-only node");
                 } catch (CairoException e) {
                     assertReadOnlyRefusal(e);
@@ -1050,10 +1067,12 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     /**
      * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute. The
      * dispatcher's apply() is overridden per test to count invocations, so this operation's own apply()
-     * never runs -- the fence either refuses before apply() or the test counts the call.
+     * never runs -- the fence either refuses before apply() or the test counts the call. A WAL token
+     * models the WAL UPDATE/ALTER that reaches applyFenced; a non-WAL token models the table whose busy
+     * TableWriter sends the operation to the async-enqueue fallback.
      */
-    private static UpdateOperation fakeOperation() {
-        final TableToken token = new TableToken("disp_fence", "disp_fence~1", null, 1, true, false, false);
+    private static UpdateOperation fakeOperation(boolean isWal) {
+        final TableToken token = new TableToken("disp_fence", "disp_fence~1", null, 1, isWal, false, false);
         final ObjList<CharSequence> columns = new ObjList<>();
         columns.add("val");
         return new UpdateOperation(token, 1, 0, 0, columns);
@@ -1168,18 +1187,26 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     /**
-     * Engine whose WAL writer acquire always throws EntryUnavailableException (the pool-exhausted
-     * condition that routes OperationDispatcher.execute into the async-enqueue catch branch). The
-     * isReadOnlyMode() flag is fixed to {@code readOnly} so the catch-branch re-check either refuses
-     * (read-only) or proceeds (primary).
+     * Engine whose writer acquire always throws EntryUnavailableException, the busy condition that routes
+     * OperationDispatcher.execute into its catch branch: every pooled WAL writer of a WAL table is in
+     * use, or another thread holds the TableWriter of a non-WAL table. The isReadOnlyMode() flag is fixed
+     * to {@code readOnly} so the fallback's re-check either refuses (read-only) or proceeds (primary).
+     * getWriterOrPublishCommand counts each command in {@code publishedCommands} and returns null, as the
+     * writer pool does when it queues the command on a busy writer.
      */
-    private CairoEngine buildPoolExhaustedWriterEngine(boolean readOnly) throws Exception {
+    private CairoEngine buildPoolExhaustedWriterEngine(boolean readOnly, AtomicInteger publishedCommands) throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
         return new CairoEngine(cfg, false) {
             @Override
             public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
                 throw EntryUnavailableException.instance("pool size exceeded");
+            }
+
+            @Override
+            public TableWriter getWriterOrPublishCommand(TableToken tableToken, AsyncWriterCommand asyncWriterCommand) {
+                publishedCommands.incrementAndGet();
+                return null;
             }
 
             @Override
