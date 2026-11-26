@@ -4500,11 +4500,12 @@ public class DeclareTest extends AbstractSqlParserTest {
             // one to take in place of its empty ELSE value. No operand was missing in total: the
             // statement parsed into a tree with the operands in the wrong places, and failed in
             // the optimiser with a NullPointerException. The inner END now refuses its empty value.
+            // The stray `v` fails first; the next statement checks the inner END.
             assertQuery("""
                     DECLARE @x := CASE WHEN 1 v > 1 THEN CASE WHEN (v = 1) THEN 'x' ELSE () END WHEN v > 2 THEN 'x' END
                     SELECT @x FROM t
                     """)
-                    .fails(72, "missing arguments");
+                    .fails(26, "'then' expected");
             assertQuery("""
                     DECLARE @x := CASE WHEN v > 1 THEN CASE WHEN (v = 2) THEN 'x' ELSE () END WHEN v > 0 THEN 'z' END
                     SELECT @x FROM t
