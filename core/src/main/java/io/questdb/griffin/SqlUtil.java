@@ -2208,6 +2208,20 @@ public class SqlUtil {
     }
 
     /**
+     * Writes a column name as an identifier that SQL reads back as the same name: as it is when it is a plain
+     * identifier and not a keyword, and double-quoted otherwise. The parser's side of the rule is
+     * {@link SqlKeywords#isKeyword(CharSequence)}, which decides where a name has to be quoted. No column name has a
+     * double quote.
+     */
+    public static void putIdentifier(CharSink<?> sink, CharSequence name) {
+        if (isPlainIdentifier(name) && !SqlKeywords.isKeyword(name)) {
+            sink.put(name);
+        } else {
+            sink.putAscii('"').put(name).putAscii('"');
+        }
+    }
+
+    /**
      * Classifies the {@code [lo, hi)} slice as a compiler-protected alias and, when it is, locates
      * the unquoted dot in its interior. This is the shared primitive behind
      * {@link #isQuoteProtectedAlias(CharSequence, int, int)}; callers that also need to know whether
@@ -2526,6 +2540,18 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
+    }
+
+    private static boolean isPlainIdentifier(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            final boolean isLetter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+            if (!isLetter && (i == 0 || c < '0' || c > '9')) {
+                return false;
+            }
+        }
+        // a column name is never empty
+        return true;
     }
 
     /**

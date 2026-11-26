@@ -609,10 +609,12 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns(expected);
             assertViewValid("price_1h");
-            // SHOW CREATE prints the SQL as stored, which produces the columns the SQL produces
+            // SHOW CREATE prints the view's columns, which its SQL no longer builds, as a column list
             assertQuery("SHOW CREATE MATERIALIZED VIEW price_1h").noLeakCheck().noRandomAccess().returns(
-                    "ddl\nCREATE MATERIALIZED VIEW 'price_1h' WITH BASE 'base' REFRESH IMMEDIATE AS (\n"
-                            + VIEW_SQL + "\n) PARTITION BY DAY;\n"
+                    "ddl\nCREATE MATERIALIZED VIEW 'price_1h' (\n"
+                            + "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE,\n\tamount DOUBLE,\n\textra INT\n"
+                            + ") WITH BASE 'base' REFRESH IMMEDIATE AS (\n"
+                            + VIEW_SQL + "\n) TIMESTAMP(ts) PARTITION BY DAY;\n"
             );
         });
     }

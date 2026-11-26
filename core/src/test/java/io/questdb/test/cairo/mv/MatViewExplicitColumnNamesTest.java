@@ -425,6 +425,8 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
     public void testShowCreateCompileFailures() throws Exception {
         // SHOW CREATE prints the stored SQL when the compile of an older view's SQL fails, a stale table reference
         // and a missing table included, and fails with the cancellation when the statement is cancelled meanwhile.
+        // Without the compile it cannot tell whether the SQL builds the view's columns, so it prints them as a
+        // column list.
         assertMemoryLeak(() -> {
             createBase();
             createOlderView("counts", "SELECT ts, sym, count FROM base SAMPLE BY 1h");
@@ -432,9 +434,13 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
             final String showCreate = "SHOW CREATE MATERIALIZED VIEW counts";
             final String stored = """
                     ddl
-                    CREATE MATERIALIZED VIEW 'counts' WITH BASE 'base' REFRESH IMMEDIATE AS (
+                    CREATE MATERIALIZED VIEW 'counts' (
+                    	ts TIMESTAMP,
+                    	sym SYMBOL NOCACHE,
+                    	count LONG
+                    ) WITH BASE 'base' REFRESH IMMEDIATE AS (
                     SELECT ts, sym, count FROM base SAMPLE BY 1h
-                    ) PARTITION BY DAY;
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
                     """;
             final TableToken baseToken = engine.verifyTableName("base");
             // the optimiser reads the base table's columns, the code generator then opens the table
@@ -678,7 +684,8 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
     public void testShowCreatePrintsSqlAsStoredWhenItCannotAddNames() throws Exception {
         // SHOW CREATE prints the stored SQL as it is when the SQL no longer compiles, when it no longer produces
         // as many columns as the view has, when the names it would add do not replay under the rules, and when
-        // the SQL needs no names.
+        // the SQL needs no names. In the first two cases, the SQL no longer builds the view's columns, and SHOW
+        // CREATE prints them as a column list.
         assertMemoryLeak(() -> {
             createBase();
             insertBaseRows();
@@ -701,22 +708,38 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
             drainWalAndViewQueues();
 
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-            assertShowCreateSql("renamed", "SELECT ts, sym, avg FROM (SELECT ts, sym, avg(price) FROM base SAMPLE BY 1h)");
-            assertShowCreateSql("widened", "SELECT *, price * 2 FROM base");
+            assertShowCreateSql(
+                    "renamed",
+                    "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE,\n\tavg DOUBLE\n",
+                    "SELECT ts, sym, avg FROM (SELECT ts, sym, avg(price) FROM base SAMPLE BY 1h)",
+                    "ts"
+            );
+            assertShowCreateSql(
+                    "widened",
+                    "\tsym SYMBOL NOCACHE,\n\tprice DOUBLE,\n\tamount DOUBLE,\n\tts TIMESTAMP,\n\t\"column\" DOUBLE\n",
+                    "SELECT *, price * 2 FROM base",
+                    "ts"
+            );
             assertShowCreateSql("drifted", "SELECT ts, sym, count FROM (SELECT ts, sym, count() FROM base SAMPLE BY 1h)");
             assertShowCreateSql("named", "SELECT ts, sym, max(price) AS max_price FROM base SAMPLE BY 1h");
             assertQuery("SHOW CREATE MATERIALIZED VIEW reordered").noLeakCheck().noRandomAccess().returns("""
                     ddl
-                    CREATE MATERIALIZED VIEW 'reordered' WITH BASE 'base' REFRESH IMMEDIATE AS (
+                    CREATE MATERIALIZED VIEW 'reordered' (
+                    	ts TIMESTAMP,
+                    	sym SYMBOL NOCACHE,
+                    	price DOUBLE,
+                    	"column" DOUBLE
+                    ) WITH BASE 'base' REFRESH IMMEDIATE AS (
                     SELECT *, price * 2 FROM v_base
-                    ) PARTITION BY DAY;
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
                     """);
         });
     }
 
     @Test
     public void testShowCreatePrintsSqlAsStoredWhenItIsNoQuery() throws Exception {
-        // A definition file whose SQL is not a query, which no CREATE writes, comes as stored.
+        // A definition file whose SQL is not a query, which no CREATE writes, comes as stored, with the view's
+        // columns as a column list.
         assertMemoryLeak(() -> {
             createBase();
             createOlderView("counts", "SELECT ts, sym, count FROM base SAMPLE BY 1h");
@@ -736,7 +759,7 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
             } finally {
                 definition.setMatViewSqlForTesting(viewSql);
             }
-            assertShowCreateSql("counts", sql);
+            assertShowCreateSql("counts", "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE,\n\tcount LONG\n", sql, "ts");
             assertQuery("SELECT count(*) FROM base").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
     }
@@ -769,6 +792,15 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
         assertQuery("SHOW CREATE MATERIALIZED VIEW " + viewName).noLeakCheck().noRandomAccess().returns(
                 "ddl\nCREATE MATERIALIZED VIEW '" + viewName + "' WITH BASE 'base' REFRESH IMMEDIATE AS (\n"
                         + expectedSql + "\n) PARTITION BY DAY;\n"
+        );
+    }
+
+    // Asserts that SHOW CREATE prints the view's DDL with the column list's lines, the SQL and the designated
+    // timestamp as expected.
+    private void assertShowCreateSql(String viewName, String expectedColumns, String expectedSql, String expectedTimestamp) throws Exception {
+        assertQuery("SHOW CREATE MATERIALIZED VIEW " + viewName).noLeakCheck().noRandomAccess().returns(
+                "ddl\nCREATE MATERIALIZED VIEW '" + viewName + "' (\n" + expectedColumns + ") WITH BASE 'base' REFRESH IMMEDIATE AS (\n"
+                        + expectedSql + "\n) TIMESTAMP(" + expectedTimestamp + ") PARTITION BY DAY;\n"
         );
     }
 

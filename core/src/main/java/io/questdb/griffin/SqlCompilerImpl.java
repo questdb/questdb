@@ -233,6 +233,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // that the optimiser read as a call to a zero-argument function, such as `count`.
     private final ObjList<String> matViewBareNoArgCallNames = new ObjList<>();
     private final IntList matViewBareNoArgCallPositions = new IntList();
+    // the names addExplicitColumnNames() requires of the columns of the SQL it returns
+    private final ObjList<CharSequence> matViewColumnNames = new ObjList<>();
     private final MatViewExplicitColumnNames matViewExplicitColumnNames = new MatViewExplicitColumnNames();
     private final MatViewSqlValidator matViewSqlValidator = new MatViewSqlValidator();
     private final AlterMatViewQueryValidator alterMatViewQueryValidator = new AlterMatViewQueryValidator();
@@ -465,8 +467,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public @Nullable String addExplicitColumnNames(
             MatViewDefinition viewDefinition,
             ObjList<CharSequence> viewColumnNames,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            GenericRecordMetadata sqlColumns
     ) {
+        sqlColumns.clear();
         final String viewSql = viewDefinition.getMatViewSql();
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
@@ -491,29 +495,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             // The optimiser renames and wraps models, so only the parsed model shows the names the SQL wrote.
             matViewExplicitColumnNames.collect((IQueryModel) model);
-            final GenericRecordMetadata outputMetadata;
+            // the rule the refresh picks its copy by, see SqlParser.parse()
+            final boolean isCopiedByPosition = !SqlParser.isNamingItsColumns((IQueryModel) model);
             // Armed through generateSelectWithRetries() too: a retry optimises the query again, and the calls
             // recorded have to come from the pass that builds the factory.
             optimiser.setBareNoArgCallSink(matViewBareNoArgCallNames, matViewBareNoArgCallPositions);
             try {
                 final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
                 try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
-                    outputMetadata = GenericRecordMetadata.copyOf(factory.getMetadata());
+                    GenericRecordMetadata.copyColumns(factory.getMetadata(), sqlColumns);
                 }
             } finally {
                 optimiser.setBareNoArgCallSink(null, null);
             }
             final String sql = matViewExplicitColumnNames.edit(
                     viewSql,
-                    outputMetadata,
+                    sqlColumns,
                     viewColumnNames,
                     matViewBareNoArgCallNames,
-                    matViewBareNoArgCallPositions
+                    matViewBareNoArgCallPositions,
+                    isCopiedByPosition
             );
-            if (sql == null || !isMatViewSqlReproducingColumns(sql, viewDefinition.getBaseTableName(), viewColumnNames, executionContext)) {
+            if (sql == null) {
                 return null;
             }
-            return sql;
+            // The edit adds names and parentheses, so the result produces as many columns as the SQL. The refresh
+            // copies a SQL that relies on generated names by position, and the result has to name each column
+            // after the view column at its position. It maps any other SQL by name, and the result has to keep
+            // the SQL's names.
+            final ObjList<CharSequence> columnNames = matViewColumnNames;
+            columnNames.clear();
+            if (isCopiedByPosition) {
+                columnNames.addAll(viewColumnNames);
+            } else {
+                for (int i = 0, n = sqlColumns.getColumnCount(); i < n; i++) {
+                    columnNames.add(sqlColumns.getColumnName(i));
+                }
+            }
+            return isMatViewSqlProducingColumns(sql, viewDefinition.getBaseTableName(), columnNames, executionContext, sqlColumns) ? sql : null;
         } catch (SqlException e) {
             logExplicitColumnNamesFailure(viewToken, e.getFlyweightMessage());
             return null;
@@ -532,6 +551,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
             executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
             matViewExplicitColumnNames.clear();
+            matViewColumnNames.clear();
             clear();
         }
     }
@@ -7631,13 +7651,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     // True when the SQL of a materialized view compiles under the explicit column name rules of CREATE
-    // MATERIALIZED VIEW, as a CREATE that replays it would compile it, and produces the view's columns: the same
-    // names, ignoring case, in the same order.
-    private boolean isMatViewSqlReproducingColumns(
+    // MATERIALIZED VIEW, as a CREATE that replays it would compile it, and produces columns of the given names,
+    // ignoring case, in the same order. Then sqlColumns receives its output columns, and is left as it is otherwise.
+    private boolean isMatViewSqlProducingColumns(
             String sql,
             String baseTableName,
-            ObjList<CharSequence> viewColumnNames,
-            SqlExecutionContext executionContext
+            ObjList<CharSequence> columnNames,
+            SqlExecutionContext executionContext,
+            GenericRecordMetadata sqlColumns
     ) throws SqlException {
         clear();
         lexer.of(sql);
@@ -7650,14 +7671,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
         final RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false);
         try {
-            // The edits add names, so the result produces as many columns as the SQL, which matches the view's
-            // count. Each view column has to come at its own position.
+            // each name has to come at its own position
             final RecordMetadata metadata = factory.getMetadata();
-            for (int i = 0, n = viewColumnNames.size(); i < n; i++) {
-                if (metadata.getColumnIndexQuiet(viewColumnNames.getQuick(i)) != i) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (metadata.getColumnIndexQuiet(columnNames.getQuick(i)) != i) {
                     return false;
                 }
             }
+            sqlColumns.clear();
+            GenericRecordMetadata.copyColumns(metadata, sqlColumns);
             return true;
         } finally {
             Misc.free(factory);

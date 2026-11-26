@@ -39,17 +39,21 @@ import org.jetbrains.annotations.Nullable;
  * Writes explicit column names into the SQL of a materialized view that relies on generated column names, or calls
  * a zero-argument function without parentheses, as the SQL of views created before CREATE MATERIALIZED VIEW
  * required explicit names can. SHOW CREATE prints the result, so that its output replays under those rules and
- * reproduces the view's columns. {@link SqlCompilerImpl#addExplicitColumnNames} compiles the SQL; this class reads
- * the parsed query, records the columns that may need a name, and edits the text.
+ * feeds the view's columns as the stored SQL does. {@link SqlCompilerImpl#addExplicitColumnNames} compiles the SQL;
+ * this class reads the parsed query, records the columns that may need a name, and edits the text.
  * <p>
  * A column of a select model of the SQL's own text needs a name when its name is generated: a computed column, a
  * plain column reference that another column renamed, or one whose column name is longer than the default
  * generated name size, see {@link SqlParser#isNamedAfterReferencedColumn}. So does a bare name that the optimiser
- * reads as a call to a zero-argument function, which also gets its parentheses. A column of the top-level select
- * list takes the name of the view column it feeds by position. A column of a model below takes the name of the
- * view column of the same output name, which a wildcard of the top-level select list may bring it to, and otherwise
- * keeps its generated name, which the select models above it reference. When a guess is wrong, the compile of the
- * result, see {@link SqlCompilerImpl#addExplicitColumnNames}, finds that it does not reproduce the view's columns.
+ * reads as a call to a zero-argument function, which also gets its parentheses.
+ * <p>
+ * The view's refresh copies a SQL that relies on generated names by position, and one that names its columns by
+ * name. In a SQL of the first kind, a column of the top-level select list takes the name of the view column it
+ * feeds by position. A column of a model below takes the name of the view column of the same output name, which a
+ * wildcard of the top-level select list may bring it to, and otherwise keeps its generated name, which the select
+ * models above it reference. In a SQL of the second kind, only bare calls need a name, and each takes its own
+ * output name, which is what the refresh maps by. When a guess is wrong, the compile of the result, see
+ * {@link SqlCompilerImpl#addExplicitColumnNames}, finds that it does not produce the columns it has to.
  * A materialized view's SQL has no top-level UNION: CREATE requires the designated timestamp, which a UNION does not
  * produce.
  */
@@ -79,18 +83,6 @@ final class MatViewExplicitColumnNames implements Mutable {
         isTopLevel.clear();
         sink.clear();
         hasTopLevelWildcard = false;
-    }
-
-    private static boolean isPlainIdentifier(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            final char c = name.charAt(i);
-            final boolean isLetter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-            if (!isLetter && (i == 0 || c < '0' || c > '9')) {
-                return false;
-            }
-        }
-        // a column name is never empty
-        return true;
     }
 
     private void addEdit(int lo, int hi, String text) {
@@ -156,17 +148,6 @@ final class MatViewExplicitColumnNames implements Mutable {
         }
     }
 
-    // Writes name as an identifier SQL reads back as the same name: as it is when it is a plain identifier and not
-    // a keyword, and double-quoted otherwise. No column name has a double quote, and a generated name with one,
-    // such as that of a string constant, makes a quoted identifier that the compile of the result rejects.
-    static void putIdentifier(StringSink sink, CharSequence name) {
-        if (isPlainIdentifier(name) && !SqlKeywords.isKeyword(name)) {
-            sink.put(name);
-        } else {
-            sink.putAscii('"').put(name).putAscii('"');
-        }
-    }
-
     /**
      * Records the columns of a parsed query that may need an explicit name. The parse has to record where the
      * columns' expressions end, see {@link SqlParser#setRecordingColumnExprEnds(boolean)}.
@@ -177,23 +158,27 @@ final class MatViewExplicitColumnNames implements Mutable {
     }
 
     /**
-     * Returns the SQL with the explicit names, or null when it needs none, or when the compiled query produces
-     * another number of columns than the view has, so that the columns cannot be told apart by position.
+     * Returns the SQL with the explicit names, or null when it needs none, or when the refresh copies the SQL by
+     * position and the compiled query produces another number of columns than the view has, so that the columns
+     * cannot be told apart by position.
      *
-     * @param sql             the SQL that {@link #collect(IQueryModel)} read the parse of
-     * @param output          the metadata of the compiled SQL
-     * @param viewColumnNames the names of the view's columns, in the order the view stores them
-     * @param callNames       the bare names the optimiser read as calls to zero-argument functions
-     * @param callPositions   where those bare names are in the SQL
+     * @param sql                the SQL that {@link #collect(IQueryModel)} read the parse of
+     * @param output             the metadata of the compiled SQL
+     * @param viewColumnNames    the names of the view's columns, in the order the view stores them
+     * @param callNames          the bare names the optimiser read as calls to zero-argument functions
+     * @param callPositions      where those bare names are in the SQL
+     * @param isCopiedByPosition whether the view's refresh copies the SQL's columns by position, which it does
+     *                           when the SQL relies on generated names, see {@link SqlParser#isNamingItsColumns}
      */
     @Nullable String edit(
             CharSequence sql,
             RecordMetadata output,
             ObjList<CharSequence> viewColumnNames,
             ObjList<String> callNames,
-            IntList callPositions
+            IntList callPositions,
+            boolean isCopiedByPosition
     ) {
-        if (output.getColumnCount() != viewColumnNames.size()) {
+        if (isCopiedByPosition && output.getColumnCount() != viewColumnNames.size()) {
             return null;
         }
         edits.clear();
@@ -209,9 +194,13 @@ final class MatViewExplicitColumnNames implements Mutable {
             if (isNameGenerated.getQuick(i) == 0 && !callPositions.contains(astPositions.getQuick(i))) {
                 continue;
             }
+            // A SQL that names its columns has no generated name: only its bare calls get here.
+            assert isCopiedByPosition || isNameGenerated.getQuick(i) == 0;
             sink.clear();
             sink.putAscii(" AS ");
-            putIdentifier(sink, chooseName(i, output, viewColumnNames));
+            // A generated name with a double quote, such as that of a string constant, makes a quoted identifier
+            // that the compile of the result rejects.
+            SqlUtil.putIdentifier(sink, isCopiedByPosition ? chooseName(i, output, viewColumnNames) : generatedNames.getQuick(i));
             addEdit(exprEnds.getQuick(i), exprEnds.getQuick(i), sink.toString());
         }
         if (edits.size() == 0) {

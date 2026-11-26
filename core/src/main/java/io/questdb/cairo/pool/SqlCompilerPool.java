@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -134,9 +135,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public @Nullable String addExplicitColumnNames(
                 MatViewDefinition viewDefinition,
                 ObjList<CharSequence> viewColumnNames,
-                SqlExecutionContext executionContext
+                SqlExecutionContext executionContext,
+                GenericRecordMetadata sqlColumns
         ) {
-            return delegate.addExplicitColumnNames(viewDefinition, viewColumnNames, executionContext);
+            return delegate.addExplicitColumnNames(viewDefinition, viewColumnNames, executionContext, sqlColumns);
         }
 
         @Override

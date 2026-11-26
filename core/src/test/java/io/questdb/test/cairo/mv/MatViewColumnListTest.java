@@ -1211,7 +1211,7 @@ public class MatViewColumnListTest extends AbstractCairoTest {
     @Test
     public void testRefreshAndStorageClausesUnchanged() throws Exception {
         // the list changes the view's columns only: with each REFRESH form and storage clause the view's definition
-        // is the one the same CREATE without the list gives
+        // is the one the same CREATE without the list gives, and SHOW CREATE prints it around the list
         assertMemoryLeak(() -> {
             createBase();
             insertBaseRows();
@@ -1246,7 +1246,10 @@ public class MatViewColumnListTest extends AbstractCairoTest {
                     drainWalAndMatViewQueues();
                     sink.clear();
                     printSql("SHOW CREATE MATERIALIZED VIEW " + noList, sink);
-                    final String expected = sink.toString().replace(noList, list);
+                    // the list's SYMBOL is cached, which the view without a list never is
+                    final String expected = sink.toString()
+                            .replace("'" + noList + "'", "'" + list + "' (\n\tts TIMESTAMP,\n\tsym SYMBOL CACHE,\n\tprice DOUBLE\n)")
+                            .replace("\n) PARTITION BY ", "\n) TIMESTAMP(ts) PARTITION BY ");
                     sink.clear();
                     printSql("SHOW CREATE MATERIALIZED VIEW " + list, sink);
                     TestUtils.assertEquals(form[0] + form[1], expected, sink);

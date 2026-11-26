@@ -1122,8 +1122,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // day without a base partition while the range of an UPDATE or ATTACH waits in the view's cache. Oracle: a
         // twin view with every column the view's SQL can produce, and the period of a period view, created and fully
         // refreshed at each check, which the view must match outside the base days the fuzzer removed and the view
-        // days it dropped, see MatViewFuzzOracle; and at each restart, the view state that the writers committed to the
-        // view's WAL, see restartOperationsFuzzViewStates().
+        // days it dropped, see MatViewFuzzOracle; at each check, the view that SHOW CREATE's output creates, which must
+        // have the view's columns, see checkOperationsFuzzShowCreate(); and at each restart, the view state that the
+        // writers committed to the view's WAL, see restartOperationsFuzzViewStates().
         // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
         final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
@@ -1681,6 +1682,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         Assert.assertFalse(context.toString(), opsViewState("twin").isInvalid());
         final TreeMap<String, MatViewFuzzOracle.Row> twinRows = readOperationsFuzzRows("twin");
         execute("DROP MATERIALIZED VIEW twin");
+        checkOperationsFuzzShowCreate(oracle, context);
         final boolean[] baseDays = new boolean[OPS_DAY_COUNT];
         for (MatViewFuzzOracle.Row row : twinRows.values()) {
             baseDays[row.day] = true;
@@ -1707,6 +1709,47 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final TreeMap<String, MatViewFuzzOracle.Row> viewRows = readOperationsFuzzRows("mv");
         oracle.assertView(viewRows, twinRows, baseDays, generator.getSqlColumns(), context);
         oracle.onChecked(viewRows, baseDays);
+    }
+
+    // Replays SHOW CREATE MATERIALIZED VIEW mv as the view mv_replay, which has to have the columns, the row-expiry
+    // policy and the DDL of mv. Like the twin, it lives for the check only.
+    private static void checkOperationsFuzzShowCreate(MatViewFuzzOracle oracle, CharSequence context) throws Exception {
+        final String ddl = showCreateOperationsFuzzView("mv");
+        final String replayDdl = ddl.replace("CREATE MATERIALIZED VIEW 'mv'", "CREATE MATERIALIZED VIEW 'mv_replay'");
+        Assert.assertNotEquals(ddl, replayDdl);
+        try {
+            execute(replayDdl);
+        } catch (SqlException e) {
+            throw new AssertionError("SHOW CREATE does not replay: " + e.getFlyweightMessage() + ' ' + ddl + ' ' + context, e);
+        }
+        execute("REFRESH MATERIALIZED VIEW mv_replay FULL");
+        drainOperationsFuzzQueues(oracle);
+        Assert.assertFalse(context.toString(), opsViewState("mv_replay").isInvalid());
+        // The mapping summary of mv is that of the last compile of its SQL, which a view column change does not run,
+        // so the check leaves it out.
+        final String[] queries = {
+                "SELECT \"column\", type, indexed, indexType, indexInclude, symbolCached, designated FROM table_columns('%s')",
+                "SELECT expire_clause FROM materialized_views() WHERE view_name = '%s'"
+        };
+        final StringSink expected = new StringSink();
+        final StringSink actual = new StringSink();
+        for (String query : queries) {
+            printSql(query.formatted("mv"), expected);
+            printSql(query.formatted("mv_replay"), actual);
+            TestUtils.assertEquals(ddl + ' ' + context, expected, actual);
+        }
+        TestUtils.assertEquals(ddl + ' ' + context, ddl, showCreateOperationsFuzzView("mv_replay").replace("'mv_replay'", "'mv'"));
+        execute("DROP MATERIALIZED VIEW mv_replay");
+    }
+
+    private static String showCreateOperationsFuzzView(String viewName) throws SqlException {
+        try (
+                RecordCursorFactory factory = select("SHOW CREATE MATERIALIZED VIEW " + viewName);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getVarcharA(0).toString();
+        }
     }
 
     // Asserts a view against its SQL run on the current base, which a fully refreshed twin view holds: every bucket of

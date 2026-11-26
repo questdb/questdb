@@ -1138,7 +1138,7 @@ public class SqlParser {
      * carry names up from subqueries, CTEs and join branches, so the walk covers those too. A model expanded
      * from a regular view is not part of the text; its columns reach the query as plain columns.
      */
-    private static boolean isNamingItsColumns(@Nullable IQueryModel model) {
+    static boolean isNamingItsColumns(@Nullable IQueryModel model) {
         return findColumnWithGeneratedName(model) == null;
     }
 

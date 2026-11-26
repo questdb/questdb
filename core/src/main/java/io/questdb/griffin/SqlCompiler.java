@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -48,20 +49,26 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     /**
      * Returns the SQL of a materialized view with the explicit column names that CREATE MATERIALIZED VIEW
-     * requires, for SHOW CREATE: each generated column name aliased to the view column it feeds, and each bare
-     * zero-argument function name that the view's refresh reads as a call written with parentheses. Returns null
-     * when the SQL needs no change, and when it no longer compiles or the result would not reproduce the view's
-     * columns, so the caller shows the SQL as stored.
+     * requires, for SHOW CREATE: each bare zero-argument function name that the view's refresh reads as a call
+     * written with parentheses, and each generated column name, and each such call, aliased to the name the view's
+     * refresh maps the column by. That is the view column the column feeds when the refresh copies the SQL by
+     * position, which it does for a SQL that relies on generated names, and otherwise the column's own output
+     * name. Returns null when the SQL needs no change, and when it no longer compiles or the result would not
+     * feed the view's columns as the stored SQL does, so the caller shows the SQL as stored.
      *
      * @param viewDefinition   the definition of the view
      * @param viewColumnNames  the names of the view's columns, in the order the view stores them
      * @param executionContext the context to compile the SQL with, which the method leaves as it found it
+     * @param sqlColumns       receives the output columns of the returned SQL as CREATE MATERIALIZED VIEW compiles
+     *                         it; when the method returns null, those of the stored SQL as the view's refresh
+     *                         compiles it, or none when the stored SQL does not compile
      */
     @Nullable
     String addExplicitColumnNames(
             MatViewDefinition viewDefinition,
             ObjList<CharSequence> viewColumnNames,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            GenericRecordMetadata sqlColumns
     );
 
     /**

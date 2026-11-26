@@ -699,6 +699,36 @@ public class PGMatViewDdlTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testShowCreateExecutedTwice() throws Exception {
+        // a prepared SHOW CREATE prints the view's column list once a view ADD COLUMN makes its columns differ from
+        // its SQL's, and SHOW CREATE DATABASE prints the same
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createBaseAndView();
+            final String sql = "SELECT ts, sym, sum(price) AS price FROM base SAMPLE BY 1h";
+            final String noList = "CREATE MATERIALIZED VIEW 'mv' WITH BASE 'base' REFRESH IMMEDIATE AS (\n" + sql + "\n) PARTITION BY DAY;";
+            final String withList = "CREATE MATERIALIZED VIEW 'mv' (\n\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE,\n\tprice DOUBLE,\n\textra INT\n)"
+                    + " WITH BASE 'base' REFRESH IMMEDIATE AS (\n" + sql + "\n) TIMESTAMP(ts) PARTITION BY DAY;";
+            try (PreparedStatement show = connection.prepareStatement("SHOW CREATE MATERIALIZED VIEW mv")) {
+                for (int i = 0; i < 2; i++) {
+                    assertSingleDdl(show, noList);
+                }
+                execute("ALTER MATERIALIZED VIEW mv ADD COLUMN extra INT");
+                drainWalAndMatViewQueues();
+                for (int i = 0; i < 2; i++) {
+                    assertSingleDdl(show, withList);
+                }
+            }
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SHOW CREATE DATABASE")) {
+                boolean isViewFound = false;
+                while (rs.next()) {
+                    isViewFound |= withList.equals(rs.getString(1));
+                }
+                Assert.assertTrue(isViewFound);
+            }
+        });
+    }
+
     // Arms the definition wait seam of the view to apply the WAL of every table, on a thread of its own, so that the
     // server's worker keeps no thread-local state of the apply, and to count its runs.
     private static void armSeamDrain(MatViewState state, AtomicInteger waitCount) {
@@ -786,6 +816,14 @@ public class PGMatViewDdlTest extends BasePGTest {
 
     private static long viewSeqTxn() {
         return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("mv"));
+    }
+
+    private static void assertSingleDdl(PreparedStatement show, String expected) throws Exception {
+        try (ResultSet rs = show.executeQuery()) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(expected, rs.getString(1));
+            Assert.assertFalse(rs.next());
+        }
     }
 
     private static void assertQueryResult(Connection connection, String sql, String expected) throws Exception {
