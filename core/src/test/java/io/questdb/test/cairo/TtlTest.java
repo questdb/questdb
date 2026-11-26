@@ -476,7 +476,7 @@ public class TtlTest extends AbstractCairoTest {
         // future timestamps will cause TTL to evict data based on maxTimestamp only.
         // The wall clock is pinned to 2024-06-01T12:00:00Z so that the existing rows are
         // within TTL relative to it: only the maxTimestamp reference can evict them.
-        setCurrentMicros(1717243200000000L); // 1717243200 seconds since epoch, in micros
+        setCurrentMicros(1_717_243_200_000_000L); // 1_717_243_200 seconds since epoch, in micros
         node1.setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, false);
         try {
             // Create table with 1 day TTL, partitioned by hour
