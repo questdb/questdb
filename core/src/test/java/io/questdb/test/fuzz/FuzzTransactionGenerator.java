@@ -409,6 +409,8 @@ public class FuzzTransactionGenerator {
         );
         // the length of one partition; the tables have fixed-length partitions: DAY, HOUR or a sub-hour size
         final long partitionDuration = partitionDuration(timestampDriver, tableMetadata);
+        // DETACH/ATTACH and the newest-partitions DROP work on DAY partitions
+        final long oneDay = timestampDriver.fromDays(1);
         final ReplaceWindowPicker replaceWindowPicker = new ReplaceWindowPicker(timestampDriver, partitionDuration);
 
         long lastTimestamp = minTimestamp;
