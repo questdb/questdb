@@ -628,11 +628,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
-     * An IN that InTimestampTimestampFunctionFactory reads as an interval search: a column or expression key of
-     * TIMESTAMP, TIMESTAMP_NS or DATE type and a constant STRING or VARCHAR text.
+     * A call that searches the intervals of its text, see {@link FunctionFactory#isIntervalSearch()}: a column or
+     * expression key of TIMESTAMP, TIMESTAMP_NS or DATE type and a constant STRING or VARCHAR text.
      */
     private static boolean isIntervalSearch(FunctionFactoryDescriptor overload, ObjList<Function> args) {
-        return overload.getFactory() instanceof InTimestampTimestampFunctionFactory && args.size() == 2
+        return overload.getFactory().isIntervalSearch() && args.size() == 2
                 && isTemporalOperand(args.getQuick(0)) && args.getQuick(1).isConstant() && ColumnType.isVarcharOrString(args.getQuick(1).getType());
     }
 
@@ -1319,11 +1319,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             if (folded == null && isIntervalSearch(overload, args)) {
                 assert arguments.getQuick(1) instanceof ConstantExpression : "constant text bound to a non-constant";
                 final int keyType = args.getQuick(0).getType();
-                // A string literal over a TIMESTAMP key parses in its quoted spelling, as interval extraction parses it.
-                final boolean isQuotedSpelling = ColumnType.tagOf(keyType) == ColumnType.TIMESTAMP
-                        && IntervalExtractor.isStringLiteral((ConstantExpression) arguments.getQuick(1));
+                // A string literal over a TIMESTAMP key reads a bare number as an invalid interval, as interval extraction reads it.
+                final boolean isEpochAllowed = ColumnType.tagOf(keyType) != ColumnType.TIMESTAMP
+                        || !IntervalExtractor.isStringLiteral((ConstantExpression) arguments.getQuick(1));
                 intervalSearch = IntervalSearch.parse(ColumnType.getTimestampType(keyType), sqlExecutionContext.getCairoEngine().getConfiguration(),
-                        args.getQuick(1).getStrA(null), isQuotedSpelling, positions.getQuick(1));
+                        args.getQuick(1).getStrA(null), isEpochAllowed, positions.getQuick(1));
                 if (intervalSearch == null) {
                     folded = BooleanConstant.FALSE;
                 }
@@ -2249,7 +2249,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             }
             return;
         }
-        if (!(overload.getFactory() instanceof InTimestampTimestampFunctionFactory) || count < 2
+        if (!overload.getFactory().isIntervalSearch() || count < 2
                 || ColumnType.tagOf(args.getQuick(0).getType()) != ColumnType.TIMESTAMP) {
             return;
         }

@@ -123,7 +123,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
         final LongList values = VETTED_VALUES.get();
         values.clear();
-        if (!isIntervalSearch(args)) {
+        if (!hasSingleText(args)) {
             parseElements(timestampType, args, argPositions, configuration, values);
             return true;
         }
@@ -134,6 +134,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         final StringSink sink = VETTED_SINK.get();
         sink.clear();
         IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(timestampType), configuration, right, values, argPositions.getQuick(1), sink);
+        return true;
+    }
+
+    /**
+     * A single constant text after the key is the interval text {@code ts IN '2024-01'} searches, and each text element
+     * of a longer TIMESTAMP list may spell an interval too.
+     */
+    @Override
+    public boolean isIntervalSearch() {
         return true;
     }
 
@@ -149,7 +158,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
         }
 
-        boolean intervalSearch = isIntervalSearch(args);
+        boolean intervalSearch = hasSingleText(args);
         int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
         assert ColumnType.isTimestamp(timestampType);
         if (listKind == LIST_CONSTANT) {
@@ -255,6 +264,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return null;
     }
 
+    private static boolean hasSingleText(ObjList<Function> args) {
+        if (args.size() != 2) {
+            return false;
+        }
+        Function rightFn = args.getQuick(1);
+        return ColumnType.isVarcharOrString(rightFn.getType());
+    }
+
     private static boolean isElementEqual(Function func, Record rec, long ts, TimestampDriver driver, int position) {
         return switch (ColumnType.tagOf(func.getType())) {
             case ColumnType.DATE -> driver.fromDate(func.getDate(rec)) == ts;
@@ -274,13 +291,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static boolean isIntervalSearch(ObjList<Function> args) {
-        if (args.size() != 2) {
-            return false;
-        }
-        Function rightFn = args.getQuick(1);
-        return ColumnType.isVarcharOrString(rightFn.getType());
-    }
 
     private static boolean isValueEqual(long value, int type, long ts, TimestampDriver driver) {
         return driver.ceilFrom(value, type) == ts && driver.floorFrom(value, type) == ts;

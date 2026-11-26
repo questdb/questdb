@@ -819,10 +819,53 @@ public final class IntervalUtils {
             StringSink sink,
             long nowTimestamp
     ) throws SqlException {
+        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, sink, nowTimestamp, true);
+    }
+
+    /**
+     * Parses a TICK interval expression as {@link #parseTickExpr(TimestampDriver, CairoConfiguration, CharSequence, int, int, int, LongList, StringSink)}
+     * does, deciding whether the text may spell an epoch number. A number reads as an epoch only when it is the whole
+     * text and neither a date nor an interval, so the inner range of a quoted token never does. With
+     * {@code isEpochAllowed} false the text, read in place, never does either, which is how interval extraction reads
+     * a string literal; text that a day filter, a bracket expansion or a date variable rebuilds reads as an epoch
+     * either way, as it does there.
+     *
+     * @param isEpochAllowed whether the text, read in place, may spell an epoch number
+     */
+    public static void parseTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            StringSink sink,
+            boolean isEpochAllowed
+    ) throws SqlException {
+        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, sink, timestampDriver.getTicks(), isEpochAllowed);
+    }
+
+    /**
+     * Parses a TICK interval expression with a custom "now", deciding whether the text may spell an epoch number, see
+     * {@link #parseTickExpr(TimestampDriver, CairoConfiguration, CharSequence, int, int, int, LongList, StringSink, boolean)}.
+     */
+    public static void parseTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            StringSink sink,
+            long nowTimestamp,
+            boolean isEpochAllowed
+    ) throws SqlException {
         assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
                 : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
         if (hasSubPrecisionDigits(timestampDriver, seq, lo, lim)) {
-            parseSubPrecisionTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, sink, nowTimestamp);
+            parseSubPrecisionTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, sink, nowTimestamp, isEpochAllowed);
             return;
         }
         // Skip leading whitespace
@@ -870,6 +913,7 @@ public final class IntervalUtils {
             effectiveSeqLo = 0;
             effectiveSeqLim = sink.length();
         }
+        final boolean isEffectiveEpochAllowed = isEpochAllowed || effectiveSeq != seq;
 
         // Check if this is a date list (starts with '[')
         // A date list looks like: [date1,date2,...] or [date1,date2,...]T09:30;1h
@@ -1101,18 +1145,18 @@ public final class IntervalUtils {
                 // Parse without duration - use dateLim which excludes the duration suffix
                 if (tzMarkerPos >= 0) {
                     // Reconstruct without timezone and without duration
-                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, tzMarkerPos, position, out, IntervalOperation.INTERSECT);
+                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, tzMarkerPos, position, out, IntervalOperation.INTERSECT, isEffectiveEpochAllowed);
                 } else {
-                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, dateLim, position, out, IntervalOperation.INTERSECT);
+                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, dateLim, position, out, IntervalOperation.INTERSECT, isEffectiveEpochAllowed);
                 }
             } else if (tzMarkerPos >= 0 && semicolonPos >= 0) {
                 // Parse from reconstructed tzSink
-                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, IntervalOperation.INTERSECT);
+                parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, IntervalOperation.INTERSECT, true);
             } else if (tzMarkerPos >= 0) {
                 // No semicolon, just truncate at timezone marker
-                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, IntervalOperation.INTERSECT);
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveLim, position, out, IntervalOperation.INTERSECT, isEffectiveEpochAllowed);
             } else {
-                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, IntervalOperation.INTERSECT);
+                parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, IntervalOperation.INTERSECT, isEffectiveEpochAllowed);
             }
             applyLastEncodedInterval(timestampDriver, out);
             // Day filter applies BEFORE timezone conversion (based on local time)
@@ -2238,7 +2282,7 @@ public final class IntervalUtils {
                     tlPendingDayFilter.get().of(0, false, 0)
             );
         } else {
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT, true);
             applyLastEncodedInterval(timestampDriver, tmp);
         }
 
@@ -2295,7 +2339,7 @@ public final class IntervalUtils {
             }
 
             final int dayLo = staticIntervals.size();
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, staticIntervals, IntervalOperation.INTERSECT);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, staticIntervals, IntervalOperation.INTERSECT, true);
             applyLastEncodedInterval(timestampDriver, staticIntervals);
             finishStaticIntervals(timestampDriver, staticIntervals, dayLo, effectiveDayMask, numericTzOffset, tzRules);
             checkStaticIntervalCount(staticIntervals, mergeThreshold, maxIntervalsAfterMerge, position);
@@ -2460,7 +2504,7 @@ public final class IntervalUtils {
                     pendingDayFilter
             );
         } else {
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, staticIntervals, IntervalOperation.INTERSECT);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, staticIntervals, IntervalOperation.INTERSECT, true);
             applyLastEncodedInterval(timestampDriver, staticIntervals);
         }
 
@@ -4591,7 +4635,7 @@ public final class IntervalUtils {
             int errorPos,
             LongList out
     ) throws SqlException {
-        parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, IntervalOperation.INTERSECT);
+        parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, IntervalOperation.INTERSECT, true);
         applyLastEncodedInterval(timestampDriver, out);
     }
 
@@ -4602,7 +4646,8 @@ public final class IntervalUtils {
             int lim,
             int position,
             LongList out,
-            short operation
+            short operation,
+            boolean isEpochAllowed
     ) throws SqlException {
         int writeIndex = out.size();
         int pos0 = 0, pos1 = 0, pos2 = 0;
@@ -4635,13 +4680,15 @@ public final class IntervalUtils {
                     encodeInterval(timestamp, timestamp, operation, out);
                     break;
                 } catch (NumericException e) {
-                    try {
-                        final long timestamp = Numbers.parseLong(seq);
-                        encodeInterval(timestamp, timestamp, operation, out);
-                        break;
-                    } catch (NumericException e2) {
-                        throw SqlException.$(position, "Invalid date: ").put(seq, lo, lim);
+                    if (isEpochAllowed && lo == 0 && lim == seq.length()) {
+                        try {
+                            final long timestamp = Numbers.parseLong(seq, lo, lim);
+                            encodeInterval(timestamp, timestamp, operation, out);
+                            break;
+                        } catch (NumericException ignore) {
+                        }
                     }
+                    throw SqlException.$(position, "Invalid date: ").put(seq, lo, lim);
                 }
             case 0:
                 // single semicolon, expect a period format after date
@@ -4874,12 +4921,13 @@ public final class IntervalUtils {
             int position,
             LongList out,
             StringSink sink,
-            long nowTimestamp
+            long nowTimestamp,
+            boolean isEpochAllowed
     ) throws SqlException {
         final int outSize = out.size();
         final TimestampDriver nanos = NanosTimestampDriver.INSTANCE;
         parseTickExpr(nanos, configuration, seq, lo, lim, position, out, sink,
-                nanos.from(nowTimestamp, timestampDriver.getTimestampType()));
+                nanos.from(nowTimestamp, timestampDriver.getTimestampType()), isEpochAllowed);
         int write = outSize;
         for (int read = outSize, n = out.size(); read < n; read += 2) {
             final long ceil = timestampDriver.ceilFrom(out.getQuick(read), ColumnType.TIMESTAMP_NANO);

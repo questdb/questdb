@@ -197,6 +197,18 @@ public interface FunctionFactory {
     }
 
     /**
+     * Returns true if a call of the function searches the intervals that a constant text after its TIMESTAMP,
+     * TIMESTAMP_NS or DATE key spells, as {@code ts IN '2024-01'} does. The binder parses such text once, see
+     * {@link io.questdb.griffin.model.IntervalSearch}, and checks that each text element of a longer TIMESTAMP list
+     * spells a timestamp or an interval.
+     *
+     * @return true if a call of the function searches the intervals of its text
+     */
+    default boolean isIntervalSearch() {
+        return false;
+    }
+
+    /**
      * Returns true if the window function ranks a row among its peers, so that a window without ORDER BY, where every
      * row is a peer of every other, gives every row of a partition the same value whatever order the rows come in:
      * rank(), dense_rank(), percent_rank() and cume_dist().

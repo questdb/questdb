@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
@@ -123,6 +124,48 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                 assertError(table, "t2 IN '1583077401000000'", 6, "Invalid date: 1583077401000000");
                 assertError(table, "t2 IN ('1583077401000000')", 7, "Invalid date: 1583077401000000");
                 assertError(table, "ts IN ('1583077401000000', '2024')", 7, "Invalid date");
+            }
+        });
+    }
+
+    @Test
+    public void testInEpochNumberOutsideTimestampLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE xd (d DATE, ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO xd VALUES ('2024-01-10', '2024-01-10', 1), ('2024-01-11', '2024-01-11', 2), (NULL, '2024-01-12', 3)");
+            final int oldMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode = SqlJitMode.JIT_MODE_DISABLED; mode >= SqlJitMode.JIT_MODE_ENABLED; mode--) {
+                    sqlExecutionContext.setJitMode(mode);
+                    for (String table : TABLES) {
+                        final String epoch = table.equals("x") ? "1704844800000000" : "1704844800000000000";
+                        for (String key : new String[]{"ts", "t2"}) {
+                            assertQuery("SELECT v FROM " + table + " WHERE " + key + " IN '" + epoch + "'::VARCHAR").noLeakCheck().returns("v\n1\n");
+                            assertQuery("SELECT v FROM " + table + " WHERE " + key + " IN concat('" + epoch.substring(0, 10) + "', '" + epoch.substring(10) + "')")
+                                    .noLeakCheck()
+                                    .returns("v\n1\n");
+                            assertQuery("SELECT v FROM " + table + " WHERE " + key + " NOT IN '" + epoch + "'::VARCHAR").noLeakCheck().returns("v\n2\n3\n4\n5\n");
+                        }
+                        assertQuery("SELECT v FROM " + table + " WHERE t2 IN '" + epoch + "#Wed'").noLeakCheck().returns("v\n1\n");
+                        assertQuery("SELECT v FROM " + table + " WHERE t2 IN ('2024-01-10', '2024-02-09')").noLeakCheck().returns("v\n1\n3\n");
+                        bindVariableService.clear();
+                        bindVariableService.setStr(0, epoch);
+                        assertQuery("SELECT v FROM " + table + " WHERE t2 IN $1").noLeakCheck().returns("v\n1\n");
+                        bindVariableService.clear();
+                    }
+                    assertQuery("SELECT v FROM xd WHERE d IN '1704844800000000'").noLeakCheck().returns("v\n1\n");
+                    assertQuery("SELECT v FROM xd WHERE d IN ('1704844800000000')").noLeakCheck().returns("v\n1\n");
+                    assertQuery("SELECT v FROM xd WHERE d NOT IN '1704844800000000'").noLeakCheck().returns("v\n2\n3\n");
+                    assertQuery("SELECT v FROM xd WHERE d IN NULL::VARCHAR").noLeakCheck().returns("v\n3\n");
+                    assertQuery("SELECT v FROM xd WHERE d NOT IN NULL::VARCHAR").noLeakCheck().returns("v\n1\n2\n");
+                    for (String text : new String[]{"' 1704844800000000'", "'1704844800000000@+01:00'"}) {
+                        final String sql = "SELECT v FROM xd WHERE d IN " + text + "::VARCHAR";
+                        assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "Invalid date: 1704844800000000");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(oldMode);
             }
         });
     }

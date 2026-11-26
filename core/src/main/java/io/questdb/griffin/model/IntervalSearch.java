@@ -51,19 +51,19 @@ public final class IntervalSearch {
     }
 
     /**
-     * Parses the text of an interval IN over a key of {@code timestampType}: NULL text searches NULL. Text in its
-     * quoted spelling, as interval extraction parses a string literal, reads a bare number as an invalid interval;
-     * other text reads it as an epoch, as InTimestampTimestampFunctionFactory always did. Returns null when the text
-     * holds no instant at that precision, e.g. '2024-01-06#workday', where the day filter drops the only day, a
-     * Saturday: no row matches, NULL included.
+     * Parses the text of an interval IN over a key of {@code timestampType}: NULL text searches NULL. Returns null when
+     * the text holds no instant at that precision, e.g. '2024-01-06#workday', where the day filter drops the only day,
+     * a Saturday: no row matches, NULL included.
      *
+     * @param isEpochAllowed whether a bare number reads as an epoch rather than an invalid interval, see
+     *                       {@link IntervalUtils#parseTickExpr(io.questdb.cairo.TimestampDriver, CairoConfiguration, CharSequence, int, int, int, LongList, StringSink, boolean)}
      * @throws SqlException at {@code position} for text that spells no interval
      */
     public static @Nullable IntervalSearch parse(
             int timestampType,
             CairoConfiguration configuration,
             @Nullable CharSequence text,
-            boolean isQuotedSpelling,
+            boolean isEpochAllowed,
             int position
     ) throws SqlException {
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
@@ -73,12 +73,10 @@ public final class IntervalSearch {
         }
         final LongList intervals = new LongList();
         final StringSink sink = new StringSink();
-        if (text != null && isQuotedSpelling) {
-            final StringSink quoted = new StringSink();
-            quoted.put('\'').put(text).put('\'');
-            IntervalUtils.parseTickExpr(driver, configuration, quoted, 1, quoted.length() - 1, position, intervals, sink);
+        if (text != null) {
+            IntervalUtils.parseTickExpr(driver, configuration, text, 0, text.length(), position, intervals, sink, isEpochAllowed);
         } else {
-            IntervalUtils.parseTickExprAndIntersect(driver, configuration, text, intervals, position, sink);
+            IntervalUtils.parseTickExprAndIntersect(driver, configuration, null, intervals, position, sink);
         }
         return intervals.size() > 0 ? new IntervalSearch(timestampType, intervals, null) : null;
     }
