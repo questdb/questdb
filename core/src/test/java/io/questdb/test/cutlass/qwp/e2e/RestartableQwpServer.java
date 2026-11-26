@@ -253,14 +253,17 @@ public final class RestartableQwpServer implements AutoCloseable {
             throw new IllegalStateException("already running");
         }
         final long maxUncommittedRows = qwpMaxUncommittedRows;
-        final LineHttpProcessorConfiguration lineConfiguration = maxUncommittedRows > 0
-                ? new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(cairoConfiguration) {
-                    @Override
-                    public long getQwpMaxUncommittedRows() {
-                        return maxUncommittedRows;
-                    }
+        final LineHttpProcessorConfiguration lineConfiguration;
+        if (maxUncommittedRows > 0) {
+            lineConfiguration = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(cairoConfiguration) {
+                @Override
+                public long getQwpMaxUncommittedRows() {
+                    return maxUncommittedRows;
                 }
-                : null;
+            };
+        } else {
+            lineConfiguration = null;
+        }
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 cairoConfiguration,
                 new DefaultHttpContextConfiguration() {
