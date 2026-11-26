@@ -584,6 +584,21 @@ cmake --build build/release --config Release
 4. **Column-oriented storage**: Data stored by column for compression and
    vectorized operations.
 
+### Query planners
+
+- **The new planner is the default path.** It binds the query into a typed
+  logical plan (`griffin/bind`, `griffin/plan`), rewrites it
+  (`griffin/optimiser`) and generates the factories (`griffin/codegen`).
+  `cairo.sql.legacy.planner.enabled` defaults to `false`.
+- **The legacy planner is only a fallback.** Master's optimiser and code
+  generator live under `io.questdb.legacy` (`com.questdb.legacy` in
+  Enterprise), and the server setting, the `Legacy-Planner` HTTP header or the
+  `legacy_planner` PostgreSQL option switch a query to it. `ci/legacy_planner.py`
+  generates it from master; it takes no fixes and no features.
+- **Implement new features and fixes in the new planner only.** Do not port
+  them to the legacy planner, and do not make new code depend on legacy
+  classes.
+
 ### Entry Points
 
 - `ServerMain.java` - Main server entry point
