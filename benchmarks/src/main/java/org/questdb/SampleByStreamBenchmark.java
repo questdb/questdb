@@ -68,6 +68,9 @@ public class SampleByStreamBenchmark {
     public String dataFormat;
     @Param({"stream"})
     public String expectedStrategy;
+    // The parallel filter dispatch limit; 0 takes the server default, the worker count up to 32.
+    @Param({"0"})
+    public int dispatchLimit;
     @Param({"none"})
     public String fill;
     @Param({"7"})
@@ -133,6 +136,11 @@ public class SampleByStreamBenchmark {
                 @Override
                 public int getSqlPageFrameMinRows() {
                     return frameRows;
+                }
+
+                @Override
+                public int getSqlParallelFilterDispatchLimit() {
+                    return dispatchLimit > 0 ? dispatchLimit : Math.min(Math.max(1, workers), 32);
                 }
             };
             engine = new CairoEngine(configuration);

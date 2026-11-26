@@ -1191,7 +1191,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
                 groupBy.set(stream);
                 final int laneCount = stream.getAtom().getLaneCount();
-                Assert.assertEquals(workers + 1, laneCount);
+                Assert.assertEquals(2 * (workers + 1), laneCount);
                 // The owner may reduce every frame of a run.
                 for (int run = 0; run < 100 && heldState.get() == null; run++) {
                     Assert.assertEquals(expected, sortedLines(read(factory, context)));
@@ -3868,9 +3868,11 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     // Three 1m buckets of 60_000 rows: the first holds a key per row, the others 200 keys.
+    // The first minute holds 60_000 keys and the next two 201 keys each. 201 shares no factor with the lane counts, so
+    // even with a row per frame the span map of each lane holds every key, past the test sharding threshold.
     private static void createSkewedKeysTable(CairoEngine engine, SqlExecutionContext context) throws Exception {
         engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 1_000L) ts, "
-                + "CASE WHEN x <= 60_000 THEN x ELSE x % 200 END k, x v FROM long_sequence(180_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                + "CASE WHEN x <= 60_000 THEN x ELSE x % 201 END k, x v FROM long_sequence(180_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
     }
 
     // Each 10s bucket holds 10_000 rows of 5_000 keys, past the test sharding threshold, and spans frames.
