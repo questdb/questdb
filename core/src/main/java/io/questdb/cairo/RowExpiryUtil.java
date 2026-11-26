@@ -128,10 +128,13 @@ public final class RowExpiryUtil {
 
     /**
      * Returns what CREATE MATERIALIZED VIEW with a column list probes its {@code EXPIRE ROWS} policy over, before the
-     * view exists: {@code (SELECT ... FROM (<selectText>) TIMESTAMP("<queryTimestampName>"))} with the listed columns
-     * in the list's order, the designated timestamp as the query names it and every other column as a NULL of its
-     * listed type. The view's columns are the listed ones, not the query's. A computed select keeps the designated
-     * timestamp only under the query's spelling of its name, which may differ from the list's in letter case.
+     * view exists: {@code (SELECT ... FROM ((<selectText>) TIMESTAMP("<queryTimestampName>")))} with the listed
+     * columns in the list's order, the designated timestamp as the query names it and every other column as a NULL of
+     * its listed type. The view's columns are the listed ones, not the query's. A computed select keeps the designated
+     * timestamp only under the query's spelling of its name, which may differ from the list's in letter case. The
+     * parentheses around the {@code TIMESTAMP} clause keep the designation for a query that has none of its own, such
+     * as a GROUP BY timestamp_floor() without ORDER BY: a select of computed columns straight over
+     * {@code (<selectText>) TIMESTAMP(...)} loses it.
      */
     public static String buildColumnListProbeSource(
             RecordMetadata columnList,
@@ -159,7 +162,7 @@ public final class RowExpiryUtil {
             }
             sink.putAscii(" AS ").put(quoteIdentifier(columnList.getColumnName(i)));
         }
-        sink.putAscii(" FROM (").put(selectText).putAscii(") TIMESTAMP(").put(quoteIdentifier(queryTimestampName)).putAscii("))");
+        sink.putAscii(" FROM ((").put(selectText).putAscii(") TIMESTAMP(").put(quoteIdentifier(queryTimestampName)).putAscii(")))");
         return sink.toString();
     }
 

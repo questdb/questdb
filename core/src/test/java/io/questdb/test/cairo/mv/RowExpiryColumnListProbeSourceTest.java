@@ -46,6 +46,31 @@ import org.junit.Test;
 public class RowExpiryColumnListProbeSourceTest extends AbstractCairoTest {
 
     @Test
+    public void testSourceDesignatesTimestampTheQueryLacks() throws Exception {
+        // The query of a GROUP BY timestamp_floor() view without ORDER BY has no designated timestamp, while the list
+        // has one: the source designates the query's column at the list's position, so that a policy probe reads the
+        // view's designated timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsbase (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String query = "SELECT timestamp_floor('1h', ts) AS ts, last(v) AS v FROM tsbase";
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+            }
+            for (int timestampIndex = 0; timestampIndex < 2; timestampIndex++) {
+                final GenericRecordMetadata list = new GenericRecordMetadata();
+                for (int column = 0; column < 2; column++) {
+                    list.add(column == timestampIndex ? newColumn("TS", ColumnType.TIMESTAMP) : newColumn("v", ColumnType.DOUBLE));
+                }
+                list.setTimestampIndex(timestampIndex);
+                try (RecordCursorFactory factory = select("SELECT * FROM " + RowExpiryUtil.buildColumnListProbeSource(list, "ts", query))) {
+                    Assert.assertEquals(timestampIndex, factory.getMetadata().getTimestampIndex());
+                    Assert.assertEquals(ColumnType.TIMESTAMP, factory.getMetadata().getColumnType(timestampIndex));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSourceHasTheListedColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tsbase (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -96,7 +121,7 @@ public class RowExpiryColumnListProbeSourceTest extends AbstractCairoTest {
         list.setTimestampIndex(1);
         Assert.assertEquals(
                 "(SELECT CAST(NULL AS SYMBOL) AS \"k \"\"q\"\"\", \"ts\", to_long128(NULL, NULL) AS \"x\", CAST(NULL AS DECIMAL(18,3)) AS \"d\""
-                        + " FROM (SELECT ts FROM t) TIMESTAMP(\"ts\"))",
+                        + " FROM ((SELECT ts FROM t) TIMESTAMP(\"ts\")))",
                 RowExpiryUtil.buildColumnListProbeSource(list, "ts", "SELECT ts FROM t")
         );
     }

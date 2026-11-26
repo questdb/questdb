@@ -333,11 +333,19 @@ public class MatViewColumnListTest extends AbstractCairoTest {
             );
             // The query of a GROUP BY timestamp_floor() view without ORDER BY has no designated timestamp, the list
             // does. Such a view does not refresh, with or without a list, a known gap tracked separately, so both
-            // views read no row. (A RANGE-frame window policy on this shape is refused by CREATE with or without a
-            // list, another gap tracked separately, so it is not part of this test.)
+            // views read no row. With the list, a RANGE frame orders by the list's designated timestamp. (Without a
+            // list, CREATE refuses a RANGE-frame window policy on this shape, another gap tracked separately.)
             final String floor = "SELECT timestamp_floor('1h', ts) AS ts, sym, last(price) AS price FROM base";
             assertCreateAndAlterAgree("(ts TIMESTAMP, sym SYMBOL, price DOUBLE)", floor, "", "KEEP LATEST PARTITION BY sym", null, -1);
             assertCreateAndAlterAgree("(ts TIMESTAMP, sym SYMBOL, price DOUBLE)", floor, "", "KEEP 2 HIGHEST ON price PARTITION BY sym", null, -1);
+            assertCreateAndAlterAgree(
+                    "(ts TIMESTAMP, sym SYMBOL, price DOUBLE)",
+                    floor,
+                    "",
+                    "WHEN price < max(price) OVER (ORDER BY ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW)",
+                    null,
+                    -1
+            );
             final String orderedFloor = floor + " ORDER BY ts";
             assertCreateAndAlterAgree("(ts TIMESTAMP, sym SYMBOL, price DOUBLE)", orderedFloor, "", "KEEP LATEST PARTITION BY sym", null, 2);
             assertCreateAndAlterAgree("(ts TIMESTAMP, sym SYMBOL, price DOUBLE)", orderedFloor, "", "KEEP 2 HIGHEST ON price PARTITION BY sym", null, 3);
