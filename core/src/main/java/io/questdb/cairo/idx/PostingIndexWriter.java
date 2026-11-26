@@ -221,6 +221,7 @@ public class PostingIndexWriter implements IndexWriter {
     // on every of() call to avoid leaking entries across reopens.
     private final LongList recoveryOrphanScratch = new LongList();
     private final byte rowIdEncoding;
+    private final SealTxnHighWater sealTxnHighWater = new SealTxnHighWater();
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final ObjList<MemoryMARW> sidecarMems = new ObjList<>();
     // Staging for switchToSealedValueFile: new .pv is mapped here first, then
@@ -1444,8 +1445,15 @@ public class PostingIndexWriter implements IndexWriter {
 
         try {
             if (isInit) {
-                // Seal purges may still be queued for the value files of the index this replaces: start past its sealTxns.
-                this.sealTxn = PostingIndexUtils.readKeyFileGenCounter(ff, path, plen, name, columnNameTxn) + 1;
+                // Seal purges may still be queued for files of the index this replaces: start past its sealTxns and files.
+                // A file at sealTxn 0 does not count: a seal past it counts a later sealTxn or leaves a later file.
+                sealTxnHighWater.sealTxn = 0;
+                PostingIndexUtils.scanSealedFiles(ff, path, plen, name, columnNameTxn, sealTxnHighWater);
+                final long fileSealTxn = sealTxnHighWater.sealTxn;
+                this.sealTxn = Math.max(
+                        PostingIndexUtils.readKeyFileGenCounter(ff, path, plen, name, columnNameTxn) + 1,
+                        fileSealTxn > 0 ? fileSealTxn + 1 : 0
+                );
             }
             LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, columnNameTxn);
 
@@ -8325,6 +8333,20 @@ public class PostingIndexWriter implements IndexWriter {
             this.toTableTxn = toTableTxn;
             this.partitionTimestamp = partitionTimestamp;
             this.partitionNameTxn = partitionNameTxn;
+        }
+    }
+
+    private static final class SealTxnHighWater implements PostingIndexUtils.SealedFileVisitor {
+        long sealTxn;
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            this.sealTxn = Math.max(this.sealTxn, sealTxn);
+        }
+
+        @Override
+        public void onValueFile(long sealTxn) {
+            this.sealTxn = Math.max(this.sealTxn, sealTxn);
         }
     }
 
