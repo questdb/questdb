@@ -4669,7 +4669,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: (,'2018-01-31')
+                              range: (null,'2018-01-31')
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -4709,7 +4709,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2017-12-20',)
+                              range: ('2017-12-20',null)
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -5198,7 +5198,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2017-12-20',)
+                              range: ('2017-12-20',null)
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -5220,7 +5220,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2017-12-20',)
+                              range: ('2017-12-20',null)
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
