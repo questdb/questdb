@@ -1373,10 +1373,11 @@ public class WindowJoinTest extends AbstractCairoTest {
 
     @Test
     public void testConstantFalseJoinFilterKeepsLongTopKOnMasterColumn() throws Exception {
-        // A GROUP BY master runs the Long Top K loop on its LONG columns. The constant-false splice keeps
-        // that loop for a master column and reads the aggregates from its own records. A table master
-        // offers no Long Top K loop, so the splice keeps its sort and its parallel Top K. The per-row
-        // false filter runs the regular path.
+        // A hash GROUP BY master runs the Long Top K loop on its LONG columns. The constant-false splice
+        // keeps that loop for a master column and reads the aggregates from its own records. A stream
+        // GROUP BY master offers no random access, which Long Top K needs, so the splice keeps the
+        // copying Top K. A table master offers no Long Top K loop, so the splice keeps its sort and its
+        // parallel Top K. The per-row false filter runs the regular path.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             final String leftType = leftTableTimestampType.getTypeName();
@@ -1396,56 +1397,57 @@ public class WindowJoinTest extends AbstractCairoTest {
             };
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
-                for (String condition : groupByMasterConditions) {
-                    final boolean isConstantFalse = !condition.equals("t.mk < 0");
-                    final String windowJoin = " FROM " + groupByMaster + " WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
-                    assertQuery("SELECT t.*, count() n" + windowJoin + " ORDER BY mk DESC LIMIT 2")
-                            .noLeakCheck()
-                            .supportsRandomAccess(true)
-                            .sizeMayVary()
-                            .withPlanContaining(isConstantFalse ? """
-                                    Long Top K lo: 2
-                                      keys: [mk desc]
-                                        ExtraEmptyValueColumnRecord
-                                    """ : null)
-                            .returns(replaceTimestampSuffix("""
-                                    ts\tmk\tn
-                                    2024-01-01T09:02:00.000000Z\t3\t0
-                                    2024-01-01T09:01:00.000000Z\t2\t0
-                                    """, leftType));
-
-                    assertQuery("SELECT t.*, max(p.ts) mx" + windowJoin + " ORDER BY mk DESC LIMIT 2")
-                            .noLeakCheck()
-                            .supportsRandomAccess(true)
-                            .sizeMayVary()
-                            .withPlanContaining(isConstantFalse ? """
-                                    Long Top K lo: 2
-                                      keys: [mk desc]
-                                        ExtraNullColumnRecord
-                                    """ : null)
-                            .returns(replaceTimestampSuffix("""
-                                    ts\tmk\tmx
-                                    2024-01-01T09:02:00.000000Z\t3\t
-                                    2024-01-01T09:01:00.000000Z\t2\t
-                                    """, leftType));
-
-                    // A reordering projection over the splice resolves the sort key through its cross
-                    // index, which maps it to the master column.
-                    assertQuery("SELECT t.mk, count() n, t.ts" + windowJoin + " ORDER BY mk DESC LIMIT 2")
-                            .noLeakCheck()
-                            .supportsRandomAccess(true)
-                            .sizeMayVary()
-                            .withPlanContaining(isConstantFalse ? """
-                                    Long Top K lo: 2
-                                      keys: [mk desc]
-                                        SelectedRecord
+                for (boolean isStreamGroupBy : new boolean[]{false, true}) {
+                    sqlExecutionContext.setStreamGroupByEnabled(isStreamGroupBy);
+                    final String topK = isStreamGroupBy ? "Encode sort lo: 2\n" : "Long Top K lo: 2\n";
+                    for (String condition : groupByMasterConditions) {
+                        final boolean isConstantFalse = !condition.equals("t.mk < 0");
+                        final String windowJoin = " FROM " + groupByMaster + " WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
+                        assertQuery("SELECT t.*, count() n" + windowJoin + " ORDER BY mk DESC LIMIT 2")
+                                .noLeakCheck()
+                                .supportsRandomAccess(true)
+                                .sizeMayVary()
+                                .withPlanContaining(isConstantFalse ? topK + """
+                                          keys: [mk desc]
                                             ExtraEmptyValueColumnRecord
-                                    """ : null)
-                            .returns(replaceTimestampSuffix("""
-                                    mk\tn\tts
-                                    3\t0\t2024-01-01T09:02:00.000000Z
-                                    2\t0\t2024-01-01T09:01:00.000000Z
-                                    """, leftType));
+                                        """ : null)
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tmk\tn
+                                        2024-01-01T09:02:00.000000Z\t3\t0
+                                        2024-01-01T09:01:00.000000Z\t2\t0
+                                        """, leftType));
+
+                        assertQuery("SELECT t.*, max(p.ts) mx" + windowJoin + " ORDER BY mk DESC LIMIT 2")
+                                .noLeakCheck()
+                                .supportsRandomAccess(true)
+                                .sizeMayVary()
+                                .withPlanContaining(isConstantFalse ? topK + """
+                                          keys: [mk desc]
+                                            ExtraNullColumnRecord
+                                        """ : null)
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tmk\tmx
+                                        2024-01-01T09:02:00.000000Z\t3\t
+                                        2024-01-01T09:01:00.000000Z\t2\t
+                                        """, leftType));
+
+                        // A reordering projection over the splice resolves the sort key through its cross
+                        // index, which maps it to the master column.
+                        assertQuery("SELECT t.mk, count() n, t.ts" + windowJoin + " ORDER BY mk DESC LIMIT 2")
+                                .noLeakCheck()
+                                .supportsRandomAccess(true)
+                                .sizeMayVary()
+                                .withPlanContaining(isConstantFalse ? topK + """
+                                          keys: [mk desc]
+                                            SelectedRecord
+                                                ExtraEmptyValueColumnRecord
+                                        """ : null)
+                                .returns(replaceTimestampSuffix("""
+                                        mk\tn\tts
+                                        3\t0\t2024-01-01T09:02:00.000000Z
+                                        2\t0\t2024-01-01T09:01:00.000000Z
+                                        """, leftType));
+                    }
                 }
 
                 for (String condition : tableMasterConditions) {
@@ -3072,7 +3074,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .returns(spliceOfSymbolARows("2.0", "3.0", "3.0", false));
 
             // A set operation hides the page frames from the filter above it, and so does a LIMIT of the ORDER BY
-            // model itself. Both leave the trades of 09:00:00 and 09:00:10.
+            // model itself, which the sort takes as its top-K bound. Both leave the trades of 09:00:00 and 09:00:10.
             final String twoTradeRows = spliceOfSymbolARows("null", "null", "null", true);
             final String laterTradeExcluded = "(SELECT sym, ap, ts FROM z_ref WHERE ts = '2024-01-02T09:00:00.000000Z')";
             assertQuery(spliceOverOperand("(SELECT * FROM (" + zCi + " EXCEPT " + laterTradeExcluded + ") WHERE rnd_double() < 2)"))
@@ -3087,7 +3089,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQuery(spliceOverOperand("(SELECT * FROM (" + constantFalseOverCoveringIndex + " LIMIT 2) WHERE rnd_double() < 2)"))
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Limit", "Encode sort\n", "keys: [ts]")
+                    .withPlanContaining("Encode sort lo: 2 partiallySorted: true\n", "keys: [ts]")
                     .returns(twoTradeRows);
 
             // Over a no-row-id master the splice reports neither random access nor its master's row ids.
@@ -5757,7 +5759,8 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonAndSpliceJoinOverWindowJoinSortedByTimestampSortLimits() throws Exception {
         // The kept sort applies the sort memory limits. A TIMESTAMP key takes 8 bytes and the row id 8 more, so
-        // sorting the five trades takes 80 bytes of keys.
+        // sorting the five trades takes 80 bytes of keys. The sort takes the LIMIT as its top-K bound, and the
+        // top-K reports the bytes of the whole entries a key limit holds.
         assertMemoryLeak(() -> {
             createSpliceOverWindowJoinTables();
             execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5770,7 +5773,8 @@ public class WindowJoinTest extends AbstractCairoTest {
             final String spliceRows = queryResult(splice.formatted("w_ref"));
             for (long keyLimit : new long[]{1, 79}) {
                 setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, keyLimit);
-                final String keyLimitError = "limit of " + keyLimit + " memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes)";
+                final long entryBytes = keyLimit / 16 * 16;
+                final String keyLimitError = "limit of " + entryBytes + " memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes)";
                 assertExceptionNoLeakCheck(horizon.formatted(sortedWindowJoin), -1, keyLimitError);
                 assertExceptionNoLeakCheck(splice.formatted(sortedWindowJoin), -1, keyLimitError);
             }
@@ -5869,8 +5873,8 @@ public class WindowJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinOverWindowJoinSortedByTimestampWithLimit() throws Exception {
-        // LIMIT applies above the kept sort, so the HORIZON JOIN reads the first or the last trades in
-        // timestamp order, also when one compiled query runs again with another bound.
+        // The kept sort takes LIMIT as its top-K bound, so the HORIZON JOIN reads the first or the last trades
+        // in timestamp order, also when one compiled query runs again with another bound.
         assertMemoryLeak(() -> {
             createHorizonOverWindowJoinTables();
             execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5888,7 +5892,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
-                            .withPlanContaining("Horizon Join", "Limit", "Encode sort\n", "keys: [ts]")
+                            .withPlanContaining("Horizon Join", "Encode sort lo: " + limit + " partiallySorted: true\n", "keys: [ts]")
                             .withPlanNotContaining("Async Horizon Join", "Async JIT Horizon Join")
                             .returns("3".equals(limit) ? firstThree : lastTwo);
                     assertSqlCursors(horizon.formatted("SELECT * FROM w_ref LIMIT " + limit), query);

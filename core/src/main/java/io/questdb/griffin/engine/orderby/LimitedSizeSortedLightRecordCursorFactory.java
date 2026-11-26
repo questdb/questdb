@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
@@ -51,6 +52,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
     private final Function hiFunction;
+    private final int limitPosition;
     private final Function loFunction;
     private final ObjList<DirectIntList> rankMaps;
     private final ListColumnFilter sortColumnFilter;
@@ -72,6 +74,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             RecordComparator comparator,
             Function loFunc,
             @Nullable Function hiFunc,
+            int limitPosition,
             ListColumnFilter sortColumnFilter,
             int timestampIndex // index of timestamp that base record cursor is already sorted on
     ) {
@@ -79,6 +82,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.base = base;
         this.loFunction = loFunc;
         this.hiFunction = hiFunc;
+        this.limitPosition = limitPosition;
         this.configuration = configuration;
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
@@ -241,10 +245,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         } else {
             // at this stage we also have 'hi'
             long hi = hiFunction.getLong(null);
-            // NULL lo with a non-NULL hi means "from the start"; NULL,NULL stays raw so lo == hi yields empty.
-            if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
-                lo = 0;
-            }
+            lo = LimitRecordCursorFactory.resolveLo(lo, hi, limitPosition);
             if (lo < 0) {
                 // right, here we are looking for something like -10,-5 five rows away from tail
                 if (lo == hi) {
