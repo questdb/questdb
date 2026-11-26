@@ -170,6 +170,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             this.messageHeader = new QwpMessageHeader();
             this.messageCursor = new QwpMessageCursor(configuration.getMaxRowsPerTable());
+            // Each table keeps its schema parse on its cache entry, bounded like the
+            // tables this receiver holds open.
+            this.messageCursor.setSchemaCache(tudCache);
             this.buf = buf;
             this.walAppender = walAppender;
             this.tudCache = tudCache;

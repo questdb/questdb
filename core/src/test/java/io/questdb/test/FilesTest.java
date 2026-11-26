@@ -444,6 +444,100 @@ public class FilesTest {
     }
 
     /**
+     * A file can vanish between the listing of its directory and its link or copy: the column purge job removes
+     * superseded column files from a partition directory that DETACH or FORCE REINDEX is linking. The walk must skip
+     * the vanished entry, as a walk that listed the directory after the removal would. A failure while the source is
+     * still there must still fail the walk, and a failure other than a missing file must leave errno to the caller.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveSkipEntryRemovedAfterListing() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicReference<String> failure = new AtomicReference<>();
+            final AtomicInteger failedSourceChecks = new AtomicInteger();
+            final AtomicInteger fakeErrno = new AtomicInteger(-1);
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int copy(LPSZ from, LPSZ to) {
+                    return invoke(from) ? super.copy(from, to) : -1;
+                }
+
+                @Override
+                public int errno() {
+                    return fakeErrno.get() > -1 ? fakeErrno.get() : super.errno();
+                }
+
+                @Override
+                public boolean exists(LPSZ path) {
+                    if (failure.get() != null && Utf8s.endsWithAscii(path, failure.get())) {
+                        failedSourceChecks.incrementAndGet();
+                    }
+                    return super.exists(path);
+                }
+
+                @Override
+                public int hardLink(LPSZ src, LPSZ hardLink) {
+                    return invoke(src) ? super.hardLink(src, hardLink) : -1;
+                }
+
+                // false when the operation must fail without touching the file system
+                private boolean invoke(LPSZ src) {
+                    final String name = Utf8s.stringFromUtf8Bytes(src);
+                    if (name.endsWith("gone") || name.endsWith("gone2")) {
+                        // a purge removes the file after the walk listed it
+                        Assert.assertTrue(super.removeQuiet(src));
+                        return true;
+                    }
+                    if (failure.get() != null && name.endsWith(failure.get())) {
+                        return false;
+                    }
+                    return true;
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath();
+            final java.nio.file.Path srcDir = root.resolve("src");
+            java.nio.file.Files.createDirectories(srcDir.resolve("subdir"));
+            java.nio.file.Files.writeString(srcDir.resolve("keep"), "abcde");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("keep2"), "efgh");
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isHardLink : new boolean[]{false, true}) {
+                    // the walk skips the files that vanish and links or copies the rest
+                    java.nio.file.Files.writeString(srcDir.resolve("gone"), "x");
+                    java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("gone2"), "y");
+                    java.nio.file.Path dstDir = root.resolve("dst-" + isHardLink);
+                    src.of(srcDir.toString());
+                    dst.of(dstDir.toString());
+                    Assert.assertEquals(0, isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode));
+                    Assert.assertEquals("abcde", java.nio.file.Files.readString(dstDir.resolve("keep")));
+                    Assert.assertEquals("efgh", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("keep2")));
+                    Assert.assertFalse(java.nio.file.Files.exists(dstDir.resolve("gone")));
+                    Assert.assertFalse(java.nio.file.Files.exists(dstDir.resolve("subdir").resolve("gone2")));
+                    Assert.assertFalse(java.nio.file.Files.exists(srcDir.resolve("gone")));
+
+                    // a missing-file error while the source is still there fails the walk
+                    failure.set("keep2");
+                    fakeErrno.set(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
+                    failedSourceChecks.set(0);
+                    dstDir = root.resolve("dst-enoent-" + isHardLink);
+                    dst.of(dstDir.toString());
+                    Assert.assertEquals(-1, isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode));
+                    Assert.assertEquals(1, failedSourceChecks.get());
+
+                    // any other error fails the walk without probing the source, which could change errno
+                    fakeErrno.set(18);
+                    failedSourceChecks.set(0);
+                    dstDir = root.resolve("dst-exdev-" + isHardLink);
+                    dst.of(dstDir.toString());
+                    Assert.assertEquals(-1, isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode));
+                    Assert.assertEquals(0, failedSourceChecks.get());
+                    failure.set(null);
+                    fakeErrno.set(-1);
+                }
+            }
+        });
+    }
+
+    /**
      * On a file system that reports no entry types (XFS without ftype, some FUSE and network file systems) the
      * recursive copy and hard link must ask whether an entry is a directory; they used to open every file as a
      * directory and fail with ENOTDIR. A file system that reports types must not pay for the question.
@@ -900,6 +994,15 @@ public class FilesTest {
             // above every mapping
             Assert.assertNull(Files.findPathOfMapping(-1));
         });
+    }
+
+    @Test
+    public void testGetFileSystemStatusTellsApfsByName() throws Exception {
+        // macOS numbers file system types in the order it loads them: HFS+ takes 0x19 on macOS 26, a number APFS had on
+        // macOS 15. The status must follow the name of the file system, on disk images of both.
+        Assume.assumeTrue(Os.isOSX());
+        assertFileSystemStatusOfImage("APFS", "apfs", true);
+        assertFileSystemStatusOfImage("HFS+", "hfs", false);
     }
 
     @Test
@@ -2028,6 +2131,14 @@ public class FilesTest {
         return file.toPath().toRealPath().toString();
     }
 
+    private static int runCommand(String... command) throws IOException, InterruptedException {
+        return new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
+                .waitFor();
+    }
+
     private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
         try (
                 Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt");
@@ -2065,6 +2176,35 @@ public class FilesTest {
     private static void touch(File file) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.close();
+    }
+
+    // Creates a disk image of the file system format, mounts it, and checks the name and the status that
+    // Files.getFileSystemStatus reports for the mounted volume. Skips the check where hdiutil cannot mount an image.
+    private void assertFileSystemStatusOfImage(String format, String expectedName, boolean isExpectedSupported) throws Exception {
+        assertMemoryLeak(() -> {
+            final File dir = temporaryFolder.newFolder();
+            final File image = new File(dir, "volume.sparseimage");
+            final File mountPoint = new File(dir, "mnt");
+            Assert.assertTrue(mountPoint.mkdir());
+            Assume.assumeTrue(
+                    "hdiutil cannot create an image of " + format,
+                    runCommand("hdiutil", "create", "-quiet", "-size", "16m", "-fs", format, "-type", "SPARSE", "-volname", "qdb", image.getAbsolutePath()) == 0
+            );
+            Assume.assumeTrue(
+                    "hdiutil cannot attach an image of " + format,
+                    runCommand("hdiutil", "attach", "-quiet", "-nobrowse", "-mountpoint", mountPoint.getAbsolutePath(), image.getAbsolutePath()) == 0
+            );
+            try (Path path = new Path()) {
+                path.of(mountPoint.getAbsolutePath());
+                final int status = Files.getFileSystemStatus(path.$());
+                // the file system name overwrites the path
+                path.seekZ();
+                Assert.assertEquals(expectedName, path.toString());
+                Assert.assertEquals(format + " status " + status, isExpectedSupported, status < 0);
+            } finally {
+                runCommand("hdiutil", "detach", "-quiet", "-force", mountPoint.getAbsolutePath());
+            }
+        });
     }
 
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {

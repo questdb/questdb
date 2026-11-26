@@ -46,6 +46,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_COMMAND_QUEUE_CAPACITY("cairo.writer.command.queue.capacity"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
+    CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE("cairo.commit.mode.adaptive.downgrade"),
     CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED("cairo.adaptive.epoch.column.sync.batched"),
     CAIRO_WAL_COMMIT_WRITEBACK_DRAIN("cairo.wal.commit.writeback.drain"),
     CAIRO_ADAPTIVE_EPOCH_INTERVAL("cairo.adaptive.epoch.interval"),
@@ -239,6 +240,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
     CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT("cairo.mat.view.refresh.busy.retry.timeout"),
     CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT("cairo.mat.view.refresh.busy.retry.limit"),
+    CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT("cairo.view.compile.busy.retry.timeout"),
     CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST("cairo.mat.view.refresh.block.list"),
     // Deprecated no-op: superseded by cairo.mat.view.refresh.busy.retry.timeout. Retained so that an
     // existing server.conf carrying this key still validates and starts, including under strict

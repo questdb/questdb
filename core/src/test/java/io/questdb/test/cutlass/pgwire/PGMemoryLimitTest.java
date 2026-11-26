@@ -25,6 +25,12 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerProvider;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -111,6 +117,89 @@ public class PGMemoryLimitTest extends BasePGTest {
                         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
                     }
                 }
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
+    }
+
+    @Test
+    public void testPipelinedPortalChargesCastDictionaryToItsOwnExecution() throws Exception {
+        // The parallel window join initializes its join filter, and the cast to SYMBOL in it, on the
+        // first read. The driver sends both statements before Sync, so the second portal registers
+        // before the first one reads a row.
+        sharedQueryWorkerCount = 2;
+        try {
+            assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+                try (Statement stat = connection.createStatement()) {
+                    stat.execute("""
+                            CREATE TABLE trades AS (
+                                SELECT rnd_symbol('a', 'b', 'c') sym, (x * 1_000_000)::TIMESTAMP ts
+                                FROM long_sequence(100)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""");
+                    stat.execute("""
+                            CREATE TABLE prices AS (
+                                SELECT rnd_symbol('a', 'b', 'c') sym, x, x * 1.5 price, (x * 100_000)::TIMESTAMP ts
+                                FROM long_sequence(1_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""");
+                }
+                final String windowJoin = """
+                        SELECT t.ts, sum(p.price) s
+                        FROM trades t
+                        WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x::symbol <> 'zzz'
+                        RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING""";
+                try (Statement stat = connection.createStatement(); ResultSet plan = stat.executeQuery("EXPLAIN " + windowJoin)) {
+                    sink.clear();
+                    while (plan.next()) {
+                        sink.put(plan.getString(1)).put('\n');
+                    }
+                    assertContains(sink, "Async Window Fast Join");
+                    assertContains(sink, "join filter: p.x::symbol!='zzz'");
+                }
+
+                connection.setAutoCommit(false);
+                try (Statement stat = connection.createStatement()) {
+                    // A fetch size keeps the second portal suspended after the first one ends.
+                    stat.setFetchSize(1);
+                    Assert.assertTrue(stat.execute(windowJoin + "; SELECT x FROM long_sequence(10)"));
+
+                    // The first portal has ended. A tracker it returned to the pool still charged
+                    // with its dictionary fails the next acquire.
+                    final MemoryTrackerProvider provider = engine.getMemoryTrackerProvider();
+                    final ObjList<MemoryTracker> trackers = new ObjList<>();
+                    try {
+                        for (int i = 0; i < 16; i++) {
+                            final MemoryTracker tracker = provider.acquire(AllowAllSecurityContext.INSTANCE, -1, MemoryTrackerWorkload.QUERY);
+                            trackers.add(tracker);
+                            Assert.assertEquals(0, tracker.getUsed());
+                        }
+                    } finally {
+                        Misc.freeObjList(trackers);
+                    }
+
+                    Assert.assertTrue(stat.getMoreResults());
+                    try (ResultSet resultSet = stat.getResultSet()) {
+                        sink.clear();
+                        assertResultSet(
+                                """
+                                        x[BIGINT]
+                                        1
+                                        2
+                                        3
+                                        4
+                                        5
+                                        6
+                                        7
+                                        8
+                                        9
+                                        10
+                                        """,
+                                sink,
+                                resultSet
+                        );
+                    }
+                }
+                connection.commit();
             });
         } finally {
             sharedQueryWorkerCount = 0;

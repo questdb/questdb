@@ -106,11 +106,13 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     private static final String READ_ONLY_REFUSAL = "replica access is read-only";
 
     /**
-     * Drives a real WAL UPDATE into the OperationDispatcher async-enqueue fallback (the WAL writer-pool
-     * exhaustion path) on a read-only engine and asserts the catch branch refuses before enqueuing. On a
-     * read-only node the async apply would physical-commit without a replicated txn -- a silent
-     * acked-loss -- so the fence must refuse. A non-null event sub-sequence selects the async-enqueue
-     * branch (the re-throw branch fires only when it is null).
+     * Drives a real UPDATE into the OperationDispatcher async-enqueue fallback (the busy-writer path) on
+     * a read-only engine and asserts the catch branch refuses before enqueuing. On a read-only node the
+     * async apply would physical-commit without a replicated txn -- a silent acked-loss -- so the fence
+     * must refuse. A non-null event sub-sequence selects the async-enqueue branch (the re-throw branch
+     * fires only when it is null). The probe targets a non-WAL table: a WAL UPDATE that finds its WAL
+     * writer pool exhausted never reaches the fallback, which would apply it outside the WAL, and is
+     * reported busy instead, which the second half asserts.
      */
     @Test
     public void testAsyncEnqueueBranchDrivesRealWriteAndIsFenced() throws Exception {
@@ -123,10 +125,16 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                     }
                 };
                 try {
-                    dispatcher.execute(fenceProbeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
-                    Assert.fail("the async-enqueue fallback must refuse a WAL UPDATE on a read-only node");
+                    dispatcher.execute(fenceProbeOperation(false), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("the async-enqueue fallback must refuse an UPDATE on a read-only node");
                 } catch (CairoException e) {
                     assertReadOnlyRefusal(e);
+                }
+                try {
+                    dispatcher.execute(fenceProbeOperation(true), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("a WAL UPDATE must not reach the async-enqueue fallback");
+                } catch (EntryUnavailableException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=pool size exceeded]");
                 }
             }
         });
@@ -355,6 +363,9 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("COMMIT", EXEMPT);
         http.put("ROLLBACK", EXEMPT);
         http.put("VACUUM", EXEMPT);
+        // COMPACT rewrites physical cold storage under its manager tenure and catalog locks;
+        // it does not mint a replicated WAL transaction or change the table's logical data.
+        http.put("COMPACT", EXEMPT);
         http.put("REPAIR", EXEMPT);
         http.put("CHECKPOINT_CREATE", EXEMPT);
         http.put("CHECKPOINT_RELEASE", EXEMPT);
@@ -513,6 +524,9 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         put(pg, "BEGIN", EXEMPT);
         put(pg, "ROLLBACK", EXEMPT);
         put(pg, "VACUUM", EXEMPT);
+        // COMPACT uses the same manager-tenure/catalog maintenance path during compilation
+        // as HTTP, without minting a replicated WAL transaction.
+        put(pg, "COMPACT", EXEMPT);
         put(pg, "REPAIR", EXEMPT);
         put(pg, "CHECKPOINT_CREATE", EXEMPT);
         put(pg, "CHECKPOINT_RELEASE", EXEMPT);
@@ -622,8 +636,8 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
      * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute (the
      * dispatcher's apply() is overridden to a no-op, so the operation's own apply() never runs).
      */
-    private static UpdateOperation fenceProbeOperation() {
-        final TableToken token = new TableToken("matrix_disp", "matrix_disp~1", null, 1, true, false, false);
+    private static UpdateOperation fenceProbeOperation(boolean isWal) {
+        final TableToken token = new TableToken("matrix_disp", "matrix_disp~1", null, 1, isWal, false, false);
         final ObjList<CharSequence> columns = new ObjList<>();
         columns.add("val");
         return new UpdateOperation(token, 1, 0, 0, columns);
@@ -695,9 +709,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     }
 
     /**
-     * An engine on a dedicated root whose WAL writer acquire always throws EntryUnavailableException (the
-     * pool-exhausted condition that routes OperationDispatcher.execute into the async-enqueue catch
-     * branch) and whose isReadOnlyMode() is fixed true, so the catch-branch re-check must refuse.
+     * An engine on a dedicated root whose writer acquire always throws EntryUnavailableException (the
+     * busy-writer condition that routes OperationDispatcher.execute into its catch branch, and for a
+     * non-WAL table into the async-enqueue fallback) and whose isReadOnlyMode() is fixed true, so the
+     * fallback's re-check must refuse.
      */
     private CairoEngine poolExhaustedReadOnlyEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();

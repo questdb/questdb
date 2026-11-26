@@ -106,6 +106,13 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         }
     }
 
+    /**
+     * Copies the query tracker binding without exposing the tracker object.
+     */
+    public void copyMemoryTrackerFrom(RowGroupBuffers source) {
+        this.memoryTracker = source.memoryTracker;
+    }
+
     public long getChunkAuxPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
@@ -172,9 +179,10 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
      * the in-band 0. A column top need not be the leading rows of a chunk: CONVERT TO PARQUET of a
      * split or composite partition writes a row group from several folders, each with its own top,
      * which the {@code _pm} decoder records from the definition levels. The footer decoder, which
-     * serves CONVERT TO NATIVE, gives the leading rows of the column top that the file records, for
-     * a source type with a NULL as well, which a conversion to a type without a NULL keeps as the
-     * native column top. The memory stays valid until the next decode.
+     * serves CONVERT TO NATIVE, records them so as well for a decode to a type with a NULL, STRING
+     * and VARCHAR included, and otherwise gives the leading rows of the column top that the file
+     * records, for a source type with a NULL as well, which a conversion to a type without a NULL
+     * keeps as the native column top. The memory stays valid until the next decode.
      */
     public long getChunkTopRowsPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
@@ -194,6 +202,16 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     public long ptr() {
         return ptr;
+    }
+
+    /**
+     * Installs {@code viewCount} non-owning four-long descriptors
+     * {@code [dataPtr, dataSize, auxPtr, auxSize]}. The decoder resource handed
+     * to the page-frame cache owns the addressed allocations; closing or
+     * reusing this shell never frees them.
+     */
+    public void installExternalColumnViews(int columnOffset, long viewsAddress, int viewCount) {
+        installExternalColumnViews(ptr, columnOffset, viewsAddress, viewCount);
     }
 
     @Override
@@ -248,6 +266,13 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static native long create(long allocator);
 
     private static native void destroy(long impl);
+
+    private static native void installExternalColumnViews(
+            long impl,
+            int columnOffset,
+            long viewsAddress,
+            int viewCount
+    );
 
     static {
         Os.init();

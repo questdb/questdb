@@ -26,8 +26,10 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1689,44 +1691,56 @@ public final class PostingIndexUtils {
             CharSequence columnName,
             long postingColumnNameTxn
     ) {
-        final boolean[] anyFailed = {false};
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
-        if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
-            anyFailed[0] = true;
-        }
-        // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
-        // directory only after a change at table txn 0 in the default partition of a table that is not
-        // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
-        // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
-        // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
-        // takes its .pc files too, removes it.
-        final boolean isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
-                && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
-        path.trimTo(pathTrimTo);
-        scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new SealedFileVisitor() {
-            @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-                if (isCoverDataOfInstanceZero) {
-                    return;
-                }
-                LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
+        return new SealedFileRemover().remove(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
+    }
 
-            @Override
-            public void onValueFile(long sealTxn) {
-                LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
+    /**
+     * Resets the posting index of one column instance in a partition directory to an empty chain, for an index that is
+     * not committed: ADD INDEX does it before it builds the index, and checkpoint restore for every chain the restored
+     * metadata does not commit. Nothing reads what an earlier attempt left in the directory, and a crash or a copy can
+     * leave its chain torn, so the chain is never opened: the key file and every sealed file of the instance go. The
+     * new chain starts past every sealTxn the old one counted or left a file for, so a seal purge queued for one of
+     * those files cannot reach a file of the new chain. One listing of the directory finds the sealed files and the
+     * highest sealTxn they carry.
+     *
+     * @return {@code false} when the directory holds no key file of the instance, so there was nothing to reset
+     */
+    public static boolean resetIndex(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            MemoryMA keyMem
+    ) {
+        try {
+            if (!ff.exists(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn))) {
+                return false;
             }
-        });
-        path.trimTo(pathTrimTo);
-        return anyFailed[0];
+            final long keyFileGenCounter = readKeyFileGenCounter(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
+            final SealedFileRemover remover = new SealedFileRemover();
+            if (remover.remove(ff, path, pathTrimTo, columnName, postingColumnNameTxn)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index files [path=")
+                        .put(path.trimTo(pathTrimTo)).put(", column=").put(columnName).put(']');
+            }
+            // A new key file rather than a rewrite: an older partition version may share the old one through a hard link.
+            final LPSZ keyFile = keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+            if (!ff.removeQuiet(keyFile) && ff.exists(keyFile)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index key file [path=")
+                        .put(keyFile).put(']');
+            }
+            keyMem.smallFile(ff, keyFile, MemoryTag.MMAP_INDEX_WRITER);
+            try {
+                // The new chain starts past both the key file's counter and the highest sealTxn of the files the
+                // remover visited.
+                PostingIndexWriter.initKeyMemory(keyMem, Math.max(keyFileGenCounter, remover.getLastSealTxn()) + 1);
+            } finally {
+                keyMem.close();
+            }
+            return true;
+        } finally {
+            path.trimTo(pathTrimTo);
+        }
     }
 
     /**
@@ -1745,14 +1759,7 @@ public final class PostingIndexUtils {
     ) {
         path.trimTo(pathTrimTo);
         StringSink fileName = Misc.getThreadLocalSink();
-        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
-                return;
-            }
-            fileName.clear();
-            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-            parseSealedFileName(fileName, columnName, postingColumnNameTxn, visitor);
-        });
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, visitor));
         path.trimTo(pathTrimTo);
     }
 
@@ -1988,6 +1995,22 @@ public final class PostingIndexUtils {
         return -1;
     }
 
+    private static void parseSealedDirEntry(
+            long pUtf8NameZ,
+            int type,
+            StringSink fileName,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            SealedFileVisitor visitor
+    ) {
+        if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+            return;
+        }
+        fileName.clear();
+        Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+        parseSealedFileName(fileName, columnName, postingColumnNameTxn, visitor);
+    }
+
     /**
      * Parses a directory entry name and dispatches to the visitor if it matches
      * a sealed-file pattern of the posting column instance {@code columnName},
@@ -2105,6 +2128,34 @@ public final class PostingIndexUtils {
         } catch (NumericException e) {
             return PARSE_FAIL;
         }
+    }
+
+    /**
+     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
+     */
+    private static long readKeyFileGenCounter(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        long genCounter = -1;
+        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
+        if (fd > -1) {
+            try {
+                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
+                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
+                    if (sequence > 0 && (sequence & 1L) == 0
+                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
+                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
+                    }
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        return genCounter;
     }
 
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {
@@ -2323,6 +2374,102 @@ public final class PostingIndexUtils {
          * Called for each {@code .pv[.<postingColumnNameTxn>].<sealTxn>} file.
          */
         void onValueFile(long sealTxn);
+    }
+
+    /**
+     * Reusable, allocation-free form of {@link #removeAllSealedFiles}. Owners on
+     * zero-GC paths, such as the writer's synchronous purge, hold one instance
+     * and call {@link #remove} repeatedly. Not thread-safe; one instance per owner.
+     */
+    public static final class SealedFileRemover implements SealedFileVisitor {
+        private final FindVisitor dirEntryVisitor = this::onDirEntry;
+        private CharSequence columnName;
+        private FilesFacade ff;
+        private StringSink fileName;
+        private boolean isAnyFailed;
+        // the .pc files of the host token 0 belong to instance 0, see removeAllSealedFiles()
+        private boolean isCoverDataOfInstanceZero;
+        private long lastSealTxn;
+        private Path path;
+        private int pathTrimTo;
+        private long postingColumnNameTxn;
+
+        /**
+         * The highest sealTxn among the sealed files the last {@link #remove} call visited, the ones it kept
+         * included, or -1 when it visited none.
+         */
+        public long getLastSealTxn() {
+            return lastSealTxn;
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            lastSealTxn = Math.max(lastSealTxn, sealTxn);
+            if (isCoverDataOfInstanceZero) {
+                return;
+            }
+            LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+            if (!ff.removeQuiet(p) && ff.exists(p)) {
+                isAnyFailed = true;
+            }
+            path.trimTo(pathTrimTo);
+        }
+
+        @Override
+        public void onValueFile(long sealTxn) {
+            lastSealTxn = Math.max(lastSealTxn, sealTxn);
+            LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
+            if (!ff.removeQuiet(p) && ff.exists(p)) {
+                isAnyFailed = true;
+            }
+            path.trimTo(pathTrimTo);
+        }
+
+        /**
+         * Same contract as {@link #removeAllSealedFiles}.
+         */
+        public boolean remove(
+                FilesFacade ff,
+                Path path,
+                int pathTrimTo,
+                CharSequence columnName,
+                long postingColumnNameTxn
+        ) {
+            this.ff = ff;
+            this.path = path;
+            this.pathTrimTo = pathTrimTo;
+            this.columnName = columnName;
+            this.postingColumnNameTxn = postingColumnNameTxn;
+            this.isAnyFailed = false;
+            this.lastSealTxn = -1;
+            try {
+                LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+                if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
+                    isAnyFailed = true;
+                }
+                // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
+                // directory only after a change at table txn 0 in the default partition of a table that is not
+                // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
+                // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
+                // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
+                // takes its .pc files too, removes it.
+                isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
+                        && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
+                fileName = Misc.getThreadLocalSink();
+                ff.iterateDir(path.trimTo(pathTrimTo).$(), dirEntryVisitor);
+                return isAnyFailed;
+            } finally {
+                path.trimTo(pathTrimTo);
+                this.ff = null;
+                this.path = null;
+                this.columnName = null;
+                this.fileName = null;
+            }
+        }
+
+        private void onDirEntry(long pUtf8NameZ, int type) {
+            parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, this);
+        }
     }
 
     /**
