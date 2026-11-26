@@ -481,17 +481,29 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     @Test
     public void testRangeElementSuffixInViewsAcrossRestart() throws Exception {
         // A view and a materialized view store the text of their query, which the database parses
-        // again after a restart. A range between two points in time with a day filter of its
-        // element, and a range of days with a timezone of its element before its day filter, select
-        // what the same ranges select with the suffix on the list, before the restart and after it,
-        // when the materialized views refresh and stay valid. On Sunday 2025-01-19 at 12:00,
-        // [$now - 2h..$now#Sun] holds the rows from 10:00 to 12:00, [$now - 2h..$now#Mon] none, and
-        // the Sunday at UTC+05 runs from 2025-01-18T19:00Z to 2025-01-19T19:00Z.
+        // again after a restart. A range between two points in time with a day filter, or a
+        // timezone and a day filter, of its element, and a range of days with a timezone of its
+        // element before its day filter, select the same rows before the restart and after it, when
+        // the materialized views refresh and stay valid. A view runs at the clock: on Sunday
+        // 2025-01-19 at 12:00, [$now - 2h..$now#Sun] holds the rows from 10:00 to 12:00,
+        // [$now - 2h..$now#Mon] none, and the Sunday at UTC+05 runs from 2025-01-18T19:00Z to
+        // 2025-01-19T19:00Z. A refresh resolves $now against the "now" of its context, the start of
+        // the epoch, Thursday 1970-01-01 at 00:00, see testRowValueDateVariableResolvesLikeLiteral,
+        // so each materialized view holds the rows of that Thursday that the suffix of its element
+        // selects, as does its twin, which has the suffix on the list:
+        // [$now..$now + 2h#Thu, $now + 24h..$now + 26h#Thu] keeps 00:00 to 02:00 and drops those
+        // hours of the Friday, 00:00 to 02:00 at UTC-05 is 05:00 to 07:00Z, and the Thursday at
+        // UTC+05 ends at 19:00Z, before the row at 20:00Z. A timezone read as UTC would select
+        // 00:00 to 02:00Z instead, and keep the row at 20:00Z.
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
                     INSERT INTO base VALUES
+                    ('1970-01-01T01:00:00.000000Z', 1),
+                    ('1970-01-01T06:00:00.000000Z', 1),
+                    ('1970-01-01T20:00:00.000000Z', 1),
+                    ('1970-01-02T01:00:00.000000Z', 1),
                     ('2025-01-18T18:00:00.000000Z', 1),
                     ('2025-01-18T19:00:00.000000Z', 1),
                     ('2025-01-19T05:00:00.000000Z', 1),
@@ -500,21 +512,36 @@ public class MatViewTickExprTest extends AbstractCairoTest {
                     ('2025-01-19T19:00:00.000000Z', 1)
                     """);
             drainWalQueue();
-            // the view, its rows on the Sunday, the literal of its materialized view, and that of
-            // the materialized view that has the suffix on the list
+            // the literal of a view and its rows on the Sunday
             final String[][] views = {
-                    {"[$now - 2h..$now#Sun]", "2025-01-19T10:00:00.000000Z\t1\n2025-01-19T11:00:00.000000Z\t1\n", "[$now - 2h..$now]#Sun"},
-                    {"[$now - 2h..$now#Mon]", "", "[$now - 2h..$now]#Mon"},
+                    {"[$now - 2h..$now#Sun]", "2025-01-19T10:00:00.000000Z\t1\n2025-01-19T11:00:00.000000Z\t1\n"},
+                    {"[$now - 2h..$now#Mon]", ""},
                     {
                             "[$today..$tomorrow@UTC+05#Sun]",
-                            "2025-01-18T19:00:00.000000Z\t1\n2025-01-19T05:00:00.000000Z\t1\n2025-01-19T10:00:00.000000Z\t1\n2025-01-19T11:00:00.000000Z\t1\n",
-                            "[$today..$tomorrow]@UTC+05#Sun"
+                            "2025-01-18T19:00:00.000000Z\t1\n2025-01-19T05:00:00.000000Z\t1\n2025-01-19T10:00:00.000000Z\t1\n2025-01-19T11:00:00.000000Z\t1\n"
+                    }
+            };
+            // the literal of a materialized view, its rows on the Thursday, and the literal of its
+            // twin, which has the suffix on the list
+            final String[][] matViews = {
+                    {
+                            "[$now..$now + 2h#Thu, $now + 24h..$now + 26h#Thu]",
+                            "1970-01-01T01:00:00.000000Z\t1\n",
+                            "[$now..$now + 2h, $now + 24h..$now + 26h]#Thu"
+                    },
+                    {"[$now..$now + 2h@UTC-05#Thu]", "1970-01-01T06:00:00.000000Z\t1\n", "[$now..$now + 2h]@UTC-05#Thu"},
+                    {
+                            "[$today..$tomorrow@UTC+05#Thu]",
+                            "1970-01-01T01:00:00.000000Z\t1\n1970-01-01T06:00:00.000000Z\t1\n",
+                            "[$today..$tomorrow]@UTC+05#Thu"
                     }
             };
             for (int i = 0; i < views.length; i++) {
                 execute("CREATE VIEW v" + i + " AS (SELECT ts, v FROM base WHERE ts IN '" + views[i][0] + "')");
-                execute("CREATE MATERIALIZED VIEW mv" + i + " AS (SELECT ts, count() c FROM base WHERE ts IN '" + views[i][0] + "' SAMPLE BY 1h)");
-                execute("CREATE MATERIALIZED VIEW lmv" + i + " AS (SELECT ts, count() c FROM base WHERE ts IN '" + views[i][2] + "' SAMPLE BY 1h)");
+            }
+            for (int i = 0; i < matViews.length; i++) {
+                execute("CREATE MATERIALIZED VIEW mv" + i + " AS (SELECT ts, count() c FROM base WHERE ts IN '" + matViews[i][0] + "' SAMPLE BY 1h)");
+                execute("CREATE MATERIALIZED VIEW lmv" + i + " AS (SELECT ts, count() c FROM base WHERE ts IN '" + matViews[i][2] + "' SAMPLE BY 1h)");
             }
             drainWalAndMatViewQueues();
             drainViewQueue();
@@ -525,6 +552,14 @@ public class MatViewTickExprTest extends AbstractCairoTest {
                         .inferTimestamp()
                         .sizeMayVary()
                         .returns("ts\tv\n" + views[i][1]);
+            }
+            for (int i = 0; i < matViews.length; i++) {
+                assertQuery("mv" + i)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns("ts\tc\n" + matViews[i][1]);
                 assertSqlCursors("lmv" + i, "mv" + i);
             }
             engine.releaseInactive();
@@ -539,12 +574,12 @@ public class MatViewTickExprTest extends AbstractCairoTest {
                 drainWalAndMatViewQueues(restarted);
                 drainViewQueue(restarted);
                 final StringBuilder statuses = new StringBuilder("view_name\tview_status\n");
-                for (int i = 0; i < views.length; i++) {
+                for (int i = 0; i < matViews.length; i++) {
                     restarted.execute("REFRESH MATERIALIZED VIEW lmv" + i + " FULL", restartedContext);
                     restarted.execute("REFRESH MATERIALIZED VIEW mv" + i + " FULL", restartedContext);
                     statuses.append("lmv").append(i).append("\tvalid\n");
                 }
-                for (int i = 0; i < views.length; i++) {
+                for (int i = 0; i < matViews.length; i++) {
                     statuses.append("mv").append(i).append("\tvalid\n");
                 }
                 drainWalAndMatViewQueues(restarted);
@@ -557,8 +592,6 @@ public class MatViewTickExprTest extends AbstractCairoTest {
                         .returns(statuses);
                 // the queries of the views run at 12:00
                 restartedContext.initNow();
-                final StringSink expected = new StringSink();
-                final StringSink actual = new StringSink();
                 for (int i = 0; i < views.length; i++) {
                     assertQuery("v" + i)
                             .withEngine(restarted)
@@ -568,6 +601,18 @@ public class MatViewTickExprTest extends AbstractCairoTest {
                             .inferTimestamp()
                             .sizeMayVary()
                             .returns("ts\tv\n" + views[i][1]);
+                }
+                final StringSink expected = new StringSink();
+                final StringSink actual = new StringSink();
+                for (int i = 0; i < matViews.length; i++) {
+                    assertQuery("mv" + i)
+                            .withEngine(restarted)
+                            .withContext(restartedContext)
+                            .noLeakCheck()
+                            .inferRandomAccess()
+                            .inferTimestamp()
+                            .sizeMayVary()
+                            .returns("ts\tc\n" + matViews[i][1]);
                     TestUtils.printSql(restarted, restartedContext, "lmv" + i, expected);
                     TestUtils.printSql(restarted, restartedContext, "mv" + i, actual);
                     TestUtils.assertEquals("mv" + i, expected, actual);

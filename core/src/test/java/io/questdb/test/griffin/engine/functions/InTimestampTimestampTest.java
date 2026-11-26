@@ -1055,48 +1055,64 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // the literal selects, whether the filter runs in parallel, on a copy of the function for
         // each worker, or on the thread of the query. On Sunday 2025-01-19 at 12:00,
         // [$now - 2h..$now#Sun] holds the rows from 10:00 to 12:00, [$now - 2h..$now#Mon] none, and
-        // [$today..$tomorrow@UTC+05#Sun] the Sunday at UTC+05, from 2025-01-18T19:00Z on.
+        // [$today..$tomorrow@UTC+05#Sun] the Sunday at UTC+05, from 2025-01-18T19:00Z on. The queries
+        // run on a started worker pool: its workers evaluate the frames they take with their own
+        // copies of the filter, and the thread of the query the frames it takes with its filter.
         assertMemoryLeak(() -> {
-            // a row every 30 minutes from 2025-01-15T00:00 to 2025-01-27T23:30
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L) ts,
-                               '[$now - 2h..$now#Sun]'::STRING s1,
-                               '[$now - 2h..$now#Sun]'::VARCHAR vc1,
-                               '[$now - 2h..$now#Mon]'::STRING s2,
-                               '[$now - 2h..$now#Mon]'::VARCHAR vc2,
-                               '[$today..$tomorrow@UTC+05#Sun]'::STRING s3,
-                               '[$today..$tomorrow@UTC+05#Sun]'::VARCHAR vc3
-                        FROM long_sequence(624)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
-            final boolean isParallelFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
-            try {
-                for (boolean isParallel : new boolean[]{true, false}) {
-                    sqlExecutionContext.setParallelFilterEnabled(isParallel);
-                    for (String[] column : new String[][]{
-                            {"s1", "5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"},
-                            {"vc1", "5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"},
-                            {"s2", "0\t\t"},
-                            {"vc2", "0\t\t"},
-                            {"s3", "48\t2025-01-18T19:00:00.000000Z\t2025-01-19T18:30:00.000000Z"},
-                            {"vc3", "48\t2025-01-18T19:00:00.000000Z\t2025-01-19T18:30:00.000000Z"}
-                    }) {
-                        assertQuery("SELECT ts FROM t WHERE ts IN " + column[0])
-                                .noLeakCheck()
-                                .assertsPlanContaining(isParallel ? "Async Filter" : "Filter filter: ts in " + column[0]);
-                        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN " + column[0])
-                                .noLeakCheck()
-                                .noRandomAccess()
-                                .expectSize()
-                                .returns("count\tmin\tmax\n" + column[1] + "\n");
-                    }
-                }
-            } finally {
-                sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
-                setCurrentMicros(-1);
-            }
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, context) -> {
+                        // a row every 30 minutes from 2025-01-15T00:00 to 2025-01-27T23:30
+                        engine.execute("""
+                                CREATE TABLE t AS (
+                                    SELECT timestamp_sequence('2025-01-15T00:00:00.000000Z', 1_800_000_000L) ts,
+                                           '[$now - 2h..$now#Sun]'::STRING s1,
+                                           '[$now - 2h..$now#Sun]'::VARCHAR vc1,
+                                           '[$now - 2h..$now#Mon]'::STRING s2,
+                                           '[$now - 2h..$now#Mon]'::VARCHAR vc2,
+                                           '[$today..$tomorrow@UTC+05#Sun]'::STRING s3,
+                                           '[$today..$tomorrow@UTC+05#Sun]'::VARCHAR vc3
+                                    FROM long_sequence(624)
+                                ) TIMESTAMP(ts) PARTITION BY DAY
+                                """, context);
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-19T12:00:00.000000Z"));
+                        final boolean isParallelFilterEnabled = context.isParallelFilterEnabled();
+                        try {
+                            context.initNow();
+                            for (boolean isParallel : new boolean[]{true, false}) {
+                                context.setParallelFilterEnabled(isParallel);
+                                for (String[] column : new String[][]{
+                                        {"s1", "5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"},
+                                        {"vc1", "5\t2025-01-19T10:00:00.000000Z\t2025-01-19T12:00:00.000000Z"},
+                                        {"s2", "0\t\t"},
+                                        {"vc2", "0\t\t"},
+                                        {"s3", "48\t2025-01-18T19:00:00.000000Z\t2025-01-19T18:30:00.000000Z"},
+                                        {"vc3", "48\t2025-01-18T19:00:00.000000Z\t2025-01-19T18:30:00.000000Z"}
+                                }) {
+                                    assertQuery("SELECT ts FROM t WHERE ts IN " + column[0])
+                                            .withEngine(engine)
+                                            .withContext(context)
+                                            .noLeakCheck()
+                                            .assertsPlanContaining(isParallel ? "Async Filter workers: 4" : "Filter filter: ts in " + column[0]);
+                                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN " + column[0])
+                                            .withEngine(engine)
+                                            .withContext(context)
+                                            .noLeakCheck()
+                                            .noRandomAccess()
+                                            .expectSize()
+                                            .withPlanContaining(isParallel ? "workers: 4" : "Filter filter: ts in " + column[0])
+                                            .returns("count\tmin\tmax\n" + column[1] + "\n");
+                                }
+                            }
+                        } finally {
+                            context.setParallelFilterEnabled(isParallelFilterEnabled);
+                            setCurrentMicros(-1);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 
@@ -1557,41 +1573,44 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     public void testLongTickDateRangeInParallelFilter() throws Exception {
         // The row filter of each worker evaluates a copy of the expression of its own, whose date
         // ranges merge their days into the intervals so far. Every worker must select the rows that
-        // the filter of the query thread selects.
-        final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-        TestUtils.execute(
-                pool,
-                (engine, compiler, context) -> {
-                    engine.execute(longRangeTableDdl("TIMESTAMP"), context);
-                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
-                    final boolean isParallelFilterEnabled = context.isParallelFilterEnabled();
-                    try {
-                        context.initNow();
-                        for (String[] range : new String[][]{
-                                {"[$today-1000d..$today]T09:00;1h", "2022-04-30", "2025-01-24"},
-                                {"[$today+1d..$today+500d, $today-500d..$today]T09:00;1h", "2023-09-12", "2026-06-08"}
-                        }) {
-                            final String expected = "count\tmin\tmax\n1001\t" + range[1] + "T09:30:00.000000Z\t" + range[2] + "T09:30:00.000000Z\n";
-                            for (boolean isParallel : new boolean[]{true, false}) {
-                                context.setParallelFilterEnabled(isParallel);
-                                assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + range[0] + "' OR v = -1")
-                                        .withEngine(engine)
-                                        .withContext(context)
-                                        .noLeakCheck()
-                                        .noRandomAccess()
-                                        .expectSize()
-                                        .withPlanContaining(isParallel ? "workers: 4" : "Filter filter: (ts in [")
-                                        .returns(expected);
+        // the filter of the query thread selects. The query assertions share the leak check of the
+        // wrapper, which spans the engine and the worker pool.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, context) -> {
+                        engine.execute(longRangeTableDdl("TIMESTAMP"), context);
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2025-01-24T12:00:00.000000Z"));
+                        final boolean isParallelFilterEnabled = context.isParallelFilterEnabled();
+                        try {
+                            context.initNow();
+                            for (String[] range : new String[][]{
+                                    {"[$today-1000d..$today]T09:00;1h", "2022-04-30", "2025-01-24"},
+                                    {"[$today+1d..$today+500d, $today-500d..$today]T09:00;1h", "2023-09-12", "2026-06-08"}
+                            }) {
+                                final String expected = "count\tmin\tmax\n1001\t" + range[1] + "T09:30:00.000000Z\t" + range[2] + "T09:30:00.000000Z\n";
+                                for (boolean isParallel : new boolean[]{true, false}) {
+                                    context.setParallelFilterEnabled(isParallel);
+                                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + range[0] + "' OR v = -1")
+                                            .withEngine(engine)
+                                            .withContext(context)
+                                            .noLeakCheck()
+                                            .noRandomAccess()
+                                            .expectSize()
+                                            .withPlanContaining(isParallel ? "workers: 4" : "Filter filter: (ts in [")
+                                            .returns(expected);
+                                }
                             }
+                        } finally {
+                            context.setParallelFilterEnabled(isParallelFilterEnabled);
+                            setCurrentMicros(-1);
                         }
-                    } finally {
-                        context.setParallelFilterEnabled(isParallelFilterEnabled);
-                        setCurrentMicros(-1);
-                    }
-                },
-                configuration,
-                LOG
-        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
