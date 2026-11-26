@@ -236,12 +236,6 @@ final class ScalarCompensation implements Mutable {
         return bound instanceof ConstantExpression && LogicalPlans.mayBeNegativeLimit(bound);
     }
 
-    /**
-     * Whether the aggregate output reads a value over no rows that is neither NULL nor a count's zero: isOrdered()
-     * reads true and haversine_dist_deg() reads 0.0. The value a matched row reads cannot tell the LEFT join's NULL
-     * apart, a BOOLEAN NULL reading false, so a row marker of the scalar projection restores it, see
-     * {@link #markedValue}.
-     */
     private static boolean isMarkedOnEmptyColumn(int columnId, AggregatePlan aggregate) {
         final int index = aggregate.getOutput().getColumnIndexById(columnId);
         final int keyCount = aggregate.getGroupingExpressions().size();
@@ -253,8 +247,8 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
-     * Whether the expression reads NULL over no rows whenever the aggregates it reads do: it reads no aggregate that
-     * reads a value over no rows, through null-propagating arithmetic.
+     * Whether the expression reads NULL over no rows whenever the aggregates it reads do: it reads no count,
+     * isOrdered() or haversine_dist_deg(), through null-propagating arithmetic.
      */
     private static boolean isNullOnEmpty(BoundExpression expression, AggregatePlan aggregate) {
         return !hasZeroOnEmpty(expression, aggregate) && !hasMarkedOnEmpty(expression, aggregate) && isNullPropagating(expression);
@@ -299,10 +293,6 @@ final class ScalarCompensation implements Mutable {
         };
     }
 
-    /**
-     * Whether the expression reads an aggregate output that {@link #isMarkedOnEmptyColumn} holds for, when
-     * {@code isMarked}, or a count otherwise.
-     */
     private static boolean readsAggregateOf(BoundExpression expression, AggregatePlan aggregate, boolean isMarked) {
         if (expression instanceof ColumnExpression column) {
             return isMarked ? isMarkedOnEmptyColumn(column.getColumnId(), aggregate) : isZeroOnEmptyColumn(column.getColumnId(), aggregate);
@@ -349,11 +339,10 @@ final class ScalarCompensation implements Mutable {
 
     /**
      * The value a column of the projection over a keyless aggregate takes over no rows, over
-     * {@code input}: counts read zero, isOrdered() and haversine_dist_deg() read their value over no rows where the
-     * projection's row marker fails, see {@link #markedValue}, other aggregates read their carried value (NULL), and
-     * the columns {@link DecorrelationContext#substitution} holds read their substitutes. Null when the column reads,
-     * through null-propagating arithmetic, only aggregates that read NULL over no rows: the LEFT join's NULL is then
-     * the value.
+     * {@code input}: counts read zero, isOrdered() and haversine_dist_deg() read true and 0.0, other aggregates read
+     * their carried value (NULL), and the columns {@link DecorrelationContext#substitution} holds read their substitutes.
+     * Null when the column reads aggregates none of which counts, isOrdered() or haversine_dist_deg(), through
+     * null-propagating arithmetic: the LEFT join's NULL is then the value.
      */
     private BoundExpression emptyValue(ProjectPlan project, int index, OutputSchema input) throws SqlException {
         final BoundExpression expression = project.getExpressions().getQuick(index);
@@ -436,9 +425,6 @@ final class ScalarCompensation implements Mutable {
         return expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), (AggregatePlan) scalarProjection.getChild());
     }
 
-    /**
-     * True when column {@code index} of {@link #scalarProjection} is an aggregate {@link #isMarkedOnEmptyColumn} holds for.
-     */
     private boolean isScalarMarked(int index) {
         final BoundExpression expression = scalarProjection.getExpressions().getQuick(index);
         return expression instanceof ColumnExpression column && isMarkedOnEmptyColumn(column.getColumnId(), (AggregatePlan) scalarProjection.getChild());
@@ -479,11 +465,6 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
-    /**
-     * The value over {@code input} of the aggregate {@code name} of the projection, which {@link #isMarkedOnEmptyColumn}
-     * holds for: {@code value} where the projection's row marker holds, its value over no rows where the LEFT join
-     * null-extends the projection.
-     */
     private BoundExpression markedValue(ColumnExpression value, CharSequence name, ProjectPlan project, OutputSchema input) throws SqlException {
         final int position = value.getPosition();
         final int index = markedScalars.indexOf(project);
@@ -1026,8 +1007,8 @@ final class ScalarCompensation implements Mutable {
 
     /**
      * Exposes, as hidden columns of the projection, the aggregate outputs that the empty-input values of its
-     * columns read through other expressions, recording each in {@link #carrierColumnIds}, and the row marker
-     * {@link #markedValue} reads, when a column reads an aggregate {@link #isMarkedOnEmptyColumn} holds for.
+     * columns read through other expressions, recording each in {@link #carrierColumnIds}, and a row marker when a
+     * column reads isOrdered() or haversine_dist_deg().
      */
     void exposeCarriers(ProjectPlan project) {
         final AggregatePlan aggregate = scalarAggregateBelow(project);

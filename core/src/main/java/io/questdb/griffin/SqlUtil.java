@@ -1841,10 +1841,6 @@ public class SqlUtil {
                 || isTrueOnEmptyAggregate(name);
     }
 
-    /**
-     * Whether the aggregate function of that name reads true over no rows: isOrdered(). Every other aggregate
-     * {@link #hasNonNullEmptyValue} holds for reads zero over no rows.
-     */
     public static boolean isTrueOnEmptyAggregate(CharSequence name) {
         return Chars.equalsIgnoreCase(name, "isOrdered");
     }

@@ -440,9 +440,7 @@ final class PivotBinder implements Mutable {
             choice.args.add(value);
             choice.args.add(condition);
         }
-        // A cell matches at most one row. An absent cell reads the aggregate's value over no rows: a count and
-        // haversine_dist_deg() read zero and never NULL, so sum merges them, and isOrdered() reads true, which bool_and
-        // keeps. BOOLEAN has no NULL for first_not_null to skip, and bool_or reads an absent cell as false.
+        // A cell matches at most one row; BOOLEAN has no NULL for first_not_null to skip, and bool_or reads an absent cell as false.
         final CharSequence merge = isZeroOnEmpty ? "sum" : isTrueOnEmpty ? "bool_and" : ColumnType.isBoolean(measuredType) ? "bool_or" : "first_not_null";
         final ExpressionNode aggregate = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, merge, 0, position);
         aggregate.paramCount = 1;
