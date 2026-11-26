@@ -2076,11 +2076,9 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueConvertsTextToAggregateType() throws Exception {
-        // Text fill values parse once at compile time with INSERT's rules. Before, a GEOHASH fill
-        // crashed at the first gap row, a DATE fill parsed the text as a LONG and '300' filled a
-        // BYTE with 44. LONG256 is left to testFillValueMatchesInsertForEveryTypePair: a constant
-        // LONG256 returns one object from getLong256A and getLong256B, which the returns() battery
-        // rejects.
+        // Text fill values parse once, at compile time, with INSERT's rules. LONG256 is covered by
+        // testFillValueMatchesInsertForEveryTypePair: the returns() battery rejects a LONG256
+        // constant, whose getLong256A and getLong256B return the same object.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_fv_txt (
@@ -2116,8 +2114,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueConvertsTimestampToDate() throws Exception {
-        // TIMESTAMP -> DATE converts micros (or nanos) to millis, as INSERT does. Before, the
-        // fill was either refused or read the micros as millis.
+        // TIMESTAMP -> DATE converts micros (or nanos) to millis, as INSERT does.
         assertQuery("SELECT ts, first(dt) a, first(dt) b, first(dt) c FROM t_fv_ts2d SAMPLE BY 1h " +
                 "FILL(300_000::TIMESTAMP, '2024-01-05T00:00:00.000000Z'::TIMESTAMP, '2024-01-05T00:00:00.123456789Z'::TIMESTAMP_NS)")
                 .ddl(
@@ -2188,11 +2185,16 @@ public class SampleByFillTest extends AbstractCairoTest {
                 "GEOHASH(3b)", "GEOHASH(1c)", "GEOHASH(2c)", "GEOHASH(5c)", "GEOHASH(8c)", "DECIMAL(10,2)"
         };
         final String[] literals = {
-                "0", "1", "-1", "300", "70_000", "2_147_483_647", "5_000_000_000",
-                "1.5", "-1.5", "300.5", "1e300", "1e-50", "-0.0",
+                "0", "1", "-1", "127", "128", "-129", "300", "32_767", "32_768", "-32_769", "70_000",
+                "2_147_483_647", "2_147_483_648", "-2_147_483_648", "5_000_000_000",
+                "1.5", "-1.5", "127.5", "-128.5", "300.5", "32767.5", "-32768.5",
+                "2147483647.5", "-2147483648.5", "1e300", "1e-50", "-0.0",
                 "NULL::INT", "NULL::LONG", "NULL::DOUBLE", "NULL::STRING", "NULL::CHAR",
-                // ::FLOAT follows PostgreSQL and yields DOUBLE; only CAST yields FLOAT
-                "CAST(1.5 AS FLOAT)", "CAST(300.5 AS FLOAT)", "65::BYTE", "65::SHORT", "true",
+                // ::FLOAT follows PostgreSQL and yields DOUBLE; CAST(... AS FLOAT) yields FLOAT
+                "CAST(1.5 AS FLOAT)", "CAST(127.5 AS FLOAT)", "CAST(-128.5 AS FLOAT)", "CAST(300.5 AS FLOAT)",
+                "CAST(32767.5 AS FLOAT)", "CAST(-32768.5 AS FLOAT)",
+                "CAST(2147483647 AS FLOAT)", "CAST(-2147483648 AS FLOAT)",
+                "65::BYTE", "65::SHORT", "true",
                 "'5'", "'a'", "'s'", "''", "'300'", "'1.5'", "'abc'", "'5'::VARCHAR", "'abc'::VARCHAR", "'abc'::SYMBOL",
                 "'2024-01-05'", "'2024-01-05T00:00:00.000Z'", "'0x01'", "'1.2.3.4'", "'11111111-1111-1111-1111-111111111111'",
                 "'2024-01-05T00:00:00.000000Z'::TIMESTAMP", "300_000::TIMESTAMP",
@@ -2214,38 +2216,24 @@ public class SampleByFillTest extends AbstractCairoTest {
                 for (String literal : literals) {
                     final String fill = fillOutcome("SELECT ts, " + agg + " v FROM " + src + " SAMPLE BY 1h FILL(" + literal + ")");
                     final String insert = insertOutcome(dst, literal);
-                    if (!fill.equals(insert)) {
+                    // INSERT's copier generator asserts on a pair it has no conversion for; FILL
+                    // must reject such a pair at compile time.
+                    final boolean isRejectedByBoth = "error".equals(fill) && "assertion".equals(insert);
+                    if (!fill.equals(insert) && !isRejectedByBoth) {
                         mismatches.put(type).put(" <- ").put(literal)
                                 .put(": fill=").put(fill).put(", insert=").put(insert).put('\n');
                     }
                 }
             }
             // Deliberate or pre-existing deviations, none of them a run-time failure:
-            // - INSERT has no numeric -> CHAR copier and trips an assertion; FILL rejects the pair,
-            //   except SHORT -> CHAR, which FillRecord has always read as a code point.
+            // - FillRecord has always read SHORT -> CHAR as a code point; INSERT has no copier.
             // - FILL rejects IPv4 -> STRING/VARCHAR and SYMBOL -> UUID, which INSERT converts.
             // - A NULL CHAR fills a NULL VARCHAR/SYMBOL; INSERT stores the NUL character.
             // - Malformed UUID and empty GEOHASH strings go through the implicit cast factory and
             //   fill NULL; INSERT rejects them.
             // - INSERT mis-parses VARCHAR -> LONG256; FILL parses it as INSERT parses STRING.
             TestUtils.assertEquals("""
-                    CHAR <- 5_000_000_000: fill=error, insert=assertion
-                    CHAR <- 1.5: fill=error, insert=assertion
-                    CHAR <- -1.5: fill=error, insert=assertion
-                    CHAR <- 300.5: fill=error, insert=assertion
-                    CHAR <- 1e300: fill=error, insert=assertion
-                    CHAR <- 1e-50: fill=error, insert=assertion
-                    CHAR <- -0.0: fill=error, insert=assertion
-                    CHAR <- NULL::LONG: fill=error, insert=assertion
-                    CHAR <- NULL::DOUBLE: fill=error, insert=assertion
-                    CHAR <- CAST(1.5 AS FLOAT): fill=error, insert=assertion
-                    CHAR <- CAST(300.5 AS FLOAT): fill=error, insert=assertion
-                    CHAR <- 65::BYTE: fill=error, insert=assertion
                     CHAR <- 65::SHORT: fill=A, insert=assertion
-                    CHAR <- '2024-01-05T00:00:00.000000Z'::TIMESTAMP: fill=error, insert=assertion
-                    CHAR <- 300_000::TIMESTAMP: fill=error, insert=assertion
-                    CHAR <- '2024-01-05T00:00:00.000000001Z'::TIMESTAMP_NS: fill=error, insert=assertion
-                    CHAR <- '2024-01-05'::DATE: fill=error, insert=assertion
                     STRING <- '1.2.3.4'::IPv4: fill=error, insert=1.2.3.4
                     VARCHAR <- NULL::CHAR: fill=, insert=\\u0000
                     VARCHAR <- '1.2.3.4'::IPv4: fill=error, insert=1.2.3.4
@@ -2378,8 +2366,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueRejectedForByteToChar() throws Exception {
-        // INSERT has no BYTE -> CHAR conversion to mirror, so the pair is rejected at compile time
-        // instead of crashing at the first gap row.
+        // INSERT has no BYTE -> CHAR conversion to mirror, so the pair is rejected at compile time.
         String sql = "SELECT ts, first(c) c FROM t_fv_b2c SAMPLE BY 1h FILL(65::BYTE)";
         assertQuery(sql)
                 .ddl("CREATE TABLE t_fv_b2c (c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
@@ -2417,6 +2404,8 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertInconvertibleFill("first(b)", "'300'", "inconvertible value: `300` [STRING -> BYTE]");
             assertInconvertibleFill("first(l)", "'abc'", "inconvertible value: `abc` [STRING -> LONG]");
             assertInconvertibleFill("first(f)", "1e300", "inconvertible value: 1.0E300 [DOUBLE -> FLOAT]");
+            // a FLOAT is range-checked before truncation, as INSERT does
+            assertInconvertibleFill("first(s)", "CAST(32767.5 AS FLOAT)", "inconvertible value: 32767.5 [FLOAT -> SHORT]");
             assertInconvertibleFill("first(dt)", "'a'", "inconvertible value: a [CHAR -> DATE]");
             assertInconvertibleFill("first(dt)", "'abc'", "inconvertible value: `abc` [STRING -> DATE]");
             assertInconvertibleFill("first(g)", "'a'", "inconvertible value: a [CHAR -> GEOHASH(1c)]");
@@ -2434,9 +2423,8 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueRejectedForNonConstantNeedingConversion() throws Exception {
-        // A deterministic but non-constant fill value that needs converting cannot fold, and
-        // FillRecord would parse it on every read.
-        // current_user() is a deterministic runtime constant.
+        // current_user() is deterministic but not a constant, so a fill that needs converting
+        // cannot fold it.
         String sql = "SELECT ts, first(b) b FROM t_fv_nc SAMPLE BY 1h FILL(current_user())";
         assertQuery(sql)
                 .ddl("CREATE TABLE t_fv_nc (b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
@@ -3011,13 +2999,12 @@ public class SampleByFillTest extends AbstractCairoTest {
         } catch (SqlException | CairoException | ImplicitCastException e) {
             return "error";
         } catch (AssertionError e) {
-            // RecordToRowCopierUtils asserts on a pair it has no copier for.
             return "assertion";
         }
         final StringSink rows = new StringSink();
         printSql("SELECT v FROM " + table, rows);
         final String value = rows.toString().split("\n", -1)[1];
-        return value.indexOf('\u0000') >= 0 ? value.replace("\u0000", "\\u0000") : value;
+        return value.replace("\u0000", "\\u0000");
     }
 
     private void assertInconvertibleFill(String aggregate, String literal, String message) throws Exception {

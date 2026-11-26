@@ -1588,21 +1588,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static Function foldFillConstant(Function fn, int fromType, int toType) {
         final short fromTag = ColumnType.tagOf(fromType);
         final boolean isText = isTextType(fromType);
-        final boolean isFloating = fromTag == ColumnType.DOUBLE || fromTag == ColumnType.FLOAT;
+        final boolean isFloat = fromTag == ColumnType.FLOAT;
+        final boolean isDouble = fromTag == ColumnType.DOUBLE;
         final boolean isString = fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR;
+        // FLOAT and DOUBLE use INSERT's separate helpers, which range-check differently.
         // Integer sources (BYTE to LONG, DATE, TIMESTAMP) read through getLong, where NULL is
         // LONG_NULL; BYTE and SHORT have no NULL, so INSERT stores 0 there.
         return switch (ColumnType.tagOf(toType)) {
             case ColumnType.BYTE -> ByteConstant.newInstance(isText ? fn.getByte(null)
-                    : isFloating ? SqlUtil.implicitCastDoubleAsByte(fn.getDouble(null))
+                    : isFloat ? SqlUtil.implicitCastFloatAsByte(fn.getFloat(null))
+                    : isDouble ? SqlUtil.implicitCastDoubleAsByte(fn.getDouble(null))
                     : SqlUtil.implicitCastAsByte(nullAsZero(fn.getLong(null)), fromType));
             case ColumnType.SHORT -> ShortConstant.newInstance(isText ? fn.getShort(null)
-                    : isFloating ? SqlUtil.implicitCastDoubleAsShort(fn.getDouble(null))
+                    : isFloat ? SqlUtil.implicitCastFloatAsShort(fn.getFloat(null))
+                    : isDouble ? SqlUtil.implicitCastDoubleAsShort(fn.getDouble(null))
                     : SqlUtil.implicitCastAsShort(nullAsZero(fn.getLong(null)), fromType));
             case ColumnType.INT -> IntConstant.newInstance(isText ? fn.getInt(null)
-                    : isFloating ? SqlUtil.implicitCastDoubleAsInt(fn.getDouble(null))
+                    : isFloat ? SqlUtil.implicitCastFloatAsInt(fn.getFloat(null))
+                    : isDouble ? SqlUtil.implicitCastDoubleAsInt(fn.getDouble(null))
                     : longAsInt(fn.getLong(null), fromType));
+            // Integer sources widen to LONG and FLOAT without a fold.
             case ColumnType.LONG -> LongConstant.newInstance(isText ? fn.getLong(null)
+                    : isFloat ? SqlUtil.implicitCastFloatAsLong(fn.getFloat(null))
                     : SqlUtil.implicitCastDoubleAsLong(fn.getDouble(null)));
             case ColumnType.FLOAT -> FloatConstant.newInstance(isText ? fn.getFloat(null)
                     : SqlUtil.implicitCastDoubleAsFloat(fn.getDouble(null)));
@@ -1613,7 +1620,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // convert to DATE.
             case ColumnType.DATE -> DateConstant.newInstance(
                     isString || ColumnType.isTimestamp(fromType) ? fn.getDate(null)
-                            : isFloating ? SqlUtil.implicitCastFloatAsLong(fn.getFloat(null))
+                            : isFloat ? SqlUtil.implicitCastFloatAsLong(fn.getFloat(null))
                             : fromTag == ColumnType.CHAR ? SqlUtil.implicitCastCharAsType(fn.getChar(null), toType)
                             : fn.getLong(null));
             // Only text converts to IPv4 and LONG256. Only CHAR reaches GEOBYTE: createImplicitCast
@@ -5319,11 +5326,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 throw fillTypeMismatch(fillExpr.position, fillType, targetColType);
                             }
                             // FillRecord reads the fill value through the target column's getter,
-                            // so the value must be a function of the target type unless that getter
-                            // reads a numeric widening correctly. Text sources are not exempt: their
-                            // getters parse on every read and would fail mid-result on bad input.
-                            if (fillType != targetColType
-                                    && !(ColumnType.isBuiltInWideningCast(fillType, targetColType) && !isTextType(fillType))) {
+                            // which handles a numeric widening. A text getter parses on every read
+                            // and would fail mid-result on bad input, so text always converts.
+                            final boolean isReadableAsIs = ColumnType.isBuiltInWideningCast(fillType, targetColType)
+                                    && !isTextType(fillType);
+                            if (fillType != targetColType && !isReadableAsIs) {
                                 Function converted;
                                 try {
                                     // Wraps INT -> DECIMAL and similar pairs that have a cast factory;
