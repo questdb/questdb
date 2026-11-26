@@ -2124,9 +2124,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE2, true, "timestamp_ns");
             final String message = "SAMPLE BY does not support this stride on a microsecond timestamp, use a whole number of microseconds";
             for (String stride : new String[]{"3n", "999n", "1500n", "2001n"}) {
-                final String sampleBy = "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by " + stride + ") partition by day";
+                final String sampleBy = "create materialized view test as (select ts, avg(v) avg_v from " + TABLE1 + " sample by " + stride + ") partition by day";
                 assertQuery(sampleBy).noLeakCheck().fails(sampleBy.indexOf(stride), message);
-                final String floor = "create materialized view test as (select timestamp_floor('" + stride + "', ts) ts, avg(v) from " + TABLE1 + ") partition by day";
+                final String floor = "create materialized view test as (select timestamp_floor('" + stride + "', ts) ts, avg(v) avg_v from " + TABLE1 + ") partition by day";
                 assertQuery(floor).noLeakCheck().fails(floor.indexOf("'" + stride), message);
             }
             assertNull(getMatViewDefinition("test"));
