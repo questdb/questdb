@@ -52,10 +52,16 @@ import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -65,6 +71,8 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cutlass.parquet.ParquetExportMode.DIRECT_PAGE_FRAME;
 import static io.questdb.cutlass.parquet.ParquetExportMode.PAGE_FRAME_BACKED;
@@ -561,6 +569,19 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorBasedExportFailsWhenSourceCloseFails() throws Exception {
+        // A join exports row-wise from a cursor, which the export closes in the same cleanup as a page frame
+        // cursor. The export decodes no Parquet frames itself, and the cursor's close failure fails it.
+        assertExportFailsWhenSourceCloseFails(
+                "close_cursor",
+                "SELECT i, i + 1 ii FROM " + readParquet("close_cursor_source") + " CROSS JOIN long_sequence(1)",
+                ParquetExportMode.CURSOR_BASED,
+                false,
+                0
+        );
+    }
+
+    @Test
     public void testDecodedFramesOfVaryingSizesHoldOnlyTheirRows() throws Exception {
         // 30 days of hourly Parquet partitions of one row group each: hours 0 and 1 of a day hold 990 rows,
         // the other hours 10. In row groups of 10_000 rows, the export holds the decoded frames whose rows
@@ -696,6 +717,35 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_read_parquet"));
             }
         });
+    }
+
+    @Test
+    public void testDecodedFramesReleasedWhenSourceCloseFails() throws Exception {
+        // The export holds the decoded frames of all three row groups of its source when the source's cursor
+        // fails to close. It must free them before the job returns its memory tracker to the pool, or the next
+        // query that takes the tracker fails. The query passes INT and VARCHAR columns through and computes an
+        // INT and a DOUBLE.
+        assertExportFailsWhenSourceCloseFails(
+                "close_frames",
+                "SELECT i, i + 1 ii, db * 2 dd, vc FROM " + readParquet("close_frames_source"),
+                PAGE_FRAME_BACKED,
+                false,
+                3
+        );
+    }
+
+    @Test
+    public void testDecodedFramesReleasedWhenSourceCloseFailsAfterWriteFailure() throws Exception {
+        // The write of the export's file fails, then the source's cursor fails to close. The close failure
+        // replaces the write failure in the export log, as it did before the export held decoded frames
+        // (bug-copy-export-close-failure-hides-export-failure.md).
+        assertExportFailsWhenSourceCloseFails(
+                "close_write",
+                "SELECT i, i + 1 ii, db * 2 dd, vc FROM " + readParquet("close_write_source"),
+                PAGE_FRAME_BACKED,
+                true,
+                3
+        );
     }
 
     @Test
@@ -1782,6 +1832,101 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         }
         // The table is still readable.
         assertQuery("SELECT count() FROM tv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+    }
+
+    // Exports the query to fileName and fails to close the export's source cursor, then exports it again to
+    // fileName_after. The query reads the file fileName_source through read_parquet(), which the helper writes
+    // from a table of 3000 rows in row groups of 1000 rows. The export writes row groups of 5000 rows, so it
+    // writes its file once it has read all three row groups. That first write to its temp file makes the next
+    // munmap of a read_parquet() file throw, as MmapCache reports a failed munmap, and leave the file mapped:
+    // the munmap of the export's source cursor, which the export closes once it has written its file. The
+    // read_parquet() factory closes the cursor again when it closes, and unmaps the file. With isWriteFailing,
+    // that first write fails too. A table with Parquet partitions fails to close only when its reader fails to
+    // return to the pool, which leaves the reader busy (bug-reader-left-busy-when-return-to-pool-fails.md):
+    // read_parquet() takes the export through the same cleanup.
+    private void assertExportFailsWhenSourceCloseFails(
+            String fileName,
+            String query,
+            ParquetExportMode expectedMode,
+            boolean isWriteFailing,
+            long expectedDecodeBufferCount
+    ) throws Exception {
+        final AtomicLong exportFd = new AtomicLong(-1);
+        final AtomicBoolean isWriteArmed = new AtomicBoolean();
+        final AtomicBoolean isMunmapFailing = new AtomicBoolean();
+        final AtomicBoolean hasMunmapFailed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                if (memoryTag == MemoryTag.MMAP_PARQUET_PARTITION_DECODER && isMunmapFailing.compareAndSet(true, false)) {
+                    hasMunmapFailed.set(true);
+                    throw CairoException.critical(0).put("munmap failed [injected]");
+                }
+                super.munmap(address, size, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (Utf8s.endsWithAscii(name, "export.parquet")) {
+                    exportFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (fd == exportFd.get() && isWriteArmed.compareAndSet(true, false)) {
+                    isMunmapFailing.set(true);
+                    if (isWriteFailing) {
+                        return -1;
+                    }
+                }
+                return super.write(fd, address, len, offset);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src AS (
+                        SELECT x::INT i, x / 2.0 db, ('v' || x)::VARCHAR vc, timestamp_sequence('2024-01-01', 1_000_000) ts
+                        FROM long_sequence(3_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            final PerQueryMemoryTrackerProvider trackerProvider = (PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider();
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                runCopy(job, "SELECT * FROM src", DIRECT_PAGE_FRAME, fileName + "_source", " ROW_GROUP_SIZE 1000");
+                assertExportFinished(engine, sqlExecutionContext);
+
+                assertExportMode(engine, sqlExecutionContext, query, expectedMode);
+                final LongList usedAtRelease = new LongList();
+                final long allocationCount = HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting();
+                trackerProvider.setReleaseListener(tracker -> usedAtRelease.add(tracker.getUsed()));
+                try {
+                    isWriteArmed.set(true);
+                    runCopy(engine, sqlExecutionContext, job, query, fileName, " ROW_GROUP_SIZE 5000");
+                } finally {
+                    trackerProvider.setReleaseListener(null);
+                }
+                Assert.assertEquals(expectedDecodeBufferCount, HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting() - allocationCount);
+                Assert.assertTrue("the source cursor must fail to close", hasMunmapFailed.get());
+                // The export's memory tracker goes back to its pool holding no memory.
+                Assert.assertEquals("[0]", usedAtRelease.toString());
+                // The next query takes that tracker.
+                assertQuery("SELECT status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\tmessage\nfailed\tmunmap failed [injected]\n");
+                Assert.assertFalse(exportFileExists(fileName));
+
+                // The same job exports the query again.
+                final long allocationCountAfter = HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting();
+                runCopy(job, query, expectedMode, fileName + "_after", " ROW_GROUP_SIZE 5000");
+                assertExportFinished(engine, sqlExecutionContext);
+                Assert.assertEquals(expectedDecodeBufferCount, HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting() - allocationCountAfter);
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet(fileName + "_after"));
+            }
+        });
     }
 
     private void assertExportFinished(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {

@@ -628,12 +628,14 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             drainHybridFrames(exporter, streamBuffers, streamColumnData, pfc, cursor, batchSize, phase);
             numOfFiles = 1;
         } finally {
-            Misc.free(pfc);
-            Misc.free(cursor);
             // The decoded Parquet frames charge the export's memory tracker, which the job
-            // recycles once the export ends: free them now rather than on the next export.
-            // A failed export's writer still points at them, but only to drop its frames.
-            streamBuffers.clear();
+            // recycles once the export ends: free them first, so a cursor that fails to close
+            // cannot leave them charged. A failed export's writer still points at them, but
+            // only to drop its frames.
+            Throwable cleanupFailure = Misc.clearBestEffort(null, streamBuffers);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, pfc);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
     }
 
