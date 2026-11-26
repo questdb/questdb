@@ -869,7 +869,8 @@ double MIN_DOUBLE(double *d, int64_t count) {
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
-        bVec = vec > D_MIN;
+        // not vec > D_MIN: VCL's AVX-512 operator > is an unordered compare, true for NaN
+        bVec = Vec8d(D_MIN) < vec;
         vecMin = select(bVec, min(vecMin, vec), vecMin);
     }
 
