@@ -409,7 +409,8 @@ public class FuzzTransactionGenerator {
         );
         // the length of one partition; the tables have fixed-length partitions: DAY, HOUR or a sub-hour size
         final long partitionDuration = partitionDuration(timestampDriver, tableMetadata);
-        // DETACH/ATTACH and the newest-partitions DROP work on DAY partitions
+        final int partitionBy = tableMetadata != null ? tableMetadata.getPartitionBy() : PartitionBy.DAY;
+        // DETACH/ATTACH and the newest-partitions DROP work on days, each of which starts a partition
         final long oneDay = timestampDriver.fromDays(1);
         final ReplaceWindowPicker replaceWindowPicker = new ReplaceWindowPicker(timestampDriver, partitionDuration);
 
@@ -690,6 +691,7 @@ public class FuzzTransactionGenerator {
                         lowestTimestamp,
                         lastTimestamp,
                         oneDay,
+                        partitionBy,
                         rnd,
                         detachedDays
                 );
@@ -1112,16 +1114,16 @@ public class FuzzTransactionGenerator {
     }
 
     /**
-     * Detaches a day before the one taking writes, from the day of {@code lowestTimestamp}, the lowest timestamp the
-     * run wrote, on, and attaches it back, see {@link FuzzDetachAttachPartitionOperation}. Returns the first day a
-     * DROP between the two removes, or {@code Long.MIN_VALUE} when no DROP runs between them or nothing is generated.
-     * Generates nothing when there is no such day, or when the day was detached before: a WAL table keeps the detached
+     * Detaches the partition, of a table partitioned by {@code partitionBy}, that starts a day before the one taking
+     * writes, from the day of {@code lowestTimestamp}, the lowest timestamp the run wrote, on, and attaches it back,
+     * see {@link FuzzDetachAttachPartitionOperation}. Returns the first day a DROP between the two removes, or
+     * {@code Long.MIN_VALUE} when no DROP runs between them or nothing is generated. Generates nothing when there is no such day, or when the day was detached before: a WAL table keeps the detached
      * copy of a partition until a save point covers its attach under the ADAPTIVE commit mode, so a second DETACH of the
      * day could fail on the WAL table alone.
      */
     private static long generateDetachAttachPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lowestTimestamp, long lastTimestamp, long oneDay, Rnd rnd, LongHashSet detachedDays
+            long lowestTimestamp, long lastTimestamp, long oneDay, int partitionBy, Rnd rnd, LongHashSet detachedDays
     ) {
         final long firstDay = lowestTimestamp - lowestTimestamp % oneDay;
         final long frontDay = lastTimestamp - lastTimestamp % oneDay;
@@ -1139,7 +1141,7 @@ public class FuzzTransactionGenerator {
         // from two days before the detached day, which drops it, older days and every newer one, to two days after
         final long dropFrom = day + (rnd.nextInt(5) - 2) * oneDay;
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDetachAttachPartitionOperation(day, between, dropFrom));
+        transaction.operationList.add(new FuzzDetachAttachPartitionOperation(day, between, dropFrom, partitionBy));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
