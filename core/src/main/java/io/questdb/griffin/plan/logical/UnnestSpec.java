@@ -47,7 +47,7 @@ public final class UnnestSpec implements PlanFactSource {
         expressions.clear();
         jsonColumnNames.clear();
         jsonColumnTypes.clear();
-        output.clear();
+        output.clearAndTrim();
         hasOrdinality = false;
         isStandalone = false;
     }

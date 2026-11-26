@@ -80,6 +80,61 @@ public class OutputSchemaTest {
     }
 
     @Test
+    public void testClearAndTrimKeepsRetainedCapacity() {
+        final OutputSchema schema = new OutputSchema();
+        addColumns(schema, 0, OutputSchema.MAX_RETAINED_CAPACITY);
+        assertMatchesScan(schema);
+        assertIdsMatchScan(schema);
+        Assert.assertEquals(OutputSchema.MAX_RETAINED_CAPACITY, schema.getCapacity());
+        schema.setTimestampIndex(3);
+        schema.clearAndTrim();
+        Assert.assertEquals(0, schema.getColumnCount());
+        Assert.assertEquals(-1, schema.getTimestampIndex());
+        Assert.assertEquals(OutputSchema.MAX_RETAINED_CAPACITY, schema.getCapacity());
+        addColumns(schema, 0, 100);
+        assertMatchesScan(schema);
+        assertIdsMatchScan(schema);
+    }
+
+    @Test
+    public void testClearAndTrimRestoresWideSchema() {
+        final OutputSchema schema = new OutputSchema();
+        final int initialCapacity = schema.getCapacity();
+        addColumns(schema, 0, OutputSchema.MAX_RETAINED_CAPACITY + 1);
+        assertMatchesScan(schema);
+        assertIdsMatchScan(schema);
+        Assert.assertTrue(schema.getCapacity() > OutputSchema.MAX_RETAINED_CAPACITY);
+        schema.setTimestampIndex(3);
+        schema.clearAndTrim();
+        Assert.assertEquals(0, schema.getColumnCount());
+        Assert.assertEquals(-1, schema.getTimestampIndex());
+        Assert.assertEquals(initialCapacity, schema.getCapacity());
+        assertMatchesScan(schema);
+        assertIdsMatchScan(schema);
+        for (int width : new int[]{3, 100}) {
+            schema.clear();
+            addColumns(schema, 0, width);
+            assertMatchesScan(schema);
+            assertIdsMatchScan(schema);
+        }
+    }
+
+    @Test
+    public void testClearKeepsCapacity() {
+        final OutputSchema schema = new OutputSchema();
+        addColumns(schema, 0, 2 * OutputSchema.MAX_RETAINED_CAPACITY);
+        assertMatchesScan(schema);
+        final int capacity = schema.getCapacity();
+        schema.clear();
+        Assert.assertEquals(capacity, schema.getCapacity());
+        final OutputSchema source = new OutputSchema();
+        addColumns(source, 0, 3);
+        schema.copyFrom(source);
+        Assert.assertEquals(capacity, schema.getCapacity());
+        assertMatchesScan(schema);
+    }
+
+    @Test
     public void testLookupAfterMutationsNarrow() {
         assertLookupAfterMutations(4);
     }
@@ -182,6 +237,21 @@ public class OutputSchemaTest {
             if (i % 11 == 4) {
                 schema.protectName(i);
             }
+        }
+    }
+
+    private static void assertIdsMatchScan(OutputSchema schema) {
+        final int count = schema.getColumnCount();
+        for (int i = -1; i < count; i++) {
+            final int id = i < 0 ? Integer.MAX_VALUE : schema.getColumnId(i);
+            int expected = -1;
+            for (int j = 0; j < count; j++) {
+                if (schema.getColumnId(j) == id) {
+                    expected = j;
+                    break;
+                }
+            }
+            Assert.assertEquals(expected, schema.getColumnIndexById(id));
         }
     }
 

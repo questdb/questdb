@@ -31,6 +31,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * What binding knows about a join of more than two inputs and leaves for the optimiser to order: per input, the inputs
@@ -43,6 +44,12 @@ import io.questdb.std.ObjectFactory;
  */
 public final class JoinGraph implements Mutable {
     public static final ObjectFactory<JoinGraph> FACTORY = JoinGraph::new;
+    /**
+     * The most values each int list of a cleared graph keeps room for. A join of tens of inputs states its edges in
+     * far fewer, while the ordering constraints of a chain of hundreds of outer joins grow with the square of its
+     * inputs.
+     */
+    public static final int MAX_RETAINED_CAPACITY = 4096;
     private final IntList constantFilterOrigins = new IntList();
     private final ObjList<BoundExpression> constantFilters = new ObjList<>();
     private final ObjList<JoinDependency> dependencies = new ObjList<>();
@@ -210,15 +217,25 @@ public final class JoinGraph implements Mutable {
 
     @Override
     public void clear() {
-        constantFilterOrigins.clear();
+        constantFilterOrigins.clearAndTrim(MAX_RETAINED_CAPACITY);
         constantFilters.clear();
         dependencies.clear();
-        lateInputs.clear();
-        lateralDependencies.clear();
-        orderingConstraints.clear();
-        residualOwnerEnds.clear();
-        residualOwners.clear();
+        lateInputs.clearAndTrim(MAX_RETAINED_CAPACITY);
+        lateralDependencies.clearAndTrim(MAX_RETAINED_CAPACITY);
+        orderingConstraints.clearAndTrim(MAX_RETAINED_CAPACITY);
+        residualOwnerEnds.clearAndTrim(MAX_RETAINED_CAPACITY);
+        residualOwners.clearAndTrim(MAX_RETAINED_CAPACITY);
         residuals.clear();
+    }
+
+    /**
+     * Returns the largest capacity, in values, of the graph's int lists.
+     */
+    @TestOnly
+    public int getCapacity() {
+        int capacity = Math.max(constantFilterOrigins.capacity(), lateInputs.capacity());
+        capacity = Math.max(capacity, Math.max(lateralDependencies.capacity(), orderingConstraints.capacity()));
+        return Math.max(capacity, Math.max(residualOwnerEnds.capacity(), residualOwners.capacity()));
     }
 
     public int getConstantFilterOrigin(int constantFilter) {

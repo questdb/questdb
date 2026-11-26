@@ -128,6 +128,18 @@ public class IntList implements Mutable, Sinkable {
         Arrays.fill(data, NO_ENTRY_VALUE);
     }
 
+    /**
+     * Empties the list, and gives it back its initial capacity when it has room for more than
+     * {@code maxRetainedCapacity} values, so that a list one large use grew does not keep that memory.
+     */
+    public void clearAndTrim(int maxRetainedCapacity) {
+        if (data.length > maxRetainedCapacity) {
+            restoreInitialCapacity();
+        } else {
+            pos = 0;
+        }
+    }
+
     public boolean contains(int value) {
         return indexOf(value, 0, pos) > -1;
     }

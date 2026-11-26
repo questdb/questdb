@@ -95,7 +95,7 @@ public final class JoinInput implements PlanFactSource {
         keyPairCounts.clear();
         keys.clear();
         keyPool.clear();
-        output.clear();
+        output.clearAndTrim();
         algorithm = null;
         bindingAlias = null;
         buildSide = null;

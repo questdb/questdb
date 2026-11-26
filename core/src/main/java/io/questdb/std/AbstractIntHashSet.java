@@ -29,6 +29,7 @@ import java.util.Arrays;
 public abstract class AbstractIntHashSet implements Mutable {
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected static final int noEntryKey = -1;
+    protected final int initialCapacity;
     protected final double loadFactor;
     protected final int noEntryKeyValue;
     protected int capacity;
@@ -46,10 +47,18 @@ public abstract class AbstractIntHashSet implements Mutable {
         }
         this.noEntryKeyValue = noKeyValue;
         free = this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
+        this.initialCapacity = this.capacity;
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
         keys = new int[len];
         mask = len - 1;
+    }
+
+    /**
+     * Returns how many keys the set holds before it grows.
+     */
+    public int capacity() {
+        return capacity;
     }
 
     @Override

@@ -38,7 +38,7 @@ public abstract sealed class LogicalPlan implements PlanFactSource
 
     @Override
     public void clear() {
-        output.clear();
+        output.clearAndTrim();
         position = -1;
         stage = null;
     }

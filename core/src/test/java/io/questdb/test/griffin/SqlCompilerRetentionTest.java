@@ -27,10 +27,13 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.plan.logical.JoinGraph;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -271,6 +274,39 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                     compiler.clear();
                 }
                 Assert.assertEquals(floor, compiler.getViewLexerMaxPoolCapacity());
+            }
+        });
+    }
+
+    @Test
+    public void testJoinChainReturnsCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (k INT, j INT)");
+            final int tableCount = OutputSchema.MAX_RETAINED_CAPACITY / 2 + 8;
+            final StringSink sql = new StringSink();
+            sql.put("SELECT * FROM c t0");
+            for (int i = 1; i < tableCount; i++) {
+                if (i % 2 == 1) {
+                    sql.put(" FULL JOIN c t").put(i).put(" ON t").put(i).put(".k > t").put(i - 1).put(".k");
+                } else {
+                    sql.put(" JOIN c t").put(i).put(" ON t").put(i).put(".k = t").put(i - 1).put(".k AND t").put(i - 2).put(".j > 0");
+                }
+            }
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndClose(compiler, sql);
+                Assert.assertTrue(compiler.getJoinSchemaCapacity() > OutputSchema.MAX_RETAINED_CAPACITY);
+                Assert.assertTrue(compiler.getJoinGraphCapacity() > JoinGraph.MAX_RETAINED_CAPACITY);
+                Assert.assertTrue(compiler.getTemporaryIntListCapacity() > CompilerTemporaries.MAX_RETAINED_CAPACITY);
+                compiler.clear();
+                final int retained = compiler.getJoinSchemaCapacity();
+                Assert.assertTrue(retained <= OutputSchema.MAX_RETAINED_CAPACITY);
+                Assert.assertTrue(retained > OutputSchema.MAX_RETAINED_CAPACITY / 2);
+                Assert.assertTrue(compiler.getJoinGraphCapacity() <= JoinGraph.MAX_RETAINED_CAPACITY);
+                Assert.assertTrue(compiler.getTemporaryIntListCapacity() <= CompilerTemporaries.MAX_RETAINED_CAPACITY);
+
+                compileAndClose(compiler, "SELECT * FROM c t0 JOIN c t1 ON t1.k = t0.k");
+                compiler.clear();
+                Assert.assertEquals(retained, compiler.getJoinSchemaCapacity());
             }
         });
     }
@@ -582,6 +618,35 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 Assert.assertEquals(retained, compiler.getJoinEqualityCapacity());
                 clearPastRetention(compiler);
                 Assert.assertEquals(ceiling, compiler.getJoinEqualityCapacity());
+            }
+        });
+    }
+
+    @Test
+    public void testWideJoinKeepsSchemaCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int columnCount = OutputSchema.MAX_RETAINED_CAPACITY / 4;
+            final StringSink ddl = new StringSink();
+            ddl.put("CREATE TABLE w (");
+            for (int i = 0; i < columnCount; i++) {
+                if (i > 0) {
+                    ddl.put(", ");
+                }
+                ddl.put('c').put(i).put(" LONG");
+            }
+            ddl.put(')');
+            execute(ddl);
+            final String sql = "SELECT * FROM w a JOIN w b ON a.c0 = b.c0";
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndClose(compiler, sql);
+                compiler.clear();
+                final int retained = compiler.getJoinSchemaCapacity();
+                Assert.assertTrue(retained >= 2 * columnCount);
+                for (int i = 0; i < 3; i++) {
+                    compileAndClose(compiler, sql);
+                    compiler.clear();
+                    Assert.assertEquals(retained, compiler.getJoinSchemaCapacity());
+                }
             }
         });
     }

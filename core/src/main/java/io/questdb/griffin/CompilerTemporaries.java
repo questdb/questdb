@@ -42,12 +42,18 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * The scratch collections the components of one compiler share. A component picks the members it uses in its
  * constructor; a user fills a member and consumes it before another user of the same member runs.
  */
 public final class CompilerTemporaries implements Mutable {
+    /**
+     * The most values an int list keeps room for between statements. A statement of tens of joins needs far fewer,
+     * while a chain of hundreds of outer joins collects ordering edges that grow with the square of its inputs.
+     */
+    public static final int MAX_RETAINED_CAPACITY = 4096;
     public final ObjList<BoundExpression> arguments = new ObjList<>(2);
     public final ObjList<BoundExpression> expressions = new ObjList<>();
     public final IntList functionPositions = new IntList();
@@ -79,7 +85,7 @@ public final class CompilerTemporaries implements Mutable {
 
     /**
      * Empties the functions, the join children with their pool and the names, which the compiler releases between
-     * statements.
+     * statements, and the int lists, which keep room for at most {@link #MAX_RETAINED_CAPACITY} values.
      */
     @Override
     public void clear() {
@@ -87,5 +93,21 @@ public final class CompilerTemporaries implements Mutable {
         joinChildren.clear();
         joinChildrenPool.clear();
         names.clear();
+        functionPositions.clearAndTrim(MAX_RETAINED_CAPACITY);
+        indexes.clearAndTrim(MAX_RETAINED_CAPACITY);
+        masterKeys.clearAndTrim(MAX_RETAINED_CAPACITY);
+        positions.clearAndTrim(MAX_RETAINED_CAPACITY);
+        slaveKeys.clearAndTrim(MAX_RETAINED_CAPACITY);
+        values.clearAndTrim(MAX_RETAINED_CAPACITY);
+    }
+
+    /**
+     * Returns the largest capacity, in values, of the int lists.
+     */
+    @TestOnly
+    public int getIntListCapacity() {
+        int capacity = Math.max(functionPositions.capacity(), indexes.capacity());
+        capacity = Math.max(capacity, Math.max(masterKeys.capacity(), positions.capacity()));
+        return Math.max(capacity, Math.max(slaveKeys.capacity(), values.capacity()));
     }
 }

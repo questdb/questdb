@@ -35,6 +35,7 @@ import java.util.Comparator;
 public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final Object[] EMPTY_ARRAY = new Object[0];
+    private final int initialCapacity;
     private T[] buffer;
     private int pos = 0;
     // every slot at or past max(pos, staleLimit) is null, so clear() wipes no more than the slots in use
@@ -43,11 +44,13 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     @SuppressWarnings("unchecked")
     public ObjList() {
         this.buffer = (T[]) new Object[DEFAULT_ARRAY_SIZE];
+        this.initialCapacity = buffer.length;
     }
 
     @SuppressWarnings("unchecked")
     public ObjList(ObjList<? extends T> other) {
         this.buffer = (T[]) new Object[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
+        this.initialCapacity = buffer.length;
         setPos(other.size());
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
     }
@@ -56,6 +59,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     @SuppressWarnings("unchecked")
     public ObjList(T... other) {
         this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
+        this.initialCapacity = buffer.length;
         setPos(other.length);
         System.arraycopy(other, 0, this.buffer, 0, pos);
     }
@@ -63,6 +67,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
         this.buffer = (T[]) (capacity == 0 ? EMPTY_ARRAY : new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)]);
+        this.initialCapacity = buffer.length;
     }
 
     public void add(T value) {
@@ -95,6 +100,10 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     @SuppressWarnings("unchecked")
+    public int capacity() {
+        return buffer.length;
+    }
+
     public void checkCapacity(int capacity) {
         int l = buffer.length;
         if (capacity > l) {
@@ -314,6 +323,17 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             return index;
         }
         return -1;
+    }
+
+    /**
+     * Empties the list and gives it back the capacity it was created with, so that a list one large use grew does not
+     * keep that memory.
+     */
+    @SuppressWarnings("unchecked")
+    public void restoreInitialCapacity() {
+        buffer = (T[]) (initialCapacity == 0 ? EMPTY_ARRAY : new Object[initialCapacity]);
+        pos = 0;
+        staleLimit = 0;
     }
 
     public void set(int from, int to, T value) {

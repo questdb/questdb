@@ -130,6 +130,21 @@ public class ObjListTest {
     }
 
     @Test
+    public void testRestoreInitialCapacity() {
+        final Object value = new Object();
+        final ObjList<Object> copied = new ObjList<>();
+        for (int i = 0; i < 20; i++) {
+            copied.add(value);
+        }
+        assertRestoresInitialCapacity(new ObjList<>(), 16);
+        assertRestoresInitialCapacity(new ObjList<>(0), 0);
+        assertRestoresInitialCapacity(new ObjList<>(1), 16);
+        assertRestoresInitialCapacity(new ObjList<>(40), 40);
+        assertRestoresInitialCapacity(new ObjList<>(copied), 20);
+        assertRestoresInitialCapacity(new ObjList<>(value, value), 16);
+    }
+
+    @Test
     public void testZeroCapacityBulkGrowth() {
         final ObjList<String> inserted = new ObjList<>(0);
         inserted.insert(0, 2, "a");
@@ -164,6 +179,26 @@ public class ObjListTest {
         first.add("reused");
         Assert.assertEquals(list("reused"), first);
         Assert.assertEquals(list("other"), second);
+    }
+
+    private static void assertRestoresInitialCapacity(ObjList<Object> list, int initialCapacity) {
+        final Object value = new Object();
+        Assert.assertEquals(initialCapacity, list.capacity());
+        for (int i = 0; i < 1_000; i++) {
+            list.add(value);
+        }
+        Assert.assertTrue(list.capacity() >= 1_000);
+        list.restoreInitialCapacity();
+        Assert.assertEquals(0, list.size());
+        Assert.assertEquals(initialCapacity, list.capacity());
+        Assert.assertTrue(list.hasOnlyNullsBeyondSizeForTesting());
+        list.add(value);
+        list.add(null);
+        list.add(value);
+        Assert.assertEquals(3, list.size());
+        Assert.assertSame(value, list.getQuick(0));
+        Assert.assertNull(list.getQuick(1));
+        Assert.assertSame(value, list.getQuick(2));
     }
 
     private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {

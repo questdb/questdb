@@ -31,6 +31,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Objects;
 
@@ -42,6 +43,12 @@ import java.util.Objects;
  */
 public final class OutputSchema implements Mutable {
     public static final int COLUMN_AMBIGUOUS = -2;
+    /**
+     * The most columns a schema keeps room for across {@link #clearAndTrim()}. It covers the widest tables QuestDB
+     * users commonly keep, a few hundred columns, so their plans reuse the room statement after statement, while a
+     * join chain, which grows one prefix schema per step, keeps room only in the steps up to this width.
+     */
+    public static final int MAX_RETAINED_CAPACITY = 512;
     private static final int VISIBLE = 1;
     private static final int SYMBOL_TABLE_STATIC = 2;
     private static final int NAME_PROTECTED = 4;
@@ -181,6 +188,26 @@ public final class OutputSchema implements Mutable {
         timestampIndex = -1;
     }
 
+    /**
+     * Clears the schema for the pooled node that owns it to be reused, giving it back its initial capacity when it
+     * grew past {@link #MAX_RETAINED_CAPACITY} columns, so that a pooled node does not keep the room one wide
+     * statement needed.
+     */
+    public void clearAndTrim() {
+        if (columnIds.capacity() > MAX_RETAINED_CAPACITY) {
+            columnIds.restoreInitialCapacity();
+            columnMetadata.restoreInitialCapacity();
+            columnNames.restoreInitialCapacity();
+            columnQualifiers.restoreInitialCapacity();
+            columnTypes.restoreInitialCapacity();
+            columnFlags.restoreInitialCapacity();
+            idIndexes.restoreInitialCapacity();
+            nameSlots.restoreInitialCapacity();
+            sameNamePrevious.restoreInitialCapacity();
+        }
+        clear();
+    }
+
     public void copyFrom(OutputSchema that) {
         if (that != this) {
             clear();
@@ -192,6 +219,14 @@ public final class OutputSchema implements Mutable {
             columnFlags.addAll(that.columnFlags);
             timestampIndex = that.timestampIndex;
         }
+    }
+
+    /**
+     * Returns how many columns the schema holds before its storage grows.
+     */
+    @TestOnly
+    public int getCapacity() {
+        return columnIds.capacity();
     }
 
     public int getColumnCount() {

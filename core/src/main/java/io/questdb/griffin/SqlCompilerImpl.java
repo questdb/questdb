@@ -917,6 +917,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public int getJoinGraphCapacity() {
+        return planNodePools.getJoinGraphCapacity();
+    }
+
+    @TestOnly
+    public int getJoinSchemaCapacity() {
+        return planNodePools.getJoinSchemaCapacity();
+    }
+
+    @TestOnly
     public int getLexerStashSize() {
         return lexer.getStashSize();
     }
@@ -952,6 +962,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public int getSubqueryPoolCapacity() {
         return planNodePools.subqueries.getCapacity();
+    }
+
+    @TestOnly
+    public int getTemporaryIntListCapacity() {
+        return temporaries.getIntListCapacity();
     }
 
     @TestOnly
