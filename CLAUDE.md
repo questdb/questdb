@@ -586,18 +586,33 @@ cmake --build build/release --config Release
 
 ### Query planners
 
-- **The new planner is the default path.** It binds the query into a typed
-  logical plan (`griffin/bind`, `griffin/plan`), rewrites it
-  (`griffin/optimiser`) and generates the factories (`griffin/codegen`).
-  `cairo.sql.legacy.planner.enabled` defaults to `false`.
-- **The legacy planner is only a fallback.** Master's optimiser and code
-  generator live under `io.questdb.legacy` (`com.questdb.legacy` in
-  Enterprise), and the server setting, the `Legacy-Planner` HTTP header or the
-  `legacy_planner` PostgreSQL option switch a query to it. `ci/legacy_planner.py`
-  generates it from master; it takes no fixes and no features.
-- **Implement new features and fixes in the new planner only.** Do not port
-  them to the legacy planner, and do not make new code depend on legacy
-  classes.
+QuestDB runs SQL through one of two planners. All planner work targets the new
+one.
+
+- **New planner: the default path.** `SqlBinder` (`griffin/bind`) binds a
+  query into a typed logical plan (`griffin/plan/logical`), `SqlOptimiser`
+  (`griffin/optimiser`) rewrites it and plans its physical operators, and the
+  generators in `griffin/codegen` build its cursor factories.
+- **Legacy planner: a fallback only.** `io.questdb.legacy` (and
+  `com.questdb.legacy` in Enterprise) holds the query-model optimiser and code
+  generator as of the commit that `legacy/package-info.java` records. It lets
+  an operator route queries back to it when the new planner misbehaves, and it
+  goes away once the new planner has shipped.
+- **New features and fixes go into the new planner only.** Do not port them to
+  the legacy planner, and do not make shared or new code depend on legacy
+  classes. A bug that only the legacy planner has stays unfixed.
+- **Edit legacy code only to keep it building.** When a change to shared code
+  (functions, cursor factories, runtime, storage) breaks the legacy planner,
+  adapt it with the smallest mechanical edit. `ci/legacy_planner.py`
+  regenerates it from its base commit (`add`, `remove`, `rebase`) and keeps
+  such edits.
+- **The switch.** `cairo.sql.legacy.planner.enabled` (default `false`,
+  reloadable) chooses the planner for the server. The `Legacy-Planner` HTTP
+  header and the `legacy_planner` PostgreSQL startup option
+  (`options=-c legacy_planner=true`), `true` or `false`, override it for one
+  request or connection, and `SqlExecutionContext.isLegacyPlannerEnabled()`
+  resolves the choice. Tests run on the new planner unless they set the
+  switch.
 
 ### Entry Points
 
