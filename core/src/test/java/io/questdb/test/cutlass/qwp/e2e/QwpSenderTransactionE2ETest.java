@@ -27,6 +27,8 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.cairo.TableToken;
 import io.questdb.client.QuestDB;
 import io.questdb.client.Sender;
+import io.questdb.client.SenderConnectionEvent;
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.TransactionTooLargeException;
@@ -36,6 +38,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -329,25 +333,42 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testRollbackDiscardsTransactionOfEveryTable() throws Exception {
         // The frames of the transaction carry rows of two tables: the rollback discards the
-        // rows of both. The next transaction writes both tables over several frames too,
-        // and its commit commits every row the server holds uncommitted: only its own.
-        runInContext(port -> {
-            try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(conf(port) + "transaction=on;")) {
-                Assert.assertTrue("the server confirms rollback", sender.isServerRollbackEnabled());
-                writeRowsOfTwoTables(sender, 0, 3_000);
-                awaitTable("ta");
-                awaitTable("tb");
-                sender.rollback();
-                writeRowsOfTwoTables(sender, 10_000, 3_000);
-                sender.flush();
-                Assert.assertTrue(sender.drain(60_000));
-            }
-            drainWalQueue();
-            assertQuery("SELECT count(), min(v), max(v) FROM ta").noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\tmin\tmax\n1500\t10000\t12998\n");
-            assertQuery("SELECT count(), min(v), max(v) FROM tb").noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\tmin\tmax\n1500\t10001\t12999\n");
-        });
+        // rows of both, and the next transaction, which writes both tables again, commits
+        // only its own. A server that kept rows past the rollback commits them with a next
+        // transaction of several frames, and refuses one of a single frame, which the sender
+        // then replays on a new connection, leaving the tables right. So no frame may be
+        // refused, and the sender keeps its connection.
+        for (int nextRows : new int[]{10, 3_000}) {
+            runInContext(port -> {
+                final List<SenderError> errors = new CopyOnWriteArrayList<>();
+                final List<SenderConnectionEvent.Kind> events = new CopyOnWriteArrayList<>();
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.builder(conf(port) + "transaction=on;")
+                        .errorHandler(errors::add)
+                        .connectionListener(event -> events.add(event.getKind()))
+                        .build()) {
+                    Assert.assertTrue("the server confirms rollback", sender.isServerRollbackEnabled());
+                    writeRowsOfTwoTables(sender, 0, 3_000);
+                    awaitTable("ta");
+                    awaitTable("tb");
+                    sender.rollback();
+                    writeRowsOfTwoTables(sender, 10_000, nextRows);
+                    sender.flush();
+                    Assert.assertTrue(sender.drain(60_000));
+                }
+                // close() delivered every notification the sender had queued.
+                Assert.assertEquals("no frame refused, next rows: " + nextRows, List.of(), errors);
+                Assert.assertEquals("one connection, next rows: " + nextRows,
+                        List.of(SenderConnectionEvent.Kind.CONNECTED), events);
+                drainWalQueue();
+                // ta takes the even values, tb the odd ones.
+                assertQuery("SELECT count(), min(v), max(v) FROM ta").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\tmin\tmax\n" + nextRows / 2 + "\t10000\t" + (10_000 + nextRows - 2) + "\n");
+                assertQuery("SELECT count(), min(v), max(v) FROM tb").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\tmin\tmax\n" + nextRows / 2 + "\t10001\t" + (10_000 + nextRows - 1) + "\n");
+                execute("DROP TABLE ta");
+                execute("DROP TABLE tb");
+            });
+        }
     }
 
     @Test
