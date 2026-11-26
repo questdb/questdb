@@ -166,6 +166,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableToken()).I$();
                         tud.setWriterInError();
                         tud.releaseWriter(false);
+                    } else if (ex.getReason() instanceof CairoException e && e.isSchemaMismatch()) {
+                        // The table refused the sender's rows, as a materialized view refuses a backfill row past its
+                        // frozen zone: bad data, not a server fault, so no stack trace either.
+                        LOG.error().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$safe(ex.getMessage()).I$();
                     } else {
                         LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                     }

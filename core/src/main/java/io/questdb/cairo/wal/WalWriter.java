@@ -3187,8 +3187,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // same state it would be in after a user-initiated rollback. Mat-view writers carry one to enforce the
     // bucket-whole rule on user backfill; everyone else has preCommitValidator == null and pays no cost.
     //
-    // A CairoException is the sanctioned reject channel: we roll the txn back and rethrow, leaving the writer
-    // healthy and reusable. Any other Throwable is treated as an internal validator fault -- the writer is marked
+    // A CairoException is the sanctioned reject channel: we log the rows it discards, roll the txn back and rethrow,
+    // leaving the writer healthy and reusable. Any other Throwable is treated as an internal validator fault -- the writer is marked
     // distressed first, so the pool expels this tenant and the next acquisition starts clean; rollback0() then
     // short-circuits (it no-ops once distressed) since a distressed writer's segment is truncated on close anyway.
     // Either way, if rollback itself throws, the original cause is preserved via addSuppressed so the validator's
@@ -3198,7 +3198,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 preCommitValidator.validate(txnType, dedupMode, txnMinTimestamp, txnMaxTimestamp);
             } catch (Throwable ex) {
-                if (!(ex instanceof CairoException)) {
+                if (ex instanceof CairoException e) {
+                    // The rollback below discards every row of the transaction, the valid ones included. An
+                    // ILP/TCP sender hears nothing of it, so this line tells its user which rows to send again.
+                    LOG.error().$("pre-commit check refused the transaction, discarding its rows [table=").$(tableToken)
+                            .$(", rows=").$(getUncommittedRowCount())
+                            .$(", minTs=").$ts(timestampDriver, txnMinTimestamp)
+                            .$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp)
+                            .$(", reason=").$safe(e.getFlyweightMessage())
+                            .I$();
+                } else {
                     distressed = true;
                 }
                 try {

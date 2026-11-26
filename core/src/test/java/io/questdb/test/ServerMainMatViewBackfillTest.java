@@ -26,8 +26,13 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
@@ -402,10 +407,63 @@ public class ServerMainMatViewBackfillTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testIlpTcpManagedZoneRowStillRefusedAtCommit() throws Exception {
-        // ILP/TCP keeps refusing a managed-zone view row only at the view's commit: the sender is told nothing, the
-        // server logs the refusal, and the view keeps its rows and stays valid. A new connection's frozen-zone row
-        // lands.
+    public void testIlpTcpCommitFaultStaysCritical() throws Exception {
+        // An ILP/TCP commit that fails for another reason than the table refusing the sender's rows is a server fault,
+        // which stays a critical log line: a validator fault here, a CairoException without the schema mismatch marker
+        // and then a RuntimeException. A validator on the view's writer that fails only for user rows forces them.
+        TestUtils.assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                final CairoEngine engine = serverMain.getEngine();
+                createBackfillableView(serverMain, engine);
+                final TableToken viewToken = engine.verifyTableName("v");
+                final long viewSeqTxn = seqTxn(engine, "v");
+                capture.start();
+                final String[] faults = {"simulated commit fault", "simulated validator fault"};
+                for (int i = 0; i < faults.length; i++) {
+                    final String fault = faults[i];
+                    final boolean isCairoException = i == 0;
+                    final MatViewBackfillValidator validator = new MatViewBackfillValidator(engine, viewToken);
+                    // The pool hands this tenant to the connection's writer of the view: the previous connection's
+                    // writer is back in the pool, and nothing else writes to the view.
+                    try (WalWriter viewWriter = engine.getWalWriter(viewToken)) {
+                        viewWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                            // user rows; the close commits none after the failed commit
+                            if (txnType == WalTxnType.DATA && dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT && txnMaxTs > -1) {
+                                if (isCairoException) {
+                                    throw CairoException.nonCritical().put(fault);
+                                }
+                                throw new RuntimeException(fault);
+                            }
+                            validator.validate(txnType, dedupMode, txnMinTs, txnMaxTs);
+                        });
+                    }
+                    try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(ILP_PORT).build()) {
+                        sender.table("v").symbol("sym", "a").doubleColumn("price", 7.0)
+                                .at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                        sender.flush();
+                        // the connection stays open, so the commit interval, not the close, commits the row
+                        capture.waitForRegex("Z C \\S+ commit failed \\[table=v~\\d+,ex=[^\\n]*" + fault);
+                    }
+                    awaitLogCount(capture, "closing table writer \\[tableName=v~", i + 1);
+                }
+                Assert.assertEquals(0, capture.countLoggedRE("Z E \\S+ commit failed \\[table=v~"));
+                Assert.assertEquals(viewSeqTxn, seqTxn(engine, "v"));
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testIlpTcpManagedZoneRowDiscardsViewCommit() throws Exception {
+        // ILP/TCP refuses a managed-zone view row only at the view's commit, which discards every row of the commit,
+        // the valid frozen-zone ones included: the sender is told nothing. This is accepted, since ILP backfill is for
+        // rare error recovery. The server logs the discarded rows, so that the user knows what to send again, and logs
+        // the failed commit as an error, not as a critical server fault. The view keeps its rows and stays valid, and a
+        // new connection's frozen-zone row lands.
         TestUtils.assertMemoryLeak(() -> {
             final LogCapture capture = new LogCapture();
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -416,11 +474,18 @@ public class ServerMainMatViewBackfillTest extends AbstractBootstrapTest {
                 final long viewSeqTxn = seqTxn(engine, "v");
                 capture.start();
                 try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(ILP_PORT).build()) {
+                    sender.table("v").symbol("sym", "a").doubleColumn("price", 6.0)
+                            .at(parseFloorPartialTimestamp("2024-09-10T07:00"), ChronoUnit.MICROS);
                     sender.table("v").symbol("sym", "a").doubleColumn("price", 95.0)
                             .at(parseFloorPartialTimestamp("2024-09-10T12:45"), ChronoUnit.MICROS);
                     sender.flush();
+                    // the connection stays open, so the commit interval, not the close, commits the rows
+                    capture.waitForRegex("pre-commit check refused the transaction, discarding its rows \\[table=v~\\d+, rows=2,"
+                            + " minTs=2024-09-10T07:00:00.000000Z, maxTs=2024-09-10T12:45:00.000000Z,"
+                            + " reason=backfill row falls in or past the managed zone of materialized view \\[view=v, maxRowTs=2024-09-10T12:45:00.000000Z");
+                    capture.waitForRegex("Z E \\S+ commit failed \\[table=v~\\d+,ex=[^\\n]*backfill row falls in or past the managed zone");
                 }
-                capture.waitForRegex("commit[^\\n]*\\[table=v[^\\n]*backfill row falls in or past the managed zone of materialized view \\[view=v, maxRowTs=2024-09-10T12:45:00.000000Z");
+                Assert.assertEquals(0, capture.countLoggedRE("Z C \\S+ commit failed \\[table=v~"));
                 Assert.assertEquals(viewSeqTxn, seqTxn(engine, "v"));
 
                 try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(ILP_PORT).build()) {
@@ -430,6 +495,7 @@ public class ServerMainMatViewBackfillTest extends AbstractBootstrapTest {
                 }
                 awaitCount(serverMain, "select count() from v where ts = '2024-09-10T08:00:00.000000Z'", 1);
                 awaitRefreshed(engine, "v", 1, true);
+                // the 07:00 row went with the refused commit
                 serverMain.assertSql("select * from v", """
                         sym\tprice\tts
                         a\t7.0\t2024-09-10T08:00:00.000000Z
@@ -760,6 +826,14 @@ public class ServerMainMatViewBackfillTest extends AbstractBootstrapTest {
     }
 
     // Waits until the view has refreshed up to the base txn, its WAL has applied and, when asked, it accepts backfill.
+    private static void awaitLogCount(LogCapture capture, String regex, int expectedCount) {
+        final long deadline = System.currentTimeMillis() + 120_000;
+        while (capture.countLoggedRE(regex) < expectedCount) {
+            Assert.assertTrue("timed out waiting for " + expectedCount + " log lines matching " + regex, System.currentTimeMillis() < deadline);
+            Os.sleep(10);
+        }
+    }
+
     private static void awaitRefreshed(CairoEngine engine, String viewName, long baseTxn, boolean isBackfillable) {
         final TableToken viewToken = engine.verifyTableName(viewName);
         final long deadline = System.currentTimeMillis() + 60_000;
