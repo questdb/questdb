@@ -551,12 +551,18 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         // that the engine runs on its own and a compile probe evaluate without an error. Where the
         // parse with the limit fits, as the bind variable with the limit shows, they evaluate to the
         // documented semantics: the own extents of the elements, united, cut by the sessions, each piece
-        // extended by the duration, and merged. Where it does not, they evaluate as the list always
-        // has: the same with the fixed date as windows as long as the duration from each of its
-        // slots. No element holds a window there, as an element that held the slots would let the parse
-        // fit. The windows are at least as long as the time between the slots, so that they join, as
-        // windows that stay apart fail the list as it compiles. questdb.fuzz.tickExpressions sets the
-        // number of lists, a tenth of it.
+        // extended by the duration, and merged. Where it does not, as no element before the fixed date
+        // holds its day, they evaluate as the list always has, with the fixed date as windows as long as
+        // the duration from each of its slots. The same list with the duration on its fixed date
+        // instead has no duration of its own, so it compiles as it always has, its fixed date to the same
+        // windows, and evaluates to what the list does before the duration extends each piece. The tick
+        // calendar cuts those intervals without uniting them first, and keeps the end of the later of
+        // two that nest, see bug-nested-slots-tick-calendar, so a day that an element after the fixed
+        // date holds can cut short a piece of the windows. Where no element holds the day of the fixed
+        // date, the windows united, cut by the sessions, each piece extended by the duration, and merged,
+        // give the same. The windows are at least as long as the time between the slots, so that they
+        // join, as windows that stay apart fail the list as it compiles. questdb.fuzz.tickExpressions
+        // sets the number of lists, a tenth of it.
         final String[] variables = {"$today", "$yesterday", "$today-3d..$today", "$yesterday..$tomorrow"};
         final int[][] variableDays = {{0, 0}, {-1, -1}, {-3, 0}, {-1, 1}};
         final String[] days = {"2025-01-23", "2025-01-24", "2025-01-27", "2025-01-28"};
@@ -573,9 +579,13 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int fittingCount = 0;
             int fallbackCount = 0;
+            int laterHolderFallbackCount = 0;
             final LongList ownExtents = new LongList();
             final LongList windows = new LongList();
+            final LongList durationOnDateIntervals = new LongList();
             final StringBuilder sb = new StringBuilder();
+            // the same list with the duration on its fixed date instead
+            final StringBuilder durationOnDateSb = new StringBuilder();
             try (
                     SqlExecutionContextImpl engineJob = newEngineJobContext();
                     SqlExecutionContextImpl compileProbe = new SqlExecutionContextImpl(engine, 1)
@@ -598,19 +608,27 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     windows.clear();
                     sb.setLength(0);
                     sb.append('[');
+                    durationOnDateSb.setLength(0);
+                    durationOnDateSb.append('[');
                     final int variableCount = rnd.nextInt(3);
                     final int fixedDatePlace = rnd.nextInt(variableCount + 1);
+                    // the day of the fixed date, which the elements after it compare their days with
+                    long fixedDay = Long.MIN_VALUE;
+                    boolean hasLaterHolder = false;
                     for (int e = 0; e <= variableCount; e++) {
                         if (e > 0) {
                             sb.append(", ");
+                            durationOnDateSb.append(", ");
                         }
                         if (e == fixedDatePlace) {
                             final String dayText = days[rnd.nextInt(days.length)];
-                            final long day = driver.parseFloorLiteral(dayText + "T00:00:00.000000Z");
-                            sb.append(dayText).append(isSmallLimit ? "T[00..23]:00:00" : "T[00..23]:[00..59]:00");
+                            fixedDay = driver.parseFloorLiteral(dayText + "T00:00:00.000000Z");
+                            final String fixedDate = dayText + (isSmallLimit ? "T[00..23]:00:00" : "T[00..23]:[00..59]:00");
+                            sb.append(fixedDate);
+                            durationOnDateSb.append(fixedDate).append(';').append(durations[durationIndex]);
                             for (int hour = 0; hour < 24; hour++) {
                                 for (int minute = 0, n = isSmallLimit ? 1 : 60; minute < n; minute++) {
-                                    final long lo = day + driver.fromHours(hour) + driver.fromMinutes(minute) - zoneOffset;
+                                    final long lo = fixedDay + driver.fromHours(hour) + driver.fromMinutes(minute) - zoneOffset;
                                     ownExtents.add(lo, lo + driver.fromSeconds(1) - 1);
                                     windows.add(lo, lo + duration - 1);
                                 }
@@ -618,6 +636,10 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         } else {
                             final int v = rnd.nextInt(variables.length);
                             sb.append(variables[v]);
+                            durationOnDateSb.append(variables[v]);
+                            hasLaterHolder |= e > fixedDatePlace
+                                    && fixedDay >= today + driver.fromDays(variableDays[v][0])
+                                    && fixedDay <= today + driver.fromDays(variableDays[v][1]);
                             for (int d = variableDays[v][0]; d <= variableDays[v][1]; d++) {
                                 final long lo = today + driver.fromDays(d) - zoneOffset;
                                 ownExtents.add(lo, lo + driver.fromDays(1) - 1);
@@ -626,6 +648,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         }
                     }
                     sb.append(']').append(zones[zoneIndex]).append('#').append(calendar).append(';').append(durations[durationIndex]);
+                    durationOnDateSb.append(']').append(zones[zoneIndex]).append('#').append(calendar);
                     final String text = sb.toString();
                     final CairoConfiguration limits = isSmallLimit ? smallLimits : defaultLimits;
                     final String message = text + " at " + nowText + " [" + ColumnType.nameOf(driver.getTimestampType()) + (isSmallLimit ? ", limit 16]" : "]");
@@ -636,16 +659,26 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         TestUtils.assertContains(message, e.getFlyweightMessage(), LIMIT_ERROR);
                         isFit = false;
                     }
-                    final LongList kept = TickCalendarTest.union(TickCalendarTest.intersect(TickCalendarTest.union(isFit ? ownExtents : windows), TickCalendarTest.sessions(driver, calendar)));
-                    for (int k = 1, n = kept.size(); k < n; k += 2) {
-                        kept.setQuick(k, kept.getQuick(k) + duration);
-                    }
-                    // intervalToString() prints to a sink that it reuses
-                    final String expected = intervalToString(driver, TickCalendarTest.union(kept)).toString();
+                    final String expected;
                     if (isFit) {
                         fittingCount++;
+                        expected = cutBySessionsAndExtend(driver, ownExtents, calendar, duration);
                     } else {
                         fallbackCount++;
+                        final String durationOnDateText = durationOnDateSb.toString();
+                        try (CompiledTickExpression durationOnDate = IntervalUtils.compileTickExpr(driver, limits, durationOnDateText, 0, durationOnDateText.length(), 0)) {
+                            Assert.assertFalse(durationOnDateText, durationOnDate.isParsedOnEvaluation());
+                            engineJob.setNowAndFixClock(now, driver.getTimestampType());
+                            durationOnDate.init(null, engineJob);
+                            durationOnDateIntervals.clear();
+                            durationOnDate.evaluate(durationOnDateIntervals);
+                        }
+                        expected = extendAndMerge(driver, durationOnDateIntervals, duration);
+                        if (hasLaterHolder) {
+                            laterHolderFallbackCount++;
+                        } else {
+                            TestUtils.assertEquals(message + " as windows", cutBySessionsAndExtend(driver, windows, calendar, duration), expected);
+                        }
                     }
                     try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, limits, text, 0, text.length(), 0)) {
                         Assert.assertTrue(message, compiled.isParsedOnEvaluation());
@@ -659,9 +692,13 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     }
                 }
             }
-            LOG.info().$("static date overflow fuzz in background jobs [fitting=").$(fittingCount).$(", fallback=").$(fallbackCount).I$();
+            LOG.info().$("static date overflow fuzz in background jobs [fitting=").$(fittingCount)
+                    .$(", fallback=").$(fallbackCount)
+                    .$(", fallbackWithLaterHolder=").$(laterHolderFallbackCount)
+                    .I$();
             Assert.assertTrue("a parse that fits", fittingCount > 0);
-            Assert.assertTrue("a parse that does not fit", fallbackCount > 0);
+            Assert.assertTrue("a parse that does not fit, where no element holds the day of the fixed date", fallbackCount > laterHolderFallbackCount);
+            Assert.assertTrue("a parse that does not fit, where an element after the fixed date holds its day", laterHolderFallbackCount > 0);
         });
     }
 
@@ -677,6 +714,15 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         // minutes from 01:00 up to now, and the parse keeps those at 03:40 and 03:50, the last of which
         // ends the session of XHKG at 04:00Z, ten minutes later; the windows of ten minutes used to end it
         // at 04:10.
+        // At +08:00 on Monday, the seconds at the hours of Tuesday lie only in the range from yesterday to
+        // tomorrow, which follows them in the list, so the parse fails there too. The list keeps the
+        // windows of four hours as three intervals: the first 22 windows, which its merges unite as they
+        // reach 8 intervals, and the last two. After the 8th interval of the list, Sunday of that range,
+        // it merges them and the days from Friday on into one interval, from 16:00Z on Thursday to 19:00Z
+        // on Tuesday, which Monday and Tuesday of the range follow. The tick calendar cuts the intervals
+        // without uniting them first, and keeps the end of Tuesday, 16:00Z, as the end of the session of
+        // Tuesday rather than 19:00Z, see bug-nested-slots-tick-calendar, so the duration ends it at
+        // 20:00Z, not 23:00Z.
         final CairoConfiguration defaultLimits = tickCalendarConfiguration(256, 1024);
         final CairoConfiguration smallLimits = tickCalendarConfiguration(8, 16);
         assertMemoryLeak(() -> {
@@ -706,6 +752,14 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                                 driver, smallLimits, context, mondayMorning,
                                 "[$today..$now, 2025-01-27T[01..03]:[00,10,20,30,40,50]:00]#XHKG;10m",
                                 "2025-01-27T01:30:00.000000Z", "2025-01-27T04:00:01.000000Z"
+                        );
+                        assertLenientIntervals(
+                                driver, smallLimits, context, monday,
+                                "[$today-3d..$today, 2025-01-28T[00..23]:00:00, $yesterday..$tomorrow]@+08:00#XNYS;4h",
+                                "2025-01-23T16:00:00.000000Z", "2025-01-24T01:00:00.000000Z",
+                                "2025-01-24T14:30:00.000000Z", "2025-01-25T01:00:00.000000Z",
+                                "2025-01-27T14:30:00.000000Z", "2025-01-28T01:00:00.000000Z",
+                                "2025-01-28T14:30:00.000000Z", "2025-01-28T20:00:00.000000Z"
                         );
                     }
                 }
@@ -830,6 +884,14 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     }
 
     /**
+     * Returns the intervals united, cut by the sessions of the test calendar, each piece extended by the
+     * duration, and merged, as the documented semantics of a tick calendar and a duration make them.
+     */
+    private static String cutBySessionsAndExtend(TimestampDriver driver, LongList intervals, String calendar, long duration) {
+        return extendAndMerge(driver, TickCalendarTest.intersect(TickCalendarTest.union(intervals), TickCalendarTest.sessions(driver, calendar)), duration);
+    }
+
+    /**
      * Returns the intervals from each start to the instant before each end, given as pairs of
      * timestamps, at the precision of the driver.
      */
@@ -839,6 +901,19 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             intervals.add(driver.parseFloorLiteral(startsAndEnds[i]), driver.parseFloorLiteral(startsAndEnds[i + 1]) - 1);
         }
         return intervals;
+    }
+
+    /**
+     * Returns the intervals with the duration added to the end of each, and merged, as a tick calendar
+     * with a duration extends the pieces it keeps.
+     */
+    private static String extendAndMerge(TimestampDriver driver, LongList intervals, long duration) {
+        final LongList extended = new LongList(intervals.size());
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            extended.add(intervals.getQuick(i), intervals.getQuick(i + 1) + duration);
+        }
+        // intervalToString() prints to a sink that it reuses
+        return intervalToString(driver, TickCalendarTest.union(extended)).toString();
     }
 
     private static boolean isError(String result) {
