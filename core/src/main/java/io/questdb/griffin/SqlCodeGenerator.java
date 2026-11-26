@@ -35,6 +35,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
@@ -150,9 +151,18 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -1564,6 +1574,76 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return true;
+    }
+
+    private static SqlException fillTypeMismatch(int position, int fillType, int targetColType) {
+        return SqlException.$(position, "fill value of type ").put(ColumnType.nameOf(fillType))
+                .put(" cannot fill column of type ").put(ColumnType.nameOf(targetColType));
+    }
+
+    // Folds a constant fill value into a constant of the aggregate's type with the conversion
+    // INSERT applies, throwing ImplicitCastException where INSERT rejects the value; null when
+    // no conversion exists. Text sources convert through their own getters, which are INSERT's
+    // implicitCastStrAs* / implicitCastVarcharAs* parsers.
+    private static Function foldFillConstant(Function fn, int fromType, int toType) {
+        final short fromTag = ColumnType.tagOf(fromType);
+        final boolean isText = isTextType(fromType);
+        final boolean isFloat = fromTag == ColumnType.FLOAT;
+        final boolean isDouble = fromTag == ColumnType.DOUBLE;
+        final boolean isString = fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR;
+        // FLOAT and DOUBLE use INSERT's separate helpers, which range-check differently.
+        // Integer sources (BYTE to LONG, DATE, TIMESTAMP) read through getLong, where NULL is
+        // LONG_NULL; BYTE and SHORT have no NULL, so INSERT stores 0 there.
+        return switch (ColumnType.tagOf(toType)) {
+            case ColumnType.BYTE -> ByteConstant.newInstance(isText ? fn.getByte(null)
+                    : isFloat ? SqlUtil.implicitCastFloatAsByte(fn.getFloat(null))
+                    : isDouble ? SqlUtil.implicitCastDoubleAsByte(fn.getDouble(null))
+                    : SqlUtil.implicitCastAsByte(nullAsZero(fn.getLong(null)), fromType));
+            case ColumnType.SHORT -> ShortConstant.newInstance(isText ? fn.getShort(null)
+                    : isFloat ? SqlUtil.implicitCastFloatAsShort(fn.getFloat(null))
+                    : isDouble ? SqlUtil.implicitCastDoubleAsShort(fn.getDouble(null))
+                    : SqlUtil.implicitCastAsShort(nullAsZero(fn.getLong(null)), fromType));
+            case ColumnType.INT -> IntConstant.newInstance(isText ? fn.getInt(null)
+                    : isFloat ? SqlUtil.implicitCastFloatAsInt(fn.getFloat(null))
+                    : isDouble ? SqlUtil.implicitCastDoubleAsInt(fn.getDouble(null))
+                    : longAsInt(fn.getLong(null), fromType));
+            // Integer sources widen to LONG and FLOAT without a fold.
+            case ColumnType.LONG -> LongConstant.newInstance(isText ? fn.getLong(null)
+                    : isFloat ? SqlUtil.implicitCastFloatAsLong(fn.getFloat(null))
+                    : SqlUtil.implicitCastDoubleAsLong(fn.getDouble(null)));
+            case ColumnType.FLOAT -> FloatConstant.newInstance(isText ? fn.getFloat(null)
+                    : SqlUtil.implicitCastDoubleAsFloat(fn.getDouble(null)));
+            case ColumnType.DOUBLE -> DoubleConstant.newInstance(fn.getDouble(null));
+            // BYTE -> CHAR has no INSERT conversion to mirror, so only text folds.
+            case ColumnType.CHAR -> isString ? CharConstant.newInstance(fn.getChar(null)) : null;
+            // A FLOAT, a digit CHAR and an integer are milliseconds: '5' is 5 ms. DOUBLE does not
+            // convert to DATE.
+            case ColumnType.DATE -> DateConstant.newInstance(
+                    isString || ColumnType.isTimestamp(fromType) ? fn.getDate(null)
+                            : isFloat ? SqlUtil.implicitCastFloatAsLong(fn.getFloat(null))
+                            : fromTag == ColumnType.CHAR ? SqlUtil.implicitCastCharAsType(fn.getChar(null), toType)
+                            : fn.getLong(null));
+            // Only text converts to IPv4 and LONG256. Only CHAR reaches GEOBYTE: createImplicitCast
+            // takes STRING and VARCHAR.
+            case ColumnType.IPv4 -> IPv4Constant.newInstance(fn.getIPv4(null));
+            case ColumnType.LONG256 -> SqlUtil.implicitCastStrAsLong256(fn.getStrA(null));
+            case ColumnType.GEOBYTE ->
+                    new GeoByteConstant(SqlUtil.implicitCastCharAsGeoHash(fn.getChar(null), toType), toType);
+            default -> null;
+        };
+    }
+
+    private static boolean isTextType(int columnType) {
+        final short tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.STRING || tag == ColumnType.VARCHAR || tag == ColumnType.CHAR;
+    }
+
+    private static int longAsInt(long value, int fromType) {
+        return value == Numbers.LONG_NULL ? Numbers.INT_NULL : SqlUtil.implicitCastAsInt(value, fromType);
+    }
+
+    private static long nullAsZero(long value) {
+        return value == Numbers.LONG_NULL ? 0 : value;
     }
 
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
@@ -5231,41 +5311,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         .put("invalid fill value: ").put(fillExpr.token);
                             }
                         } else {
-                            // Reject non-deterministic functions like rnd_double() --
-                            // a fill value must yield the same result on every read.
-                            // isNonDeterministic is preferred over coerceRuntimeConstantType,
-                            // which would also require isConstant/isRuntimeConstant and
-                            // reject valid cast(literal) wrappers.
-                            //
-                            // isConvertibleFrom catches obvious type mismatches up front;
-                            // otherwise Function.getXxx throws UnsupportedOperationException
-                            // at runtime. UNDEFINED (unbound bind variable) is left to
-                            // late binding.
-                            Function fillFunc = fillValues.getQuick(fillIdx);
-                            final int fillType = fillFunc.getType();
-                            if (fillType != ColumnType.UNDEFINED
-                                    && !ColumnType.isConvertibleFrom(fillType, targetColType)) {
-                                throw SqlException.$(fillExpr.position,
-                                                "fill value of type ").put(ColumnType.nameOf(fillType))
-                                        .put(" cannot fill column of type ")
-                                        .put(ColumnType.nameOf(targetColType));
-                            }
-                            // ColumnType.isConvertibleFrom may rely on an implicit cast factory;
-                            // without wrapping here, FillRecord.getXxx would call the unwrapped
-                            // fillFunc and hit Function.getXxx's UnsupportedOperationException
-                            // at runtime (e.g. INT -> DECIMAL via IntFunction.getDecimal64).
-                            if (fillType != ColumnType.UNDEFINED
-                                    && fillType != targetColType
-                                    && !ColumnType.isBuiltInWideningCast(fillType, targetColType)) {
-                                final Function cast = functionParser.createImplicitCast(fillExpr.position, fillFunc, targetColType);
-                                if (cast != null) {
-                                    fillValues.setQuick(fillIdx, cast);
-                                    fillFunc = cast;
-                                }
-                            }
+                            // Reject non-deterministic functions like rnd_double() and bind
+                            // variables -- a fill value must yield the same result on every
+                            // read. isNonDeterministic is preferred over coerceRuntimeConstantType,
+                            // which would also require isConstant/isRuntimeConstant and reject
+                            // valid cast(literal) wrappers.
+                            final Function fillFunc = fillValues.getQuick(fillIdx);
                             if (fillFunc.isNonDeterministic()) {
                                 throw SqlException.$(fillExpr.position,
                                         "fill value must be a constant expression");
+                            }
+                            final int fillType = fillFunc.getType();
+                            if (!ColumnType.isConvertibleFrom(fillType, targetColType)) {
+                                throw fillTypeMismatch(fillExpr.position, fillType, targetColType);
+                            }
+                            // FillRecord reads the fill value through the target column's getter,
+                            // which handles a numeric widening. A text getter parses on every read
+                            // and would fail mid-result on bad input, so text always converts.
+                            final boolean isReadableAsIs = ColumnType.isBuiltInWideningCast(fillType, targetColType)
+                                    && !isTextType(fillType);
+                            if (fillType != targetColType && !isReadableAsIs) {
+                                Function converted;
+                                try {
+                                    // Wraps INT -> DECIMAL and similar pairs that have a cast factory;
+                                    // folds the result when the fill value is a constant.
+                                    converted = functionParser.createImplicitCast(fillExpr.position, fillFunc, targetColType);
+                                    // STRING, VARCHAR and SYMBOL columns read any text source as it is.
+                                    if (converted == null
+                                            && !ColumnType.isVarcharOrString(targetColType)
+                                            && !ColumnType.isSymbol(targetColType)) {
+                                        if (!fillFunc.isConstant()) {
+                                            throw SqlException.$(fillExpr.position,
+                                                    "fill value must be a constant expression");
+                                        }
+                                        converted = foldFillConstant(fillFunc, fillType, targetColType);
+                                        if (converted == null) {
+                                            throw fillTypeMismatch(fillExpr.position, fillType, targetColType);
+                                        }
+                                        fillValues.setQuick(fillIdx, null);
+                                        Misc.free(fillFunc);
+                                    }
+                                } catch (ImplicitCastException e) {
+                                    throw SqlException.$(fillExpr.position, e.getFlyweightMessage());
+                                }
+                                if (converted != null) {
+                                    fillValues.setQuick(fillIdx, converted);
+                                }
                             }
                         }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);

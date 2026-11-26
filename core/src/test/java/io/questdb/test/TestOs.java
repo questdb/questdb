@@ -119,7 +119,9 @@ public class TestOs {
                 }
 
                 try (InputStream is = Files.newInputStream(rustLibPath)) {
-                    Os.loadLib(rustLibPath.toString(), is);
+                    // Os.loadLib splits its name argument at the first dot, so pass the file
+                    // name only: a dot in a parent directory would break it.
+                    Os.loadLib(rustLibPath.getFileName().toString(), is);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }

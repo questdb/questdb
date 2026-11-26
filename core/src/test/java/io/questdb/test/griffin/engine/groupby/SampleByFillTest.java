@@ -7,17 +7,20 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.BindVarTuple;
@@ -2072,6 +2075,84 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueConvertsTextToAggregateType() throws Exception {
+        // Text fill values parse once, at compile time, with INSERT's rules. LONG256 is covered by
+        // testFillValueMatchesInsertForEveryTypePair: the returns() battery rejects a LONG256
+        // constant, whose getLong256A and getLong256B return the same object.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fv_txt (
+                        g GEOHASH(1c), dt DATE, b BYTE, k SYMBOL, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t_fv_txt VALUES
+                        (#u, '2024-01-01T00:00:00.000Z', 7, 'k1', '2024-01-01T00:00:00.000000Z'),
+                        (#u, '2024-01-01T00:00:00.000Z', 7, 'k1', '2024-01-01T02:00:00.000000Z')""");
+            assertQuery("SELECT ts, first(g) g, first(dt) dt, first(dt) dt5, first(b) b FROM t_fv_txt " +
+                    "SAMPLE BY 1h FILL('s', '2024-01-05', '5', '12')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tg\tdt\tdt5\tb
+                            2024-01-01T00:00:00.000000Z\tu\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000Z\t7
+                            2024-01-01T01:00:00.000000Z\ts\t2024-01-05T00:00:00.000Z\t1970-01-01T00:00:00.005Z\t12
+                            2024-01-01T02:00:00.000000Z\tu\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000Z\t7
+                            """);
+            // keyed SAMPLE BY folds the same way
+            assertQuery("SELECT ts, k, first(b) b FROM t_fv_txt SAMPLE BY 1h FILL('12') ORDER BY ts, k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tb
+                            2024-01-01T00:00:00.000000Z\tk1\t7
+                            2024-01-01T01:00:00.000000Z\tk1\t12
+                            2024-01-01T02:00:00.000000Z\tk1\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillValueConvertsTimestampToDate() throws Exception {
+        // TIMESTAMP -> DATE converts micros (or nanos) to millis, as INSERT does.
+        assertQuery("SELECT ts, first(dt) a, first(dt) b, first(dt) c FROM t_fv_ts2d SAMPLE BY 1h " +
+                "FILL(300_000::TIMESTAMP, '2024-01-05T00:00:00.000000Z'::TIMESTAMP, '2024-01-05T00:00:00.123456789Z'::TIMESTAMP_NS)")
+                .ddl(
+                        "CREATE TABLE t_fv_ts2d (dt DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO t_fv_ts2d VALUES
+                                    ('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000000Z'),
+                                    ('2024-01-01T00:00:00.000Z', '2024-01-01T02:00:00.000000Z')"""
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\ta\tb\tc
+                        2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000Z
+                        2024-01-01T01:00:00.000000Z\t1970-01-01T00:00:00.300Z\t2024-01-05T00:00:00.000Z\t2024-01-05T00:00:00.123Z
+                        2024-01-01T02:00:00.000000Z\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000Z
+                        """);
+    }
+
+    @Test
+    public void testFillValueDoubleFillsFloatAggregate() throws Exception {
+        // DOUBLE -> FLOAT has no cast factory; the fill folds the literal with INSERT's range check.
+        assertQuery("SELECT ts, max(f) m FROM t_fv_d2f SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_d2f (f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_d2f VALUES (1.0, '2024-01-01T00:00:00.000000Z'), (3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tm
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.5
+                        2024-01-01T02:00:00.000000Z\t3.0
+                        """);
+    }
+
+    @Test
     public void testFillValueIntCastsToDecimalAggregate() throws Exception {
         // IntFunction has no typed DECIMAL accessor, so SampleByFillRecord would crash at runtime
         // with UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL
@@ -2094,6 +2175,151 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueMatchesInsertForEveryTypePair() throws Exception {
+        // INSERT INTO t VALUES (<literal>) is the oracle: FILL(<literal>) on an aggregate of the
+        // same type must store the same value, or fail at compile time where INSERT fails. A fill
+        // must never fail while the cursor emits rows.
+        final String[] types = {
+                "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "FLOAT", "DOUBLE",
+                "STRING", "VARCHAR", "SYMBOL", "UUID", "IPv4", "LONG256",
+                "GEOHASH(3b)", "GEOHASH(1c)", "GEOHASH(2c)", "GEOHASH(5c)", "GEOHASH(8c)", "DECIMAL(10,2)"
+        };
+        final String[] literals = {
+                "0", "1", "-1", "127", "128", "-129", "300", "32_767", "32_768", "-32_769", "70_000",
+                "2_147_483_647", "2_147_483_648", "-2_147_483_648", "5_000_000_000",
+                "1.5", "-1.5", "127.5", "-128.5", "300.5", "32767.5", "-32768.5",
+                "2147483647.5", "-2147483648.5", "1e300", "1e-50", "-0.0",
+                "NULL::INT", "NULL::LONG", "NULL::DOUBLE", "NULL::STRING", "NULL::CHAR",
+                // ::FLOAT follows PostgreSQL and yields DOUBLE; CAST(... AS FLOAT) yields FLOAT
+                "CAST(1.5 AS FLOAT)", "CAST(127.5 AS FLOAT)", "CAST(-128.5 AS FLOAT)", "CAST(300.5 AS FLOAT)",
+                "CAST(32767.5 AS FLOAT)", "CAST(-32768.5 AS FLOAT)",
+                "CAST(2147483647 AS FLOAT)", "CAST(-2147483648 AS FLOAT)",
+                "65::BYTE", "65::SHORT", "true",
+                "'5'", "'a'", "'s'", "''", "'300'", "'1.5'", "'abc'", "'5'::VARCHAR", "'abc'::VARCHAR", "'abc'::SYMBOL",
+                "'2024-01-05'", "'2024-01-05T00:00:00.000Z'", "'0x01'", "'1.2.3.4'", "'11111111-1111-1111-1111-111111111111'",
+                "'2024-01-05T00:00:00.000000Z'::TIMESTAMP", "300_000::TIMESTAMP",
+                "'2024-01-05T00:00:00.000000001Z'::TIMESTAMP_NS", "'2024-01-05'::DATE",
+                "#s", "#sp", "'1.2.3.4'::IPv4", "'11111111-1111-1111-1111-111111111111'::UUID",
+                "'0x01'::LONG256", "1.50m"
+        };
+        assertMemoryLeak(() -> {
+            final StringSink mismatches = new StringSink();
+            for (int t = 0; t < types.length; t++) {
+                final String type = types[t];
+                final String src = "fv_src_" + t;
+                final String dst = "fv_dst_" + t;
+                execute("CREATE TABLE " + src + " (v " + type + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + src + " (ts) VALUES ('2024-01-01T00:00:00.000000Z'), ('2024-01-01T02:00:00.000000Z')");
+                execute("CREATE TABLE " + dst + " (v " + type + ")");
+                // first(LONG256) resolves to first(LONG); sum keeps the LONG256 type.
+                final String agg = "LONG256".equals(type) ? "sum(v)" : "first(v)";
+                for (String literal : literals) {
+                    final String fill = fillOutcome("SELECT ts, " + agg + " v FROM " + src + " SAMPLE BY 1h FILL(" + literal + ")");
+                    final String insert = insertOutcome(dst, literal);
+                    // INSERT's copier generator asserts on a pair it has no conversion for; FILL
+                    // must reject such a pair at compile time.
+                    final boolean isRejectedByBoth = "error".equals(fill) && "assertion".equals(insert);
+                    if (!fill.equals(insert) && !isRejectedByBoth) {
+                        mismatches.put(type).put(" <- ").put(literal)
+                                .put(": fill=").put(fill).put(", insert=").put(insert).put('\n');
+                    }
+                }
+            }
+            // Deliberate or pre-existing deviations, none of them a run-time failure:
+            // - FillRecord has always read SHORT -> CHAR as a code point; INSERT has no copier.
+            // - FILL rejects IPv4 -> STRING/VARCHAR and SYMBOL -> UUID, which INSERT converts.
+            // - A NULL CHAR fills a NULL VARCHAR/SYMBOL; INSERT stores the NUL character.
+            // - Malformed UUID and empty GEOHASH strings go through the implicit cast factory and
+            //   fill NULL; INSERT rejects them.
+            // - INSERT mis-parses VARCHAR -> LONG256; FILL parses it as INSERT parses STRING.
+            TestUtils.assertEquals("""
+                    CHAR <- 65::SHORT: fill=A, insert=assertion
+                    STRING <- '1.2.3.4'::IPv4: fill=error, insert=1.2.3.4
+                    VARCHAR <- NULL::CHAR: fill=, insert=\\u0000
+                    VARCHAR <- '1.2.3.4'::IPv4: fill=error, insert=1.2.3.4
+                    SYMBOL <- NULL::CHAR: fill=, insert=\\u0000
+                    UUID <- '300': fill=, insert=error
+                    UUID <- '1.5': fill=, insert=error
+                    UUID <- 'abc': fill=, insert=error
+                    UUID <- '5'::VARCHAR: fill=, insert=error
+                    UUID <- 'abc'::VARCHAR: fill=, insert=error
+                    UUID <- 'abc'::SYMBOL: fill=error, insert=
+                    UUID <- '2024-01-05': fill=, insert=error
+                    UUID <- '2024-01-05T00:00:00.000Z': fill=, insert=error
+                    UUID <- '0x01': fill=, insert=error
+                    UUID <- '1.2.3.4': fill=, insert=error
+                    LONG256 <- '5'::VARCHAR: fill=0x05, insert=0x00
+                    LONG256 <- 'abc'::VARCHAR: fill=0x0abc, insert=0x0c
+                    GEOHASH(3b) <- '': fill=, insert=error
+                    GEOHASH(1c) <- '': fill=, insert=error
+                    GEOHASH(2c) <- '': fill=, insert=error
+                    GEOHASH(5c) <- '': fill=, insert=error
+                    GEOHASH(8c) <- '': fill=, insert=error
+                    """, mismatches);
+        });
+    }
+
+    @Test
+    public void testFillValueNarrowsDoubleToLong() throws Exception {
+        // DOUBLE -> LONG has no implicit cast factory; the fill constant is folded with the same
+        // rules INSERT applies, so 1.5 fills 1 instead of reaching DoubleFunction.getLong.
+        assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_dbl (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl VALUES (1, '2024-01-01T00:00:00.000000Z'), (3, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-01T01:00:00.000000Z\t1
+                        2024-01-01T02:00:00.000000Z\t1
+                        """);
+    }
+
+    @Test
+    public void testFillValueNarrowsDoubleToLongInBroadcast() throws Exception {
+        // Broadcast FILL(1.5) over count() (LONG) and sum(DOUBLE): each slot is folded to its own type.
+        assertQuery("SELECT ts, count() c, sum(d) s FROM t_fv_dbl_bc SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_dbl_bc (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl_bc VALUES (1.0, '2024-01-01T00:00:00.000000Z'), (3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc\ts
+                        2024-01-01T00:00:00.000000Z\t1\t1.0
+                        2024-01-01T01:00:00.000000Z\t1\t1.5
+                        2024-01-01T02:00:00.000000Z\t1\t3.0
+                        """);
+    }
+
+    @Test
+    public void testFillValueNarrowsDoubleToNarrowIntegers() throws Exception {
+        // DOUBLE -> INT, SHORT and BYTE truncate toward zero, as INSERT does. first() keeps the
+        // column type; max() over BYTE or SHORT returns INT.
+        assertQuery("SELECT ts, first(i) i, first(s) s, first(b) b, first(i) ni, first(s) ns, first(b) nb FROM t_fv_d2n " +
+                "SAMPLE BY 1h FILL(1.5, 1.5, 1.5, -1.5, -1.5, -1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_d2n (i INT, s SHORT, b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO t_fv_d2n VALUES
+                                    (7, 7, 7, '2024-01-01T00:00:00.000000Z'),
+                                    (7, 7, 7, '2024-01-01T02:00:00.000000Z')"""
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\ti\ts\tb\tni\tns\tnb
+                        2024-01-01T00:00:00.000000Z\t7\t7\t7\t7\t7\t7
+                        2024-01-01T01:00:00.000000Z\t1\t1\t1\t-1\t-1\t-1
+                        2024-01-01T02:00:00.000000Z\t7\t7\t7\t7\t7\t7
+                        """);
+    }
+
+    @Test
     public void testFillValueRejectedForArrayAggregate() throws Exception {
         // first(array) returns DOUBLE[]. FirstArrayGroupByFunction omits
         // SAMPLE_BY_FILL_VALUE from getSampleByFlags(), so the GroupByUtils
@@ -2107,6 +2333,44 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertQuery("SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)")
                 .ddl("CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(52, "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]");
+    }
+
+    @Test
+    public void testFillValueRejectedForBindVariable() throws Exception {
+        // A bind variable is not a constant, whatever its type; the type check must not run first
+        // and report a type mismatch instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_bind (f FLOAT, dt DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 1.5);
+            String sql = "SELECT ts, count() c FROM t_fv_bind SAMPLE BY 1h FILL($1)";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("$1"), "fill value must be a constant expression");
+
+            bindVariableService.clear();
+            bindVariableService.setDouble("v", 1.5);
+            sql = "SELECT ts, max(f) m FROM t_fv_bind SAMPLE BY 1h FILL(:v)";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf(":v"), "fill value must be a constant expression");
+
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 300_000);
+            sql = "SELECT ts, first(dt) d FROM t_fv_bind SAMPLE BY 1h FILL($1)";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("$1"), "fill value must be a constant expression");
+
+            // unbound
+            bindVariableService.clear();
+            sql = "SELECT ts, count() c FROM t_fv_bind SAMPLE BY 1h FILL($1)";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("$1"), "fill value must be a constant expression");
+        });
+    }
+
+    @Test
+    public void testFillValueRejectedForByteToChar() throws Exception {
+        // INSERT has no BYTE -> CHAR conversion to mirror, so the pair is rejected at compile time.
+        String sql = "SELECT ts, first(c) c FROM t_fv_b2c SAMPLE BY 1h FILL(65::BYTE)";
+        assertQuery(sql)
+                .ddl("CREATE TABLE t_fv_b2c (c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(sql.indexOf("65::BYTE") + 2, "fill value of type BYTE cannot fill column of type CHAR");
     }
 
     @Test
@@ -2127,11 +2391,52 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueRejectedForInconvertibleValue() throws Exception {
+        // INSERT rejects these values; the fill does too, at compile time, pointing at the
+        // literal and naming the literal's own type and the aggregate's type.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fv_bad (
+                        b BYTE, s SHORT, l LONG, f FLOAT, dt DATE, g GEOHASH(1c), ip IPv4, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            assertInconvertibleFill("first(b)", "300", "inconvertible value: 300 [INT -> BYTE]");
+            assertInconvertibleFill("first(s)", "70_000", "inconvertible value: 70000 [INT -> SHORT]");
+            assertInconvertibleFill("first(b)", "'300'", "inconvertible value: `300` [STRING -> BYTE]");
+            assertInconvertibleFill("first(l)", "'abc'", "inconvertible value: `abc` [STRING -> LONG]");
+            assertInconvertibleFill("first(f)", "1e300", "inconvertible value: 1.0E300 [DOUBLE -> FLOAT]");
+            // a FLOAT is range-checked before truncation, as INSERT does
+            assertInconvertibleFill("first(s)", "CAST(32767.5 AS FLOAT)", "inconvertible value: 32767.5 [FLOAT -> SHORT]");
+            assertInconvertibleFill("first(dt)", "'a'", "inconvertible value: a [CHAR -> DATE]");
+            assertInconvertibleFill("first(dt)", "'abc'", "inconvertible value: `abc` [STRING -> DATE]");
+            assertInconvertibleFill("first(g)", "'a'", "inconvertible value: a [CHAR -> GEOHASH(1c)]");
+            assertInconvertibleFill("first(ip)", "'1.2.3'", "invalid IPv4 format: 1.2.3");
+        });
+    }
+
+    @Test
     public void testFillValueRejectedForLong256Aggregate() throws Exception {
         // sum(long256) returns LONG256; no INT -> LONG256 implicit cast exists.
         assertQuery("SELECT ts, sum(l) FROM t_fv_l256 SAMPLE BY 1m FILL(0)")
                 .ddl("CREATE TABLE t_fv_l256 (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(51, "fill value of type INT cannot fill column of type LONG256");
+    }
+
+    @Test
+    public void testFillValueRejectedForNonConstantNeedingConversion() throws Exception {
+        // current_user() is deterministic but not a constant, so a fill that needs converting
+        // cannot fold it.
+        String sql = "SELECT ts, first(b) b FROM t_fv_nc SAMPLE BY 1h FILL(current_user())";
+        assertQuery(sql)
+                .ddl("CREATE TABLE t_fv_nc (b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(sql.indexOf("current_user()"), "fill value must be a constant expression");
+    }
+
+    @Test
+    public void testFillValueRejectedForOutOfRangeLongToInt() throws Exception {
+        // Same range check INSERT applies when narrowing LONG -> INT.
+        assertQuery("SELECT ts, max(i) m FROM t_fv_l2i SAMPLE BY 1m FILL(9_223_372_036_854_775_807)")
+                .ddl("CREATE TABLE t_fv_l2i (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(52, "inconvertible value: 9223372036854775807 [LONG -> INT]");
     }
 
     @Test
@@ -2662,5 +2967,48 @@ public class SampleByFillTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
             }
         });
+    }
+
+    // Value of the 01:00 gap row or "error" for a compile-time error. A crash yields a marker that
+    // never equals an INSERT outcome. Error messages differ between the statements by design;
+    // targeted tests pin them.
+    private static String fillOutcome(String sql) {
+        final RecordCursorFactory factory;
+        try {
+            factory = select(sql);
+        } catch (SqlException e) {
+            return "error";
+        } catch (Throwable e) {
+            return "compile crash: " + e;
+        }
+        try (factory; RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final StringSink rows = new StringSink();
+            println(factory.getMetadata(), cursor, rows);
+            // header, 00:00 row, 01:00 gap row, 02:00 row
+            final String gapRow = rows.toString().split("\n", -1)[2];
+            return gapRow.substring(gapRow.indexOf('\t') + 1);
+        } catch (Throwable e) {
+            return "runtime crash: " + e;
+        }
+    }
+
+    private static String insertOutcome(String table, String literal) throws SqlException {
+        execute("TRUNCATE TABLE " + table);
+        try {
+            execute("INSERT INTO " + table + " VALUES (" + literal + ")");
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            return "error";
+        } catch (AssertionError e) {
+            return "assertion";
+        }
+        final StringSink rows = new StringSink();
+        printSql("SELECT v FROM " + table, rows);
+        final String value = rows.toString().split("\n", -1)[1];
+        return value.replace("\u0000", "\\u0000");
+    }
+
+    private void assertInconvertibleFill(String aggregate, String literal, String message) throws Exception {
+        final String sql = "SELECT ts, " + aggregate + " v FROM t_fv_bad SAMPLE BY 1h FILL(" + literal + ")";
+        assertQuery(sql).noLeakCheck().fails(sql.indexOf("FILL(") + 5, message);
     }
 }
