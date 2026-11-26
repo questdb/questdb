@@ -797,7 +797,7 @@ public class WorkerPool implements Closeable {
     }
 
     // A group's share of a pool-wide fiber limit, in proportion to its share of the workers,
-    // rounded up and at least 1. A split shared network pool has at least
+    // rounded up and at least 1. A split network pool has at least
     // PropServerConfiguration.MIN_NETWORK_GROUP_WORKERS (8) workers per group, so dividing the
     // default limits gives what the default formulas give for the group's own worker count. A limit
     // below 1 passes through for the runtime to reject.

@@ -3659,8 +3659,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     /**
-     * The source of the CPU socket layout for {@code shared.network.worker.groups}, or null where
-     * worker groups don't apply.
+     * The source of the CPU socket layout that places the groups of a split network pool, or null
+     * where worker groups don't apply.
      */
     protected @Nullable CpuTopology createCpuTopology() {
         return Os.isLinux() ? new CpuTopology() : null;

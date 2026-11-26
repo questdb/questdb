@@ -35,7 +35,7 @@ import java.util.TreeMap;
 /**
  * The CPU sockets among the CPUs this process may use, read from the Linux {@code /proc} and
  * {@code /sys} trees, and the checks that decide whether the layout looks real enough to pin the
- * groups of the shared network pool to sockets.
+ * groups of a split network pool to sockets.
  * <p>
  * The allowed CPUs come from {@code Cpus_allowed_list} in {@code /proc/self/status}, which reflects
  * {@code taskset}, cgroup cpusets and {@code docker --cpuset-cpus}. That list can name offline CPUs,

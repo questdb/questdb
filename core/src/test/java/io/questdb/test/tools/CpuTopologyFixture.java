@@ -45,6 +45,14 @@ public final class CpuTopologyFixture {
     }
 
     /**
+     * Sets the CPUs the process may use to the kernel CPU list {@code list}.
+     */
+    public static Path allowed(Path fixture, String list) throws IOException {
+        Files.writeString(fixture.resolve("proc/self/status"), "Name:\tjava\nCpus_allowed_list:\t" + list + "\n");
+        return fixture;
+    }
+
+    /**
      * Creates a server configuration that reads the CPU layout from {@code fixture}, or reports
      * CPU socket placement as unsupported when it is null.
      */
@@ -74,11 +82,24 @@ public final class CpuTopologyFixture {
      */
     public static Path create(Path dir, String allowed, String online) throws IOException {
         Files.createDirectories(dir.resolve("proc/self"));
-        Files.writeString(dir.resolve("proc/self/status"), "Name:\tjava\nCpus_allowed_list:\t" + allowed + "\n");
-        final Path cpuDir = dir.resolve("sys/devices/system/cpu");
-        Files.createDirectories(cpuDir);
-        Files.writeString(cpuDir.resolve("online"), online + "\n");
-        return dir;
+        Files.createDirectories(dir.resolve("sys/devices/system/cpu"));
+        allowed(dir, allowed);
+        return online(dir, online);
+    }
+
+    /**
+     * Sets the online CPUs to the kernel CPU list {@code list}.
+     */
+    public static Path online(Path fixture, String list) throws IOException {
+        Files.writeString(fixture.resolve("sys/devices/system/cpu/online"), list + "\n");
+        return fixture;
+    }
+
+    /**
+     * A {@link CpuTopology} that reads {@code fixture}.
+     */
+    public static CpuTopology topology(Path fixture) {
+        return new CpuTopology(fixture.resolve("proc"), fixture.resolve("sys"));
     }
 
     /**
@@ -113,7 +134,7 @@ public final class CpuTopologyFixture {
         @Override
         protected @Nullable CpuTopology createCpuTopology() {
             final Path fixture = FixtureConfiguration.fixture;
-            return fixture != null ? new CpuTopology(fixture.resolve("proc"), fixture.resolve("sys")) : null;
+            return fixture != null ? topology(fixture) : null;
         }
     }
 }

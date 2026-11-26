@@ -83,7 +83,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
@@ -107,9 +106,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME;
@@ -1786,12 +1783,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     @Test
     public void testReloadOnRestrictedThreadKeepsCpuDerivedDefaults() throws Exception {
         // A worker of a network pool split by CPU socket runs reload_config() on its socket's CPUs.
-        Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
-        final int[] allowedCpus = TestUtils.getThreadAllowedCpus();
-        // restricted to one CPU, the defaults size each shared pool at 2 workers
-        Assume.assumeTrue("needs at least 3 allowed CPUs", allowedCpus.length > 2);
-        // a CPU quota caps the JVM's count below the cpuset, and the defaults follow the JVM's count
-        Assume.assumeTrue("needs a JVM CPU count of at least 3", Runtime.getRuntime().availableProcessors() > 2);
+        // Restricted to one CPU, the defaults size each shared pool at 2 workers, so a difference
+        // shows from 3 CPUs on.
+        TestUtils.assumeRestrictableToOneCpu(3);
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write("pg.net.connection.limit=10\n");
@@ -1813,31 +1807,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     try (FileWriter w = new FileWriter(serverConf)) {
                         w.write("pg.net.connection.limit=11\n");
                     }
-                    final AtomicInteger seenCpuCount = new AtomicInteger();
                     final AtomicBoolean isReloaded = new AtomicBoolean();
-                    final AtomicReference<Throwable> failure = new AtomicReference<>();
-                    final Thread reloader = new Thread(() -> {
-                        try {
-                            Assert.assertEquals(0, Os.setCurrentThreadCpus(new int[]{allowedCpus[0]}));
-                            // in a container, the JVM caches the CPU count across threads for a few milliseconds
-                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                            int cpuCount;
-                            while ((cpuCount = Runtime.getRuntime().availableProcessors()) != 1 && System.nanoTime() < deadline) {
-                                Os.pause();
-                            }
-                            seenCpuCount.set(cpuCount);
-                            isReloaded.set(configuration.reload());
-                        } catch (Throwable th) {
-                            failure.set(th);
-                        }
-                    });
-                    reloader.start();
-                    reloader.join();
-                    if (failure.get() != null) {
-                        throw new AssertionError(failure.get());
-                    }
-                    Assert.assertEquals("the reloading thread sees only its own CPU", 1, seenCpuCount.get());
+                    TestUtils.runOnOneCpu(() -> isReloaded.set(configuration.reload()));
                     Assert.assertTrue(isReloaded.get());
+                    // the reload took effect, so the values below come from the reloaded configuration
+                    Assert.assertEquals(11, configuration.getPGWireConfiguration().getLimit());
 
                     Assert.assertEquals(networkWorkerCount, network.getWorkerCount());
                     Assert.assertEquals(networkMaxLiveCount, network.getFiberMaxLiveCount());

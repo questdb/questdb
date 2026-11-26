@@ -1397,6 +1397,21 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Skips the calling test unless {@link #runOnOneCpu(LeakProneCode)} lowers the CPU count a
+     * thread sees from at least {@code minCpuCount} to 1. Thread CPU sets apply on Linux only, and
+     * both the calling thread's CPU set and the JVM's CPU count must hold {@code minCpuCount} CPUs:
+     * a CPU quota caps the JVM's count below the CPU set.
+     */
+    public static void assumeRestrictableToOneCpu(int minCpuCount) throws IOException {
+        Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
+        Assume.assumeTrue("needs at least " + minCpuCount + " allowed CPUs", getThreadAllowedCpus().length >= minCpuCount);
+        Assume.assumeTrue(
+                "needs a JVM CPU count of at least " + minCpuCount,
+                Runtime.getRuntime().availableProcessors() >= minCpuCount
+        );
+    }
+
     public static void await(CyclicBarrier barrier) {
         try {
             barrier.await();
@@ -2561,6 +2576,35 @@ public final class TestUtils {
         }
         joinThreads(threads);
         rethrowFirst(firstError);
+    }
+
+    /**
+     * Runs {@code code} on a new thread restricted to the first CPU the calling thread may use, once
+     * {@link Runtime#availableProcessors()} reports that single CPU to it, the way a worker of a
+     * network pool split by CPU socket runs on its socket's CPUs. A failure on that thread fails the
+     * calling test through {@link #rethrowFirst(AtomicReference)}. Linux only.
+     */
+    public static void runOnOneCpu(LeakProneCode code) throws Exception {
+        final int cpu = getThreadAllowedCpus()[0];
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread thread = new Thread(() -> {
+            try {
+                Assert.assertEquals(0, Os.setCurrentThreadCpus(new int[]{cpu}));
+                // in a container, the JVM caches the CPU count across threads for a few milliseconds
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                int cpuCount;
+                while ((cpuCount = Runtime.getRuntime().availableProcessors()) != 1 && System.nanoTime() < deadline) {
+                    Os.pause();
+                }
+                Assert.assertEquals("the restricted thread sees only its own CPU", 1, cpuCount);
+                code.run();
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        });
+        thread.start();
+        thread.join();
+        rethrowFirst(failure);
     }
 
     /**
