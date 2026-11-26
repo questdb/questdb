@@ -34,6 +34,18 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface FunctionFactory {
+    /**
+     * The value the group by function the factory builds reports over a group of no rows. The planner reads it where
+     * a rewrite loses the empty group: an outer row a decorrelated LATERAL matches no row of, an absent PIVOT cell,
+     * a WINDOW JOIN whose filter is constant false. Every function the factory builds agrees with it, see
+     * {@link io.questdb.griffin.engine.functions.GroupByFunction#hasNonNullEmptyValue()}.
+     *
+     * @return the value of the group by function over no rows
+     */
+    default EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.NULL;
+    }
+
     default int getExecutionRequirements() {
         return SqlExecutionRequirements.NONE;
     }
@@ -290,6 +302,27 @@ public interface FunctionFactory {
 
     default boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
         return true;
+    }
+
+    /**
+     * The value a group by function reports over a group of no rows.
+     */
+    enum EmptyGroupValue {
+        /**
+         * NULL, or false for a BOOLEAN function.
+         */
+        NULL,
+        /**
+         * Zero of the function's LONG or DOUBLE type, as count() reports. Over a group of rows the function reports
+         * neither NULL nor a negative value: {@code coalesce(value, 0)} restores the value over no rows where an outer
+         * join has no row, and a comparison that every value from zero up passes keeps every group.
+         */
+        ZERO,
+        /**
+         * True, as isOrdered() reports. The function is BOOLEAN, which an outer join reads as false where it has no
+         * row.
+         */
+        TRUE
     }
 
     /**

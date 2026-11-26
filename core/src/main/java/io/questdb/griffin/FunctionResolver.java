@@ -926,6 +926,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             throw ex;
         }
         assert declaredType == ColumnType.UNDEFINED || declaredType == function.getType() : "function type differs from the result type its factory declares";
+        assert !(function instanceof GroupByFunction groupBy) || hasDeclaredEmptyGroupValue(factory, groupBy)
+                : "group by function value over no rows differs from the one its factory declares";
         if (!executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
             RequirementFact fact = null;
             if (nonDeterministicCallIndex < 0) {
@@ -1460,6 +1462,15 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             }
         }
         return false;
+    }
+
+    private static boolean hasDeclaredEmptyGroupValue(FunctionFactory factory, GroupByFunction function) {
+        final short typeTag = ColumnType.tagOf(function.getType());
+        return switch (factory.getEmptyGroupValue()) {
+            case NULL -> !function.hasNonNullEmptyValue();
+            case ZERO -> function.hasNonNullEmptyValue() && (typeTag == ColumnType.LONG || typeTag == ColumnType.DOUBLE);
+            case TRUE -> function.hasNonNullEmptyValue() && typeTag == ColumnType.BOOLEAN;
+        };
     }
 
     // STRING ordering reads NULL <= NULL as true, CHAR ordering never holds for NULL. A NULL CHAR constant ordered

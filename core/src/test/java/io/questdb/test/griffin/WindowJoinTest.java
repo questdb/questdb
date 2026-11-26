@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -1906,48 +1906,16 @@ public class WindowJoinTest extends AbstractCairoTest {
         // IS NULL tells a NULL from an empty value that prints the same.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
-            executeWithRewriteTimestamp("""
-                            CREATE TABLE czw_prices (sym SYMBOL, b BOOLEAN, bt BYTE, sh SHORT, ch CHAR, i INT, l LONG, f FLOAT,
-                            d DOUBLE, dt DATE, tsx TIMESTAMP, tsn TIMESTAMP_NS, s STRING, v VARCHAR, l256 LONG256, u UUID,
-                            ip IPV4, g1 GEOHASH(1c), g2 GEOHASH(2c), g4 GEOHASH(4c), g8 GEOHASH(8c), bin BINARY, arr DOUBLE[],
-                            d8 DECIMAL(2,1), d16 DECIMAL(4,1), d32 DECIMAL(9,2), d64 DECIMAL(18,2), d128 DECIMAL(38,2),
-                            d256 DECIMAL(76,2), ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY""",
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
                     rightTableTimestampType.getTypeName()
             );
-            execute("""
-                    INSERT INTO czw_prices SELECT CASE WHEN x = 3 THEN 'b' ELSE 'a' END, true, x::byte, x::short, 'c',
-                    x::int, x, x::float, x::double, '2024-01-01'::date, '2024-01-01'::timestamp,
-                    '2024-01-01'::timestamp_ns, 's' || x, ('v' || x)::varchar, rnd_long256(), rnd_uuid4(), rnd_ipv4(),
-                    rnd_geohash(5), rnd_geohash(10), rnd_geohash(20), rnd_geohash(40), rnd_bin(4, 4, 0),
-                    ARRAY[x::double, 2.0], x::decimal(2,1), x::decimal(4,1), x::decimal(9,2), x::decimal(18,2),
-                    x::decimal(38,2), x::decimal(76,2), timestamp_sequence('2024-01-01T08:59:30', 30_000_000)
-                    FROM long_sequence(3)""");
+            execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES
+                    + ", timestamp_sequence('2024-01-01T08:59:30', 30_000_000) FROM long_sequence(3)");
 
             final TreeSet<String> calls = new TreeSet<>();
             final TreeSet<String> functionNames = new TreeSet<>();
-            engine.getFunctionFactoryCache().getFactories().forEach((name, descriptors) -> {
-                for (int i = 0, n = descriptors.size(); i < n; i++) {
-                    final FunctionFactoryDescriptor descriptor = descriptors.getQuick(i);
-                    if (!descriptor.getFactory().isGroupBy()) {
-                        continue;
-                    }
-                    functionNames.add(descriptor.getName());
-                    final ObjList<ObjList<String>> argsPerPosition = new ObjList<>();
-                    for (int p = 0, m = descriptor.getSigArgCount(); p < m; p++) {
-                        final int typeWithFlags = descriptor.getArgTypeWithFlags(p);
-                        final ObjList<String> args = new ObjList<>();
-                        addEmptyValueSweepArgs(
-                                FunctionFactoryDescriptor.toTypeTag(typeWithFlags),
-                                FunctionFactoryDescriptor.isArray(typeWithFlags),
-                                FunctionFactoryDescriptor.isConstant(typeWithFlags),
-                                p > 0,
-                                args
-                        );
-                        argsPerPosition.add(args);
-                    }
-                    addEmptyValueSweepCalls(descriptor.getName(), argsPerPosition, 0, new StringBuilder(), calls);
-                }
-            });
+            GroupByCallSweep.collectCalls(engine.getFunctionFactoryCache(), "p.", FunctionFactory::isGroupBy, calls, functionNames);
 
             final String[] constantFalseConditions = {
                     "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
@@ -12906,99 +12874,6 @@ public class WindowJoinTest extends AbstractCairoTest {
     // Arguments of one type for testConstantFalseJoinFilterMatchesRegularPathForEveryAggregate(): the
     // czw_prices columns of that type, then, for a constant parameter or a parameter after the first,
     // constants of that type.
-    private static void addEmptyValueSweepArgs(short typeTag, boolean isArray, boolean isConstant, boolean isAfterFirst, ObjList<String> args) {
-        if (!isConstant) {
-            if (isArray) {
-                args.add("p.arr");
-            } else {
-                switch (typeTag) {
-                    case ColumnType.BOOLEAN -> args.add("p.b");
-                    case ColumnType.BYTE -> args.add("p.bt");
-                    case ColumnType.SHORT -> args.add("p.sh");
-                    case ColumnType.CHAR -> args.add("p.ch");
-                    case ColumnType.INT -> args.add("p.i");
-                    case ColumnType.LONG -> args.add("p.l");
-                    case ColumnType.FLOAT -> args.add("p.f");
-                    case ColumnType.DOUBLE -> args.add("p.d");
-                    case ColumnType.DATE -> args.add("p.dt");
-                    case ColumnType.TIMESTAMP -> {
-                        args.add("p.tsx");
-                        args.add("p.tsn");
-                        args.add("p.ts");
-                    }
-                    case ColumnType.STRING -> args.add("p.s");
-                    case ColumnType.VARCHAR -> args.add("p.v");
-                    case ColumnType.SYMBOL -> args.add("p.sym");
-                    case ColumnType.LONG256 -> args.add("p.l256");
-                    case ColumnType.UUID -> args.add("p.u");
-                    case ColumnType.IPv4 -> args.add("p.ip");
-                    case ColumnType.GEOHASH -> {
-                        args.add("p.g1");
-                        args.add("p.g2");
-                        args.add("p.g4");
-                        args.add("p.g8");
-                    }
-                    case ColumnType.BINARY -> args.add("p.bin");
-                    case ColumnType.DECIMAL -> {
-                        args.add("p.d8");
-                        args.add("p.d16");
-                        args.add("p.d32");
-                        args.add("p.d64");
-                        args.add("p.d128");
-                        args.add("p.d256");
-                    }
-                    // A VAR_ARG parameter takes a column of any type, so one column stands for all of them.
-                    case ColumnType.VAR_ARG -> args.add("p.i");
-                    default -> throw new AssertionError("no czw_prices column of type " + ColumnType.nameOf(typeTag));
-                }
-            }
-        }
-        if (isConstant || isAfterFirst) {
-            if (isArray) {
-                args.add("ARRAY[0.5]");
-            } else {
-                switch (typeTag) {
-                    case ColumnType.BOOLEAN -> args.add("true");
-                    case ColumnType.CHAR -> args.add("','");
-                    case ColumnType.INT, ColumnType.LONG -> args.add("4");
-                    case ColumnType.DOUBLE -> {
-                        args.add("0.5");
-                        args.add("1.0");
-                    }
-                    case ColumnType.STRING -> args.add("'1.5'");
-                    default -> {
-                        if (isConstant) {
-                            throw new AssertionError("no constant of type " + ColumnType.nameOf(typeTag));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static void addEmptyValueSweepCalls(
-            String functionName,
-            ObjList<ObjList<String>> argsPerPosition,
-            int position,
-            StringBuilder argList,
-            TreeSet<String> calls
-    ) {
-        if (position == argsPerPosition.size()) {
-            calls.add(functionName + '(' + argList + ')');
-            return;
-        }
-        final ObjList<String> args = argsPerPosition.getQuick(position);
-        final int length = argList.length();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (position > 0) {
-                argList.append(", ");
-            }
-            argList.append(args.getQuick(i));
-            addEmptyValueSweepCalls(functionName, argsPerPosition, position + 1, argList, calls);
-            argList.setLength(length);
-        }
-    }
-
     private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
         while (factory != null) {
             if (factoryClass.isInstance(factory)) {

@@ -35,6 +35,11 @@ import io.questdb.std.ObjList;
 public class IsLongOrderedGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.TRUE;
+    }
+
+    @Override
     public OrderDependence getOrderDependence() {
         return OrderDependence.INPUT_ORDER;
     }

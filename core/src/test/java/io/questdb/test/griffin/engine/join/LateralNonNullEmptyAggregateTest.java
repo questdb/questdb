@@ -24,9 +24,15 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.GroupByCallSweep;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.TreeSet;
 
 public class LateralNonNullEmptyAggregateTest extends AbstractCairoTest {
     private static final String AGGREGATES = "isOrdered(v) o, isOrdered(ip) i, haversine_dist_deg(lat, lon, ts) h";
@@ -100,6 +106,76 @@ public class LateralNonNullEmptyAggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDrivenScalarRestoresEachEmptyValue() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String join : new String[]{"CROSS", "LEFT"}) {
+                assertQuery("SELECT a.k, l.s, l.n, l.h, l.o, l.t FROM a " + join + " JOIN LATERAL ("
+                        + "SELECT x.s, y.n, y.h, y.o, y.t FROM (SELECT sum(v) s FROM b WHERE b.k = a.k) x "
+                        + "CROSS JOIN (SELECT count() n, haversine_dist_deg(lat, lon, ts) h, isOrdered(v) o, sum(v) t FROM b WHERE b.k = a.k) y"
+                        + ") l ORDER BY a.k")
+                        .noLeakCheck()
+                        .expectSize(join.equals("CROSS"))
+                        .returns("""
+                                k\ts\tn\th\to\tt
+                                1\t8\t2\t155.94336875296912\tfalse\t8
+                                2\tnull\t0\t0.0\ttrue\tnull
+                                3\t7\t1\t0.0\ttrue\t7
+                                """);
+                assertQuery("SELECT a.k, l.s, l.h FROM a " + join + " JOIN LATERAL ("
+                        + "SELECT x.s, y.h FROM (SELECT sum(v) s FROM b WHERE b.k = a.k) x "
+                        + "CROSS JOIN (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) y"
+                        + ") l ORDER BY a.k")
+                        .noLeakCheck()
+                        .expectSize(join.equals("CROSS"))
+                        .returns("""
+                                k\ts\th
+                                1\t8\t155.94336875296912
+                                2\tnull\t0.0
+                                3\t7\t0.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testEveryNonNullEmptyAggregateRestoresItsValueOverNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES + ", timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3)");
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (3), (9)");
+            final TreeSet<String> calls = new TreeSet<>();
+            final TreeSet<String> functionNames = new TreeSet<>();
+            GroupByCallSweep.collectCalls(
+                    engine.getFunctionFactoryCache(),
+                    "p.",
+                    factory -> factory.isGroupBy() && factory.getEmptyGroupValue() != FunctionFactory.EmptyGroupValue.NULL,
+                    calls,
+                    functionNames
+            );
+            final TreeSet<String> comparedFunctionNames = new TreeSet<>();
+            for (String call : calls) {
+                final String body = "(SELECT " + call + " a FROM czw_prices p WHERE p.i = ";
+                final String reference = "SELECT 1 k, a FROM " + body + "1) UNION ALL SELECT 3 k, a FROM " + body + "3) UNION ALL SELECT 9 k, a FROM " + body + "9)";
+                try (RecordCursorFactory ignored = select(reference)) {
+                    comparedFunctionNames.add(call.substring(0, call.indexOf('(')));
+                } catch (SqlException e) {
+                    // the aggregate rejects these arguments, e.g. a precision out of range
+                    continue;
+                }
+                try {
+                    assertSqlCursors(reference, "SELECT o.k, l.a FROM o LEFT JOIN LATERAL " + body + "o.k) l ON true ORDER BY o.k");
+                    assertSqlCursors(reference, "SELECT o.k, l.a FROM o, LATERAL " + body + "o.k) l ORDER BY o.k");
+                } catch (AssertionError e) {
+                    throw new AssertionError(call, e);
+                }
+            }
+            Assert.assertEquals(functionNames, comparedFunctionNames);
+        });
+    }
+
+    @Test
     public void testExpressionsOverAggregatesRestoreEmptyValues() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -116,6 +192,48 @@ public class LateralNonNullEmptyAggregateTest extends AbstractCairoTest {
                             2\tfalse\t1.0\t0\ttrue
                             3\tfalse\t1.0\t1\tfalse
                             """);
+        });
+    }
+
+    @Test
+    public void testHaversineRestoresZeroAsACountDoes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String allRows = """
+                    k\th
+                    1\t155.94336875296912
+                    2\t0.0
+                    3\t0.0
+                    """;
+            assertQuery("SELECT a.k, l.h FROM a, LATERAL (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) l ORDER BY a.k")
+                    .noLeakCheck()
+                    .withPlanContaining("functions: [a.k,coalesce(l.h,0.0)]")
+                    .returns(allRows);
+            assertQuery("""
+                    SELECT a.k, l.h, l.x FROM a LEFT JOIN LATERAL (
+                        SELECT s.h, y.x FROM (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) s
+                        CROSS JOIN long_sequence(1) y
+                    ) l ON true ORDER BY a.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\th\tx
+                            1\t155.94336875296912\t1
+                            2\t0.0\t1
+                            3\t0.0\t1
+                            """);
+            assertQuery("SELECT a.k, l.h FROM a, LATERAL (SELECT h FROM (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) WHERE h > 0) l ORDER BY a.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\th
+                            1\t155.94336875296912
+                            """);
+            assertQuery("SELECT a.k, l.h FROM a, LATERAL (SELECT h FROM (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) WHERE h >= 0) l ORDER BY a.k")
+                    .noLeakCheck()
+                    .returns(allRows);
+            assertQuery("SELECT a.k, l.h FROM a, LATERAL (SELECT h FROM (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) WHERE NOT h < 0) l ORDER BY a.k")
+                    .noLeakCheck()
+                    .returns(allRows);
         });
     }
 
@@ -293,6 +411,21 @@ public class LateralNonNullEmptyAggregateTest extends AbstractCairoTest {
                             2\ttrue
                             3\tfalse
                             3\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testWhereOverNullOnEmptyAggregateDropsUnmatchedRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT a.k, l.s FROM a, LATERAL (SELECT s FROM (SELECT sum(v) s FROM b WHERE b.k = a.k) WHERE s > 0) l ORDER BY a.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ts
+                            1\t8
+                            3\t7
                             """);
         });
     }

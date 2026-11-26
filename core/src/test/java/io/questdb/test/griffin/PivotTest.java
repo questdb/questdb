@@ -36,6 +36,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
@@ -64,6 +65,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntSupplier;
@@ -5087,6 +5089,55 @@ public class PivotTest extends AbstractSqlParserTest {
                         country\tname\t2000_sum\t2010_sum\t2020_sum
                         US\tSeattle\t564\t608\t738
                         """);
+    }
+
+    @Test
+    public void testPivotAbsentCellReadsEveryNonNullEmptyAggregateOverNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES + ", timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3)");
+            final TreeSet<String> calls = new TreeSet<>();
+            final TreeSet<String> functionNames = new TreeSet<>();
+            GroupByCallSweep.collectCalls(
+                    engine.getFunctionFactoryCache(),
+                    "",
+                    factory -> factory.isGroupBy() && factory.getEmptyGroupValue() != FunctionFactory.EmptyGroupValue.NULL,
+                    calls,
+                    functionNames
+            );
+            final TreeSet<String> comparedFunctionNames = new TreeSet<>();
+            for (String call : calls) {
+                final String reference = "SELECT x.v a, y.v z FROM (SELECT " + call + " v FROM czw_prices WHERE sym = 'a') x "
+                        + "CROSS JOIN (SELECT " + call + " v FROM czw_prices WHERE sym = 'z') y";
+                try (RecordCursorFactory ignored = select(reference)) {
+                    comparedFunctionNames.add(call.substring(0, call.indexOf('(')));
+                } catch (SqlException e) {
+                    // the aggregate rejects these arguments, e.g. a precision out of range
+                    continue;
+                }
+                try {
+                    assertSqlCursors(reference, "SELECT * FROM czw_prices PIVOT (" + call + " FOR sym IN ('a', 'z'))");
+                } catch (AssertionError e) {
+                    throw new AssertionError(call, e);
+                }
+            }
+            Assert.assertEquals(functionNames, comparedFunctionNames);
+        });
+    }
+
+    @Test
+    public void testPivotAbsentCellReadsNullOnEmptyMeasuresOverNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES + ", timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3)");
+            for (String measure : new String[]{"sum(l)", "bool_or(b)", "first(s)", "sum(l) + 1"}) {
+                assertSqlCursors(
+                        "SELECT x.v a, y.v z FROM (SELECT " + measure + " v FROM czw_prices WHERE sym = 'a') x "
+                                + "CROSS JOIN (SELECT " + measure + " v FROM czw_prices WHERE sym = 'z') y",
+                        "SELECT * FROM czw_prices PIVOT (" + measure + " FOR sym IN ('a', 'z'))"
+                );
+            }
+        });
     }
 
     @Test

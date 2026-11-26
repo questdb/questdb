@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 public class ApproxCountDistinctIPv4GroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.ZERO;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.LONG;
     }

@@ -35,6 +35,11 @@ import io.questdb.std.ObjList;
 public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.ZERO;
+    }
+
+    @Override
     public OrderDependence getOrderDependence() {
         return OrderDependence.INPUT_ORDER;
     }

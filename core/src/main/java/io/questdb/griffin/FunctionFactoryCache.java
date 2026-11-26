@@ -124,6 +124,26 @@ public class FunctionFactoryCache {
         }
     }
 
+    /**
+     * The value the group by overloads of the function named {@code name} report over a group of no rows, which they
+     * all declare alike, see {@link FunctionFactory#getEmptyGroupValue()}: a caller that knows only the name of an
+     * aggregate, not its overload, can read it. NULL when the name has no group by overload.
+     */
+    public FunctionFactory.EmptyGroupValue getEmptyGroupValue(CharSequence name) {
+        FunctionFactory.EmptyGroupValue value = null;
+        final ObjList<FunctionFactoryDescriptor> overloads = name != null ? factories.get(name) : null;
+        if (overloads != null) {
+            for (int i = 0, n = overloads.size(); i < n; i++) {
+                final FunctionFactory factory = overloads.getQuick(i).getFactory();
+                if (factory.isGroupBy()) {
+                    assert value == null || value == factory.getEmptyGroupValue() : "group by overloads of " + name + " report different values over no rows";
+                    value = factory.getEmptyGroupValue();
+                }
+            }
+        }
+        return value != null ? value : FunctionFactory.EmptyGroupValue.NULL;
+    }
+
     @TestOnly
     public LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> getFactories() {
         return factories;

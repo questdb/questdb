@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -300,7 +300,7 @@ public final class WindowJoinStep implements PlanFactSource {
         NULL_PADDING,
         /**
          * The filter is constant false and an aggregate reads another value over no rows, see
-         * {@link SqlUtil#hasNonNullEmptyValue(CharSequence)}: the step pads each column with the value its aggregate
+         * {@link FunctionExpression#getEmptyGroupValue()}: the step pads each column with the value its aggregate
          * reads over an empty window and passes the master's time frames through, but no page frames, which carry no
          * such value.
          */
@@ -314,7 +314,7 @@ public final class WindowJoinStep implements PlanFactSource {
                 return NONE;
             }
             for (int i = 0, n = aggregates.size(); i < n; i++) {
-                if (SqlUtil.hasNonNullEmptyValue(aggregates.getQuick(i).getName())) {
+                if (aggregates.getQuick(i).getEmptyGroupValue() != FunctionFactory.EmptyGroupValue.NULL) {
                     return EMPTY_VALUES;
                 }
             }

@@ -2086,12 +2086,6 @@ final class JoinFactoryGenerator {
                     } catch (Throwable th) {
                         failure = th;
                     }
-                    if (failure == null && (emptyValues == null) != (nullExtension == WindowJoinStep.NullExtension.NULL_PADDING)
-                            && (ParanoiaState.PLAN_PARANOIA_MODE || emptyValues != null)) {
-                        // A NULL-padding step would report NULL for a non-NULL empty value; an empty-values step whose
-                        // aggregates all read NULL only gives up page frames it could have passed through.
-                        failure = new AssertionError("window join step null extension differs from its aggregates' empty values");
-                    }
                     failure = Misc.freeBestEffort(failure, slave);
                     failure = Misc.freeBestEffort(failure, joinMetadata);
                     failure = Misc.freeBestEffort(failure, joinFilter);

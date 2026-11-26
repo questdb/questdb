@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -89,6 +90,13 @@ public final class FunctionExpression extends BoundExpression {
 
     public ObjList<BoundExpression> getArguments() {
         return arguments;
+    }
+
+    /**
+     * The value the aggregate reports over a group of no rows, as its factory declares it.
+     */
+    public FunctionFactory.EmptyGroupValue getEmptyGroupValue() {
+        return overload.getFactory().getEmptyGroupValue();
     }
 
     public String getName() {

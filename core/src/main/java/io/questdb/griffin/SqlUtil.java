@@ -1826,34 +1826,6 @@ public class SqlUtil {
         return quoteProtectedInteriorDot(alias, lo, hi) != Integer.MIN_VALUE;
     }
 
-    public static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
-        return node != null && node.type == ExpressionNode.FUNCTION && isZeroOnEmptyAggregate(node.token);
-    }
-
-    /**
-     * Whether an aggregate function of that name reads a value other than NULL over no rows, see
-     * {@link io.questdb.griffin.engine.functions.GroupByFunction#hasNonNullEmptyValue()}: the counts read zero,
-     * haversine_dist_deg() reads 0.0 and isOrdered() reads true.
-     */
-    public static boolean hasNonNullEmptyValue(CharSequence name) {
-        return isZeroOnEmptyAggregate(name)
-                || Chars.equalsIgnoreCase(name, "haversine_dist_deg")
-                || isTrueOnEmptyAggregate(name);
-    }
-
-    public static boolean isTrueOnEmptyAggregate(CharSequence name) {
-        return Chars.equalsIgnoreCase(name, "isOrdered");
-    }
-
-    /**
-     * Whether the aggregate function of that name reads zero over no rows rather than NULL: the counts.
-     */
-    public static boolean isZeroOnEmptyAggregate(CharSequence name) {
-        return Chars.equalsIgnoreCase(name, "count")
-                || Chars.equalsIgnoreCase(name, "count_distinct")
-                || Chars.equalsIgnoreCase(name, "approx_count_distinct");
-    }
-
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
         return pool.next().of(exprNodeType, token, 0, position);
     }

@@ -25,8 +25,8 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.FunctionFactory.EmptyGroupValue;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -65,8 +65,10 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
 /**
  * Restores the values a keyless aggregate takes over no rows once decorrelation keys it by the outer columns:
- * counts read zero, and a LIMIT or ON condition guards the restored values, as does a row marker of the inputs
- * before the step when a later step null-extends them.
+ * counts read zero, an aggregate that reads true over no rows reads true where a row marker of the scalar shows that
+ * the LEFT join found no row, and a LIMIT or ON condition guards the restored values, as does a row marker of the
+ * inputs before the step when a later step null-extends them. A count here is any aggregate that reads
+ * {@link EmptyGroupValue#ZERO zero} over no rows, such as count().
  * <p>
  * The LIMIT of a scalar body of the step keeps or drops the body's single row at the step, per outer row, so the
  * body ranks nothing. The rule by which a correlated LIMIT keeps a row by its rank among the rows of its outer row
@@ -181,7 +183,7 @@ final class ScalarCompensation implements Mutable {
             if (call.argumentAt(side) instanceof ColumnExpression column && isIntegerConstant(call.argumentAt(1 - side))) {
                 final int index = scalar.getOutput().getColumnIndexById(column.getColumnId());
                 if (index > -1 && scalar.getExpressions().getQuick(index) instanceof ColumnExpression count
-                        && isZeroOnEmptyColumn(count.getColumnId(), (AggregatePlan) scalar.getChild())) {
+                        && emptyGroupValue(count.getColumnId(), (AggregatePlan) scalar.getChild()) == EmptyGroupValue.ZERO) {
                     return side;
                 }
             }
@@ -198,6 +200,15 @@ final class ScalarCompensation implements Mutable {
         return operator == null || call == comparison ? operator : operator.complement();
     }
 
+    /**
+     * The value over no rows of output {@code columnId} of the aggregate: its aggregate's, NULL for a key.
+     */
+    private static EmptyGroupValue emptyGroupValue(int columnId, AggregatePlan aggregate) {
+        final int index = aggregate.getOutput().getColumnIndexById(columnId);
+        final int keyCount = aggregate.getGroupingExpressions().size();
+        return index < keyCount ? EmptyGroupValue.NULL : aggregate.getAggregates().getQuick(index - keyCount).getEmptyGroupValue();
+    }
+
     private static boolean hasAggregateColumn(BoundExpression expression, AggregatePlan aggregate) {
         if (expression instanceof ColumnExpression column) {
             return aggregate.getOutput().getColumnIndexById(column.getColumnId()) >= aggregate.getGroupingExpressions().size();
@@ -210,14 +221,6 @@ final class ScalarCompensation implements Mutable {
             }
         }
         return false;
-    }
-
-    private static boolean hasMarkedOnEmpty(BoundExpression expression, AggregatePlan aggregate) {
-        return readsAggregateOf(expression, aggregate, true);
-    }
-
-    private static boolean hasZeroOnEmpty(BoundExpression expression, AggregatePlan aggregate) {
-        return readsAggregateOf(expression, aggregate, false);
     }
 
     private static boolean isIntegerConstant(BoundExpression expression) {
@@ -236,22 +239,13 @@ final class ScalarCompensation implements Mutable {
         return bound instanceof ConstantExpression && LogicalPlans.mayBeNegativeLimit(bound);
     }
 
-    private static boolean isMarkedOnEmptyColumn(int columnId, AggregatePlan aggregate) {
-        final int index = aggregate.getOutput().getColumnIndexById(columnId);
-        final int keyCount = aggregate.getGroupingExpressions().size();
-        if (index < keyCount) {
-            return false;
-        }
-        final CharSequence name = aggregate.getAggregates().getQuick(index - keyCount).getName();
-        return SqlUtil.hasNonNullEmptyValue(name) && !SqlUtil.isZeroOnEmptyAggregate(name);
-    }
-
     /**
-     * Whether the expression reads NULL over no rows whenever the aggregates it reads do: it reads no count,
-     * isOrdered() or haversine_dist_deg(), through null-propagating arithmetic.
+     * Whether the expression reads NULL over no rows whenever the aggregates it reads do: it reads only aggregates
+     * that read NULL over no rows, through null-propagating arithmetic.
      */
     private static boolean isNullOnEmpty(BoundExpression expression, AggregatePlan aggregate) {
-        return !hasZeroOnEmpty(expression, aggregate) && !hasMarkedOnEmpty(expression, aggregate) && isNullPropagating(expression);
+        return !readsAggregateOf(expression, aggregate, EmptyGroupValue.ZERO) && !readsAggregateOf(expression, aggregate, EmptyGroupValue.TRUE)
+                && isNullPropagating(expression);
     }
 
     /**
@@ -260,12 +254,6 @@ final class ScalarCompensation implements Mutable {
      */
     private static boolean isOrderedAtExecution(BoundExpression lo, BoundExpression hi) {
         return !(lo instanceof ConstantExpression first) || !(hi instanceof ConstantExpression) && LogicalPlans.limitValue(first) > 0;
-    }
-
-    private static boolean isZeroOnEmptyColumn(int columnId, AggregatePlan aggregate) {
-        final int index = aggregate.getOutput().getColumnIndexById(columnId);
-        final int keyCount = aggregate.getGroupingExpressions().size();
-        return index >= keyCount && SqlUtil.isZeroOnEmptyAggregate(aggregate.getAggregates().getQuick(index - keyCount).getName());
     }
 
     private static boolean keepsEveryCount(BoundExpression predicate, ProjectPlan scalar) {
@@ -293,13 +281,16 @@ final class ScalarCompensation implements Mutable {
         };
     }
 
-    private static boolean readsAggregateOf(BoundExpression expression, AggregatePlan aggregate, boolean isMarked) {
+    /**
+     * Whether the expression reads an aggregate output of {@code aggregate} whose value over no rows is {@code value}.
+     */
+    private static boolean readsAggregateOf(BoundExpression expression, AggregatePlan aggregate, EmptyGroupValue value) {
         if (expression instanceof ColumnExpression column) {
-            return isMarked ? isMarkedOnEmptyColumn(column.getColumnId(), aggregate) : isZeroOnEmptyColumn(column.getColumnId(), aggregate);
+            return emptyGroupValue(column.getColumnId(), aggregate) == value;
         }
         if (expression instanceof FunctionExpression call) {
             for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (readsAggregateOf(call.argumentAt(i), aggregate, isMarked)) {
+                if (readsAggregateOf(call.argumentAt(i), aggregate, value)) {
                     return true;
                 }
             }
@@ -338,11 +329,10 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
-     * The value a column of the projection over a keyless aggregate takes over no rows, over
-     * {@code input}: counts read zero, isOrdered() and haversine_dist_deg() read true and 0.0, other aggregates read
-     * their carried value (NULL), and the columns {@link DecorrelationContext#substitution} holds read their substitutes.
-     * Null when the column reads aggregates none of which counts, isOrdered() or haversine_dist_deg(), through
-     * null-propagating arithmetic: the LEFT join's NULL is then the value.
+     * The value a column of the projection over a keyless aggregate takes over no rows, over {@code input}: each
+     * aggregate reads its value over no rows, see {@link #restoredValue}, and the columns
+     * {@link DecorrelationContext#substitution} holds read their substitutes. Null when the column reads only aggregates
+     * that read NULL over no rows, through null-propagating arithmetic: the LEFT join's NULL is then the value.
      */
     private BoundExpression emptyValue(ProjectPlan project, int index, OutputSchema input) throws SqlException {
         final BoundExpression expression = project.getExpressions().getQuick(index);
@@ -355,13 +345,12 @@ final class ScalarCompensation implements Mutable {
         if (hasAggregateColumn(expression, aggregate) && isNullOnEmpty(expression, aggregate)) {
             return null;
         }
-        if (expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), aggregate)) {
-            return zeroCoalesce(planNodes.columns.next().of(project.getOutput().getColumnId(index), column.getDataType(), column.getPosition()), input);
-        }
-        if (expression instanceof ColumnExpression column && isMarkedOnEmptyColumn(column.getColumnId(), aggregate)) {
-            final int aggregateIndex = aggregate.getOutput().getColumnIndexById(column.getColumnId()) - aggregate.getGroupingExpressions().size();
-            return markedValue(planNodes.columns.next().of(project.getOutput().getColumnId(index), column.getDataType(), column.getPosition()),
-                    aggregate.getAggregates().getQuick(aggregateIndex).getName(), project, input);
+        if (expression instanceof ColumnExpression column) {
+            final EmptyGroupValue emptyGroupValue = emptyGroupValue(column.getColumnId(), aggregate);
+            if (emptyGroupValue != EmptyGroupValue.NULL) {
+                return restoredValue(planNodes.columns.next().of(project.getOutput().getColumnId(index), column.getDataType(), column.getPosition()),
+                        emptyGroupValue, project, input);
+            }
         }
         final int columnBase = tmpColumnIds.size();
         ctx.collectColumnIds(expression, tmpColumnIds);
@@ -375,14 +364,7 @@ final class ScalarCompensation implements Mutable {
             if (aggregateIndex >= keyCount) {
                 final ColumnExpression carrier = planNodes.columns.next().of(carrierColumnIds.getQuick(pairIndex(carrierColumnIds, columnId) + 1), type,
                         expression.getPosition());
-                final CharSequence name = aggregate.getAggregates().getQuick(aggregateIndex - keyCount).getName();
-                if (SqlUtil.isZeroOnEmptyAggregate(name)) {
-                    replacement = zeroCoalesce(carrier, input);
-                } else if (SqlUtil.hasNonNullEmptyValue(name)) {
-                    replacement = markedValue(carrier, name, project, input);
-                } else {
-                    replacement = carrier;
-                }
+                replacement = restoredValue(carrier, aggregate.getAggregates().getQuick(aggregateIndex - keyCount).getEmptyGroupValue(), project, input);
             } else {
                 final int substitute = substitution.get(columnId);
                 if (substitute > -1) {
@@ -417,40 +399,25 @@ final class ScalarCompensation implements Mutable {
         return ctx.caseWhen(condition, value, planNodes.constants.next().ofNull(position), input, position);
     }
 
-    /**
-     * True when column {@code index} of {@link #scalarProjection} is a bare count.
-     */
-    private boolean isScalarCount(int index) {
-        final BoundExpression expression = scalarProjection.getExpressions().getQuick(index);
-        return expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), (AggregatePlan) scalarProjection.getChild());
-    }
-
-    private boolean isScalarMarked(int index) {
-        final BoundExpression expression = scalarProjection.getExpressions().getQuick(index);
-        return expression instanceof ColumnExpression column && isMarkedOnEmptyColumn(column.getColumnId(), (AggregatePlan) scalarProjection.getChild());
-    }
-
     private boolean isWrappedScalarColumn(BoundExpression expression, LogicalPlan input) {
         if (!isNullPropagating(expression)) {
             return false;
         }
         if (expression instanceof ColumnExpression column) {
             final int index = scalarColumnIndex(input, column.getColumnId());
-            return index > -1 && !isScalarMarked(index);
+            return index > -1 && scalarEmptyGroupValue(index) != EmptyGroupValue.TRUE;
         }
         final int columnBase = tmpColumnIds.size();
         ctx.collectColumnIds(expression, tmpColumnIds);
         boolean hasAggregate = false;
-        boolean hasCount = false;
-        boolean hasMarked = false;
+        boolean hasNonNullEmptyValue = false;
         for (int i = columnBase, n = tmpColumnIds.size(); i < n; i++) {
             final int index = scalarColumnIndex(input, tmpColumnIds.getQuick(i));
             hasAggregate |= index > -1;
-            hasCount |= index > -1 && isScalarCount(index);
-            hasMarked |= index > -1 && isScalarMarked(index);
+            hasNonNullEmptyValue |= index > -1 && scalarEmptyGroupValue(index) != EmptyGroupValue.NULL;
         }
         tmpColumnIds.setPos(columnBase);
-        return hasAggregate && !hasCount && !hasMarked;
+        return hasAggregate && !hasNonNullEmptyValue;
     }
 
     /**
@@ -465,18 +432,30 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
-    private BoundExpression markedValue(ColumnExpression value, CharSequence name, ProjectPlan project, OutputSchema input) throws SqlException {
+    /**
+     * Reads true where the row marker of the scalar projection shows that the LEFT join found no row of it, and
+     * {@code value} otherwise: the LEFT join reads a BOOLEAN as false where it has no row.
+     */
+    private BoundExpression markedValue(ColumnExpression value, ProjectPlan project, OutputSchema input) throws SqlException {
         final int position = value.getPosition();
         final int index = markedScalars.indexOf(project);
         assert index > -1 : "the scalar projection carries no row marker";
-        final ConstantExpression empty;
-        if (SqlUtil.isTrueOnEmptyAggregate(name)) {
-            empty = planNodes.constants.next().ofBoolean(true, position);
-        } else {
-            assert Chars.equalsIgnoreCase(name, "haversine_dist_deg") : "no value over no rows for " + name;
-            empty = planNodes.constants.next().ofDouble(0.0, position);
-        }
-        return ctx.caseWhen(planNodes.columns.next().of(scalarMarkerIds.getQuick(index), ColumnType.BOOLEAN, position), value, empty, input, position);
+        return ctx.caseWhen(planNodes.columns.next().of(scalarMarkerIds.getQuick(index), ColumnType.BOOLEAN, position), value,
+                planNodes.constants.next().ofBoolean(true, position), input, position);
+    }
+
+    /**
+     * The value over no rows of {@code value}, a column that reads an aggregate whose value over no rows is
+     * {@code emptyGroupValue}: a count reads zero where the LEFT join reads NULL, an aggregate that reads true over
+     * no rows reads true where the row marker shows no row, and any other aggregate reads the LEFT join's NULL.
+     */
+    private BoundExpression restoredValue(ColumnExpression value, EmptyGroupValue emptyGroupValue, ProjectPlan project, OutputSchema input)
+            throws SqlException {
+        return switch (emptyGroupValue) {
+            case NULL -> value;
+            case ZERO -> zeroCoalesce(value, input);
+            case TRUE -> markedValue(value, project, input);
+        };
     }
 
     private BoundExpression limitBound(BoundReading reading, BoundExpression limit, long nullLimit, OutputSchema input) throws SqlException {
@@ -622,7 +601,17 @@ final class ScalarCompensation implements Mutable {
 
     private int scalarCountIndex(LogicalPlan node, int columnId) {
         final int index = scalarColumnIndex(node, columnId);
-        return index > -1 && isScalarCount(index) ? index : -1;
+        return index > -1 && scalarEmptyGroupValue(index) == EmptyGroupValue.ZERO ? index : -1;
+    }
+
+    /**
+     * The value over no rows of column {@code index} of {@link #scalarProjection} when the column is a bare aggregate,
+     * NULL otherwise.
+     */
+    private EmptyGroupValue scalarEmptyGroupValue(int index) {
+        final BoundExpression expression = scalarProjection.getExpressions().getQuick(index);
+        return expression instanceof ColumnExpression column ? emptyGroupValue(column.getColumnId(), (AggregatePlan) scalarProjection.getChild())
+                : EmptyGroupValue.NULL;
     }
 
     /**
@@ -636,7 +625,10 @@ final class ScalarCompensation implements Mutable {
     }
 
     private BoundExpression zeroCoalesce(ColumnExpression value, OutputSchema input) throws SqlException {
-        return context.bindCall("coalesce", value.getPosition(), value, planNodes.constants.next().ofInt(0, value.getPosition()), input);
+        final int position = value.getPosition();
+        final ConstantExpression zero = ColumnType.tagOf(value.getDataType()) == ColumnType.DOUBLE
+                ? planNodes.constants.next().ofDouble(0.0, position) : planNodes.constants.next().ofInt(0, position);
+        return context.bindCall("coalesce", position, value, zero, input);
     }
 
 
@@ -966,7 +958,7 @@ final class ScalarCompensation implements Mutable {
         }
         boolean hasCount = false;
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            hasCount |= project.getOutput().isVisible(i) && hasZeroOnEmpty(project.getExpressions().getQuick(i), aggregate);
+            hasCount |= project.getOutput().isVisible(i) && readsAggregateOf(project.getExpressions().getQuick(i), aggregate, EmptyGroupValue.ZERO);
         }
         if (!hasCount) {
             return null;
@@ -1008,7 +1000,7 @@ final class ScalarCompensation implements Mutable {
     /**
      * Exposes, as hidden columns of the projection, the aggregate outputs that the empty-input values of its
      * columns read through other expressions, recording each in {@link #carrierColumnIds}, and a row marker when a
-     * column reads isOrdered() or haversine_dist_deg().
+     * column reads an aggregate that reads true over no rows.
      */
     void exposeCarriers(ProjectPlan project) {
         final AggregatePlan aggregate = scalarAggregateBelow(project);
@@ -1018,7 +1010,7 @@ final class ScalarCompensation implements Mutable {
         boolean isMarkerRead = false;
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             final BoundExpression expression = project.getExpressions().getQuick(i);
-            isMarkerRead |= hasMarkedOnEmpty(expression, aggregate);
+            isMarkerRead |= readsAggregateOf(expression, aggregate, EmptyGroupValue.TRUE);
             if (expression instanceof ColumnExpression || isNullOnEmpty(expression, aggregate)) {
                 continue;
             }

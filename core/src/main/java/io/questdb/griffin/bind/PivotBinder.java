@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompilerTemporaries;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -411,12 +412,16 @@ final class PivotBinder implements Mutable {
 
     private ExpressionNode pivotMeasure(ObjList<PivotForColumn> forColumns, QueryColumn measure, ExpressionNode measured, int measuredType) {
         final BindScope scope = ctx.scope();
-        final int position = measure.getAst().position;
         final ExpressionNode ast = measure.getAst();
-        final boolean isAggregateCall = ast.type == ExpressionNode.FUNCTION;
-        final boolean isTrueOnEmpty = isAggregateCall && SqlUtil.isTrueOnEmptyAggregate(ast.token);
-        final boolean isZeroOnEmpty = isAggregateCall && !isTrueOnEmpty && SqlUtil.hasNonNullEmptyValue(ast.token);
-        final ExpressionNode otherwise = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, isZeroOnEmpty ? "0" : isTrueOnEmpty ? "true" : "null", 0, position);
+        final int position = ast.position;
+        final FunctionFactory.EmptyGroupValue emptyValue = ast.type == ExpressionNode.FUNCTION
+                ? ctx.functionFactoryCache.getEmptyGroupValue(ast.token) : FunctionFactory.EmptyGroupValue.NULL;
+        final CharSequence emptyToken = switch (emptyValue) {
+            case NULL -> "null";
+            case ZERO -> "0";
+            case TRUE -> "true";
+        };
+        final ExpressionNode otherwise = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, emptyToken, 0, position);
         final ExpressionNode value = widenNarrowMeasure(measured, measuredType, position);
         final ExpressionNode choice;
         if (forColumns.size() == 1) {
@@ -440,8 +445,13 @@ final class PivotBinder implements Mutable {
             choice.args.add(value);
             choice.args.add(condition);
         }
-        // A cell matches at most one row; BOOLEAN has no NULL for first_not_null to skip, and bool_or reads an absent cell as false.
-        final CharSequence merge = isZeroOnEmpty ? "sum" : isTrueOnEmpty ? "bool_and" : ColumnType.isBoolean(measuredType) ? "bool_or" : "first_not_null";
+        // A cell matches at most one row, so sum and bool_and read the zero and the true of an absent cell; BOOLEAN has no
+        // NULL for first_not_null to skip, and bool_or reads an absent cell as false.
+        final CharSequence merge = switch (emptyValue) {
+            case ZERO -> "sum";
+            case TRUE -> "bool_and";
+            case NULL -> ColumnType.isBoolean(measuredType) ? "bool_or" : "first_not_null";
+        };
         final ExpressionNode aggregate = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, merge, 0, position);
         aggregate.paramCount = 1;
         aggregate.rhs = choice;

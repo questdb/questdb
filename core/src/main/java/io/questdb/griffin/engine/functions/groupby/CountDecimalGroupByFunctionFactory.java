@@ -43,6 +43,11 @@ import org.jetbrains.annotations.NotNull;
 public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.ZERO;
+    }
+
+    @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.LONG;
     }

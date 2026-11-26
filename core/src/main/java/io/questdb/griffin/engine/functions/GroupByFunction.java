@@ -267,7 +267,9 @@ public interface GroupByFunction extends Function, Mutable {
      * A WINDOW JOIN with a constant-false join filter reads that value once at compile time,
      * without aggregating any row, and reports it for every master row. A function whose empty
      * group reports a non-NULL value must override this method, e.g. count() reports 0 and
-     * isOrdered() reports true. Functions that store a pointer but report NULL over an empty
+     * isOrdered() reports true, and its factory must declare the value through
+     * {@link io.questdb.griffin.FunctionFactory#getEmptyGroupValue()}, which the planner reads
+     * before any function exists. Functions that store a pointer but report NULL over an empty
      * group, such as percentile_disc, must not.
      *
      * @return true if the empty group reports a non-NULL BOOLEAN, DOUBLE or LONG readable from the
