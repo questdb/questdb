@@ -670,9 +670,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                                 // The registry copy records the Delta flag: follow a completed conversion.
                                                 tableToken = current;
                                             }
-                                            // A Delta capture also needs the sequencer at the reader's schema.
+                                            // A Delta capture also needs the sequencer at the reader's structure version.
                                             if (tableToken.isDelta() != isDeltaTable
-                                                    || isDeltaTable && metadata.getMetadataVersion() != reader.getMetadata().getMetadataVersion()) {
+                                                    || isDeltaTable && metadata.getMetadataVersion() != reader.getTxFile().getColumnStructureVersion()) {
                                                 LOG.info().$("retrying, table changed during capture [table=").$(tableToken).I$();
                                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                                 continue;

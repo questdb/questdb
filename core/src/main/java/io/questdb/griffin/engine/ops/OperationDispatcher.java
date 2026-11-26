@@ -107,11 +107,11 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             try {
                 alter.authorize();
                 final TableToken tableToken = alter.getTableToken();
-                final long metadataVersion = engine.validateDeltaTableSwitch(tableToken);
+                final long structureVersion = engine.validateDeltaTableSwitch(tableToken);
                 if (sqlExecutionContext.isValidationOnly() || engine.isDeltaTableSwitchComplete(tableToken, -1)) {
                     return doneFuture.of(0);
                 }
-                long switchTxn = engine.getTableSequencerAPI().beginDeltaTableSwitch(tableToken, metadataVersion);
+                long switchTxn = engine.getTableSequencerAPI().beginDeltaTableSwitch(tableToken, structureVersion);
                 if (switchTxn == 0) {
                     return doneFuture.of(0);
                 }

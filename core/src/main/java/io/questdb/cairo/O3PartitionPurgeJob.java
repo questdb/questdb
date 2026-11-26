@@ -554,7 +554,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 if (lastToken == tableToken) {
                     LOG.info().$(message).$substr(pathFrom, path).I$();
                     // Delta files that remain keep the directory for the next purge pass.
-                    if (deltaWriter == null || deltaWriter.purge(path)) {
+                    if (deltaWriter == null || deltaWriter.purge(engine, tableToken, path)) {
                         hasPendingPartitions |= !ff.unlinkOrRemove(path, LOG);
                     } else {
                         hasPendingPartitions = true;

@@ -26,18 +26,12 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -46,10 +40,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -60,12 +51,10 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
     private final CairoConfiguration configuration;
-    private final Decimal128 decimal128 = new Decimal128();
-    private final Decimal256 decimal256 = new Decimal256();
     private final MemoryMARW eventIndexMem = Vm.getCMARWInstance();
     private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
-    private final StringSink sink = new StringSink();
+    private final WalSqlEncoder sqlEncoder = new WalSqlEncoder();
     // A record was appended since the files were last flushed at the grade a power-loss-durable mode needs.
     private boolean hasUnflushedRecords;
     private AtomicIntList initialSymbolCounts;
@@ -106,127 +95,6 @@ class WalEventWriter implements Closeable {
      */
     public long size() {
         return eventMem.getAppendOffset();
-    }
-
-    private void appendBindVariableValuesByIndex(BindVariableService bindVariableService) {
-        final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
-        eventMem.putInt(count);
-        for (int i = 0; i < count; i++) {
-            appendFunctionValue(bindVariableService.getFunction(i));
-        }
-    }
-
-    private void appendBindVariableValuesByName(BindVariableService bindVariableService) {
-        final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
-        eventMem.putInt(count);
-
-        if (count > 0) {
-            final ReadOnlyObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
-            for (int i = 0; i < count; i++) {
-                final CharSequence name = namedVariables.get(i);
-                eventMem.putStr(name);
-                sink.clear();
-                sink.put(':').put(name);
-                appendFunctionValue(bindVariableService.getFunction(sink));
-            }
-        }
-    }
-
-    private void appendFunctionValue(Function function) {
-        final int type = function.getType();
-        eventMem.putInt(type);
-
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN:
-                eventMem.putBool(function.getBool(null));
-                break;
-            case ColumnType.BYTE:
-                eventMem.putByte(function.getByte(null));
-                break;
-            case ColumnType.GEOBYTE:
-                eventMem.putByte(function.getGeoByte(null));
-                break;
-            case ColumnType.SHORT:
-                eventMem.putShort(function.getShort(null));
-                break;
-            case ColumnType.GEOSHORT:
-                eventMem.putShort(function.getGeoShort(null));
-                break;
-            case ColumnType.CHAR:
-                eventMem.putChar(function.getChar(null));
-                break;
-            case ColumnType.INT:
-                eventMem.putInt(function.getInt(null));
-                break;
-            case ColumnType.IPv4:
-                eventMem.putInt(function.getIPv4(null));
-                break;
-            case ColumnType.GEOINT:
-                eventMem.putInt(function.getGeoInt(null));
-                break;
-            case ColumnType.FLOAT:
-                eventMem.putFloat(function.getFloat(null));
-                break;
-            case ColumnType.LONG:
-                eventMem.putLong(function.getLong(null));
-                break;
-            case ColumnType.GEOLONG:
-                eventMem.putLong(function.getGeoLong(null));
-                break;
-            case ColumnType.DATE:
-                eventMem.putLong(function.getDate(null));
-                break;
-            case ColumnType.TIMESTAMP:
-                eventMem.putLong(function.getTimestamp(null));
-                break;
-            case ColumnType.DOUBLE:
-                eventMem.putDouble(function.getDouble(null));
-                break;
-            case ColumnType.STRING:
-                eventMem.putStr(function.getStrA(null));
-                break;
-            case ColumnType.VARCHAR:
-                VarcharTypeDriver.appendPlainValue(eventMem, function.getVarcharA(null));
-                break;
-            case ColumnType.BINARY:
-                eventMem.putBin(function.getBin(null));
-                break;
-            case ColumnType.UUID:
-                eventMem.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
-                break;
-            case ColumnType.ARRAY:
-                eventMem.putArray(function.getArray(null));
-                break;
-            case ColumnType.DECIMAL8:
-                eventMem.putByte(function.getDecimal8(null));
-                break;
-            case ColumnType.DECIMAL16:
-                eventMem.putShort(function.getDecimal16(null));
-                break;
-            case ColumnType.DECIMAL32:
-                eventMem.putInt(function.getDecimal32(null));
-                break;
-            case ColumnType.DECIMAL64:
-                eventMem.putLong(function.getDecimal64(null));
-                break;
-            case ColumnType.DECIMAL128: {
-                function.getDecimal128(null, decimal128);
-                eventMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
-                break;
-            }
-            case ColumnType.DECIMAL256: {
-                function.getDecimal256(null, decimal256);
-                eventMem.putDecimal256(
-                        decimal256.getHh(),
-                        decimal256.getHl(),
-                        decimal256.getLh(),
-                        decimal256.getLl()
-                );
-                break;
-            }
-            default:
-                throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
-        }
     }
 
     private void appendIndex(long value) {
@@ -439,14 +307,7 @@ class WalEventWriter implements Closeable {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
-        eventMem.putInt(cmdType); // byte would be enough probably
-        eventMem.putStr(sqlText);
-        final Rnd rnd = sqlExecutionContext.getRandom();
-        eventMem.putLong(rnd.getSeed0());
-        eventMem.putLong(rnd.getSeed1());
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        appendBindVariableValuesByIndex(bindVariableService);
-        appendBindVariableValuesByName(bindVariableService);
+        sqlEncoder.encode(eventMem, cmdType, sqlText, sqlExecutionContext);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 

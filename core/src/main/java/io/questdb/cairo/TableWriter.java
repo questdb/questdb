@@ -567,6 +567,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long partitionPurgeOwedTxn = -1;
     private long partitionTimestampHi;
     private boolean performRecovery;
+    // A staging writer under the COPY work directory, not on the table's own root.
+    private boolean privateRootWriter;
     private boolean processingQueue;
     // A writer of a WAL table at the database root publishes its committed txn to the table's tracker when it is
     // released; a staging writer under the COPY work directory has a _txn of its own and does not.
@@ -704,7 +706,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // A writer holding a non-WAL token for a WAL table does not enrol it either: COPY into a new table
             // holds one until the next restart, and every write through it bypasses the WAL, so a rewind to an
             // anchor would lose those writes. The table enrols at the first open with its WAL token.
-            final boolean privateRootWriter = !Chars.equals(root, configuration.getDbRoot());
+            this.privateRootWriter = !Chars.equals(root, configuration.getDbRoot());
             this.publishesCommittedTxn = !privateRootWriter && tableToken.isWal();
             this.adaptiveEnrollmentPending = !privateRootWriter
                     && tableToken.isWal()
@@ -832,7 +834,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             discardWalLag("open");
             configureAppendPosition();
             if (metadata.getWriteMode() != TableWriteMode.DELTA_RUNS) {
-                purgeUnusedPartitionsAtOpen(privateRootWriter);
+                purgeUnusedPartitionsAtOpen();
             }
             foldCompositePartitionsWhenMergeAppendDisabled();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
@@ -2094,9 +2096,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commitTxWriter();
     }
 
-    /** Call only after accepted Delta descriptors have been recovered and attached. */
+    /**
+     * Delta's counterpart of the purge at writer open, which a Delta table skips. Call only after accepted Delta
+     * descriptors have been recovered and attached.
+     */
     public void purgeUnpublishedDeltaPartitions() {
-        purgeUnusedPartitions();
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            removeNonAttachedPartitions(true);
+        }
     }
 
     public void commitSeqTxn(long seqTxn) {
@@ -4698,6 +4705,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             path.trimTo(pathSize);
                         }
                     }
+                } else if (metadata.isColumnIndexed(index) && index < indexers.size()) {
+                    // No partition is open to rebind to, but an O3 posting seal can leave the indexer open on the
+                    // last partition it sealed. Release it, so no later seal, e.g. before a Delta table switch,
+                    // writes under the old name; the next partition open binds it under the new one.
+                    ColumnIndexer indexer = indexers.getQuick(index);
+                    if (indexer != null) {
+                        indexer.releaseIndexWriterNoTruncate();
+                    }
                 }
 
                 // commit to _txn file
@@ -6177,6 +6192,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol),
                     isAllNull ? -1 : findParquetColumnIndex(parquetMetadata, covCol)
             );
+        }
+    }
+
+    // Before the stale partition versions just found are removed: makes a SYNC table's recovered _txn durable, and
+    // lets the asynchronous purge remove such versions of a table on its own root.
+    private void allowAsyncPartitionPurge() {
+        if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
+            txWriter.rewriteAndFsync();
+        }
+        final int flushCommitMode = getFlushCommitMode();
+        if (!privateRootWriter && (flushCommitMode == CommitMode.SYNC || flushCommitMode == CommitMode.ADAPTIVE)) {
+            engine.markPartitionPurgeSafe(tableToken);
         }
     }
 
@@ -14854,7 +14881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 setPathForNativePartition(other, timestampType, partitionBy, timestamp, txn);
                 other.$();
                 if (deltaWriter != null) {
-                    deltaWriter.cancel(other);
+                    deltaWriter.cancel(engine, tableToken, other);
                 }
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
@@ -14862,7 +14889,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
-                    if (deltaWriter != null && !deltaWriter.purge(other)) {
+                    if (deltaWriter != null && !deltaWriter.purge(engine, tableToken, other)) {
                         // Delta files of this version remain; the async purge retries both.
                         scheduleAsyncPurge = true;
                     } else if (!ff.unlinkOrRemove(other, LOG)) {
@@ -16950,19 +16977,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // Before removing stale partition versions at open, make a SYNC table's recovered _txn durable and mark the
-    // table safe for the asynchronous purge only when this is the real table root.
-    private void purgeUnusedPartitionsAtOpen(boolean isPrivateRoot) {
+    private void purgeUnusedPartitionsAtOpen() {
         if (PartitionBy.isPartitioned(partitionBy)) {
             try {
                 ff.iterateDir(path.$(), removePartitionDirsNotAttached);
-                if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
-                    txWriter.rewriteAndFsync();
-                }
-                final int flushCommitMode = getFlushCommitMode();
-                if (!isPrivateRoot && (flushCommitMode == CommitMode.SYNC || flushCommitMode == CommitMode.ADAPTIVE)) {
-                    engine.markPartitionPurgeSafe(tableToken);
-                }
+                allowAsyncPartitionPurge();
                 processPartitionRemoveCandidates();
                 final boolean adaptive = effectiveCommitMode == CommitMode.ADAPTIVE && tableToken.isWal();
                 for (int i = 0, n = partitionMovesFound.size(); i < n; i += 2) {
@@ -18010,10 +18029,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeNonAttachedPartitions() {
+    private void removeNonAttachedPartitions(boolean allowAsyncPurge) {
         LOG.debug().$("purging non attached partitions [path=").$substr(pathRootSize, path.$()).I$();
         try {
             ff.iterateDir(path.$(), removePartitionDirsNotAttached);
+            if (allowAsyncPurge) {
+                allowAsyncPartitionPurge();
+            }
             processPartitionRemoveCandidates();
         } finally {
             // Only the scan at writer open acts on the moves the scan finds
@@ -21916,7 +21938,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     void purgeUnusedPartitions() {
         if (PartitionBy.isPartitioned(partitionBy)) {
-            removeNonAttachedPartitions();
+            removeNonAttachedPartitions(false);
         }
     }
 

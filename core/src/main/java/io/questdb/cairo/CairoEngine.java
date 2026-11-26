@@ -136,6 +136,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -3800,14 +3801,23 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (toTableToken != null) {
                     boolean renamed = false;
                     try {
-                        try (WalWriter walWriter = getWalWriter(fromTableToken)) {
-                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
-                            LOG.info().$("renaming table [from='").$safe(fromTableName)
+                        if (isDeltaTable(fromTableToken)) {
+                            final long seqTxn = renameDeltaTable(fromTableToken, toTableNameStr, securityContext);
+                            LOG.info().$("renaming Delta table [from='").$safe(fromTableName)
                                     .$("', to='").$safe(toTableName)
-                                    .$("', wal=").$(walWriter.getWalId())
                                     .$("', seqTxn=").$(seqTxn)
                                     .I$();
                             renamed = true;
+                        } else {
+                            try (WalWriter walWriter = getWalWriter(fromTableToken)) {
+                                long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
+                                LOG.info().$("renaming table [from='").$safe(fromTableName)
+                                        .$("', to='").$safe(toTableName)
+                                        .$("', wal=").$(walWriter.getWalId())
+                                        .$("', seqTxn=").$(seqTxn)
+                                        .I$();
+                                renamed = true;
+                            }
                         }
                         TableUtils.overwriteTableNameFile(
                                 fromPath.of(configuration.getDbRoot()).concat(toTableToken),
@@ -4171,6 +4181,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /** Returns the applied structure version, which the sequencer matches when no schema change is pending. */
     public long validateDeltaTableSwitch(TableToken tableToken) {
         TableToken current = verifyAndGetTableToken(tableToken);
         if (isReadOnlyMode()) {
@@ -4208,7 +4219,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (configuration.getFilesFacade().exists(path.of(configuration.getDbRoot()).concat(current).concat(io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME).$())) {
                 throw CairoException.nonCritical().put("table already has a pending type conversion");
             }
-            return metadata.getMetadataVersion();
+            return tx.getColumnStructureVersion();
         }
     }
 
@@ -5517,6 +5528,18 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
+        }
+    }
+
+    // A Delta table sequences its rename through its own writer, like any other structural change.
+    private long renameDeltaTable(TableToken fromTableToken, String toTableName, SecurityContext securityContext) {
+        try (
+                TableWriterAPI writer = getTableWriterAPI(fromTableToken, "rename");
+                AlterOperation operation = new AlterOperation()
+        ) {
+            operation.ofRenameTable(fromTableToken, toTableName);
+            operation.withSecurityContext(securityContext);
+            return writer.apply(operation, true);
         }
     }
 

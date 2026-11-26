@@ -1425,7 +1425,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean purge(Path partitionDir) {
+                public boolean purge(CairoEngine engine, TableToken tableToken, Path partitionDir) {
                     purges.incrementAndGet();
                     return switch (mode.get()) {
                         case DELTA_PURGE_PENDING -> false;

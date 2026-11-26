@@ -42,14 +42,14 @@ import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
-class OperationExecutor implements Closeable {
+public class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
     private final WalApplySqlExecutionContext executionContext;
     private final int maxRecompilationAttempts;
     private final Rnd rnd;
 
-    OperationExecutor(
+    public OperationExecutor(
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {

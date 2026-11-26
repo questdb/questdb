@@ -26,7 +26,9 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionDeltaWriter;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.ReadOnlyObjList;
@@ -57,7 +59,7 @@ public class CairoConfigurationWrapperTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean purge(Path partitionDir) {
+        public boolean purge(CairoEngine engine, TableToken tableToken, Path partitionDir) {
             return true;
         }
 

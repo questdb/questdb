@@ -40,6 +40,7 @@ import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 
 /**
@@ -393,7 +394,7 @@ public final class FuzzTableFactory {
         for (int i = 0; i < numChunks; i++) {
             if (i == walChunks && kind == ShadowKind.CONVERTED_DELTA) {
                 drainWal.run();
-                conversion = planned;
+                conversion = coveredConversion(planned, cuts, order, walChunks);
                 applyParquetConversion(shadowName, conversion, executor);
                 drainWal.run();
                 executor.execute("ALTER TABLE " + shadowName + " SET TYPE DELTA");
@@ -415,6 +416,34 @@ public final class FuzzTableFactory {
             drainWal.run();
         }
         return conversion;
+    }
+
+    /**
+     * {@code CONVERT PARTITION ... LIST} fails on a day the shadow does not hold yet, so this keeps only the planned
+     * days that the first {@code copiedChunks} chunks of {@code order} cover.
+     */
+    private ParquetConversion coveredConversion(ParquetConversion planned, int[] cuts, int[] order, int copiedChunks) {
+        if (planned.mode != ParquetMode.PARTIAL) {
+            return planned;
+        }
+        final LocalDate start = LocalDate.parse(config.getTsStart(), DateTimeFormatter.ISO_LOCAL_DATE);
+        final StringSink covered = new StringSink();
+        for (String partition : planned.partitions.split(", ")) {
+            final long day = start.until(LocalDate.parse(partition.substring(1, partition.length() - 1)), ChronoUnit.DAYS);
+            for (int i = 0; i < copiedChunks; i++) {
+                final int chunk = order[i];
+                if (rowDay(cuts[chunk]) <= day && day <= rowDay(cuts[chunk + 1] - 1)) {
+                    if (covered.length() > 0) {
+                        covered.put(", ");
+                    }
+                    covered.put(partition);
+                    break;
+                }
+            }
+        }
+        return covered.length() > 0
+                ? new ParquetConversion(ParquetMode.PARTIAL, covered.toString())
+                : new ParquetConversion(ParquetMode.NONE, null);
     }
 
     private boolean isIndexedSymbol(Rnd rnd) {
@@ -532,6 +561,10 @@ public final class FuzzTableFactory {
 
     private ParquetMode pickParquetMode(Rnd rnd) {
         return ParquetMode.values()[rnd.nextInt(ParquetMode.values().length)];
+    }
+
+    private long rowDay(int row) {
+        return config.getStepMicros() * row / DAY_MICROS;
     }
 
     private String rowTimestamp(int row) {

@@ -32,8 +32,11 @@ import io.questdb.std.str.Path;
 
 public interface PartitionDeltaWriter extends QuietCloseable {
 
-    /** Stops background work on a removed partition version while old readers finish. */
-    default void cancel(Path partitionDir) {
+    /**
+     * Stops background work on a removed partition version while old readers finish. Like {@link #purge},
+     * it leaves a version alone while a replicating primary still has to upload the transactions it holds.
+     */
+    default void cancel(CairoEngine engine, TableToken tableToken, Path partitionDir) {
     }
 
     @Override
@@ -55,9 +58,10 @@ public interface PartitionDeltaWriter extends QuietCloseable {
 
     /**
      * Releases the Delta state of a removed partition version before its directory is deleted.
-     * Returns false to keep the directory for the next purge pass.
+     * Returns false to keep the directory for the next purge pass, e.g. while a replicating
+     * primary still has to upload the transactions it holds.
      */
-    boolean purge(Path partitionDir);
+    boolean purge(CairoEngine engine, TableToken tableToken, Path partitionDir);
 
     /**
      * Writes the physical base the catalog selects at the writer's current sequence transaction.
