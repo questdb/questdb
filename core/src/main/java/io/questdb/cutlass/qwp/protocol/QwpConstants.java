@@ -113,6 +113,16 @@ public final class QwpConstants {
      */
     public static final byte FLAG_ROLLBACK = 0x20;
     /**
+     * Flag bit: the frame belongs to a strict transaction, which must commit as one or
+     * not at all. A strict client sets it on every data frame. The server never commits
+     * such a frame's rows on its own: it answers a frame that would take a table to
+     * {@code qwp.max.uncommitted.rows} uncommitted rows with
+     * {@link #STATUS_TRANSACTION_TOO_LARGE} instead, which discards every row the
+     * connection holds uncommitted. A server that predates the bit ignores it, as it
+     * ignores every flag bit it does not know, and commits at the cap as before.
+     */
+    public static final byte FLAG_STRICT = 0x40;
+    /**
      * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
      * table block if no delta dict is present) is zstd-compressed. The prelude
      * remains uncompressed so the I/O thread can dispatch on msg_kind / batch_seq
@@ -268,6 +278,14 @@ public final class QwpConstants {
      * mask (see {@link #SERVER_INFO_CAP_DURABLE_ACK}).
      */
     public static final byte STATUS_SERVER_INFO = 0x01;
+    /**
+     * Status: a {@link #FLAG_STRICT} frame would take a table to
+     * {@code qwp.max.uncommitted.rows} uncommitted rows, at which the server commits
+     * it on its own. The server refused the frame and discarded the rows the
+     * connection held uncommitted, so the client's strict transaction did not commit
+     * in parts. Only a frame with {@link #FLAG_STRICT} gets it.
+     */
+    public static final byte STATUS_TRANSACTION_TOO_LARGE = 0x0F;
     /**
      * Status: Write failure (e.g., table not accepting writes).
      */

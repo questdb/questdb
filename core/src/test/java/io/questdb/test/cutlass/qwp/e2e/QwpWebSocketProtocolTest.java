@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
+import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorWebSocketSendLoop;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
@@ -204,6 +206,11 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
         assertClientDecodesStatus(QwpConstants.STATUS_SECURITY_ERROR, "SECURITY_ERROR");
         assertClientDecodesStatus(QwpConstants.STATUS_INTERNAL_ERROR, "INTERNAL_ERROR");
         assertClientDecodesStatus(QwpConstants.STATUS_DICTIONARY_GAP, "DICTIONARY_GAP");
+        assertClientDecodesStatus(QwpConstants.STATUS_TRANSACTION_TOO_LARGE, "TRANSACTION_TOO_LARGE");
+        // The pinned client must also act on the refusal of a strict transaction: discard
+        // it, or halt when it was committed, never retry it as an unknown status.
+        Assert.assertEquals(SenderError.Category.TRANSACTION_TOO_LARGE,
+                CursorWebSocketSendLoop.classify(QwpConstants.STATUS_TRANSACTION_TOO_LARGE));
     }
 
     @Test

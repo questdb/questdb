@@ -1306,6 +1306,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return sendState != SEND_STATE_READY;
     }
 
+    /**
+     * True when the buffered message carries {@code FLAG_STRICT}: its rows belong to
+     * a strict transaction, which must commit as one or not at all.
+     */
+    public boolean isStrictMessage() {
+        return QwpMessageHeader.isStrict(bufferAddress, bufferPosition);
+    }
+
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
     }
@@ -1897,6 +1905,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
             QwpTableBlockCursor tableBlock = preparedTableBlock;
             preparedTableBlock = null;
+            final boolean isStrict = isStrictMessage();
             while (tableBlock != null) {
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
                         securityContext,
@@ -1910,6 +1919,26 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     rejectMsg.put("failed to create table update details for: ").put(tableBlock.getTableName());
                     reject(Status.INTERNAL_ERROR, rejectMsg, fd);
                     return;
+                }
+                // A strict transaction commits as one or not at all, but the appender commits
+                // a table on its own once qwp.max.uncommitted.rows of its rows are uncommitted.
+                // Refuse the block that would get there instead: the error path rolls back
+                // every row the connection holds uncommitted, this frame's included. The writer
+                // counts the rows of every spelling of the table, as the appender's check does.
+                if (isStrict) {
+                    final long rows = tud.getWriter().getUncommittedRowCount() + tableBlock.getRowCount();
+                    final long maxRows = tud.getMetaMaxUncommittedRows();
+                    if (rows >= maxRows) {
+                        rejectMsg.clear();
+                        rejectMsg.put("strict transaction too large [table=").put(tableBlock.getTableName())
+                                .put(", rows=").put(rows)
+                                .put(", maxUncommittedRows=").put(maxRows)
+                                .put("]; the server commits a table on its own once qwp.max.uncommitted.rows of its "
+                                        + "rows are uncommitted, which would split the transaction, so it discarded the "
+                                        + "transaction's uncommitted rows instead. Raise qwp.max.uncommitted.rows on the server");
+                        reject(Status.TRANSACTION_TOO_LARGE, rejectMsg, fd);
+                        return;
+                    }
                 }
 
                 // Read BEFORE the append: the cursor is consumed by it, and a
@@ -2768,7 +2797,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         SECURITY_ERROR,
         INTERNAL_ERROR,
         NOT_ACCEPTING_WRITES,
-        DICTIONARY_GAP
+        DICTIONARY_GAP,
+        TRANSACTION_TOO_LARGE
     }
 
     /**

@@ -116,6 +116,15 @@ public class QwpMessageHeader {
     }
 
     /**
+     * True when the message at {@code address} carries {@link QwpConstants#FLAG_STRICT}:
+     * its rows belong to a strict transaction, which the server must refuse rather
+     * than commit in parts.
+     */
+    public static boolean isStrict(long address, int length) {
+        return length >= HEADER_SIZE && (Unsafe.getByte(address + HEADER_OFFSET_FLAGS) & FLAG_STRICT) != 0;
+    }
+
+    /**
      * Reads the magic integer from direct memory.
      *
      * @param address memory address
