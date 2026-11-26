@@ -384,16 +384,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             " sample by 1h")
                             .noLeakCheck()
                             .assertsPlan("""
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [timestamp]
-                                        Async Group By workers: 1
-                                          keys: [timestamp]
-                                          keyFunctions: [timestamp_floor_utc('1h',timestamp)]
-                                          values: [count(*)]
-                                          filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                      keyFunctions: [timestamp_floor_utc('1h',timestamp)]
+                                      values: [count(*)]
+                                      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                                     """);
                 }, 4, 4
         );
@@ -1676,6 +1674,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isStreamGroupByEnabled() {
+            return sqlExecutionContext.isStreamGroupByEnabled();
+        }
+
+        @Override
         public boolean isTimestampRequired() {
             return sqlExecutionContext.isTimestampRequired();
         }
@@ -1829,6 +1832,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setRandom(Rnd rnd) {
             sqlExecutionContext.setRandom(rnd);
+        }
+
+        @Override
+        public void setStreamGroupByEnabled(boolean isEnabled) {
+            sqlExecutionContext.setStreamGroupByEnabled(isEnabled);
         }
 
         @Override

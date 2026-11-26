@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -281,6 +280,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean isProjection() {
         return false;
+    }
+
+    /**
+     * Returns true if {@code toTop()} on this factory's cursor reruns a stream GROUP BY. A factory
+     * with an input that {@link #getBaseFactory()} does not expose must combine its inputs.
+     */
+    default boolean isRewindRecomputing() {
+        if (recordCursorSupportsRandomAccess()) {
+            return false;
+        }
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.isRewindRecomputing();
     }
 
     /**

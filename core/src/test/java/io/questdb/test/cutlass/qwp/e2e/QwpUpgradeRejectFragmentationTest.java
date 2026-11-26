@@ -378,7 +378,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isQwpBrowserTlsTerminationEnabled() {
+            public boolean isBrowserTlsTerminationEnabled() {
                 return tlsTerminationEnabled;
             }
         };
@@ -441,7 +441,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isQwpBrowserTlsTerminationEnabled() {
+            public boolean isBrowserTlsTerminationEnabled() {
                 return tlsTerminationEnabled;
             }
         };

@@ -164,16 +164,13 @@ public class AggregatePruningTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(v)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_agg_prune
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(v)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_agg_prune
                             """);
             assertPruned("SELECT a,b FROM (SELECT ts,sum(v) a,sum(v) b,count() ignored FROM lp_agg_prune"
                             + " SAMPLE BY 1h FILL(PREV,PREV(a),0) ALIGN TO CALENDAR) ORDER BY ts",

@@ -75,12 +75,27 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory, Monot
         return new AddLongFunc(arg, args.getQuick(1), ColumnType.getTimestampType(arg.getType()));
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(1) instanceof ConstantExpression
+                && preservesOrder(call.argumentAt(0).getDataType(), call.getDataType(), arguments.constant(call.argumentAt(1)).getLong(null));
+    }
+
 
     private static int invert(Interval io, long k, long shiftInputCeiling) {
         if (k == Numbers.LONG_NULL) {
             return MonotonicTimestampFunction.NONE;
         }
         return MonotonicTimestampFunction.invertConstantShift(io, k, shiftInputCeiling);
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of adding the constant {@code shift} to an argument of
+     * {@code argumentType}, returning {@code type}: no designated timestamp overflows.
+     */
+    private static boolean preservesOrder(int argumentType, int type, long shift) {
+        return argumentType == type && shift != Numbers.LONG_NULL
+                && shift <= Long.MAX_VALUE - ColumnType.getTimestampDriver(type).getMaxDesignatedTimestamp();
     }
 
     private static class AddLongFunc extends TimestampFunction implements BinaryFunction, MonotonicTimestampFunction {
@@ -121,6 +136,11 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory, Monot
         @Override
         public Function getTimestampArg() {
             return left;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return right.isConstant() && preservesOrder(left.getType(), getType(), right.getLong(null));
         }
 
         @Override

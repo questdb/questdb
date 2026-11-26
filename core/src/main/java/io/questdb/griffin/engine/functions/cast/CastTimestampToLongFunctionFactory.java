@@ -69,6 +69,11 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory, Mono
         return new Func(args.getQuick(0));
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        return true;
+    }
+
     private static class Func extends AbstractCastToLongFunction implements MonotonicTimestampFunction {
         public Func(Function arg) {
             super(arg);
@@ -82,6 +87,11 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory, Mono
         @Override
         public Function getTimestampArg() {
             return arg;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return true;
         }
 
         @Override

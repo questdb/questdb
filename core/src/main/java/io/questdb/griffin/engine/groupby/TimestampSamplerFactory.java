@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.microtime.Micros;
 import org.jetbrains.annotations.NotNull;
 
 public final class TimestampSamplerFactory {
@@ -93,4 +95,10 @@ public final class TimestampSamplerFactory {
         return cs.length() - 1;
     }
 
+    public static void validateStride(int timestampType, long interval, char timeUnit, int position) throws SqlException {
+        if (timeUnit == 'n' && ColumnType.isTimestampMicro(timestampType)
+                && interval % Micros.MICRO_NANOS != 0 && Micros.MICRO_NANOS % interval != 0) {
+            throw SqlException.$(position, "SAMPLE BY does not support this stride on a microsecond timestamp, use a whole number of microseconds");
+        }
+    }
 }

@@ -628,7 +628,7 @@ final class SetOperationFactoryGenerator {
             throw th;
         }
         return sortGenerator.generateSort(metadata, branch, branchSortKeys, null, -1, configuration.isSqlOrderBySortEnabled(),
-                algorithm == SortPlan.Algorithm.MATERIALIZED);
+                algorithm == SortPlan.Algorithm.MATERIALIZED, configuration.getSqlSortValueMaxBytes());
     }
 
     // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in

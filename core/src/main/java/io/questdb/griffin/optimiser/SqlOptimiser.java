@@ -81,6 +81,7 @@ public final class SqlOptimiser implements Mutable {
     private final AggregateInputOrder aggregateInputOrder;
     private final OptimiserContext context;
     private final OperatorPlanning operatorPlanning;
+    private final OrderPlanning orderPlanning;
     private final ObjList<OptimiserPass> passes = new ObjList<>(12);
     private final ColumnExpression tmpColumn = new ColumnExpression();
     private final IntIntHashMap tmpColumnMap = new IntIntHashMap();
@@ -158,7 +159,8 @@ public final class SqlOptimiser implements Mutable {
         // The endpoint LIMIT reads the input that the merge leaves, a table read through at most a filter.
         passes.add(new TimestampEndpointLimit(constants, limits, sorts));
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
-        passes.add(new OrderPlanning(configuration, functionFactoryCache, columnIds));
+        orderPlanning = new OrderPlanning(configuration, functionFactoryCache, columnIds);
+        passes.add(orderPlanning);
         operatorPlanning = new OperatorPlanning(configuration, context, planNodes, tmpValues, columnIds, tmpSteps);
         accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning, tmpConjuncts, tmpExpressions, tmpKeys, tmpValues,
                 temporaries.sink, temporaries.longs);
@@ -239,6 +241,7 @@ public final class SqlOptimiser implements Mutable {
      * Makes every join keep copies of its slave rows instead of reading them back by row id.
      */
     public void setFullFatJoins(boolean isFullFatJoins) {
+        orderPlanning.setFullFatJoins(isFullFatJoins);
         operatorPlanning.setFullFatJoins(isFullFatJoins);
     }
 

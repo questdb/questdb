@@ -125,6 +125,17 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory, Mono
         }
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        if (getTimestampArgumentIndex(call, arguments) < 0) {
+            return false;
+        }
+        final CharSequence tz = arguments.constant(call.argumentAt(1)).getStrA(null);
+        final int type = call.getDataType();
+        return constantZoneRules(tz, call.argumentAt(1).getPosition(), type) == null
+                && OffsetTimestampFunction.preservesOrder(call.argumentAt(0).getDataType(), type, fixedOffset(tz, type));
+    }
+
     /**
      * The rules of the named time zone a constant spells, null when it spells a fixed offset; raises the errors for
      * a NULL or unknown time zone.

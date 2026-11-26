@@ -129,6 +129,15 @@ public final class PhysicalProperties {
     }
 
     /**
+     * Whether the rows of the plan are the rows of a stream GROUP BY without a copy that gives them row ids, see
+     * {@link #streamRowCopy}. A copy of such rows, such as a sort's, stands in for the map of a hash GROUP BY, which
+     * only the query memory limit bounds.
+     */
+    public static boolean readsStreamRows(LogicalPlan plan) {
+        return streamRowCopy(plan) == AggregatePlan.OutputCopy.NONE;
+    }
+
+    /**
      * The fewest rows a LIMIT of constant bounds allows along the inputs that bound the rows of the plan, see
      * {@link #rowBoundScan} and {@link #limitCount}; {@link Long#MAX_VALUE} for none. A LIMIT whose count only
      * execution knows may allow fewer, see {@link #hasRuntimeLimitsOf}.
@@ -195,6 +204,32 @@ public final class PhysicalProperties {
     }
 
     /**
+     * The copy the stream GROUP BY the rows of the plan come from puts before its consumer, read through projections,
+     * filters, LIMITs, sorts that keep the input order and the left input of EXCEPT and INTERSECT; null when the rows
+     * do not come from a stream GROUP BY.
+     */
+    public static AggregatePlan.OutputCopy streamRowCopy(LogicalPlan plan) {
+        while (true) {
+            switch (plan) {
+                case AggregatePlan aggregate -> {
+                    return isStream(aggregate) ? aggregate.getOutputCopy() : null;
+                }
+                case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW
+                        && PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN ->
+                        plan = project.getChild();
+                case FilterPlan filter -> plan = filter.getChild();
+                case LimitPlan limit -> plan = limit.getChild();
+                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
+                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
+                case SetOperationPlan operation when !operation.getOperation().isUnion() -> plan = operation.getLeft();
+                default -> {
+                    return null;
+                }
+            }
+        }
+    }
+
+    /**
      * Whether the factory a parallel HORIZON JOIN matches the rows of its slave in serves the concurrent time frames it
      * reads, see {@link #supportsConcurrentTimeFrameCursor}: the factory under the filter the join steals from the
      * slave, see {@link PlanToFactoryRules#horizonStolenFilter}, else the slave's.
@@ -256,6 +291,48 @@ public final class PhysicalProperties {
     public static Capability supportsPageFrameTimeFrameCursor(ScanPlan scan, boolean isRandomAccess) {
         return Capability.of(isRandomAccess && scanTimestampIndex(scan) >= 0 && scan.getScanDirection() != SortDirection.DESCENDING
                 && (scan.getNativeTimestampColumnId() == -1 || scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()));
+    }
+
+    /**
+     * Whether rewinding the cursor of the factory reruns a stream GROUP BY: its rows reach the cursor without a copy,
+     * through operators without random access, as the master of a join or a slave the join neither hashes nor copies,
+     * or as an input of a set operation, other than the right input that EXCEPT and INTERSECT hash.
+     */
+    public static Capability rewindRecomputes(LogicalPlan plan) {
+        final Capability isRandomAccess = supportsRandomAccess(plan);
+        if (isRandomAccess != Capability.NO) {
+            return isRandomAccess == Capability.YES ? Capability.NO : Capability.UNKNOWN;
+        }
+        return switch (plan) {
+            case AggregatePlan aggregate when isStream(aggregate) -> Capability.of(aggregate.getOutputCopy() == AggregatePlan.OutputCopy.NONE);
+            case SampleByPlan sample when sample.isBaseCopied() -> Capability.NO;
+            case DomainReadPlan read -> switch (read.getAlgorithm()) {
+                case SHARED -> Capability.NO;
+                case REGENERATED -> rewindRecomputes(read.getProducer());
+                case null -> Capability.UNKNOWN;
+            };
+            case JoinPlan join -> {
+                final ObjList<JoinInput> ordered = join.getOrderedInputs();
+                Capability recomputes = rewindRecomputes(ordered.getQuick(0).getInput());
+                for (int i = 1, n = ordered.size(); i < n; i++) {
+                    final JoinInput step = ordered.getQuick(i);
+                    if (step.getJoinType() != JoinKind.UNNEST && step.getAlgorithm() != JoinInput.Algorithm.HASH && !step.isSlaveCopied()) {
+                        recomputes = or(recomputes, rewindRecomputes(step.getInput()));
+                    }
+                }
+                yield recomputes;
+            }
+            case SetOperationPlan operation -> operation.getOperation().isUnion()
+                    ? or(rewindRecomputes(operation.getLeft()), rewindRecomputes(operation.getRight()))
+                    : rewindRecomputes(operation.getLeft());
+            default -> {
+                Capability recomputes = Capability.NO;
+                for (int i = 0, n = plan.inputCount(); i < n; i++) {
+                    recomputes = or(recomputes, rewindRecomputes(plan.inputAt(i)));
+                }
+                yield recomputes;
+            }
+        };
     }
 
     /**
@@ -364,6 +441,11 @@ public final class PhysicalProperties {
         if (factory == PlanToFactoryRules.AggregateFactory.TIMESTAMP_ENDPOINT) {
             return computed(Capability.YES, ScanDirection.FORWARD, isLongSequence);
         }
+        if (isStream(aggregate)) {
+            final AggregatePlan.OutputCopy copy = aggregate.getOutputCopy();
+            final boolean isRandomAccess = copy == AggregatePlan.OutputCopy.RANDOM_ACCESS || copy == AggregatePlan.OutputCopy.RANDOM_ACCESS_IN_BATCHES;
+            return computed(Capability.of(isRandomAccess), aggregate.isStreamBackward() ? ScanDirection.BACKWARD : ScanDirection.FORWARD, isLongSequence);
+        }
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
             case PARALLEL -> direction(input);
             case PARALLEL_STOLEN_FILTER -> stolenFilterDirection(aggregate.getChild(), input);
@@ -377,10 +459,11 @@ public final class PhysicalProperties {
     /**
      * Whether the GROUP BY serves shared cursors: the vectorised and the keyed parallel one always do; the serial and
      * the keyless parallel one only when other consumers read the aggregate, see {@link AggregatePlan#hasSharedConsumers()};
-     * the one over grouping sets never does.
+     * the one over grouping sets and a stream GROUP BY never do.
      */
     private static Capability aggregateSharedCursors(AggregatePlan aggregate) {
-        if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY || aggregate.hasGroupingSets()) {
+        if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY || aggregate.hasGroupingSets()
+                || isStream(aggregate)) {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
@@ -395,9 +478,14 @@ public final class PhysicalProperties {
 
     /**
      * Count, timestamp endpoint and posting-index factories designate no timestamp, nor does the vectorised GROUP BY;
-     * before order planning records the algorithm, a single key over page frames may still pick the vectorised one.
+     * before order planning records the algorithm, a single key over page frames may still pick the vectorised one. A
+     * stream GROUP BY designates its TIMESTAMP key where its consumer requests the rows in key order and it delivers
+     * that order, see {@link #streamTimestampIndex}.
      */
     private static int aggregateTimestampIndex(AggregatePlan aggregate) {
+        if (isStream(aggregate)) {
+            return streamTimestampIndex(aggregate);
+        }
         final int timestampIndex = aggregate.getOutput().getTimestampIndex();
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON || timestampIndex < 0) {
@@ -530,13 +618,13 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The time-series DISTINCT keeps the order of its input and serves random access, the hash one neither, see
-     * {@link DistinctPlan.Algorithm}.
+     * Both DISTINCT factories emit the rows in the order of their input; only the time-series one serves random access,
+     * see {@link DistinctPlan.Algorithm}.
      */
     private static int distinct(DistinctPlan distinct, int input) {
         return switch (distinct.getAlgorithm()) {
             case TIME_SERIES -> computed(Capability.YES, direction(input), capability(input, LONG_SEQUENCE));
-            case HASH -> computed(Capability.NO, ScanDirection.FORWARD, capability(input, LONG_SEQUENCE));
+            case HASH -> computed(Capability.NO, direction(input), capability(input, LONG_SEQUENCE));
             case null -> unknown(ScanDirection.UNKNOWN, capability(input, LONG_SEQUENCE));
         };
     }
@@ -732,6 +820,10 @@ public final class PhysicalProperties {
             return scan(scan);
         }
         final int properties = derive(PlanToFactoryRules.latestByBase(latest), null);
+        if (latest.getAlgorithm() == LatestByPlan.Algorithm.MATERIALIZED) {
+            // reads its input again for the latest rows, in the input's order
+            return computed(capability(properties, RANDOM_ACCESS), direction(properties), capability(properties, LONG_SEQUENCE));
+        }
         return computed(isLightLatestBy(latest), ScanDirection.FORWARD, capability(properties, LONG_SEQUENCE));
     }
 
@@ -867,6 +959,20 @@ public final class PhysicalProperties {
     }
 
     /**
+     * Whether operator planning made the GROUP BY a stream GROUP BY, see {@link AggregatePlan#getStreamKeyIndex()}.
+     */
+    private static boolean isStream(AggregatePlan aggregate) {
+        return aggregate.getAlgorithm() != null && aggregate.getStreamKeyIndex() >= 0;
+    }
+
+    private static Capability or(Capability left, Capability right) {
+        if (left == Capability.YES || right == Capability.YES) {
+            return Capability.YES;
+        }
+        return left == Capability.NO && right == Capability.NO ? Capability.NO : Capability.UNKNOWN;
+    }
+
+    /**
      * Only the interpolating SAMPLE BY factory supports random access.
      */
     private static Capability sampleByRandomAccess(SampleByPlan sample) {
@@ -989,7 +1095,7 @@ public final class PhysicalProperties {
         final boolean isInputOrder = sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER;
         return switch (limit.getApplication()) {
             case INPUT -> isInputOrder ? input : sorted(sort, input, Capability.NO);
-            case OPERATOR, MASTER_SUFFIX -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
+            case OPERATOR, COPIED_INPUT, MASTER_SUFFIX -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
             case SORT -> sorted(sort, input, Capability.YES);
             case null -> unknown(ScanDirection.UNKNOWN, capability(input, LONG_SEQUENCE));
         };
@@ -1060,6 +1166,24 @@ public final class PhysicalProperties {
         return scan.getTableToken().isLiveView() && !scan.isUpdate() ? null : scan.getTableToken();
     }
 
+    /**
+     * The TIMESTAMP key of the stream GROUP BY as its designated timestamp where it is the SAMPLE BY bucket, whose rows
+     * a SAMPLE BY emits in bucket order, or where the consumer requests the rows ordered by it in the direction the
+     * GROUP BY emits them; -1 otherwise. Whether a GROUP BY designates a timestamp then depends on the order its
+     * consumer needs, not on whether it streams, so INSERT ... SELECT and CREATE TABLE AS see the schema of a hash
+     * GROUP BY under a sort.
+     */
+    private static int streamTimestampIndex(AggregatePlan aggregate) {
+        final int keyIndex = aggregate.getStreamKeyIndex();
+        final OutputSchema output = aggregate.getOutput();
+        if (!ColumnType.isTimestamp(output.getColumnType(keyIndex))) {
+            return -1;
+        }
+        final SortDirection direction = aggregate.getRequestedDirection();
+        return keyIndex == aggregate.getBucketKeyIndex() || aggregate.getRequestedOrderColumnId() == output.getColumnId(keyIndex)
+                && (direction == SortDirection.DESCENDING) == aggregate.isStreamBackward() ? keyIndex : -1;
+    }
+
     private static Capability supportsLongTopK(LogicalPlan plan, @Nullable LimitPlan sortedLimit, int columnIndex) {
         if (columnIndex < 0 || columnIndex >= plan.getOutput().getColumnCount()) {
             return Capability.UNKNOWN;
@@ -1074,7 +1198,7 @@ public final class PhysicalProperties {
             case AggregatePlan aggregate -> {
                 if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY
                         || aggregate.getAlgorithm() == AggregatePlan.Algorithm.HASH_JOIN
-                        || aggregate.getGroupingExpressions().size() == 0 || aggregate.hasGroupingSets()) {
+                        || aggregate.getGroupingExpressions().size() == 0 || aggregate.hasGroupingSets() || isStream(aggregate)) {
                     yield Capability.NO;
                 }
                 final int type = aggregate.getOutput().getColumnType(columnIndex);

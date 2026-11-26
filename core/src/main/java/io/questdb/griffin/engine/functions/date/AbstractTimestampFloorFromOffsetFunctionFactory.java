@@ -55,7 +55,6 @@ import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-
 /**
  * Shared base for {@link TimestampFloorFromOffsetFunctionFactory} and
  * {@link TimestampFloorFromOffsetUtcFunctionFactory}.
@@ -187,6 +186,31 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             return createRuntimeConstTzFunc(name, returnUtc, timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType, timestampDriver);
         }
         return new AllRuntimeConstDstGapAwareFunc(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos, timestampType);
+    }
+
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        if (getTimestampArgumentIndex(call, arguments) < 0 || !(call.argumentAt(0) instanceof ConstantExpression)
+                || !(call.argumentAt(2) instanceof ConstantExpression)) {
+            return false;
+        }
+        final CharSequence unitStr = arguments.constant(call.argumentAt(0)).getStrA(null);
+        final int unitPos = call.argumentAt(0).getPosition();
+        final int stride = CommonUtils.getStrideMultiple(unitStr, unitPos);
+        final char unit = CommonUtils.getStrideUnit(unitStr, unitPos);
+        final int type = call.getDataType();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(type);
+        final long effectiveOffset = TimestampFloorFromFunctionFactory.floorOrigin(timestampDriver, arguments.constant(call.argumentAt(2)).getTimestamp(null), call.argumentAt(2).getDataType())
+                + constantOffset(arguments.constant(call.argumentAt(3)).getStrA(null), call.argumentAt(3).getPosition(), timestampDriver);
+        final CharSequence tz = arguments.constant(call.argumentAt(4)).getStrA(null);
+        final TimeZoneRules tzRules = constantZoneRules(tz, call.argumentAt(4).getPosition(), timestampDriver);
+        final int argumentType = call.argumentAt(1).getDataType();
+        if (tzRules != null && !tzRules.hasFixedOffset()) {
+            return preservesZonedOrder(isReturnUtc(), argumentType, type, unit, stride, effectiveOffset, tzRules.getStandardOffset());
+        }
+        final long tzOffset = constantZoneOffset(tz, tzRules, timestampDriver);
+        return tzOffset == 0 ? TimestampFloorOffsetFunction.preservesOrder(argumentType, type, unit, stride, effectiveOffset)
+                : preservesFixedZoneOrder(argumentType, type, unit, stride, effectiveOffset, tzOffset);
     }
 
     // Returns the width of the floor's buckets when add() steps from one bucket boundary to the
@@ -561,6 +585,31 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     }
 
     /**
+     * The {@code preservesTimestampOrder()} of the function over a fixed time zone offset other than zero, which
+     * shifts every bucket by the same amount.
+     */
+    private static boolean preservesFixedZoneOrder(int argumentType, int type, char unit, int stride, long effectiveOffset, long tzOffset) {
+        return effectiveOffset == 0 && argumentType == type && TimestampFloorFunctions.preservesOrder(unit, stride, type, tzOffset);
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of the function over a time zone with daylight saving changes: a UTC
+     * floor of a sub-day unit, whose buckets the standard offset of the zone shifts.
+     */
+    private static boolean preservesZonedOrder(
+            boolean returnUtc,
+            int argumentType,
+            int type,
+            char unit,
+            int stride,
+            long effectiveOffset,
+            long standardOffset
+    ) {
+        return returnUtc && effectiveOffset == 0 && CommonUtils.isSubDayUnit(unit) && argumentType == type
+                && TimestampFloorFunctions.preservesOrder(unit, stride, type, standardOffset);
+    }
+
+    /**
      * The rules of the named time zone a constant time zone argument spells, null for a NULL or fixed-offset
      * spelling and for a runtime constant; raises the errors for an unknown zone and for an argument that is
      * neither constant nor runtime constant.
@@ -651,6 +700,11 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            return preservesZonedOrder(returnUtc, tsFunc.getType(), getType(), unit, stride, effectiveOffset, tzRules.getStandardOffset());
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name).val("('");
             sink.val(stride);
@@ -730,6 +784,11 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public Function getTimestampArg() {
             return tsFunc;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return preservesFixedZoneOrder(tsFunc.getType(), getType(), unit, stride, effectiveOffset, tzOffset);
         }
 
         @Override
@@ -826,6 +885,11 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public int invertTimestampInterval(Interval io) {
             return invertFloorNamedTz(io, timestampDriver, tzRules, floorFunc, unit, stride, effectiveOffset, returnUtc);
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return preservesZonedOrder(returnUtc, tsFunc.getType(), getType(), unit, stride, effectiveOffset, tzRules.getStandardOffset());
         }
 
         @Override

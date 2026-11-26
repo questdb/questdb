@@ -4481,6 +4481,41 @@ impl ParquetDecoder {
         Ok(i64::from_le_bytes(data[..8].try_into().unwrap()))
     }
 
+    /// Whether the timestamp statistics prove that each non-empty row group starts no earlier
+    /// than the previous one ends. Missing statistics answer false rather than decode pages.
+    pub fn are_row_groups_in_timestamp_order(
+        &self,
+        timestamp_column_index: u32,
+    ) -> ParquetResult<bool> {
+        if timestamp_column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "timestamp column index {} out of range [0,{})",
+                timestamp_column_index,
+                self.col_count
+            ));
+        }
+        let ts = timestamp_column_index as usize;
+        self.validate_timestamp_column(ts)?;
+
+        let mut previous_row_group = None;
+        for (rg, &row_group_size) in self.row_group_sizes.iter().enumerate() {
+            if row_group_size == 0 {
+                continue;
+            }
+            if let Some(previous) = previous_row_group {
+                let previous_max = self.row_group_timestamp_stat::<true>(previous, ts, None)?;
+                let min = self.row_group_timestamp_stat::<false>(rg, ts, None)?;
+                match (previous_max, min) {
+                    (Some(previous_max), Some(min)) if min >= previous_max => {}
+                    _ => return Ok(false),
+                }
+            }
+            previous_row_group = Some(rg);
+        }
+        Ok(true)
+    }
+
     pub fn row_group_min_timestamp(
         &self,
         file_ptr: *const u8,
@@ -5037,8 +5072,10 @@ mod multi_dict_tests {
             assert_eq!(bufs.data_ptr, bufs.data_vec.as_ptr() as *mut u8);
             bufs.data_vec
                 .as_slice()
-                .chunks_exact(4)
-                .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| i32::from_ne_bytes(*c))
                 .collect()
         };
         let int = ColumnTypeTag::Int.into_type();
@@ -5078,8 +5115,10 @@ mod multi_dict_tests {
             assert_eq!(bufs.data_size, bufs.data_vec.len());
             bufs.data_vec
                 .as_slice()
-                .chunks_exact(8)
-                .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| i64::from_ne_bytes(*c))
                 .collect()
         };
         let ts_ns = ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
@@ -5197,7 +5236,7 @@ mod multi_dict_tests {
         };
         type Encode = fn(Option<i64>) -> Vec<u8>;
         let int: Encode = |v| v.map_or(nulls::INT, |v| v as i32).to_le_bytes().to_vec();
-        let long: Encode = |v| v.map_or(nulls::LONG, |v| v).to_le_bytes().to_vec();
+        let long: Encode = |v| v.unwrap_or(nulls::LONG).to_le_bytes().to_vec();
         let float: Encode = |v| v.map_or(f32::NAN, |v| v as f32).to_le_bytes().to_vec();
         let double: Encode = |v| v.map_or(f64::NAN, |v| v as f64).to_le_bytes().to_vec();
         let byte_bytes: Vec<u8> = stored.iter().map(|&v| v as i8 as u8).collect();
@@ -5406,8 +5445,10 @@ mod multi_dict_tests {
         let read = |bufs: &ColumnChunkBuffers| -> Vec<i64> {
             bufs.data_vec
                 .as_slice()
-                .chunks_exact(8)
-                .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| i64::from_ne_bytes(*c))
                 .collect()
         };
 

@@ -35,7 +35,6 @@ import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 
-
 public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final char addUnit;
     private final Function arg;
@@ -73,6 +72,11 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
     @Override
     public Function getTimestampArg() {
         return arg;
+    }
+
+    @Override
+    public boolean preservesTimestampOrder() {
+        return preservesOrder(arg.getType(), getType(), unit, stride, offset);
     }
 
     @Override
@@ -157,6 +161,15 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         final long b0 = floor.floor(offset, stride, offset);
         final long next = timestampDriver.add(b0, addUnit, stride);
         return next > b0 && floor.floor(next, stride, offset) == next && floor.floor(next - 1, stride, offset) == b0;
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of the function over an argument of {@code argumentType}, returning
+     * {@code type}.
+     */
+    static boolean preservesOrder(int argumentType, int type, char unit, int stride, long offset) {
+        return offset >= 0 && argumentType == type
+                && ((unit == 'w' && offset > 0 && stride > 0) || TimestampFloorFunctions.preservesOrder(unit, stride, type));
     }
 
     static int invert(Interval io, TimestampDriver timestampDriver, char unit, int stride, long offset) {

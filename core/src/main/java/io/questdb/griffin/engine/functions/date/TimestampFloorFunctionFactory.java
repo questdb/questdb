@@ -102,6 +102,19 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
         return createFloorFunction(arg, unitName(c, str, argPositions.getQuick(0)), stride, timestampType);
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        if (!(call.argumentAt(0) instanceof ConstantExpression)) {
+            return false;
+        }
+        final CharSequence str = arguments.constant(call.argumentAt(0)).getStrA(null);
+        final int stride = stride(str);
+        final String unit = unitName(stride > 0 ? unit(str) : 1, str, call.argumentAt(0).getPosition());
+        final int argumentType = call.argumentAt(1).getDataType();
+        return stride > 1 ? TimestampFloorFunctions.preservesStrideFloorOrder(argumentType, call.getDataType(), unit, stride)
+                : TimestampFloorFunctions.preservesFloorOrder(argumentType, call.getDataType(), unit);
+    }
+
     private static Function createFloorFunction(Function arg, String unit, int stride, int timestampType) {
         if (stride > 1) {
             return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, unit, stride, timestampType);

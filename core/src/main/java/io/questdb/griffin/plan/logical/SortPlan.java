@@ -194,6 +194,11 @@ public final class SortPlan extends ForwardingPlan {
          */
         PRESORTED_LIMITED,
         /**
+         * Keeps copies of the rows the LIMIT over the sort selects, from an input without random access, by encoded
+         * keys; it stops early over an input that delivers the order of the first key, its designated timestamp.
+         */
+        COPIED_LIMITED,
+        /**
          * Keeps the top rows of the LIMIT by a single LONG or TIMESTAMP key.
          */
         LONG_TOP_K,

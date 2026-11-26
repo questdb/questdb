@@ -73,6 +73,8 @@ public class ApproxCountDistinctIntGroupByFunctionFactory implements FunctionFac
             throw SqlException.$(position, "precision must be between 4 and 18");
         }
 
-        return new ApproxCountDistinctIntGroupByFunction(exprFunc, precision);
+        return exprFunc.getType() == ColumnType.BYTE
+                ? new CountDistinctByteGroupByFunction(exprFunc, "approx_count_distinct")
+                : new ApproxCountDistinctIntGroupByFunction(exprFunc, precision);
     }
 }

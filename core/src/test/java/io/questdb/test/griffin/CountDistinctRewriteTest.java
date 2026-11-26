@@ -249,7 +249,7 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
                     """);
             assertCountDistinct("SELECT count_distinct(x) c FROM long_sequence(4)", "c\n4\n", """
                     Count
-                        GroupBy vectorized: false
+                        Stream Group By
                           keys: [x]
                             Filter filter: x!=null
                                 long_sequence count: 4

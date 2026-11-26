@@ -45,6 +45,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1722,7 +1723,7 @@ public class JoinTest extends AbstractCairoTest {
                         ('C', 'w', 40, '2024-01-01T00:00:45.000000Z')
                     """);
             execute("INSERT INTO instruments VALUES ('A', 'alpha'), ('B', 'beta')");
-            // UNION ALL gives the view no random access, so ASOF and LT joins run full-fat on it
+            // UNION ALL gives the view no random access. Pruning q.v lets these joins stay full-fat.
             execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM quotes UNION ALL SELECT * FROM quotes WHERE bid < 0) TIMESTAMP(ts))");
 
             // the default compiler on a view slave, and the full-fat compiler flag on a table slave
@@ -1789,9 +1790,24 @@ public class JoinTest extends AbstractCairoTest {
                                 """);
             }
 
-            // a column that the query references still fails as before
-            assertQuery("SELECT t.ts, q.v FROM trades t ASOF JOIN uq q ON q.sym = t.v")
+            // A referenced variable-size value needs a strict copy in default mode.
+            final String sql = "SELECT t.ts, q.v FROM trades t ASOF JOIN uq q ON q.sym = t.v";
+            assertQuery(sql)
                     .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("Materialize")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:10.000000Z\tx
+                            2024-01-01T00:00:20.000000Z\ty
+                            2024-01-01T00:00:30.000000Z\tz
+                            2024-01-01T00:00:40.000000Z\t
+                            """);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fullFatJoins()
                     .fails(31, "right side column 'v' is of unsupported type");
         });
     }
@@ -3155,6 +3171,34 @@ public class JoinTest extends AbstractCairoTest {
                                 7\t6\tnull\tnull
                                 7\t5\tnull\tnull
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverSlaveWithoutRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT 10L x FROM long_sequence(1))");
+            execute("CREATE TABLE t1 AS (SELECT 1L y FROM long_sequence(1))");
+            execute("CREATE TABLE t2 AS (SELECT 100L y FROM long_sequence(1))");
+            execute("CREATE TABLE t3 AS (SELECT 100 y FROM long_sequence(1))");
+            // The full nested loop reads its slave in place, so only the legacy planner copies it.
+            for (boolean isLegacy : new boolean[]{false, true}) {
+                setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, String.valueOf(isLegacy));
+                for (String slave : new String[]{
+                        "SELECT y FROM t1 UNION ALL SELECT y FROM t2",
+                        "SELECT y FROM t1 UNION ALL SELECT y FROM t3",
+                        "SELECT y FROM t1 UNION SELECT y FROM t2",
+                        "SELECT y FROM t1 UNION ALL SELECT a.y FROM t2 a CROSS JOIN t1 b"
+                }) {
+                    final QueryAssertion query = assertQuery("SELECT * FROM m FULL JOIN (" + slave + ") u ON u.y > m.x ORDER BY y").noLeakCheck();
+                    (isLegacy ? query.withPlanContaining("Materialize") : query.withPlanContaining("Nested Loop Full Join").withPlanNotContaining("Materialize"))
+                            .returns("""
+                                    x\ty
+                                    null\t1
+                                    10\t100
+                                    """);
+                }
             }
         });
     }
@@ -5883,13 +5927,11 @@ public class JoinTest extends AbstractCairoTest {
                     .fullFatJoins()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
         });
     }
@@ -6333,13 +6375,11 @@ public class JoinTest extends AbstractCairoTest {
                     .fullFatJoins()
                     .timestamp("k")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("k")
                     .noRandomAccess()
-                    .expectSize()
                     .returns(expected);
         });
     }
@@ -10736,6 +10776,12 @@ public class JoinTest extends AbstractCairoTest {
                       SAMPLE BY 5m ALIGN TO FIRST OBSERVATION
                     )\s
                     """, "right side of splice join doesn't support random access", 20);
+
+            assertFailure(
+                    "SELECT * FROM ((SELECT * FROM trade UNION ALL SELECT * FROM trade) TIMESTAMP(ts)) SPLICE JOIN trade",
+                    "left side of splice join doesn't support random access",
+                    82
+            );
         });
     }
 
@@ -11510,6 +11556,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
             assertQuery("xy3 join xy2 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\tb\ta1
                             ZY\t-2057990897\tZY
@@ -11520,6 +11567,7 @@ public class JoinTest extends AbstractCairoTest {
                             """);
             assertQuery("xy2 join xy3 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\ta1\tb
                             ZY\tZY\t-2057990897
@@ -11538,6 +11586,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
             assertQuery("xy3 join xy2 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\tb\ta1
                             סּ\uDA07\uDD7B\uDBD1\uDCF9\t393942866\tסּ\uDA07\uDD7B\uDBD1\uDCF9
@@ -11548,6 +11597,7 @@ public class JoinTest extends AbstractCairoTest {
                             """);
             assertQuery("xy2 join xy3 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\ta1\tb
                             \uDBE9\uDC70,䜉\t\uDBE9\uDC70,䜉\t1756786531
@@ -11587,6 +11637,34 @@ public class JoinTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .withPlanContaining("Filter filter: 0<t0.a+t1.b+t2.c")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinsUnderDescendingOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 AS (SELECT timestamp_sequence('2024-01-01', 600_000_000L) ts, x v FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 AS (SELECT timestamp_sequence('2024-01-01T00:05', 600_000_000L) ts, x v FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT a.ts, a.v, b.ts bts, b.v bv FROM t1 a SPLICE JOIN t2 b ORDER BY a.ts DESC LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampDesc("ts")
+                    .returns("""
+                            ts\tv\tbts\tbv
+                            2024-01-01T00:30:00.000000Z\t4\t2024-01-01T00:25:00.000000Z\t3
+                            """);
+            final String expected = """
+                    ts\tcts
+                    2024-01-01T00:20:00.000000Z\t2024-01-01T00:15:00.000000Z
+                    2024-01-01T00:10:00.000000Z\t2024-01-01T00:05:00.000000Z
+                    2024-01-01T00:00:00.000000Z\t
+                    """;
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT a.ts, c.ts cts FROM t1 a JOIN t2 b ON a.v = b.v " + join + " JOIN t2 c ORDER BY a.ts DESC")
+                        .noLeakCheck()
+                        .timestampDesc("ts")
                         .returns(expected);
             }
         });

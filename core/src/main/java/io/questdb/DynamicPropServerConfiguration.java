@@ -83,6 +83,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.PG_WORKER_FIBER_MAX_LIVE,
             PropertyKey.PG_WORKER_FIBER_MAX_RETAINED,
             PropertyKey.PG_WORKER_FIBER_MOUNT_BUDGET,
+            PropertyKey.HTTP_ALLOWED_HOSTS,
+            PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS,
             PropertyKey.HTTP_REQUEST_HEADER_BUFFER_SIZE,
             PropertyKey.HTTP_MULTIPART_HEADER_BUFFER_SIZE,
             PropertyKey.HTTP_RECV_BUFFER_SIZE,

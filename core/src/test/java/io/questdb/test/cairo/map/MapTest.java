@@ -49,6 +49,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -76,6 +78,7 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.function.ObjIntConsumer;
 
 @RunWith(Parameterized.class)
 public class MapTest extends AbstractCairoTest {
@@ -522,6 +525,49 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeBlockOrder() {
+        final long[] expected = {0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11};
+        for (int position = 0; position < expected.length; position++) {
+            Assert.assertEquals(expected[position], Map.mergeBlock(position, expected.length));
+        }
+    }
+
+    @Test
+    public void testMergeWalksSourceInScatteredBlocks() throws Exception {
+        assertMergeWalksSourceInScatteredBlocks(keyColumnType(ColumnType.INT), this::populateKey);
+        if (mapType == MapType.ORDERED_MAP) {
+            assertMergeWalksSourceInScatteredBlocks(new SingleColumnType(ColumnType.VARCHAR), (key, i) -> key.putVarchar(new Utf8String(Integer.toString(i))));
+        }
+    }
+
+    @Test
+    public void testMergeBlockSlots() {
+        // A source that adds keys to each destination region at under half its free share keeps one block.
+        Assert.assertEquals(1 << 20, Map.mergeBlockSlots(1 << 20, 100_000, 1 << 22, 0.7));
+        Assert.assertEquals(1 << 20, Map.mergeBlockSlots(1 << 20, 150_000, 1 << 20, 0.7));
+        Assert.assertEquals(1024, Map.mergeBlockSlots(1 << 20, 500_000, 1 << 20, 0.7));
+        Assert.assertEquals(1024, Map.mergeBlockSlots(1 << 20, 500_000, 1 << 18, 0.7));
+        Assert.assertEquals(1024, Map.mergeBlockSlots(1 << 20, 150_000, 1 << 22, 0.95));
+        Assert.assertEquals(512, Map.mergeBlockSlots(512, 400, 512, 0.7));
+    }
+
+    @Test
+    public void testMergeBlocksVisitEverySlotOnce() {
+        for (int shift = 0; shift <= 24; shift++) {
+            final long capacity = 1L << shift;
+            final long blockSlots = Map.mergeBlockSlots(capacity, capacity, capacity, 0.7);
+            final long blockCount = capacity / blockSlots;
+            Assert.assertEquals(capacity, blockSlots * blockCount);
+            final boolean[] visited = new boolean[(int) blockCount];
+            for (long position = 0; position < blockCount; position++) {
+                final int block = (int) Map.mergeBlock(position, blockCount);
+                Assert.assertFalse(visited[block]);
+                visited[block] = true;
+            }
+        }
+    }
+
+    @Test
     public void testMergeIntersectingMaps() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
@@ -630,6 +676,55 @@ public class MapTest extends AbstractCairoTest {
                         Assert.assertFalse(valueB.isNew());
                         Assert.assertEquals(valueA.getInt(0), valueB.getInt(0));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeSameCapacityNonIntersectingMaps() throws Exception {
+        // Both tables have the same slot count and the destination crosses its load factor
+        // mid-merge, the shape that made a front-to-back merge quadratic.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
+
+            try (
+                    Map mapA = createMap(keyTypes, valueTypes, 10_000, 0.7, Integer.MAX_VALUE);
+                    Map mapB = createMap(keyTypes, valueTypes, 10_000, 0.7, Integer.MAX_VALUE)
+            ) {
+                final int sizeA = 9_800;
+                final int sizeB = 8_000;
+                for (int i = 0; i < sizeA; i++) {
+                    MapKey keyA = mapA.withKey();
+                    populateKey(keyA, i);
+                    MapValue valueA = keyA.createValue();
+                    Assert.assertTrue(valueA.isNew());
+                    valueA.putInt(0, i);
+                }
+                for (int i = sizeA; i < sizeA + sizeB; i++) {
+                    MapKey keyB = mapB.withKey();
+                    populateKey(keyB, i);
+                    MapValue valueB = keyB.createValue();
+                    Assert.assertTrue(valueB.isNew());
+                    valueB.putInt(0, i);
+                }
+                final int keyCapacity = mapA.getKeyCapacity();
+                Assert.assertEquals(keyCapacity, mapB.getKeyCapacity());
+                Assert.assertTrue(keyCapacity > 4 * 1024);
+
+                mapA.merge(mapB, new TestMapValueMergeFunction());
+
+                Assert.assertEquals(sizeA + sizeB, mapA.size());
+                Assert.assertTrue(mapA.getKeyCapacity() > keyCapacity);
+                final boolean[] found = new boolean[sizeA + sizeB];
+                RecordCursor cursorA = mapA.getCursor();
+                MapRecord recordA = mapA.getRecord();
+                while (cursorA.hasNext()) {
+                    int i = readKey(recordA, 1);
+                    Assert.assertFalse(found[i]);
+                    found[i] = true;
+                    Assert.assertEquals(i, recordA.getValue().getInt(0));
                 }
             }
         });
@@ -1349,6 +1444,61 @@ public class MapTest extends AbstractCairoTest {
             case UNORDERED_VARCHAR_MAP -> ColumnType.VARCHAR;
             default -> ColumnType.INT;
         };
+    }
+
+    private void assertMergeWalksSourceInScatteredBlocks(SingleColumnType keyTypes, ObjIntConsumer<MapKey> keyPopulator) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
+            final int capacity = 1 << 16;
+            final int blockSlots = 1024;
+            final int blockCount = capacity / blockSlots;
+            final int keysPerBlock = 40;
+            try (
+                    Map src = createMap(keyTypes, valueTypes, capacity / 2, 0.95, Integer.MAX_VALUE);
+                    Map dest = createMap(keyTypes, valueTypes, capacity / 2, 0.95, Integer.MAX_VALUE)
+            ) {
+                Assert.assertEquals(capacity, src.getKeyCapacity());
+                Assert.assertEquals(capacity, dest.getKeyCapacity());
+                // Keys with home slots of their own stay in them, so each key names the block it sits in.
+                final IntList blockOfKey = new IntList();
+                final IntHashSet homes = new IntHashSet();
+                final int[] blockSizes = new int[blockCount];
+                int keyCount = 0;
+                for (int i = 1; keyCount < keysPerBlock * blockCount; i++) {
+                    final MapKey srcKey = src.withKey();
+                    keyPopulator.accept(srcKey, i);
+                    srcKey.commit();
+                    final long hash = srcKey.hash();
+                    final int home = (int) (hash & (capacity - 1));
+                    final int block = home / blockSlots;
+                    if (blockSizes[block] < keysPerBlock && homes.add(home)) {
+                        blockSizes[block]++;
+                        final MapValue srcValue = srcKey.createValue(hash);
+                        Assert.assertTrue(srcValue.isNew());
+                        srcValue.putInt(0, keyCount);
+                        final MapKey destKey = dest.withKey();
+                        keyPopulator.accept(destKey, i);
+                        destKey.createValue().putInt(0, -1);
+                        blockOfKey.add(block);
+                        keyCount++;
+                    }
+                }
+
+                // Every source key is in the destination, so the merge function sees all of them in walk order.
+                final IntList walkedBlocks = new IntList();
+                dest.merge(src, (destValue, srcValue) -> {
+                    final int block = blockOfKey.getQuick(srcValue.getInt(0));
+                    if (walkedBlocks.size() == 0 || walkedBlocks.getLast() != block) {
+                        walkedBlocks.add(block);
+                    }
+                });
+
+                Assert.assertEquals(blockCount, walkedBlocks.size());
+                for (int position = 0; position < blockCount; position++) {
+                    Assert.assertEquals(Map.mergeBlock(position, blockCount), walkedBlocks.getQuick(position));
+                }
+            }
+        });
     }
 
     private Map createMap(ColumnTypes keyTypes, ColumnTypes valueTypes, int keyCapacity, double loadFactor, int maxResizes) {

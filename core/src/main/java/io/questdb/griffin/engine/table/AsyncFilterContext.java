@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -147,6 +149,38 @@ public class AsyncFilterContext extends AsyncFilter implements Mutable {
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAuxAddresses);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, frameFilteredMemoryRecords);
         return Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
+    }
+
+    /**
+     * Filters page frame {@code frameIndex} into the filtered rows of {@code slotId}, and returns the record that reads
+     * those rows: {@code record} over the frame, or the filtered memory record of the slot where the slot
+     * late-materializes the frame. Rows of a filtered memory record need their compacted index as well, which the
+     * batched aggregation paths do not supply.
+     */
+    public PageFrameMemoryRecord filter(
+            PageFrameMemoryRecord record,
+            PageFrameAddressCache addressCache,
+            int slotId,
+            int frameIndex,
+            long frameRowCount
+    ) {
+        final IntHashSet filterColumns = getFilterUsedColumnIndexes();
+        final boolean isLateMaterialization = shouldUseLateMaterialization(
+                slotId,
+                addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET,
+                false
+        );
+        final PageFrameMemoryPool pool = getMemoryPool(slotId);
+        final PageFrameMemory frameMemory = isLateMaterialization ? pool.navigateTo(frameIndex, filterColumns) : pool.navigateTo(frameIndex);
+        record.init(frameMemory);
+        final DirectLongList rows = getFilteredRows(slotId);
+        filterFrame(slotId, frameMemory, record, addressCache, frameRowCount);
+        if (isLateMaterialization && rows.size() > 0 && frameMemory.populateRemainingColumns(filterColumns, rows, false)) {
+            final PageFrameFilteredMemoryRecord filteredRecord = getPageFrameFilteredMemoryRecord(slotId);
+            filteredRecord.of(frameMemory, record, filterColumns);
+            return filteredRecord;
+        }
+        return record;
     }
 
     /**

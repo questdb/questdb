@@ -105,6 +105,11 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return baseFactory.isRewindRecomputing();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

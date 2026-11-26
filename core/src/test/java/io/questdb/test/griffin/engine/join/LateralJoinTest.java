@@ -15130,16 +15130,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                         Sample By Fill
                                                           stride: '30m'
                                                           fill: null
-                                                            Encode sort light
-                                                              keys: [ts]
-                                                                Async Group By workers: 1
-                                                                  keys: [ts,__qdb_outer_ref__0_id]
-                                                                  keyFunctions: [timestamp_floor_utc('30m',ts)]
-                                                                  values: [sum(qty)]
-                                                                  filter: null
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: trades
+                                                          cached: true
+                                                            Async Stream Group By workers: 1
+                                                              segmentKey: timestamp_floor_utc('30m',ts)
+                                                              keys: [ts,__qdb_outer_ref__0_id]
+                                                              keyFunctions: [timestamp_floor_utc('30m',ts)]
+                                                              values: [sum(qty)]
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: trades
                             """)
                     .returns("""
                             id\tts\ttotal
@@ -15166,16 +15165,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                 Sample By Fill
                                                   stride: '30m'
                                                   fill: null
-                                                    Encode sort light
-                                                      keys: [ts2]
-                                                        Async Group By workers: 1
-                                                          keys: [ts2,__qdb_outer_ref__0_id]
-                                                          keyFunctions: [timestamp_floor_utc('30m',ts)]
-                                                          values: [sum(qty)]
-                                                          filter: null
-                                                            PageFrame
-                                                                Row forward scan
-                                                                Frame forward scan on: trades
+                                                  cached: true
+                                                    Async Stream Group By workers: 1
+                                                      segmentKey: timestamp_floor_utc('30m',ts)
+                                                      keys: [ts2,__qdb_outer_ref__0_id]
+                                                      keyFunctions: [timestamp_floor_utc('30m',ts)]
+                                                      values: [sum(qty)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: trades
                     """;
             final String copyResult = """
                     id\tts\tts2\ttotal
@@ -15249,16 +15247,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                         Sample By Fill
                                                           stride: '30m'
                                                           fill: null
-                                                            Encode sort light
-                                                              keys: [ts1]
-                                                                Async Group By workers: 1
-                                                                  keys: [ts1,__qdb_outer_ref__0_id]
-                                                                  keyFunctions: [timestamp_floor_utc('30m',ts)]
-                                                                  values: [sum(qty)]
-                                                                  filter: null
-                                                                    PageFrame
-                                                                        Row forward scan
-                                                                        Frame forward scan on: trades
+                                                          cached: true
+                                                            Async Stream Group By workers: 1
+                                                              segmentKey: timestamp_floor_utc('30m',ts)
+                                                              keys: [ts1,__qdb_outer_ref__0_id]
+                                                              keyFunctions: [timestamp_floor_utc('30m',ts)]
+                                                              values: [sum(qty)]
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: trades
                             """)
                     .returns("""
                             id\tts\ttotal

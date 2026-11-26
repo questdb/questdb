@@ -334,6 +334,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         cloneGrouping(sampleBy, clone);
         clone.getFillModes().addAll(sampleBy.getFillModes());
         clone.getFillValues().addAll(sampleBy.getFillValues());
+        clone.setBucket(sampleBy.getBucket());
         clone.setFrom(sampleBy.getFrom());
         clone.setTo(sampleBy.getTo());
         clone.setFillInput(sampleBy.isFillInput());

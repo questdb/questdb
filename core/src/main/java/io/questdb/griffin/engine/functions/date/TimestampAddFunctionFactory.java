@@ -130,6 +130,17 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
         return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, timestampType);
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        if (getTimestampArgumentIndex(call, arguments) < 0) {
+            return false;
+        }
+        final int type = call.getDataType();
+        final char period = arguments.constant(call.argumentAt(0)).getChar(null);
+        return preservesOrder(call.argumentAt(2).getDataType(), type, period, addMethod(period, type, call.argumentAt(0).getPosition()),
+                constantStride(arguments.constant(call.argumentAt(1)), call.argumentAt(1).getPosition()));
+    }
+
     private static TimestampDriver.TimestampAddMethod addMethod(char period, int timestampType, int position) throws SqlException {
         final TimestampDriver.TimestampAddMethod periodAddFunc = ColumnType.getTimestampDriver(timestampType).getAddMethod(period);
         if (periodAddFunc == null) {
@@ -144,6 +155,16 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
             throw SqlException.$(position, "`null` is not a valid stride");
         }
         return stride;
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of adding {@code stride} {@code period}s to an argument of
+     * {@code argumentType}, returning {@code type}: a period of fixed duration shifts every timestamp by the same
+     * amount, which overflows no designated timestamp.
+     */
+    static boolean preservesOrder(int argumentType, int type, char period, TimestampDriver.TimestampAddMethod periodAddFunction, int stride) {
+        return argumentType == type && (stride == 0 || period == 'u' || period == 'H' || CommonUtils.isFixedDurationUnit(period))
+                && periodAddFunction.add(0, stride) <= Long.MAX_VALUE - ColumnType.getTimestampDriver(type).getMaxDesignatedTimestamp();
     }
 
     /**
@@ -186,6 +207,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
         @Override
         public Function getTimestampArg() {
             return timestampFunc;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return preservesOrder(timestampFunc.getType(), getType(), period, periodAddFunction, stride);
         }
 
         @Override

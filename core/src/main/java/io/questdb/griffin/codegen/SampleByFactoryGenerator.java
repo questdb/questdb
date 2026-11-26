@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
@@ -63,6 +64,7 @@ import io.questdb.griffin.engine.groupby.SampleByUtcBoundFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FillMode;
@@ -92,6 +94,7 @@ import static io.questdb.griffin.SqlKeywords.*;
  * Builds SAMPLE BY factories and the FILL stage that completes their missing buckets.
  */
 final class SampleByFactoryGenerator {
+    private final AggregateFactoryGenerator aggregateGenerator;
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final IntList columnIndexes;
@@ -112,12 +115,14 @@ final class SampleByFactoryGenerator {
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             SortFactoryGenerator sortGenerator,
+            AggregateFactoryGenerator aggregateGenerator,
             IntList columnIndexes,
             IntList firstLastKinds,
             IntList firstLastPositions,
             IntList groupByFunctionPositions
     ) {
         this.configuration = configuration;
+        this.aggregateGenerator = aggregateGenerator;
         this.codeGenerator = codeGenerator;
         this.functionResolver = functionResolver;
         this.functionInstantiator = functionInstantiator;
@@ -330,9 +335,9 @@ final class SampleByFactoryGenerator {
                 }
             }
 
-            // The fill cursor requires input sorted by timestamp, and a group-by
-            // factory emits buckets in hash order, so sort here. A SAMPLE BY cursor
-            // already emits buckets in timestamp order.
+            // The fill cursor requires input sorted by timestamp, and a hash group-by
+            // factory emits buckets in hash order, so sort here. A SAMPLE BY cursor and
+            // a stream group-by already emit buckets in timestamp order.
             // Strategy comes from cairo.sql.sampleby.fill.sort.strategy; startup
             // validation makes the switch exhaustive.
             if (algorithm == FillPlan.Algorithm.SORTED) {
@@ -353,10 +358,12 @@ final class SampleByFactoryGenerator {
                 assert !isEncoded || SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
                 final RecordCursorFactory base = groupByFactory;
                 groupByFactory = null;
-                groupByFactory = sortGenerator.generateSort(sortMetadata, base, listColumnFilterA, null, -1, isEncoded, isMaterialized);
+                groupByFactory = sortGenerator.generateSort(sortMetadata, base, listColumnFilterA, null, -1, isEncoded, isMaterialized, configuration.getSqlSortValueMaxBytes());
             }
 
-            if (ParanoiaState.PLAN_PARANOIA_MODE && needsPrevPositioning && !isSampleBySource && !groupByFactory.recordCursorSupportsRandomAccess()) {
+            // A keyed fill copies the rows of an input without random access as it finds its keys.
+            if (ParanoiaState.PLAN_PARANOIA_MODE && needsPrevPositioning && !isSampleBySource && keyColIndices.size() == 0
+                    && !groupByFactory.recordCursorSupportsRandomAccess()) {
                 throw new AssertionError("fill re-reads rows of a base without random access");
             }
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
@@ -370,6 +377,7 @@ final class SampleByFactoryGenerator {
             CairoException.rethrowCleanupFailure(cleanupFailure);
             isTransferred = true;
             return new SampleByFillRecordCursorFactory(
+                    asm,
                     configuration,
                     fillMetadata,
                     groupByFactory,
@@ -445,7 +453,8 @@ final class SampleByFactoryGenerator {
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isPreAggregated
     ) throws SqlException {
         boolean isTransferred = false;
         try {
@@ -479,7 +488,8 @@ final class SampleByFactoryGenerator {
                         offsetFunc,
                         offsetFuncPos,
                         sampleFromFunc,
-                        sampleToFunc
+                        sampleToFunc,
+                        isPreAggregated
                 );
             }
             if (algorithm == SampleByPlan.Algorithm.FIRST_LAST_INDEX) {
@@ -762,8 +772,22 @@ final class SampleByFactoryGenerator {
     }
 
     RecordCursorFactory generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
+        if (sample.getPreAggregation() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER) {
+            final PreparedFilter prepared = frame.pushPreparedFilter();
+            final RecordCursorFactory factory;
+            try {
+                final RecordCursorFactory leaf = codeGenerator.generateSource(frame, PlanToFactoryRules.sampleByBase(sample), prepared, executionContext);
+                factory = generateSampleBy(frame, sample, leaf, prepared, executionContext);
+            } catch (Throwable th) {
+                frame.popPreparedFilter(th);
+                throw th;
+            }
+            frame.popPreparedFilter();
+            return factory;
+        }
         final RecordCursorFactory base = codeGenerator.generate(frame, PlanToFactoryRules.sampleByBase(sample), executionContext);
-        return generateSampleBy(frame, sample, base, executionContext);
+        return generateSampleBy(frame, sample, sample.isBaseCopied()
+                ? RowCopies.copy(configuration, asm, entityColumnFilter, base, false, false, false) : base, null, executionContext);
     }
 
     /**
@@ -774,6 +798,7 @@ final class SampleByFactoryGenerator {
             GenerationFrame frame,
             SampleByPlan plan,
             RecordCursorFactory base,
+            @Nullable PreparedFilter stolenFilter,
             SqlExecutionContext executionContext
     ) throws SqlException {
         Function timezone = null;
@@ -870,12 +895,24 @@ final class SampleByFactoryGenerator {
                     firstLastPositions.add(call.getPosition());
                 }
             }
+            if (plan.getPreAggregation() != null) {
+                final IntList outputIndexes = new IntList(keys.size() + calls.size());
+                final RecordCursorFactory rows = base;
+                base = null;
+                base = aggregateGenerator.generatePreAggregation(frame, plan, rows, stolenFilter, metadata, outputIndexes, executionContext);
+                // the interpolation reads the symbol keys from where the stream GROUP BY outputs them
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    if (records.getQuick(i) instanceof MapSymbolColumn symbol) {
+                        records.setQuick(i, new MapSymbolColumn(symbol, outputIndexes.getQuick(i)));
+                    }
+                }
+            }
             isTransferred = true;
             return generateSampleByFactory(frame, plan.getAlgorithm(), base, metadata, sampler, plan.getPeriodUnit(), aggregates, records,
                     timestampIndex, timestampType, plan.getFillModes(), fillConstants,
                     firstLastIndexes, firstLastKinds, firstLastPositions, groupByFunctionPositions,
                     timezone, plan.getTimezonePosition(), offset, plan.getOffsetPosition(),
-                    from, plan.getFromPosition(), to, plan.getToPosition());
+                    from, plan.getFromPosition(), to, plan.getToPosition(), plan.getPreAggregation() != null);
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.freeObjList(records, th);

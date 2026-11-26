@@ -92,6 +92,7 @@ public final class PlanVerifier {
     public static final String AGGREGATE_ALGORITHM = "aggregate algorithm contradicts its kind, keys or input";
     public static final String AGGREGATE_CALL = "aggregate value is not an aggregate call";
     public static final String AGGREGATE_SHAPE = "aggregate output is not its keys followed by its aggregates";
+    public static final String AGGREGATE_STREAM = "stream GROUP BY contradicts its key, its algorithm or what its consumer requires";
     public static final String AGGREGATE_TYPE = "aggregate output type differs from its expression";
     public static final String CHOICE_UNPLANNED = "physical choice is not recorded after access path planning";
     public static final String COLUMN_TYPE = "column expression type differs from the column it reads";
@@ -109,7 +110,7 @@ public final class PlanVerifier {
     public static final String DUPLICATE_COLUMN_ID = "output lists a column id twice";
     public static final String EXPRESSION_NULL = "expression is null";
     public static final String EXPRESSION_SHARED = "expression node appears twice in one expression tree";
-    public static final String FILL_ALGORITHM = "fill algorithm contradicts whether its input is a SAMPLE BY cursor without a fill";
+    public static final String FILL_ALGORITHM = "fill algorithm contradicts whether its input is a SAMPLE BY cursor without a fill or delivers its buckets in order";
     public static final String FILL_SHAPE = "fill lists differ in length";
     public static final String FILL_TIMESTAMP = "fill does not designate its bucket timestamp";
     public static final String FILTER_ALGORITHM = "filter algorithm contradicts the filter the generator builds";
@@ -516,7 +517,7 @@ public final class PlanVerifier {
     /**
      * Checks a domain read: each of its columns pairs with a distinct key of its producer named after the same outer
      * column, of its type, and it reads its producer as {@link PhysicalChoiceVerifier#domainRead} allows. The producer
-     * must lie in the plan, which {@link #check} asserts once the walk has visited every node.
+     * must lie in the plan, which {@link #verify} asserts once the walk has visited every node.
      */
     private void domainRead(DomainReadPlan read) {
         final OutputSchema output = read.getOutput();
@@ -634,6 +635,14 @@ public final class PlanVerifier {
             groupingSets(plain);
         }
         if (aggregate instanceof SampleByPlan sample) {
+            final BoundExpression bucket = sample.getBucket();
+            if (bucket != null) {
+                site = "SAMPLE BY bucket";
+                expression(input, bucket);
+                if (!ColumnType.isTimestamp(bucket.getDataType()) || !LogicalPlans.readsColumn(bucket, sample.getTimestampColumnId())) {
+                    fail(SAMPLE_BY_BUCKET);
+                }
+            }
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
             for (int i = 0, n = sample.getFillValues().size(); i < n; i++) {

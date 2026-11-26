@@ -73,6 +73,12 @@ public class SubTimestampFunctionFactory implements FunctionFactory, MonotonicTi
         return new Func(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(1) instanceof ConstantExpression
+                && preservesOrder(call.argumentAt(0).getDataType(), call.getDataType(), arguments.constant(call.argumentAt(1)).getLong(null));
+    }
+
 
     private static int invert(Interval io, long k, long shiftInputCeiling) {
         if (k == Numbers.LONG_NULL) {
@@ -80,6 +86,15 @@ public class SubTimestampFunctionFactory implements FunctionFactory, MonotonicTi
         }
         // g(ts) = ts - k, so the constant shift is -k
         return MonotonicTimestampFunction.invertConstantShift(io, -k, shiftInputCeiling);
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of subtracting the constant {@code shift} from an argument of
+     * {@code argumentType}, returning {@code type}: no designated timestamp overflows.
+     */
+    private static boolean preservesOrder(int argumentType, int type, long shift) {
+        return argumentType == type && shift != Numbers.LONG_NULL
+                && -shift <= Long.MAX_VALUE - ColumnType.getTimestampDriver(type).getMaxDesignatedTimestamp();
     }
 
     public static class Func extends TimestampFunction implements ArithmeticBinaryFunction, MonotonicTimestampFunction {
@@ -126,6 +141,11 @@ public class SubTimestampFunctionFactory implements FunctionFactory, MonotonicTi
         @Override
         public Function getTimestampArg() {
             return left;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return right.isConstant() && preservesOrder(left.getType(), getType(), right.getLong(null));
         }
 
         @Override

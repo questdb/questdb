@@ -36,10 +36,13 @@ public final class SampleByPlan extends GroupingPlan {
     private final ObjList<FillMode> fillModes = new ObjList<>();
     private final ObjList<BoundExpression> fillValues = new ObjList<>();
     private Algorithm algorithm;
+    private BoundExpression bucket;
     private BoundExpression from;
+    private boolean isBaseCopied;
     private boolean isFillInput;
     private boolean isJoinInput;
     private boolean isTimestampRequired = true;
+    private AggregatePlan.Algorithm preAggregation;
     private BoundExpression to;
 
     @Override
@@ -48,10 +51,13 @@ public final class SampleByPlan extends GroupingPlan {
         fillModes.clear();
         fillValues.clear();
         algorithm = null;
+        bucket = null;
         from = null;
+        isBaseCopied = false;
         isFillInput = false;
         isJoinInput = false;
         isTimestampRequired = true;
+        preAggregation = null;
         to = null;
     }
 
@@ -61,6 +67,16 @@ public final class SampleByPlan extends GroupingPlan {
     public Algorithm getAlgorithm() {
         checkPhysicalRead("SampleByPlan.algorithm");
         return algorithm;
+    }
+
+    /**
+     * The bucket a stream GROUP BY under a FILL(LINEAR) groups the rows by after the keys, see
+     * {@link #getPreAggregation()}: timestamp_floor of the stride over the timestamp, which the binder binds where the
+     * clause samples by a literal stride of a fixed width on the UTC calendar at no offset, without FROM or TO, so the
+     * floor puts every row in the bucket the interpolation puts it in; null otherwise.
+     */
+    public BoundExpression getBucket() {
+        return bucket;
     }
 
     /**
@@ -82,6 +98,16 @@ public final class SampleByPlan extends GroupingPlan {
         return from;
     }
 
+    /**
+     * How the stream GROUP BY that aggregates the buckets of a FILL(LINEAR) runs, which operator planning records when
+     * one does, see {@link #getBucket()}: serially, or in parallel over the page frames of the base, stealing the filter
+     * over them or not; null when the interpolating factory aggregates the rows itself.
+     */
+    public AggregatePlan.Algorithm getPreAggregation() {
+        checkPhysicalRead("SampleByPlan.preAggregation");
+        return preAggregation;
+    }
+
     public int getFromPosition() {
         return from == null ? 0 : from.getPosition();
     }
@@ -92,6 +118,16 @@ public final class SampleByPlan extends GroupingPlan {
 
     public int getToPosition() {
         return to == null ? 0 : to.getPosition();
+    }
+
+    /**
+     * True when the generator copies the rows of the base: a fill that reads the rows of the keyed SAMPLE BY cursor
+     * scans their keys first and then rewinds the cursor, which rewinds the base and would run a stream GROUP BY under
+     * it again. The copy replays the rows while they fit the query memory limit; past it, the base computes them again.
+     */
+    public boolean isBaseCopied() {
+        checkPhysicalRead("SampleByPlan.isBaseCopied");
+        return isBaseCopied;
     }
 
     /**
@@ -119,6 +155,14 @@ public final class SampleByPlan extends GroupingPlan {
         this.algorithm = algorithm;
     }
 
+    public void setBucket(BoundExpression bucket) {
+        this.bucket = bucket;
+    }
+
+    public void setBaseCopied(boolean isBaseCopied) {
+        this.isBaseCopied = isBaseCopied;
+    }
+
     public void setFrom(BoundExpression from) {
         this.from = from;
     }
@@ -129,6 +173,12 @@ public final class SampleByPlan extends GroupingPlan {
 
     public void setJoinInput(boolean isJoinInput) {
         this.isJoinInput = isJoinInput;
+    }
+
+    public void setPreAggregation(AggregatePlan.Algorithm preAggregation) {
+        assert preAggregation == null || preAggregation == AggregatePlan.Algorithm.SERIAL || preAggregation == AggregatePlan.Algorithm.PARALLEL
+                || preAggregation == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER;
+        this.preAggregation = preAggregation;
     }
 
     public void setTimestampRequired(boolean isTimestampRequired) {
@@ -144,15 +194,18 @@ public final class SampleByPlan extends GroupingPlan {
         super.visitFacts(visitor);
         visitor.facts("fillModes", fillModes);
         visitor.fact("algorithm", algorithm);
+        visitor.fact("isBaseCopied", isBaseCopied);
         visitor.fact("isFillInput", isFillInput);
         visitor.fact("isJoinInput", isJoinInput);
         visitor.fact("isTimestampRequired", isTimestampRequired);
+        visitor.fact("preAggregation", preAggregation);
     }
 
     @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         super.visitReads(visitor);
         PlanReads.expressions(fillValues, visitor);
+        bucket = PlanReads.expression(bucket, visitor);
         from = PlanReads.expression(from, visitor);
         to = PlanReads.expression(to, visitor);
     }

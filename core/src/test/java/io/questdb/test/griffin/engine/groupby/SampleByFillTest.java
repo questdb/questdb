@@ -62,17 +62,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                                   range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                          values: [sum(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: x
-                                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                      values: [sum(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: x
+                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
                             """);
         });
     }
@@ -95,16 +92,15 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts,city]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [avg(temp)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: weather
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [ts,city]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [avg(temp)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: weather
                             """);
         });
     }
@@ -127,16 +123,15 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts,city]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [avg(temp)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: weather
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [ts,city]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [avg(temp)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: weather
                             """);
         });
     }
@@ -156,16 +151,15 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts,city]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [avg(temp)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: weather
+                              cached: true
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1h',ts)
+                                  keys: [ts,city]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [avg(temp)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: weather
                             """);
         });
     }
@@ -188,16 +182,15 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts,city]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [avg(temp)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: weather
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [ts,city]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [avg(temp)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: weather
                             """);
         });
     }
@@ -1357,16 +1350,15 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('10.0.0.2', 200, '2024-01-01T00:00:00.000000Z')," +
                     "('10.0.0.2', 210, '2024-01-01T01:00:00.000000Z')," +
                     "('10.0.0.1', 110, '2024-01-01T02:00:00.000000Z')");
-            assertQuery("SELECT ts, ip, sum(bytes) FROM traffic SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+            assertQuery("SELECT ts, ip, sum(bytes) FROM traffic SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, ip")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\tip\tsum
                             2024-01-01T00:00:00.000000Z\t10.0.0.1\t100
                             2024-01-01T00:00:00.000000Z\t10.0.0.2\t200
-                            2024-01-01T01:00:00.000000Z\t10.0.0.2\t210
                             2024-01-01T01:00:00.000000Z\t10.0.0.1\tnull
+                            2024-01-01T01:00:00.000000Z\t10.0.0.2\t210
                             2024-01-01T02:00:00.000000Z\t10.0.0.1\t110
                             2024-01-01T02:00:00.000000Z\t10.0.0.2\tnull
                             """);
@@ -1628,12 +1620,12 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tk\tsum
-                            2024-01-01T00:00:00.000000Z\t1000001\t10.0
                             2024-01-01T00:00:00.000000Z\t2000002\t20.0
-                            2024-01-01T01:00:00.000000Z\t1000001\tnull
+                            2024-01-01T00:00:00.000000Z\t1000001\t10.0
                             2024-01-01T01:00:00.000000Z\t2000002\tnull
-                            2024-01-01T02:00:00.000000Z\t1000001\t11.0
+                            2024-01-01T01:00:00.000000Z\t1000001\tnull
                             2024-01-01T02:00:00.000000Z\t2000002\t21.0
+                            2024-01-01T02:00:00.000000Z\t1000001\t11.0
                             """);
         });
     }
@@ -2181,8 +2173,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-30T01:00:00.000000Z\tB\tnull
                             2024-03-30T03:00:00.000000Z\tA\t2.6
                             2024-03-30T03:00:00.000000Z\tB\tnull
-                            2024-03-30T05:00:00.000000Z\tB\t2.0
                             2024-03-30T05:00:00.000000Z\tA\t3.4
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
                             2024-03-30T07:00:00.000000Z\tA\t4.2
                             2024-03-30T07:00:00.000000Z\tB\tnull
                             2024-03-30T09:00:00.000000Z\tA\t5.0
@@ -2200,8 +2192,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-30T01:00:00.000000Z\tB\tnull
                             2024-03-30T03:00:00.000000Z\tA\t2.6
                             2024-03-30T03:00:00.000000Z\tB\tnull
-                            2024-03-30T05:00:00.000000Z\tB\t2.0
                             2024-03-30T05:00:00.000000Z\tA\t3.4
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
                             2024-03-30T07:00:00.000000Z\tA\t4.2
                             2024-03-30T07:00:00.000000Z\tB\tnull
                             2024-03-30T09:00:00.000000Z\tA\t5.0
@@ -2232,8 +2224,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-30T01:00:00.000000Z\tB\tnull
                             2024-03-30T03:00:00.000000Z\tA\t2.6
                             2024-03-30T03:00:00.000000Z\tB\tnull
-                            2024-03-30T05:00:00.000000Z\tB\t2.0
                             2024-03-30T05:00:00.000000Z\tA\t3.4
+                            2024-03-30T05:00:00.000000Z\tB\t2.0
                             2024-03-30T07:00:00.000000Z\tA\t4.2
                             2024-03-30T07:00:00.000000Z\tB\tnull
                             2024-03-30T09:00:00.000000Z\tA\t5.0
@@ -2249,8 +2241,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-29T23:15:00.000000Z\tB\tnull
                             2024-03-30T01:15:00.000000Z\tA\t2.0
                             2024-03-30T01:15:00.000000Z\tB\tnull
-                            2024-03-30T03:15:00.000000Z\tB\t2.0
                             2024-03-30T03:15:00.000000Z\tA\t3.0
+                            2024-03-30T03:15:00.000000Z\tB\t2.0
                             2024-03-30T05:15:00.000000Z\tA\t4.0
                             2024-03-30T05:15:00.000000Z\tB\tnull
                             2024-03-30T07:15:00.000000Z\tA\t5.0
@@ -2266,8 +2258,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-03-29T23:15:00.000000Z\tB\tnull
                             2024-03-30T01:15:00.000000Z\tA\t2.0
                             2024-03-30T01:15:00.000000Z\tB\tnull
-                            2024-03-30T03:15:00.000000Z\tB\t2.0
                             2024-03-30T03:15:00.000000Z\tA\t3.0
+                            2024-03-30T03:15:00.000000Z\tB\t2.0
                             2024-03-30T05:15:00.000000Z\tA\t4.0
                             2024-03-30T05:15:00.000000Z\tB\tnull
                             2024-03-30T07:15:00.000000Z\tA\t5.0
@@ -3196,17 +3188,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                               range: (2024-05-31T23:00:00.000000Z,2024-06-01T03:00:00.000000Z)
                               stride: '1h'
                               fill: null
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
-                                      values: [sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: t
-                                              intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
+                                  values: [sum(x)]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
                             """);
         });
     }
@@ -3260,16 +3249,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: mixed
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(a),first(b),first(c)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(a),first(b),first(c)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """)
                     .returns("""
                             first\tfirst1\tfirst2\tts
@@ -3557,16 +3543,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c-1000)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_minus
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c-1000)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_minus
                             """)
                     .returns("""
                             s\tts
@@ -3595,16 +3578,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c+1000)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_plus
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c+1000)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_plus
                             """)
                     .returns("""
                             s\tts
@@ -3635,16 +3615,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c*1000)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_mul
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c*1000)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_mul
                             """)
                     .returns("""
                             s\tts
@@ -3775,10 +3752,13 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Sample By
                               fill: linear
-                              values: [first(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
+                                Async Stream Group By workers: 1
+                                  keys: [__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('hour',ts)]
+                                  values: [first(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -3944,18 +3924,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testSortedRecordCursorFactoryHandlesKeyHeapOverflow() throws Exception {
-        // Pin the SortedRecordCursorFactory cleanup contract for the keyed
-        // SAMPLE BY FILL(PREV) full_recordchain path. With a tiny page size
-        // and a 1-page sort.key budget, MemoryPages fires a
-        // LimitOverflowException once the RecordTreeChain accumulates more
-        // than one page of tree nodes. The factory's catch block must free
-        // chain + rankMaps before the exception propagates; assertMemoryLeak
-        // would surface any unbalanced native allocations.
-        //
-        // AbstractCairoTest.tearDown() restores property overrides via
-        // Overrides.reset(), so no try/finally restore is needed here.
-        // Force the codegen to pick SortedRecordCursorFactory; the default
-        // light_encoded path does not exercise this cleanup contract.
+        // DISTINCT keeps hash aggregation and its full_recordchain sort so the key heap cap fires.
         setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
@@ -3966,41 +3935,24 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "k SYMBOL, " +
                     "x DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
-            // Generate enough distinct (bucket, key) groups to overflow the
-            // 64-byte sort.key budget. Each RecordTreeChain node is roughly
-            // 41 bytes, so a few hundred rows guarantees the cap fires.
             execute("INSERT INTO t SELECT " +
                     "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
                     "rnd_symbol(64, 4, 4, 0) k, " +
                     "rnd_double() x " +
                     "FROM long_sequence(512)");
 
+            final String sql = "SELECT ts, k, count_distinct(x::long) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Sort");
+            assertQuery(sql).noLeakCheck().assertsPlanNotContaining("Stream Group By");
             try {
-                // A keyed SAMPLE BY FILL(PREV) routes through the keyed fast
-                // path whose codegen wraps the group-by factory in
-                // SortedRecordCursorFactory. As the cursor populates the
-                // RecordTreeChain, MemoryPages exhausts its 1-page budget
-                // and throws LimitOverflowException. The outer
-                // SampleByFillRecordCursorFactory cursor is not random-access,
-                // so use .noRandomAccess() here.
-                assertQuery("SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                assertQuery(sql)
                         .noLeakCheck()
                         .timestamp("ts")
                         .noRandomAccess()
                         .returns("");
                 fail("expected LimitOverflowException from constrained sort.key budget");
             } catch (CairoException ex) {
-                // Catching the LimitOverflowException superclass (CairoException)
-                // directly lets JVM-level Error subclasses propagate instead of
-                // being swallowed, and the assertion locks on a single canonical
-                // substring shared by MemoryPages overflow paths. If the
-                // exception is ever re-wrapped to SqlException, the typed catch
-                // fails loudly instead of hiding the signal under a substring
-                // disjunction.
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
-                // The (raise X) hint must name the actual config key that drove the cap,
-                // so renaming cairo.sql.sort.key.max.bytes would fail this assertion
-                // instead of silently breaking the user-facing remediation guidance.
                 TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.key.max.bytes)");
             }
         });
@@ -4008,10 +3960,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testSortedRecordCursorFactoryHandlesValueHeapOverflow() throws Exception {
-        // Sibling of testSortedRecordCursorFactoryHandlesKeyHeapOverflow targeting the value chain:
-        // sort.key is left uncapped while a 1-page sort.value budget makes the RecordTreeChain's
-        // value RecordChain overflow in MemoryCARWImpl. Pins the (raise cairo.sql.sort.value.max.bytes)
-        // hint so a property rename fails here instead of silently breaking remediation guidance.
+        // DISTINCT keeps the same sort path while the value heap reaches its cap.
         setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 64);
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 64);
@@ -4028,8 +3977,11 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "rnd_double() x " +
                     "FROM long_sequence(512)");
 
+            final String sql = "SELECT ts, k, count_distinct(x::long) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Sort");
+            assertQuery(sql).noLeakCheck().assertsPlanNotContaining("Stream Group By");
             try {
-                assertQuery("SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                assertQuery(sql)
                         .noLeakCheck()
                         .timestamp("ts")
                         .noRandomAccess()

@@ -37,7 +37,7 @@ import io.questdb.legacy.cairo.sql.LegacyRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory implements LegacyRecordCursorFactory {
+public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory implements LegacyRecordCursorFactory {
     protected AbstractSetRecordCursor cursor;
     protected RecordCursorFactory factoryA;
     protected RecordCursorFactory factoryB;
@@ -62,11 +62,20 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         this.castFunctionsA = castFunctionsA;
     }
 
+    public RecordCursorFactory getFactoryA() {
+        return factoryA;
+    }
+
     // A set operation is stable iff both inputs are; cast functions are type adapters over
     // child columns and introduce no value sources of their own.
     @Override
     public boolean isNonDeterministic() {
         return factoryA.isNonDeterministic() || factoryB.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isRewindRecomputing() {
+        return factoryA.isRewindRecomputing() || (!isSecondFactoryHashed() && factoryB.isRewindRecomputing());
     }
 
     @Override

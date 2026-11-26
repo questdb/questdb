@@ -3944,7 +3944,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             // The sub-query reads the view without the policy, like a table, so its SAMPLE BY runs in parallel.
             assertQuery("SELECT sym, v FROM mv ORDER BY ts")
                     .noLeakCheck()
-                    .withPlanContaining("Async Group By")
+                    .withPlanContaining("Async Stream Group By")
                     .returns("""
                             sym\tv
                             A\t3.0

@@ -80,6 +80,16 @@ public abstract sealed class BoundExpression implements Mutable
      */
     public static final int ROW_SELECTING = 2048;
     public static final int RUNTIME_CONSTANT = 2;
+    /**
+     * The aggregate function of the call keeps a fixed-size state in its map value, which a copy of the map value holds
+     * whole.
+     */
+    public static final int SCALAR_STATE = 32768;
+    /**
+     * The aggregate function of the call keeps all of a group's state in the group's map value, so a stream GROUP BY
+     * may copy and merge that state and release it at once.
+     */
+    public static final int SELF_CONTAINED_STATE = 16384;
     public static final int STABLE_WITHIN_EXECUTION = 8;
     /**
      * The aggregate function of the call requires the designated timestamp of its input as its second argument.
@@ -157,7 +167,9 @@ public abstract sealed class BoundExpression implements Mutable
     private static int aggregateFlags(GroupByFunction aggregate) {
         return (aggregate.isEarlyExitSupported() ? EARLY_EXIT : 0)
                 | (aggregate.isAscendingTimestampRequired() ? ASCENDING_TIMESTAMP : 0)
-                | (aggregate.isTimestampArgumentRequired() ? TIMESTAMP_ARGUMENT : 0);
+                | (aggregate.isTimestampArgumentRequired() ? TIMESTAMP_ARGUMENT : 0)
+                | (aggregate.isStateSelfContained() ? SELF_CONTAINED_STATE : 0)
+                | (aggregate.isScalar() ? SCALAR_STATE : 0);
     }
 
     private static int windowFlags(WindowFunction window) {

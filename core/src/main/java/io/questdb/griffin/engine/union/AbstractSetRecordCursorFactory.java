@@ -36,7 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
+public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
     protected AbstractSetRecordCursor cursor;
     protected RecordCursorFactory factoryA;
     protected RecordCursorFactory factoryB;
@@ -61,11 +61,20 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         this.castFunctionsA = castFunctionsA;
     }
 
+    public RecordCursorFactory getFactoryA() {
+        return factoryA;
+    }
+
     // A set operation is stable iff both inputs are; cast functions are type adapters over
     // child columns and introduce no value sources of their own.
     @Override
     public boolean isNonDeterministic() {
         return factoryA.isNonDeterministic() || factoryB.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isRewindRecomputing() {
+        return factoryA.isRewindRecomputing() || (!isSecondFactoryHashed() && factoryB.isRewindRecomputing());
     }
 
     // A set operation reads externally if either input does. getBaseFactory() cannot express this

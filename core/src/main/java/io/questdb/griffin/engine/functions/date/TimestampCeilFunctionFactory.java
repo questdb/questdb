@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -103,10 +104,24 @@ public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicT
         }
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(0) instanceof ConstantExpression
+                && preservesOrder(call.argumentAt(1).getDataType(), call.getDataType(), arguments.constant(call.argumentAt(0)).getChar(null));
+    }
+
     private static SqlException invalidUnit(char unit, int position) {
         return unit == 0
                 ? SqlException.position(position).put("invalid unit 'null'")
                 : SqlException.position(position).put("invalid unit '").put(unit).put('\'');
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of the ceiling to {@code unit} of an argument of {@code argumentType},
+     * returning {@code type}: on nanosecond timestamps, only the nanosecond ceiling cannot overflow.
+     */
+    private static boolean preservesOrder(int argumentType, int type, char unit) {
+        return argumentType == type && (ColumnType.isTimestampMicro(type) || unit == 'n');
     }
 
     static class TimestampCeilFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
@@ -139,6 +154,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicT
         @Override
         public Function getTimestampArg() {
             return arg;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return preservesOrder(arg.getType(), getType(), symbol);
         }
 
         @Override

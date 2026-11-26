@@ -54,6 +54,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -111,7 +112,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         this(columnTypes, recordSink, new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, null, initialSize));
     }
 
-    protected RecordChain(@NotNull ColumnTypes columnTypes, @Nullable RecordSink recordSink, MemoryCARW mem) {
+    protected RecordChain(@Transient @NotNull ColumnTypes columnTypes, @Nullable RecordSink recordSink, MemoryCARW mem) {
         this.mem = mem;
         try {
             this.recordSink = recordSink;
@@ -184,6 +185,15 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public long getAddress(long recordOffset, int columnIndex) {
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
+    }
+
+    public long getAppendOffset() {
+        return mem.getAppendOffset();
+    }
+
+    @TestOnly
+    public long getReservedBytes() {
+        return mem.size();
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {

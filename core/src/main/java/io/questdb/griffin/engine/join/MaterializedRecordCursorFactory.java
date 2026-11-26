@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -32,7 +33,6 @@ import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,37 +42,53 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Copies the rows of its base into a record array as a cursor first reads them and replays the copy after every
- * rewind. If the copy reaches its page budget or query memory limit, it releases the copy and streams the base.
- * The slave of a nested loop computes its rows once per execution while the copy fits.
+ * rewind, so a parent that rewinds its input computes the base rows once per execution. If the copy reaches its
+ * page budget or the query memory limit, it releases the copy and streams the base. A strict factory fails with a
+ * limit error instead, and gives random access to the copied rows to a parent that relies on their row ids. A strict
+ * factory can also copy rows in batches ahead of the reads, for a parent that reads every row.
  */
 public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final boolean isStrict;
     private RecordCursorFactory base;
     private MaterializedRecordCursor cursor;
 
     /**
-     * Consumes the base on entry, including on failure.
+     * Consumes the base on entry, including on failure. A copy with the join budget holds what a full-fat join's
+     * value pages may hold; one without it stands in for the storage of a stream GROUP BY and, like the map of a
+     * hash GROUP BY, only the query memory limit bounds it.
      */
-    public MaterializedRecordCursorFactory(CairoConfiguration configuration, RecordCursorFactory base, RecordSink recordSink) {
+    public MaterializedRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordCursorFactory base,
+            RecordSink recordSink,
+            boolean isStrict,
+            boolean hasJoinBudget,
+            boolean isCopiedInBatches
+    ) {
         super(base.getMetadata());
         this.base = base;
+        this.isStrict = isStrict;
         RecordArray rows = null;
         try {
-            // The copy holds what a full-fat join's value pages may hold and, like the record chains of those joins,
-            // starts at the light join's value page, so a small slave costs little memory.
+            // The copy grows from the light join's value page, so a small base costs little memory.
+            final long pageSize = configuration.getSqlHashJoinValuePageSize();
+            final long maxBytes = hasJoinBudget ? Numbers.ceilPow2(pageSize) * configuration.getSqlHashJoinValueMaxPages() : Long.MAX_VALUE;
             rows = new CachedRecordArray(
                     base.getMetadata(),
                     recordSink,
-                    configuration.getSqlHashJoinLightValuePageSize(),
-                    configuration.getSqlHashJoinValuePageSize(),
-                    configuration.getSqlHashJoinValueMaxPages()
+                    Math.min(configuration.getSqlHashJoinLightValuePageSize(), pageSize),
+                    maxBytes,
+                    isStrict
             );
-            cursor = new MaterializedRecordCursor(rows);
+            cursor = new MaterializedRecordCursor(rows, maxBytes, isStrict, isCopiedInBatches);
         } catch (Throwable th) {
             Misc.free(rows, th);
             Misc.free(this, th);
@@ -108,8 +124,13 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
+    public boolean isRewindRecomputing() {
         return false;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return isStrict;
     }
 
     @Override
@@ -139,14 +160,6 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    // Direct joins bypass the stable public wrapper; fallback rebinds their slave once.
-    static void bindSlaveRecord(RecordCursor slaveCursor, JoinRecord joinRecord) {
-        if (slaveCursor instanceof MaterializedRecordCursor materializedCursor) {
-            materializedCursor.boundJoinRecord = joinRecord;
-            joinRecord.setSlave(materializedCursor.isStreaming ? materializedCursor.baseRecord : materializedCursor.rows.getRecord());
-        }
-    }
-
     private static class CacheLimitException extends CairoException {
         private CacheLimitException() {
             setOutOfMemory(true);
@@ -154,29 +167,35 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     /**
-     * Memory that grows as {@link MemoryCARWImpl} does from {@code initialSize}, and fails with a
-     * {@link CacheLimitException}, on which the cursor releases the copy and streams its base, when it would exceed
-     * {@code maxPages} pages or memory runs out.
+     * Memory that grows as {@link MemoryCARWImpl} does and fails with a {@link CacheLimitException} when it and its
+     * sibling would together exceed {@code maxBytes}, or, unless strict, when memory runs out.
      */
     private static class CacheMemory extends MemoryCARWImpl {
+        private final boolean isStrict;
         private final CacheLimitException limitExceeded = new CacheLimitException();
         private final long maxBytes;
+        private CacheMemory sibling;
 
-        private CacheMemory(long initialSize, long pageSize, int maxPages) {
-            super(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_RECORD_CHAIN, null, initialSize);
-            maxBytes = Numbers.ceilPow2(pageSize) * maxPages;
+        private CacheMemory(long pageSize, long maxBytes, boolean isStrict, @Nullable CacheMemory sibling) {
+            super(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_RECORD_CHAIN);
+            this.maxBytes = maxBytes;
+            this.isStrict = isStrict;
+            if (sibling != null) {
+                this.sibling = sibling;
+                sibling.sibling = this;
+            }
         }
 
         @Override
         protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
-            if (newSize > maxBytes) {
+            if (newSize + sibling.size() > maxBytes) {
                 // The allocator retries an exact page count before giving up its speculative doubling.
                 throw limitExceeded;
             }
             try {
                 return super.reallocateMemory(currentBaseAddress, currentSize, newSize);
             } catch (CairoException e) {
-                if (e.isOutOfMemory()) {
+                if (e.isOutOfMemory() && !isStrict) {
                     throw limitExceeded;
                 }
                 throw e;
@@ -185,27 +204,37 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static class CachedRecordArray extends RecordArray {
-        private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, long initialSize, long pageSize, int maxPages) {
-            super(
-                    columnTypes,
-                    recordSink,
-                    new CacheMemory(initialSize, pageSize, maxPages),
-                    new CacheMemory(initialSize >> 4, pageSize >> 4, maxPages)
-            );
+        private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, long pageSize, long maxBytes, boolean isStrict) {
+            this(columnTypes, recordSink, new CacheMemory(Math.max(pageSize >> 4, Long.BYTES), maxBytes, isStrict, null), pageSize, maxBytes, isStrict);
+        }
+
+        private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, CacheMemory offsets, long pageSize, long maxBytes, boolean isStrict) {
+            super(columnTypes, recordSink, new CacheMemory(pageSize, maxBytes, isStrict, offsets), offsets);
         }
     }
 
-    private static class MaterializedRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
+    /**
+     * Joins bind {@link #getRecord()} once per cursor; the record delegates to the copy or, after the fallback,
+     * to the base record, so the parent needs no rebinding.
+     */
+    private static class MaterializedRecordCursor implements DelegatingRecordCursor {
+        private static final int COPY_BATCH_ROWS = 256;
+        private final boolean isCopiedInBatches;
+        private final boolean isStrict;
+        private final long maxBytes;
         private final DelegatingRecord record = new DelegatingRecord();
         private final RecordArray rows;
         private RecordCursor baseCursor;
         private Record baseRecord;
-        private JoinRecord boundJoinRecord;
         private boolean isBaseExhausted;
         private boolean isStreaming;
 
-        private MaterializedRecordCursor(RecordArray rows) {
+        private MaterializedRecordCursor(RecordArray rows, long maxBytes, boolean isStrict, boolean isCopiedInBatches) {
+            assert isStrict || !isCopiedInBatches;
             this.rows = rows;
+            this.maxBytes = maxBytes;
+            this.isStrict = isStrict;
+            this.isCopiedInBatches = isCopiedInBatches;
         }
 
         @Override
@@ -230,7 +259,6 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public void close() {
-            unbind();
             final RecordCursor baseCursor = this.baseCursor;
             this.baseCursor = null;
             baseRecord = null;
@@ -243,6 +271,14 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public Record getRecord() {
             return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (!isStrict) {
+                throw new UnsupportedOperationException();
+            }
+            return rows.getRecordB();
         }
 
         @Override
@@ -262,8 +298,6 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
-            unbind();
-            record.of(null);
             rows.clear();
             rows.setMemoryTracker(executionContext.getMemoryTracker());
             rows.setSymbolTableResolver(baseCursor);
@@ -277,6 +311,14 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public long preComputedStateSize() {
             return isStreaming ? baseCursor.preComputedStateSize() : rows.size();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            if (!isStrict) {
+                throw new UnsupportedOperationException();
+            }
+            rows.recordAt(record == this.record ? rows.getRecord() : record, atRowId);
         }
 
         @Override
@@ -311,11 +353,13 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
             try {
                 rows.put(baseRecord);
             } catch (CacheLimitException e) {
+                if (isStrict) {
+                    throw LimitOverflowException.instance()
+                            .put("materialized rows exceed the memory limit [maxBytes=").put(maxBytes)
+                            .put("] (raise ").put(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()).put(')');
+                }
                 rows.clear();
                 record.of(baseRecord);
-                if (boundJoinRecord != null) {
-                    boundJoinRecord.setSlave(baseRecord);
-                }
                 isStreaming = true;
             }
             return true;
@@ -325,14 +369,13 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
             if (isStreaming) {
                 return baseCursor.hasNext();
             }
-            return copyNext() && (isStreaming || rows.hasNext());
-        }
-
-        private void unbind() {
-            if (boundJoinRecord != null) {
-                boundJoinRecord.setSlave(record);
-                boundJoinRecord = null;
+            if (isCopiedInBatches) {
+                //noinspection StatementWithEmptyBody
+                for (int i = 0; i < COPY_BATCH_ROWS && copyNext(); i++) {
+                }
+                return rows.hasNext();
             }
+            return copyNext() && (isStreaming || rows.hasNext());
         }
     }
 }

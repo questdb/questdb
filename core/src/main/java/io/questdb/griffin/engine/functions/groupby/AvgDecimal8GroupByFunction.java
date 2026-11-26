@@ -146,4 +146,9 @@ class AvgDecimal8GroupByFunction extends Decimal8Function implements GroupByFunc
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

@@ -18580,7 +18580,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectSumSquared() throws Exception {
         assertQuery("select x, sum(x)*sum(x) x from long_sequence(2) order by x")
-                .expectSize()
                 .noLeakCheck()
                 .returns("""
                         x1\tx

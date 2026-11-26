@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -78,6 +79,8 @@ public class RowIdJoinShapeCoverageTest extends AbstractCairoTest {
                 checked++;
                 try (RecordCursorFactory ignore = select(sql)) {
                     compiled++;
+                } catch (ImplicitCastException ignore) {
+                    // a constant cast the generator draws out of range fails as it folds, as QueryRunner accepts
                 } catch (SqlException e) {
                     final CharSequence message = e.getFlyweightMessage();
                     Assert.assertFalse(sql + "\n" + message, Chars.contains(message, "side of splice join doesn't support random access"));

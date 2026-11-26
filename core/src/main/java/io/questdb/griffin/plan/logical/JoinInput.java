@@ -58,6 +58,7 @@ public final class JoinInput implements PlanFactSource {
     private int hints;
     private LogicalPlan input;
     private boolean isDependent;
+    private boolean isSlaveCopied;
     private boolean isSubquery;
     private JoinKind joinType;
     private BoundExpression keyCheck;
@@ -103,6 +104,7 @@ public final class JoinInput implements PlanFactSource {
         hints = 0;
         input = null;
         isDependent = false;
+        isSlaveCopied = false;
         isSubquery = false;
         keyCheck = null;
         keyFilter = null;
@@ -323,6 +325,15 @@ public final class JoinInput implements PlanFactSource {
     }
 
     /**
+     * True when the generator puts a copy with row ids between the slave and the step, which operator planning records:
+     * an ASOF or LT join reads a slave without random access from the copy where the full-fat join cannot carry a
+     * column of the slave, see {@link PlanToFactoryRules#fullFatTemporalRejectedColumn}.
+     */
+    public boolean isSlaveCopied() {
+        return isSlaveCopied;
+    }
+
+    /**
      * True when the step reads its slave again for each master row: every nested loop but a RIGHT join's. A slave that
      * {@link Algorithm#MATERIALIZED_NESTED_LOOP} caches counts too, since the caching depends on facts decided later.
      */
@@ -390,6 +401,10 @@ public final class JoinInput implements PlanFactSource {
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
         buildSide = null;
+    }
+
+    public void setSlaveCopied(boolean isSlaveCopied) {
+        this.isSlaveCopied = isSlaveCopied;
     }
 
     public void setBuildSide(BuildSide buildSide) {
@@ -471,6 +486,7 @@ public final class JoinInput implements PlanFactSource {
         visitor.fact("filterAlgorithm", filterAlgorithm);
         visitor.fact("hints", hints);
         visitor.fact("isDependent", isDependent);
+        visitor.fact("isSlaveCopied", isSlaveCopied);
         visitor.fact("isSubquery", isSubquery);
         visitor.fact("joinType", joinType);
         visitor.fact("nullExtension", nullExtension);

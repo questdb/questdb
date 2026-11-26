@@ -42,7 +42,6 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
             MAX, Numbers.INT_NULL
     );
     private final int columnIndex;
-    private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
@@ -50,20 +49,20 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     public MaxShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
-            this.distinctFunc = Rosti::keyedMicroHourDistinct;
             this.keyValueFunc = Rosti::keyedMicroHourMaxShort;
         } else if (keyKind == GKK_NANO_HOUR_INT) {
-            this.distinctFunc = Rosti::keyedNanoHourDistinct;
             this.keyValueFunc = Rosti::keyedNanoHourMaxShort;
         } else {
-            this.distinctFunc = Rosti::keyedIntDistinct;
             this.keyValueFunc = Rosti::keyedIntMaxShort;
         }
     }
 
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
-        if (address != 0) {
+        if (address == 0) {
+            // a SHORT column top reads as 0
+            accumulator.accumulate(0);
+        } else {
             final long value = Vect.maxShort(address, frameRowCount);
             if (value != Numbers.INT_NULL) {
                 accumulator.accumulate(value);
@@ -73,11 +72,7 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
 
     @Override
     public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
-        } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
-        }
+        return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
     }
 
     @Override

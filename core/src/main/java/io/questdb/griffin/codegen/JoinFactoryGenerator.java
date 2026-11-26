@@ -93,7 +93,6 @@ import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
-import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
@@ -595,15 +594,7 @@ final class JoinFactoryGenerator {
      * Consumes the slave on entry, including failure.
      */
     private RecordCursorFactory materialize(RecordCursorFactory slave) {
-        final RecordSink rowSink;
-        try {
-            entityColumnFilter.of(slave.getMetadata().getColumnCount());
-            rowSink = RecordSinkFactory.getInstance(configuration, asm, slave.getMetadata(), entityColumnFilter);
-        } catch (Throwable th) {
-            Misc.free(slave, th);
-            throw th;
-        }
-        return new MaterializedRecordCursorFactory(configuration, slave, rowSink);
+        return RowCopies.copy(configuration, asm, entityColumnFilter, slave, false, true, false);
     }
 
     /**
@@ -1216,6 +1207,14 @@ final class JoinFactoryGenerator {
                 Misc.free(slave, th);
                 Misc.free(master, th);
                 throw th;
+            }
+            if (step.isSlaveCopied()) {
+                try {
+                    slave = RowCopies.copy(configuration, asm, entityColumnFilter, slave, true, true, false);
+                } catch (Throwable th) {
+                    Misc.free(master, th);
+                    throw th;
+                }
             }
             if (step.getAlgorithm() == JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP) {
                 try {

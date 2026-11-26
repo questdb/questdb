@@ -144,6 +144,7 @@ final class SortFactoryGenerator {
             final int firstKey = keys.getQuick(0);
             final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
             metadata.setTimestampIndex(PhysicalProperties.timestampIndex(sort));
+            final long valueMaxBytes = PhysicalProperties.readsStreamRows(sort.getChild()) ? Long.MAX_VALUE : configuration.getSqlSortValueMaxBytes();
             switch (algorithm) {
                 case LONG_TOP_K, PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K ->
                         throw new IllegalStateException("top-K generates under its LIMIT");
@@ -153,12 +154,23 @@ final class SortFactoryGenerator {
                     isLimitTransferred = true;
                     return generateSort(metadata, base, keys, bounds,
                             algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
-                            configuration.isSqlOrderBySortEnabled(), false);
+                            configuration.isSqlOrderBySortEnabled(), false, valueMaxBytes);
+                }
+                case COPIED_LIMITED -> {
+                    assert bounds != null;
+                    final LogicalPlan child = sort.getChild();
+                    final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(child);
+                    final int firstKeyIndex = Math.abs(firstKey) - 1;
+                    final boolean isPresorted = PhysicalProperties.timestampIndex(child) == firstKeyIndex
+                            && (direction == PhysicalProperties.ScanDirection.FORWARD || direction == PhysicalProperties.ScanDirection.BACKWARD);
+                    isInputTransferred = true;
+                    isLimitTransferred = true;
+                    return generateSort(metadata, base, keys, bounds, isPresorted ? firstKeyIndex : -1, true, true, valueMaxBytes);
                 }
                 default -> {
                     isInputTransferred = true;
                     final RecordCursorFactory sorted = generateSort(metadata, base, keys, null, -1, configuration.isSqlOrderBySortEnabled(),
-                            algorithm == SortPlan.Algorithm.MATERIALIZED);
+                            algorithm == SortPlan.Algorithm.MATERIALIZED, valueMaxBytes);
                     isLimitTransferred = true;
                     return applyLimit(sorted, bounds);
                 }
@@ -239,7 +251,8 @@ final class SortFactoryGenerator {
             @Nullable LimitBounds bounds,
             int preSortedTimestampIndex,
             boolean isEncodingEnabled,
-            boolean isMaterialized
+            boolean isMaterialized,
+            long valueMaxBytes
     ) throws SqlException {
         final ListColumnFilter retainedKeys;
         final boolean isEncoded;
@@ -251,26 +264,25 @@ final class SortFactoryGenerator {
             final RecordMetadata metadata = base.getMetadata();
             retainedKeys = keys.copy();
             isEncoded = isEncodingEnabled && SortKeyEncoder.isSupported(metadata, keys);
-            if (bounds == null) {
-                if (isMaterialized) {
-                    entityColumnFilter.of(orderedMetadata.getColumnCount());
-                    sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
-                } else if (!isEncoded && base instanceof VirtualRecordCursorFactory virtual) {
-                    final int threshold = configuration.getSqlSortKeyMaterializationThreshold();
-                    for (int i = 0, n = keys.size(); i < n; i++) {
-                        final int index = Math.abs(keys.getQuick(i)) - 1;
-                        final int type = metadata.getColumnType(index);
-                        final int tag = ColumnType.tagOf(type);
-                        if (ColumnType.isFixedSize(tag) && tag != ColumnType.IPv4
-                                && (ColumnType.sizeOf(type) <= Long.BYTES || tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256)
-                                && virtual.getColumnComplexity(index) > threshold) {
-                            if (indexes == null) {
-                                indexes = new IntList();
-                                types = new IntList();
-                            }
-                            indexes.add(index);
-                            types.add(type);
+            if (isMaterialized) {
+                entityColumnFilter.of(orderedMetadata.getColumnCount());
+                sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+            }
+            if (bounds == null && !isMaterialized && !isEncoded && base instanceof VirtualRecordCursorFactory virtual) {
+                final int threshold = configuration.getSqlSortKeyMaterializationThreshold();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final int index = Math.abs(keys.getQuick(i)) - 1;
+                    final int type = metadata.getColumnType(index);
+                    final int tag = ColumnType.tagOf(type);
+                    if (ColumnType.isFixedSize(tag) && tag != ColumnType.IPv4
+                            && (ColumnType.sizeOf(type) <= Long.BYTES || tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256)
+                            && virtual.getColumnComplexity(index) > threshold) {
+                        if (indexes == null) {
+                            indexes = new IntList();
+                            types = new IntList();
                         }
+                        indexes.add(index);
+                        types.add(type);
                     }
                 }
             }
@@ -283,14 +295,16 @@ final class SortFactoryGenerator {
             throw th;
         }
         if (bounds != null) {
+            assert isEncoded || sink == null;
             return isEncoded
-                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, bounds, retainedKeys, preSortedTimestampIndex)
+                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, bounds, retainedKeys, preSortedTimestampIndex,
+                    sink, valueMaxBytes)
                     : new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, bounds, retainedKeys, preSortedTimestampIndex);
         }
         if (sink != null) {
             return isEncoded
-                    ? new EncodedSortRecordCursorFactory(configuration, orderedMetadata, base, sink, retainedKeys)
-                    : new SortedRecordCursorFactory(configuration, orderedMetadata, base, sink, comparator, retainedKeys);
+                    ? new EncodedSortRecordCursorFactory(configuration, orderedMetadata, base, sink, retainedKeys, valueMaxBytes)
+                    : new SortedRecordCursorFactory(configuration, orderedMetadata, base, sink, comparator, retainedKeys, valueMaxBytes);
         }
         if (isEncoded) {
             return new EncodedSortLightRecordCursorFactory(configuration, orderedMetadata, base, retainedKeys);
@@ -311,7 +325,9 @@ final class SortFactoryGenerator {
         if (sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_TOP_K || sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K) {
             return generateParallelTopK(frame, sort, limit, executionContext);
         }
-        final RecordCursorFactory base = codeGenerator.generate(frame, sort.getChild(), executionContext);
+        final RecordCursorFactory input = codeGenerator.generate(frame, sort.getChild(), executionContext);
+        final RecordCursorFactory base = limit.getApplication() == LimitPlan.Application.COPIED_INPUT
+                ? RowCopies.copy(configuration, asm, entityColumnFilter, input, false, false, false) : input;
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
             return generate(frame, sort, base, null);
         }

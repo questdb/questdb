@@ -87,6 +87,15 @@ public interface MonotonicTimestampFunctionFactory {
     int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException;
 
     /**
+     * The {@link MonotonicTimestampFunction#preservesTimestampOrder} of the built function: whether its values never
+     * decrease as its timestamp argument grows, nor overflow, while every other argument stays the same. Only a call
+     * whose timestamp argument index is non-negative may preserve the order.
+     */
+    default boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        return false;
+    }
+
+    /**
      * Whether the built function is its timestamp argument itself rather than a function over it.
      */
     default boolean isIdentity(FunctionExpression call, ConstantArguments arguments) throws SqlException {

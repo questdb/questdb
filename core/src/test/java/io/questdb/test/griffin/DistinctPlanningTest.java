@@ -176,7 +176,8 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                     1	3
                     """);
             assertPlan("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 2", "earlyExit: 2", "DistinctTimeSeries");
-            assertPlan("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id LIMIT 2", "Limit", "earlyExit");
+            // the copying sort applies the LIMIT over the rows the DISTINCT emits
+            assertPlan("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id LIMIT 2", "Encode sort lo: 2", "earlyExit");
         });
     }
 

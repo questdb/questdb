@@ -409,6 +409,13 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                 && rowCursorFactory.isForwardScan() == (partitionFrameCursorFactory.getOrder() == ORDER_ASC);
     }
 
+    public boolean isAscendingTimestamp(int columnIndex) {
+        final int timestampIndex = partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
+        return timestampIndex >= 0 && columnIndexes.getQuick(columnIndex) == timestampIndex
+                && partitionFrameCursorFactory.getOrder() == ORDER_ASC
+                && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex();
+    }
+
     /**
      * Reports, without opening anything, whether
      * {@link #getCursorInTimestampRangeBackward(SqlExecutionContext, long, long)} would

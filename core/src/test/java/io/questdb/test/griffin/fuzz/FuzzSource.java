@@ -47,7 +47,12 @@ import io.questdb.test.griffin.fuzz.types.LongType;
  *       (renaming projection, which computes some columns &mdash; outer
  *       sees the aliases);</li>
  *   <li>{@code SELECT keyCol AS k, count() AS cnt FROM base}
- *       (aggregated &mdash; outer sees a small 2-column schema).</li>
+ *       (aggregated &mdash; outer sees a small 2-column schema);</li>
+ *   <li>{@code SELECT ts AS ts, count() AS cnt FROM base SAMPLE BY i}
+ *       (sampled &mdash; the bucket stays the designated timestamp, so outer
+ *       LATEST ON, windows and SAMPLE BY read the stream GROUP BY) or
+ *       {@code SELECT ts AS ts, keyCol AS k, count() AS cnt FROM base SAMPLE BY i ORDER BY ts, k}
+ *       (keyed &mdash; its keys share a timestamp, so it designates none).</li>
  * </ul>
  * The logical {@link FuzzTable} held by the source reflects the inner's
  * output schema so outer clauses can project, group by and compare
@@ -67,6 +72,7 @@ public final class FuzzSource {
     private static final int COMPUTED_COLUMN_ODDS = 4;
     // Out of 100: how often rowIdJoinSide() reads a WINDOW JOIN sub-query instead of the table.
     private static final int ROW_ID_JOIN_SIDE_WINDOW_JOIN_PCT = 20;
+    private static final String[] SAMPLE_INTERVALS = {"15m", "1h", "1d"};
     // The fuzz tables step their rows 30 minutes apart, so hour windows hold earlier rows and second windows hardly any.
     private static final String[] WINDOW_JOIN_UNITS = {" SECOND", " MINUTE", " HOUR"};
     private final String fromSql;
@@ -211,14 +217,17 @@ public final class FuzzSource {
     // star shape still dominates but filtered, renaming and aggregated
     // inner queries each appear a measurable fraction of the time.
     private static InnerQuery buildInnerQuery(Rnd rnd, FuzzSource base) {
-        int shape = rnd.nextInt(10);
+        int shape = rnd.nextInt(11);
         if (shape < 2) {
             return aggregated(rnd, base);
         }
-        if (shape < 4) {
+        if (shape < 3) {
+            return sampled(rnd, base);
+        }
+        if (shape < 5) {
             return projected(rnd, base);
         }
-        if (shape < 6) {
+        if (shape < 7) {
             return filtered(rnd, base);
         }
         return star(base);
@@ -280,6 +289,47 @@ public final class FuzzSource {
         sb.put(" FROM ").put(base.getFromSql());
         FuzzTable newTable = new FuzzTable(base.getTable().getName(), renamedCols, newTsColName);
         return new InnerQuery(sb.toString(), newTable, base.isOrderStable());
+    }
+
+    private static InnerQuery sampled(Rnd rnd, FuzzSource base) {
+        final FuzzTable baseTable = base.getTable();
+        final String tsName = baseTable.getTsColumnName();
+        if (tsName == null) {
+            return aggregated(rnd, base);
+        }
+        final ObjList<FuzzColumn> baseCols = baseTable.getColumns();
+        FuzzColumn ts = null;
+        FuzzColumn key = null;
+        for (int i = 0, n = baseCols.size(); i < n; i++) {
+            if (baseCols.getQuick(i).getName().equals(tsName)) {
+                ts = baseCols.getQuick(i);
+            }
+        }
+        for (int i = 0; i < baseCols.size() * 2 && key == null; i++) {
+            FuzzColumn c = baseCols.getQuick(rnd.nextInt(baseCols.size()));
+            ColumnKind kind = c.getType().getKind();
+            if (kind.isGroupable() && kind != ColumnKind.ARRAY && !c.getName().equals(tsName)) {
+                key = c;
+            }
+        }
+        if (ts == null || key == null) {
+            return star(base);
+        }
+        // Keys share their bucket's timestamp and come out in hash order. A keyed shape orders them for LIMIT and
+        // first(), and designates no timestamp, since windows and LATEST ON over tied timestamps depend on order.
+        final boolean isKeyed = rnd.nextBoolean();
+        final String interval = SAMPLE_INTERVALS[rnd.nextInt(SAMPLE_INTERVALS.length)];
+        final String sql = isKeyed
+                ? "SELECT " + tsName + " AS ts, " + key.getName() + " AS k, count() AS cnt FROM " + base.getFromSql()
+                  + " SAMPLE BY " + interval + " ORDER BY ts, k"
+                : "SELECT " + tsName + " AS ts, count() AS cnt FROM " + base.getFromSql() + " SAMPLE BY " + interval;
+        final ObjList<FuzzColumn> cols = new ObjList<>();
+        cols.add(new FuzzColumn("ts", ts.getType()));
+        if (isKeyed) {
+            cols.add(new FuzzColumn("k", key.getType()));
+        }
+        cols.add(new FuzzColumn("cnt", LongType.INSTANCE));
+        return new InnerQuery(sql, new FuzzTable(baseTable.getName(), cols, isKeyed ? null : "ts"), true);
     }
 
     private static InnerQuery star(FuzzSource base) {

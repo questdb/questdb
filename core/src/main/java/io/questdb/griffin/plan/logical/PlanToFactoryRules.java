@@ -83,6 +83,24 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * The index of the first column of the schema a copy of the rows cannot hold, such as a RECORD; -1 when a copy
+     * holds every column.
+     */
+    public static int copyRejectedColumn(OutputSchema schema) {
+        for (int i = 0, n = schema.getColumnCount(); i < n; i++) {
+            final int type = schema.getColumnType(i);
+            final boolean isCopied = RecordValueSinkFactory.isSupportedColumnType(type) || switch (ColumnType.tagOf(type)) {
+                case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY, ColumnType.INTERVAL, ColumnType.NULL -> true;
+                default -> false;
+            };
+            if (!isCopied) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * The name the generator's factory gives column {@code index} of the plan: a count aggregate, read through
      * filters, names its column {@code count} under any spelling of that name.
      */

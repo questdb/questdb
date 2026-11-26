@@ -40,6 +40,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
@@ -126,6 +128,7 @@ public final class FunctionInstantiator implements Mutable {
         }
     };
     private final SqlCompilerImpl compiler;
+    private final MonotonicTimestampFunctionFactory.ConstantArguments constantArguments = new MonotonicTimestampFunctionFactory.ConstantArguments();
     private final ObjectPool<InstantiationArguments> instantiations;
     private final LongObjHashMap<TableColumnMetadata> nullProbeColumnMetadata = new LongObjHashMap<>();
     private final ObjList<Function> nullProbeConstants = new ObjList<>(1);
@@ -792,6 +795,9 @@ public final class FunctionInstantiator implements Mutable {
                         && (BoundExpression.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
                     throw new IllegalStateException("bound function semantics have changed");
                 }
+                if (ParanoiaState.PLAN_PARANOIA_MODE && !isDeclaredTimestampOrder(call, function)) {
+                    throw new IllegalStateException("declared timestamp order differs from the built function");
+                }
                 return function;
             } catch (Throwable th) {
                 Misc.free(function, th);
@@ -835,6 +841,32 @@ public final class FunctionInstantiator implements Mutable {
         } finally {
             endWorkerClones();
         }
+    }
+
+    /**
+     * Whether the timestamp order a monotonic timestamp factory declares for the call, see
+     * {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, holds for the function built for it: a declared
+     * order holds for the built function, and when every argument but the timestamp argument is a constant, the
+     * declaration answers as the built function does.
+     */
+    private boolean isDeclaredTimestampOrder(FunctionExpression call, Function function) throws SqlException {
+        final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(call);
+        if (factory == null || !(function instanceof MonotonicTimestampFunction monotonic)) {
+            return true;
+        }
+        final boolean isDeclared = factory.preservesTimestampOrder(call, constantArguments);
+        final boolean isBuilt = monotonic.preservesTimestampOrder();
+        if (isDeclared && !isBuilt) {
+            return false;
+        }
+        final int timestampIndex = factory.getTimestampArgumentIndex(call, constantArguments);
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            if (i != timestampIndex && !(argument instanceof ConstantExpression) && !(argument instanceof TypeExpression)) {
+                return true;
+            }
+        }
+        return isDeclared == isBuilt;
     }
 
     private boolean isPreparationCompatible(PreparedFunctions.Entry entry, OutputSchema input, RecordMetadata metadata) {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -43,6 +44,14 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
         this.offset = offset;
     }
 
+    /**
+     * The {@code preservesTimestampOrder()} of the function over an argument of {@code argumentType}, returning
+     * {@code type}.
+     */
+    static boolean preservesOrder(int argumentType, int type, long offset) {
+        return argumentType == type && offset <= Long.MAX_VALUE - ColumnType.getTimestampDriver(type).getMaxDesignatedTimestamp();
+    }
+
     @Override
     public Function getArg() {
         return timestampFunc;
@@ -57,6 +66,11 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
     @Override
     public Function getTimestampArg() {
         return timestampFunc;
+    }
+
+    @Override
+    public boolean preservesTimestampOrder() {
+        return preservesOrder(timestampFunc.getType(), getType(), offset);
     }
 
     @Override

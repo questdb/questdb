@@ -449,6 +449,7 @@ public class UnionTest extends AbstractCairoTest {
                 "union all " +
                 "select x-1 from long_sequence(1) order by 1 limit 2")
                 .ddl(null)
+                .expectSize()
                 .returns("x\n0\n2\n");
     }
 
@@ -460,6 +461,7 @@ public class UnionTest extends AbstractCairoTest {
                 "union all " +
                 "select x-1 from long_sequence(1) order by 1 limit 2")
                 .ddl(null)
+                .expectSize()
                 .returns("x\n0\n2\n");
     }
 
@@ -472,6 +474,7 @@ public class UnionTest extends AbstractCairoTest {
                 "union all " +
                 "select x-1 from long_sequence(1) order by 1 limit 2")
                 .ddl(null)
+                .expectSize()
                 .returns("x\n0\n2\n");
     }
 
@@ -817,6 +820,7 @@ public class UnionTest extends AbstractCairoTest {
             assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL SELECT * FROM (SELECT v FROM t UNION SELECT v FROM t ORDER BY 1 DESC LIMIT 1)")
                     .noLeakCheck()
                     .noRandomAccess()
+                    .expectSize()
                     .returns("""
                             v
                             -1
@@ -2271,16 +2275,15 @@ public class UnionTest extends AbstractCairoTest {
                                     VirtualRecord
                                       functions: [-2L]
                                         long_sequence count: 1
-                                Limit value: 1 skip-rows: 0 take-rows: 1
-                                    Encode sort
-                                      keys: [v desc]
-                                        Union All
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t
+                                Encode sort lo: 1
+                                  keys: [v desc]
+                                    Union All
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
                             """)
                     .returns(expected);
             assertQuery("SELECT -1L v UNION ALL SELECT -2L UNION ALL (" + top1 + ")")
@@ -2511,16 +2514,15 @@ public class UnionTest extends AbstractCairoTest {
                                         VirtualRecord
                                           functions: [-2L]
                                             long_sequence count: 1
-                                    Limit value: 1 skip-rows: 0 take-rows: 1
-                                        Encode sort
-                                          keys: [v desc]
-                                            Union All
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t
+                                    Encode sort lo: 1
+                                      keys: [v desc]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
                                 VirtualRecord
                                   functions: [-3L]
                                     long_sequence count: 1
@@ -2640,16 +2642,15 @@ public class UnionTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: t
                                     Hash
-                                        Limit value: 1 skip-rows: 0 take-rows: 1
-                                            Encode sort
-                                              keys: [v desc]
-                                                Union All
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t
+                                        Encode sort lo: 1
+                                          keys: [v desc]
+                                            Union All
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
                             """)
                     .returns(joinRow);
             assertQuery("WITH c AS (" + top1 + ") SELECT * FROM t t1 JOIN t t2 ON t1.v = t2.v JOIN c t3 ON t1.v = t3.v")
@@ -2977,6 +2978,7 @@ public class UnionTest extends AbstractCairoTest {
                 "union all " +
                 "select x-1 from long_sequence(1) order by 1 limit 2")
                 .ddl(null)
+                .expectSize()
                 .returns("x\n0\n2\n");
     }
 }

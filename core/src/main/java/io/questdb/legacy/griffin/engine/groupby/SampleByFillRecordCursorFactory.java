@@ -29,8 +29,11 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.Map;
@@ -60,6 +63,7 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimezoneFloorTimestampSampler;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -137,6 +141,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     public SampleByFillRecordCursorFactory(
+            BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
@@ -175,6 +180,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
         Map keysMap = null;
+        RecordChain recordChain = null;
         SimpleMapValue localNonKeyedPrevCache = null;
         SampleByFillCursor cursorLocal;
         try {
@@ -185,6 +191,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // on the per-query counter. Mirrors the AbstractSampleByFillRecordCursorFactory
                 // idiom.
                 keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
+                if (!base.recordCursorSupportsRandomAccess()) {
+                    final EntityColumnFilter columnFilter = new EntityColumnFilter();
+                    columnFilter.of(metadata.getColumnCount());
+                    recordChain = new RecordChain(
+                            metadata,
+                            RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter),
+                            configuration.getSqlSmallMapPageSize(),
+                            Integer.MAX_VALUE
+                    );
+                }
             } else if (fixedPrevSrcCols.size() > 0) {
                 // Non-keyed with at least one fixed-size FILL_PREV source: cache
                 // the prev row in a SimpleMapValue so the gap-emit path reads
@@ -200,12 +216,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     offsetFunc, offsetFuncPos,
                     tzFunc, tzFuncPos, samplingIntervalUnit,
                     fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot,
-                    isPrevPositioningNeeded, localNonKeyedPrevCache
+                    isPrevPositioningNeeded, localNonKeyedPrevCache, recordChain
             );
         } catch (Throwable th) {
             // Free what this constructor allocated. Caller still owns its inputs
             // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
             Misc.free(keysMap, th);
+            Misc.free(recordChain, th);
             Misc.free(localNonKeyedPrevCache, th);
             throw th;
         }
@@ -266,6 +283,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             sink.attr("fill").val("value");
         } else {
             sink.attr("fill").val("null");
+        }
+        if (cursor.recordChain != null) {
+            sink.attr("cached").val(true);
         }
         sink.child(base);
     }
@@ -422,10 +442,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // Per output column: MapValue slot for the cached fixed-size PREV value,
         // or -1 if not slot-eligible (variable-width sources fall back to PREV_SLOT).
         private final IntList prevValueSlot;
+        private final RecordChain recordChain;
         // FILL stride unit ('d','w','M','y'), forwarded to the TZ wrap so the
         // local-grid floor uses the right calendar resolution.
         private final char samplingIntervalUnit;
         private long simplePrevRowId = -1L;
+        private RecordCursor sourceCursor;
         // Per output column SymbolTable cache, populated in of(); used by
         // getSymA/getSymB to skip the MapRecord setSymbolTableResolver chain.
         private final ObjList<SymbolTable> symbolCache = new ObjList<>();
@@ -474,8 +496,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 IntList fixedPrevTypeTags,
                 IntList prevValueSlot,
                 boolean isPrevPositioningNeeded,
-                SimpleMapValue nonKeyedPrevCache
+                SimpleMapValue nonKeyedPrevCache,
+                RecordChain recordChain
         ) {
+            this.recordChain = recordChain;
             this.offsetFunc = offsetFunc;
             this.offsetFuncPos = offsetFuncPos;
             this.tzFunc = tzFunc;
@@ -519,9 +543,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public void close() {
-            final RecordCursor cursor = baseCursor;
+            final RecordCursor cursor = sourceCursor;
+            sourceCursor = null;
             baseCursor = null;
-            Throwable failure = Misc.freeBestEffort(null, cursor);
+            baseRecord = null;
+            prevRecord = null;
+            Throwable failure = Misc.freeBestEffort(null, recordChain);
+            if (recordChain != null) {
+                recordChain.setMemoryTracker(null);
+            }
+            failure = Misc.freeBestEffort(failure, cursor);
             if (isOpen) {
                 isOpen = false;
                 failure = Misc.freeBestEffort(failure, keysMap);
@@ -536,7 +567,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+            return sourceCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -670,7 +701,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+            return sourceCursor.newSymbolTable(columnIndex);
         }
 
         @Override
@@ -880,6 +911,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // Pass 1: key discovery (keyed queries only)
             if (keysMap != null) {
                 keysMap.clear();
+                final boolean isCaching = recordChain != null && baseCursor != recordChain;
+                if (isCaching) {
+                    recordChain.clear();
+                }
+                long previous = -1;
                 int keyIdx = 0;
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -897,6 +933,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // -- no hasPrev branch needed in the hot path.
                         initPrevCacheSlots(value);
                     }
+                    if (isCaching) {
+                        previous = recordChain.put(baseRecord, previous);
+                    }
+                }
+                if (isCaching) {
+                    baseCursor = recordChain;
+                    baseRecord = recordChain.getRecord();
                 }
                 keyCount = keyIdx;
                 if (keyCount == 0) {
@@ -909,7 +952,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 toEmitCnt = keyCount;
                 baseCursor.toTop();
                 MapRecord mapRecord = keysMap.getRecord();
-                mapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
+                mapRecord.setSymbolTableResolver(sourceCursor, symbolTableColIndices);
                 keysMapRecord = mapRecord;
             } else {
                 // Non-keyed: degenerate case with 1 "empty" key
@@ -1011,8 +1054,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.sourceCursor = baseCursor;
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
+            if (recordChain != null) {
+                recordChain.clear();
+                recordChain.setMemoryTracker(executionContext.getMemoryTracker());
+                recordChain.setSymbolTableResolver(baseCursor);
+            }
             if (isKeyed) {
                 // Bind the active workload's MemoryTracker before reopen() so the keysMap's
                 // initial allocation is charged to it; the matching free at cursor close keeps

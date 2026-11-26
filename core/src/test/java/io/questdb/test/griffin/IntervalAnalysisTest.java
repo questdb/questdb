@@ -33,9 +33,12 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.IntervalAnalysis;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.LongList;
 import io.questdb.std.str.StringSink;
@@ -240,7 +243,105 @@ public class IntervalAnalysisTest extends AbstractCairoTest {
             "ts IN '2024-01-02' AND ts BETWEEN '2024-01-01' AND '2024-01-03'",
     };
 
+    private static final Object[][] TIMESTAMP_ORDER = {
+            // call, micro, nano; null where binding replaces the call by its argument
+            {"timestamp_floor('1h', ts)", true, true},
+            {"timestamp_floor('15m', ts)", true, true},
+            {"timestamp_floor('1w', ts)", true, false},
+            {"timestamp_floor('2w', ts)", true, false},
+            {"timestamp_floor('3M', ts)", true, true},
+            {"timestamp_floor('1y', ts)", true, true},
+            {"timestamp_floor('10n', ts)", false, true},
+            {"timestamp_floor('106751d', ts)", true, true},
+            {"timestamp_floor('106752d', ts)", true, false},
+            {"timestamp_floor('106751991d', ts)", true, false},
+            {"timestamp_floor('106751992d', ts)", false, false},
+            {"timestamp_floor('1h', ts, '2024-01-01T00:30:00.000000Z')", true, true},
+            {"timestamp_floor('1h', ts, '1969-12-31T23:00:00.000000Z')", false, false},
+            {"timestamp_floor('1w', ts, '2024-01-01T00:00:00.000000Z')", true, true},
+            {"timestamp_floor('1w', ts, null)", true, false},
+            {"timestamp_floor_utc('1h', ts, null, '00:00', null)", true, true},
+            {"timestamp_floor_utc('1h', ts, null, '00:15', null)", true, true},
+            {"timestamp_floor_utc('1h', ts, null, '-00:15', null)", false, false},
+            {"timestamp_floor_utc('1h', ts, null, '00:00', '+01:00')", true, false},
+            {"timestamp_floor_utc('1h', ts, null, '00:00', '-01:00')", true, true},
+            {"timestamp_floor_utc('1M', ts, null, '00:00', '-01:00')", true, true},
+            {"timestamp_floor_utc('2M', ts, null, '00:00', '-01:00')", false, false},
+            {"timestamp_floor_utc('1h', ts, null, '00:15', '+01:00')", false, false},
+            {"timestamp_floor_utc('1h', ts, null, '00:00', 'UTC')", true, true},
+            {"timestamp_floor_utc('1h', ts, null, '00:00', 'America/New_York')", true, true},
+            {"timestamp_floor_utc('1d', ts, null, '00:00', 'America/New_York')", false, false},
+            {"timestamp_floor('1h', ts, null, '00:00', 'America/New_York')", false, false},
+            {"timestamp_floor_utc('1h', ts, null, $1, null)", false, false},
+            {"to_utc(ts, '+01:00')", true, true},
+            {"to_timezone(ts, '+01:00')", true, false},
+            {"to_utc(ts, 'Europe/London')", false, false},
+            {"to_utc(ts, $1)", false, false},
+            {"year(ts)", true, true},
+            {"extract(year from ts)", true, true},
+            {"extract(month from ts)", false, false},
+            {"date_trunc('hour', ts)", true, true},
+            {"date_trunc('week', ts)", true, false},
+            {"date_trunc('millennium', ts)", true, false},
+            {"date_trunc('microsecond', ts)", true, true},
+            {"ts::long", true, true},
+            {"ts::timestamp_ns", false, null},
+            {"ts::timestamp", null, true},
+            {"ts + 1", true, false},
+            {"ts + 8969969736054775808", true, false},
+            {"ts + 8969969736054775809", false, false},
+            {"ts + null::long", false, false},
+            {"ts - 1", true, true},
+            {"ts - (-8969969736054775808)", true, false},
+            {"ts - (-8969969736054775809)", false, false},
+            {"ts + $1", false, false},
+            {"dateadd('h', 1, ts)", true, false},
+            {"dateadd('h', -1, ts)", true, true},
+            {"dateadd('M', 1, ts)", false, false},
+            {"dateadd('M', 0, ts)", true, true},
+            {"dateadd('h', $1, ts)", false, false},
+            {"dateadd('h', -1, ts, '+01:00')", true, true},
+            {"dateadd('h', -1, ts, 'Europe/London')", false, false},
+            {"timestamp_ceil('h', ts)", true, false},
+            {"timestamp_ceil('n', ts)", true, true},
+    };
     private static final String[] TABLES = {"ia_micro_day", "ia_micro_none", "ia_nano_day", "ia_nano_none"};
+
+    @Test
+    public void testDeclaredTimestampOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final MonotonicTimestampFunctionFactory.ConstantArguments arguments = new MonotonicTimestampFunctionFactory.ConstantArguments();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (Object[] row : TIMESTAMP_ORDER) {
+                    for (int i = 0; i < 2; i++) {
+                        final String table = i == 0 ? "ia_micro_none" : "ia_nano_none";
+                        final String sql = "SELECT " + row[0] + " e FROM " + table;
+                        bindVariableService.clear();
+                        final String call = (String) row[0];
+                        if (call.contains("ts + $1")) {
+                            bindVariableService.setLong(0, 1);
+                        } else if (call.contains("dateadd")) {
+                            bindVariableService.setInt(0, 1);
+                        } else {
+                            bindVariableService.setStr(0, "+01:00");
+                        }
+                        try (RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            final FunctionExpression projected = projectedCall(compiler.getPlanForTesting(), "e");
+                            if (row[i + 1] == null) {
+                                Assert.assertNull(sql, projected);
+                                continue;
+                            }
+                            Assert.assertNotNull(sql, projected);
+                            final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(projected);
+                            Assert.assertNotNull(sql, factory);
+                            Assert.assertEquals(sql, row[i + 1], factory.preservesTimestampOrder(projected, arguments));
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testDynamicPredicates() throws Exception {
@@ -280,6 +381,22 @@ public class IntervalAnalysisTest extends AbstractCairoTest {
     @Test
     public void testStaticPredicates() throws Exception {
         assertPredicates(STATIC, true);
+    }
+
+    private static FunctionExpression projectedCall(LogicalPlan plan, String name) {
+        if (plan instanceof ProjectPlan project) {
+            final int index = project.getOutput().getColumnIndexQuiet(name);
+            if (index >= 0 && project.getExpressions().getQuick(index) instanceof FunctionExpression call) {
+                return call;
+            }
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final FunctionExpression call = projectedCall(plan.inputAt(i), name);
+            if (call != null) {
+                return call;
+            }
+        }
+        return null;
     }
 
     private static FilterPlan scanFilter(LogicalPlan plan) {

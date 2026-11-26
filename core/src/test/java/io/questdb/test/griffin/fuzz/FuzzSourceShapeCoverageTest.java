@@ -46,6 +46,9 @@ import java.util.regex.Pattern;
  * queries that read one. Column pruning removes the unread ones; a generator that only renamed columns would leave
  * that path untested while the run stays green.
  * <p>
+ * It also pins the SAMPLE BY inner queries of {@link FuzzSource}: they nest the stream GROUP BY under the outer clauses,
+ * so the stream on/off axis reaches it under LATEST ON, windows, SAMPLE BY, GROUP BY and LIMIT.
+ * <p>
  * The generator is random, so each assertion runs over a corpus; the seed is fixed so a failure is reproducible.
  */
 public class FuzzSourceShapeCoverageTest {
@@ -118,6 +121,52 @@ public class FuzzSourceShapeCoverageTest {
             hasCountOverComputed = countOverComputed.matcher(sql).find() && COMPUTED_COLUMN.matcher(sql).find();
         }
         Assert.assertTrue("the generator produced no count() over a sub-query computing a column in " + CORPUS_SIZE + " queries", hasCountOverComputed);
+    }
+
+    @Test
+    public void testSmallFramesSplitDays() {
+        final Rnd rnd = new Rnd();
+        int smallFrames = 0;
+        for (int i = 0; i < 1_000; i++) {
+            final int maxRows = new FuzzConfig(rnd).getPageFrameMaxRows();
+            if (maxRows > 0) {
+                smallFrames++;
+                // A full day holds 48 rows, so its bucket spans frames of at most 32.
+                Assert.assertTrue(String.valueOf(maxRows), maxRows <= 32);
+            }
+        }
+        Assert.assertTrue("only " + smallFrames + " of 1000 configs use small frames", smallFrames > 250);
+    }
+
+    @Test
+    public void testSubqueriesSampleByKeepingTheTimestamp() {
+        final ObjList<FuzzColumn> columns = new ObjList<>();
+        columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
+        columns.add(new FuzzColumn("i", IntType.INSTANCE));
+        final FuzzSource base = FuzzSource.direct(new FuzzTable("t", columns, "ts"));
+        final Rnd rnd = new Rnd();
+        int keyed = 0;
+        int plain = 0;
+        for (int i = 0; i < 1_000; i++) {
+            final FuzzSource source = rnd.nextBoolean() ? FuzzSource.subquery(rnd, base) : FuzzSource.cte(rnd, base, i);
+            final String sql = source.getPrefixSql() + source.getFromSql();
+            if (sql.contains(" SAMPLE BY ")) {
+                final FuzzTable table = source.getTable();
+                Assert.assertTrue(source.isOrderStable());
+                if (sql.contains(" ORDER BY ts, k")) {
+                    keyed++;
+                    Assert.assertTrue(sql, sql.contains("SELECT ts AS ts, i AS k, count() AS cnt FROM t SAMPLE BY "));
+                    Assert.assertNull(table.getTsColumnName());
+                    Assert.assertEquals(3, table.getColumns().size());
+                } else {
+                    plain++;
+                    Assert.assertTrue(sql, sql.contains("SELECT ts AS ts, count() AS cnt FROM t SAMPLE BY "));
+                    Assert.assertEquals("ts", table.getTsColumnName());
+                    Assert.assertEquals(2, table.getColumns().size());
+                }
+            }
+        }
+        Assert.assertTrue("only " + keyed + " keyed and " + plain + " plain of 1000 sources sample by", keyed > 25 && plain > 25);
     }
 
     private static FuzzSource base() {

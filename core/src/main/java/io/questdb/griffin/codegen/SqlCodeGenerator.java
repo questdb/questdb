@@ -107,8 +107,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final int MIN_RETAINED_FRAMES = 32;
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final AggregateFactoryGenerator aggregateGenerator;
+    private final BytecodeAssembler asm;
     private final CairoConfiguration configuration;
     private final OutputSchema emptySchema;
+    private final EntityColumnFilter entityColumnFilter;
     private final FilterFactoryGenerator filterGenerator;
     private final FunctionInstantiator functionInstantiator;
     private final ObjList<GenerationFrame> generationFrames = new ObjList<>();
@@ -145,6 +147,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) {
         try {
             this.configuration = configuration;
+            this.asm = asm;
+            this.entityColumnFilter = entityColumnFilter;
             this.emptySchema = emptySchema;
             this.functionInstantiator = functionInstantiator;
             this.tmpSink = temporaries.sink;
@@ -175,7 +179,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             this.sortGenerator = new SortFactoryGenerator(configuration, this, filterGenerator, projectionGenerator, asm, entityColumnFilter,
                     recordComparatorCompiler);
             this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionResolver, functionInstantiator, asm,
-                    entityColumnFilter, sortGenerator, tmpIndexes, tmpValues, tmpMasterKeys, temporaries.slaveKeys);
+                    entityColumnFilter, sortGenerator, aggregateGenerator, tmpIndexes, tmpValues, tmpMasterKeys, temporaries.slaveKeys);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter);
             this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionInstantiator, asm, entityColumnFilter,
                     recordComparatorCompiler, characterStore);
@@ -461,7 +465,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {
                     return base;
                 }
-                return new LimitRecordCursorFactory(base, instantiateLimit(limit, base, executionContext), null);
+                final RecordCursorFactory limited = limit.getApplication() == LimitPlan.Application.COPIED_INPUT
+                        ? RowCopies.copy(configuration, asm, entityColumnFilter, base, false, false, false) : base;
+                return new LimitRecordCursorFactory(limited, instantiateLimit(limit, limited, executionContext), null);
             }
             default -> {
                 final IllegalStateException failure = new IllegalStateException("unknown logical operation");

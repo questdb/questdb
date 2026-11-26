@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampEndpointRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
@@ -71,6 +72,7 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
@@ -94,6 +96,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -297,6 +300,19 @@ public final class AggregateFactoryGenerator {
                 executionContext.getSharedQueryWorkerCount(), executionContext);
     }
 
+    /**
+     * Puts the copy the plan records between the stream GROUP BY and its consumer, see {@link AggregatePlan.OutputCopy}.
+     * The copy stands in for the map of a hash GROUP BY, which only the query memory limit bounds. Consumes the factory
+     * on entry, including on failure.
+     */
+    private RecordCursorFactory copyRows(AggregatePlan plan, RecordCursorFactory factory) {
+        return switch (plan.getOutputCopy()) {
+            case NONE -> factory;
+            case RANDOM_ACCESS -> RowCopies.copy(configuration, asm, entityColumnFilter, factory, true, false, false);
+            case RANDOM_ACCESS_IN_BATCHES -> RowCopies.copy(configuration, asm, entityColumnFilter, factory, true, false, true);
+        };
+    }
+
     private RecordCursorFactory generateFunctions(
             GenerationFrame frame,
             AggregatePlan plan,
@@ -322,7 +338,13 @@ public final class AggregateFactoryGenerator {
             columnFilter.clear();
             assemble(plan, plan.getChild().getOutput(), base.getMetadata(), functionInstantiator, executionContext, aggregates, keyFunctions,
                     recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
+            final int planStreamKeyIndex = plan.getAlgorithm() == null ? -1 : plan.getStreamKeyIndex();
+            // the map lays its keys out after the values, see layOutColumnKeys
+            final int streamKeyIndex = planStreamKeyIndex < 0 ? -1 : frame.intListA.getQuick(planStreamKeyIndex) - valueTypes.getColumnCount() - 1;
             final GenericRecordMetadata metadata = metadata(plan, base.getMetadata(), recordFunctions);
+            if (streamKeyIndex >= 0) {
+                metadata.setTimestampIndex(PhysicalProperties.timestampIndex(plan));
+            }
             final int sharedConsumerCount = plan.getSharedConsumerCount();
             if (sharedConsumerCount > 0) {
                 sharedRecordFunctions = new ObjList<>(sharedConsumerCount);
@@ -347,6 +369,11 @@ public final class AggregateFactoryGenerator {
             if (plan.hasGroupingSets()) {
                 return generateGroupingSets(plan, base, metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates,
                         keyFunctions, workerKeys, recordFunctions, filterResources, isParallel, executionContext);
+            }
+            if (streamKeyIndex >= 0) {
+                return copyRows(plan, generateStreamGroupBy(base, metadata, columnFilter, keyTypes, valueTypes, streamKeyIndex,
+                        aggregates, workerAggregates, keyFunctions, workerKeys, recordFunctions, filterResources, isParallel,
+                        plan.isStreamBackward(), executionContext));
             }
             return generateGroupBy(
                     base, metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates,
@@ -504,6 +531,45 @@ public final class AggregateFactoryGenerator {
         }
         frame.popPreparedFilter();
         return factory;
+    }
+
+    /**
+     * Builds the stream GROUP BY that finishes its groups by the key at {@code streamKeyIndex} of the map, a column key
+     * of the column filter or a computed key after them. Consumes the prepared functions, filter resources and input on
+     * entry.
+     */
+    private RecordCursorFactory generateStreamGroupBy(
+            RecordCursorFactory base,
+            RecordMetadata metadata,
+            ListColumnFilter columnFilter,
+            ArrayColumnTypes keyTypes,
+            ArrayColumnTypes valueTypes,
+            int streamKeyIndex,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<ObjList<GroupByFunction>> workerGroupByFunctions,
+            ObjList<Function> keyFunctions,
+            ObjList<ObjList<Function>> workerKeyFunctions,
+            ObjList<Function> recordFunctions,
+            AsyncFilterResources filterResources,
+            boolean isParallel,
+            boolean isBackward,
+            SqlExecutionContext executionContext
+    ) {
+        final int columnKeyCount = columnFilter.getColumnCount();
+        final Function keyFunction = streamKeyIndex < columnKeyCount
+                ? GroupByUtils.createColumnFunction(base.getMetadata(), columnFilter.getColumnIndex(streamKeyIndex), keyTypes.getColumnType(streamKeyIndex), 0)
+                : keyFunctions.getQuick(streamKeyIndex - columnKeyCount);
+        if (isParallel) {
+            return new AsyncStreamGroupByRecordCursorFactory(
+                    executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(), base, metadata,
+                    columnFilter.copy(), new ArrayColumnTypes().addAll(keyTypes), new ArrayColumnTypes().addAll(valueTypes),
+                    streamKeyIndex, keyFunction, groupByFunctions, workerGroupByFunctions, keyFunctions, workerKeyFunctions,
+                    recordFunctions, filterResources, reduceTaskFactory, executionContext.getSharedQueryWorkerCount(), isBackward
+            );
+        }
+        assert !isBackward && filterResources.getFilter() == null;
+        return new StreamGroupByRecordCursorFactory(asm, configuration, base, metadata, keyTypes, valueTypes, columnFilter,
+                streamKeyIndex, keyFunction, groupByFunctions, keyFunctions, recordFunctions);
     }
 
     private RecordCursorFactory generateTimestampEndpoint(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
@@ -733,6 +799,95 @@ public final class AggregateFactoryGenerator {
                     codeGenerator.generate(frame, PlanToFactoryRules.aggregateBase(aggregate), executionContext);
         };
         return generate(frame, aggregate, base, executionContext);
+    }
+
+    /**
+     * Builds the stream GROUP BY that aggregates the buckets of the interpolating SAMPLE BY, see
+     * {@link SampleByPlan#getPreAggregation()}. Its map holds the values the interpolation lays out, a marker byte
+     * before the aggregate states, then the column keys and last the bucket, see {@link SampleByPlan#getBucket()},
+     * which the GROUP BY finishes its groups by. Its output has the columns of the SAMPLE BY, which
+     * {@code sampleMetadata} describes, but its timestamp, which the interpolation fills, followed by the bucket; it
+     * records the output index of each SAMPLE BY column in {@code outputIndexes}, -1 for the timestamp. Consumes the
+     * input on entry, including on failure; the frame frees the stolen filter on failure.
+     */
+    RecordCursorFactory generatePreAggregation(
+            GenerationFrame frame,
+            SampleByPlan plan,
+            RecordCursorFactory base,
+            @Nullable PreparedFilter stolenFilter,
+            RecordMetadata sampleMetadata,
+            IntList outputIndexes,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        ObjList<Function> keyFunctions = null;
+        ObjList<Function> recordFunctions = null;
+        ObjList<ObjList<GroupByFunction>> workerAggregates = null;
+        ObjList<ObjList<Function>> workerKeys = null;
+        boolean isAdopted = false;
+        try {
+            final OutputSchema input = plan.getChild().getOutput();
+            final RecordMetadata baseMetadata = base.getMetadata();
+            final ObjList<GroupByFunction> aggregates = new ObjList<>(plan.getAggregates().size());
+            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes().add(ColumnType.BYTE);
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            final IntList keySlots = new IntList();
+            final ObjList<Function> sampleFunctions = new ObjList<>(plan.getOutput().getColumnCount());
+            recordFunctions = new ObjList<>(plan.getOutput().getColumnCount() + 1);
+            try {
+                instantiateAggregates(plan, input, baseMetadata, functionInstantiator, executionContext, aggregates, sampleFunctions, valueTypes);
+                layOutColumnKeys(plan, input, baseMetadata, sampleFunctions, keyTypes, valueTypes, columnFilter, keySlots);
+            } catch (Throwable th) {
+                Misc.freeObjList(sampleFunctions, th);
+                throw th;
+            }
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            outputIndexes.setAll(sampleFunctions.size(), -1);
+            for (int i = 0, n = sampleFunctions.size(); i < n; i++) {
+                final Function function = sampleFunctions.getQuick(i);
+                if (function != null) {
+                    outputIndexes.setQuick(i, recordFunctions.size());
+                    recordFunctions.add(function);
+                    metadata.add(sampleMetadata.getColumnMetadata(i));
+                }
+            }
+            keyFunctions = new ObjList<>(1);
+            final Function bucket = functionInstantiator.instantiate(plan.getBucket(), input, baseMetadata, executionContext);
+            keyFunctions.add(bucket);
+            keyTypes.add(bucket.getType());
+            recordFunctions.add(GroupByUtils.createColumnFunction(null, valueTypes.getColumnCount() + keyTypes.getColumnCount(), bucket.getType(), -1));
+            String bucketName = "__sample_by_bucket";
+            while (sampleMetadata.getColumnIndexQuiet(bucketName) >= 0) {
+                bucketName += '_';
+            }
+            metadata.add(new TableColumnMetadata(bucketName, bucket.getType()));
+            metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+            final boolean isParallel = plan.getPreAggregation() != AggregatePlan.Algorithm.SERIAL;
+            if (isParallel) {
+                final int workerCount = executionContext.getSharedQueryWorkerCount();
+                workerAggregates = functionInstantiator.instantiateWorkerAggregates(plan.getAggregates(), input, baseMetadata, aggregates, workerCount, executionContext);
+                final ObjList<BoundExpression> bucketExpressions = frame.expressions;
+                bucketExpressions.clear();
+                bucketExpressions.add(plan.getBucket());
+                workerKeys = functionInstantiator.instantiateWorkerFunctions(bucketExpressions, input, baseMetadata, keyFunctions, workerCount, executionContext);
+                if (stolenFilter != null) {
+                    filterGenerator.prepareParallel(frame, stolenFilter, base, executionContext);
+                }
+            }
+            final AsyncFilterResources filterResources = isParallel && stolenFilter != null ? stolenFilter.adopt() : new AsyncFilterResources();
+            isAdopted = true;
+            return generateStreamGroupBy(base, metadata, columnFilter, keyTypes, valueTypes, keyTypes.getColumnCount() - 1, aggregates,
+                    workerAggregates, keyFunctions, workerKeys, recordFunctions, filterResources, isParallel, false, executionContext);
+        } catch (Throwable th) {
+            if (!isAdopted) {
+                closeWorkers(workerAggregates, th);
+                closeWorkers(workerKeys, th);
+                Misc.freeObjList(recordFunctions, th);
+                Misc.freeObjList(keyFunctions, th);
+                Misc.free(base, th);
+            }
+            throw th;
+        }
     }
 
     /**

@@ -391,11 +391,12 @@ public class SampleByPlanningTest extends AbstractCairoTest {
             createRows("lp_sample", "TIMESTAMP");
             assertRowsOnly(
                     "SELECT ts bucket,sum(v) total FROM lp_sample SAMPLE BY 1h ORDER BY total DESC",
+                    // the sort keeps the bucket order of the stream GROUP BY between equal totals
                     """
                             bucket	total
                             2024-03-31T02:00:00.000000Z	11.0
-                            2024-03-31T01:00:00.000000Z	3.0
                             2024-03-31T00:00:00.000000Z	3.0
+                            2024-03-31T01:00:00.000000Z	3.0
                             """
             );
             assertRowsOnly(

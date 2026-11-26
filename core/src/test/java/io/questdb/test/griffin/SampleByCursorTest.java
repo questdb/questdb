@@ -719,14 +719,13 @@ public class SampleByCursorTest extends AbstractCairoTest {
                     "SELECT ts, sum(v) FROM (SELECT * FROM lp_sample_cursor)",
                     "WITH c AS (SELECT * FROM lp_sample_cursor) SELECT ts, sum(v) FROM c"
             };
+            // the table streams its buckets and the sub-query and CTE go through the SAMPLE BY cursor
             for (int i = 0; i < sources.length; i++) {
                 final String source = sources[i];
-                final boolean isTable = i == 0;
                 assertQuery(source + " SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00'")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .supportsRandomAccess(isTable)
-                        .expectSize(isTable)
+                        .noRandomAccess()
                         .returns("""
                                 ts	sum
                                 2024-01-01T00:00:00.000000Z	4.0

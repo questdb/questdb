@@ -56,6 +56,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 order by x*2 asc
                 limit 3""")
                 .ddl(null)
+                .expectSize()
                 .returns("""
                         x\toth
                         1\t100

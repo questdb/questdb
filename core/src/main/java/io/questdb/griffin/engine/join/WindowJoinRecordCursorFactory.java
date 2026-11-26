@@ -214,6 +214,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return masterFactory.isRewindRecomputing() || slaveFactory.isRewindRecomputing();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

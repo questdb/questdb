@@ -1357,11 +1357,10 @@ public class JoinPlanningTest extends AbstractCairoTest {
                     """);
             assertQuery("SELECT a.ts, a.id FROM " + join + " ORDER BY a.ts LIMIT 1")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
-                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                                Encode sort
-                                  keys: [ts]
-                                    SelectedRecord
-                            """ + TRAILING_CROSS_PLAN.indent(12)).returns("ts\tid\n2020-01-01T00:00:00.000000Z\t1\n");
+                            Encode sort lo: 1
+                              keys: [ts]
+                                SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("ts\tid\n2020-01-01T00:00:00.000000Z\t1\n");
             assertQuery("SELECT DISTINCT a.id FROM " + join).noLeakCheck().assertsPlan("""
                     GroupBy vectorized: false
                       keys: [id]

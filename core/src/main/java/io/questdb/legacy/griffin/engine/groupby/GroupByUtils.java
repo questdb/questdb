@@ -27,15 +27,22 @@ package io.questdb.legacy.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -67,13 +74,21 @@ import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.legacy.cairo.sql.LegacyRecordCursorFactory;
 import io.questdb.legacy.griffin.FunctionParser;
 import io.questdb.legacy.griffin.SqlKeywords;
 import io.questdb.legacy.griffin.SqlUtil;
 import io.questdb.legacy.griffin.engine.functions.groupby.GroupingFunction;
+import io.questdb.legacy.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.legacy.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.legacy.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.legacy.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.legacy.griffin.model.ExpressionNode;
 import io.questdb.legacy.griffin.model.IQueryModel;
 import io.questdb.legacy.griffin.model.QueryColumn;
@@ -96,6 +111,28 @@ public class GroupByUtils {
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
+
+    public static void aggregateKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            RecordSink sink,
+            ObjList<GroupByFunction> functions,
+            FlyweightPackedMapValue value,
+            long batchAddress,
+            long rowIdsAddress,
+            long lo,
+            long hi,
+            long baseRowId
+    ) {
+        // Entry offsets must remain valid until every function has updated the batch.
+        map.reserveCapacity(hi - lo);
+        final long baseAddress = rowIdsAddress == 0
+                ? map.probeBatch(record, sink, lo, hi, batchAddress)
+                : map.probeBatchFiltered(record, sink, rowIdsAddress, lo, hi, batchAddress);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).computeKeyedBatch(record, value, baseAddress, batchAddress, hi - lo, baseRowId);
+        }
+    }
 
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
@@ -841,6 +878,61 @@ public class GroupByUtils {
         }
     }
 
+    public static Function getGroupByKeyFunction(RecordCursorFactory base, ColumnTypes keyTypes, ListColumnFilter columnFilter, ObjList<Function> keyFunctions, int index) {
+        return index < columnFilter.getColumnCount()
+                ? createColumnFunction(base.getMetadata(), columnFilter.getColumnIndex(index), keyTypes.getColumnType(index), 0)
+                : keyFunctions.getQuick(index - columnFilter.getColumnCount());
+    }
+
+    public static int getStreamGroupByKeyIndex(
+            RecordCursorFactory base,
+            ColumnTypes keyTypes,
+            ListColumnFilter columnFilter,
+            ObjList<Function> keyFunctions,
+            ObjList<GroupByFunction> groupByFunctions
+    ) {
+        if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                || keyTypes.getColumnCount() == 0 || !LegacyRecordCursorFactory.isStableWithinExecution(base)) {
+            return -1;
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction function = groupByFunctions.getQuick(i);
+            if (!function.isStateSelfContained() || !function.isStableWithinExecution()) {
+                return -1;
+            }
+        }
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return -1;
+            }
+        }
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int keyType = keyTypes.getColumnType(i);
+            if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
+                continue;
+            }
+            final Function key = getGroupByKeyFunction(base, keyTypes, columnFilter, keyFunctions, i);
+            final Function arg = key instanceof MonotonicTimestampFunction monotonic && monotonic.preservesTimestampOrder()
+                    ? monotonic.getTimestampArg() : key;
+            if (arg instanceof ColumnFunction column
+                    && arg.getType() == base.getMetadata().getColumnType(column.getColumnIndex())
+                    && isAscendingKey(base, column.getColumnIndex())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public static int getStreamGroupByTimestampIndex(RecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (ColumnType.isTimestamp(metadata.getColumnType(i))
+                    && functions.getQuick(i) instanceof ColumnFunction column && column.getColumnIndex() == keyIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -871,6 +963,14 @@ public class GroupByUtils {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).setAllocator(allocator);
             }
+        }
+    }
+
+    public static void setStreamGroupByKey(MapValue value, int index, int type, long key) {
+        if (type == ColumnType.INT) {
+            value.putInt(index, key == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) key);
+        } else {
+            value.putLong(index, key);
         }
     }
 
@@ -1053,6 +1153,24 @@ public class GroupByUtils {
             return ((ColumnFunction) func).getColumnIndex();
         }
         return -1;
+    }
+
+    private static boolean isAscendingKey(RecordCursorFactory factory, int columnIndex) {
+        if (factory instanceof PageFrameRecordCursorFactory pageFrameFactory) {
+            return pageFrameFactory.isAscendingTimestamp(columnIndex);
+        }
+        if (LongSequenceFunctionFactory.isLongSequence(factory)) {
+            return columnIndex == 0;
+        }
+        if (factory instanceof SelectedRecordCursorFactory) {
+            return isAscendingKey(factory.getBaseFactory(), factory.getColumnCrossIndex().getQuick(columnIndex));
+        }
+        if (factory instanceof FilteredRecordCursorFactory
+                || factory instanceof AsyncFilteredRecordCursorFactory
+                || factory instanceof AsyncJitFilteredRecordCursorFactory) {
+            return isAscendingKey(factory.getBaseFactory(), columnIndex);
+        }
+        return false;
     }
 
     private static void validateSparklineScanDirection(boolean isBaseTimestampAscending, int position) throws SqlException {

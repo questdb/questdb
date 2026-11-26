@@ -161,6 +161,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory, Mon
         throw SqlException.position(argPositions.getQuick(0)).put("unsupported part '").put(part).put('\'');
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        return getTimestampArgumentIndex(call, arguments) >= 0;
+    }
+
     static final class CenturyFunction extends IntExtractFunction {
         public CenturyFunction(Function arg, TimestampDriver driver) {
             super(arg, driver);

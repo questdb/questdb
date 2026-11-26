@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -44,6 +46,8 @@ import io.questdb.griffin.plan.logical.FillMode;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
@@ -113,6 +117,7 @@ final class OperatorPlanning implements Mutable {
         return TreeWalk.CONTINUE;
     };
     private final IntHashSet columnIds;
+    private final MonotonicTimestampFunctionFactory.ConstantArguments constantArguments = new MonotonicTimestampFunctionFactory.ConstantArguments();
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
@@ -470,6 +475,63 @@ final class OperatorPlanning implements Mutable {
      * {@link #firstLastIndexScan}, the bitmap index of a table whose parquet partitions store no column under a
      * converted type.
      */
+    /**
+     * Whether the generator sorts by encoded keys: sorting by them is enabled, and every key has an encodable type.
+     */
+    private boolean isEncodedSort(SortPlan sort) {
+        if (!configuration.isSqlOrderBySortEnabled()) {
+            return false;
+        }
+        final OutputSchema input = sort.getChild().getOutput();
+        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
+            if (!SortKeyEncoder.isEncodable(ColumnType.tagOf(input.getColumnType(input.getColumnIndexById(sort.getColumnIds().getQuick(i)))))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the fill reads its input in the order the input delivers: ascending by the bucket. A fill that reads the
+     * rows of PREV values again by row id, see {@link #isPrevRowRead}, needs an input with random access as well.
+     */
+    static boolean isFillInputOrdered(FillPlan fill) {
+        final LogicalPlan input = fill.getChild();
+        final int bucketIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
+        return bucketIndex >= 0 && PhysicalProperties.timestampIndex(input) == bucketIndex
+                && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.FORWARD
+                && (!isPrevRowRead(fill) || PhysicalProperties.supportsRandomAccess(input) == PhysicalProperties.Capability.YES);
+    }
+
+    /**
+     * Whether the fill reads the row it takes a PREV value from again by row id: a fill without keys that repeats the
+     * PREV value of a column it cannot cache in a slot. The keyed fill copies such rows itself as it finds its keys.
+     */
+    static boolean isPrevRowRead(FillPlan fill) {
+        final OutputSchema output = fill.getChild().getOutput();
+        final int bucketIndex = output.getColumnIndexById(fill.getTimestampColumnId());
+        final int groupingKeyCount = ((GroupingPlan) LogicalPlans.skipFilters(fill.getChild())).getGroupingExpressions().size();
+        final ObjList<FillMode> modes = fill.getModes();
+        if (groupingKeyCount > (bucketIndex >= 0 && bucketIndex < groupingKeyCount ? 1 : 0)) {
+            return false;
+        }
+        for (int i = 0, n = modes.size(); i < n; i++) {
+            if (modes.getQuick(i) == FillMode.KEY) {
+                return false;
+            }
+        }
+        for (int i = 0, n = modes.size(); i < n; i++) {
+            final FillMode mode = modes.getQuick(i);
+            if (mode == FillMode.PREV || mode == FillMode.PREV_COLUMN) {
+                final int sourceId = mode == FillMode.PREV ? fill.getTargetColumnIds().getQuick(i) : fill.getSourceColumnIds().getQuick(i);
+                if (!SampleByFillRecordCursorFactory.isPrevSlotEligible(ColumnType.tagOf(output.getColumnType(output.getColumnIndexById(sourceId))))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean isFirstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
         final ScanPlan scan = firstLastIndexScan(sample, base);
         if (scan == null) {
@@ -664,6 +726,248 @@ final class OperatorPlanning implements Mutable {
         return algorithm;
     }
 
+    /**
+     * Whether a sort by the column of the output may run as a long top-K over the map of a GROUP BY: the column is a
+     * LONG or a TIMESTAMP.
+     */
+    private static boolean isLongTopKColumn(OutputSchema output, int columnId) {
+        final int index = output.getColumnIndexById(columnId);
+        if (index < 0) {
+            return false;
+        }
+        final int type = output.getColumnType(index);
+        return type == ColumnType.LONG || ColumnType.isTimestamp(type);
+    }
+
+    /**
+     * The column of {@code base} that the column {@code columnId} of {@code plan} passes through, -1 when a projection
+     * between them computes it or another operator separates them.
+     */
+    private static int sourceColumnId(LogicalPlan plan, LogicalPlan base, int columnId) {
+        while (plan != base && columnId >= 0) {
+            switch (plan) {
+                case ProjectPlan project -> columnId = LogicalPlans.projectedSourceColumnId(project, columnId);
+                case FilterPlan _ -> {
+                }
+                default -> {
+                    return -1;
+                }
+            }
+            plan = plan.inputAt(0);
+        }
+        return columnId;
+    }
+
+    /**
+     * The column of the aggregate's input whose values never decrease along the input rows, -1 for none: the designated
+     * timestamp of a base read forward, or of any page frame base of a parallel GROUP BY, which reads the frames in the
+     * order it picks, unless the scan order does not vouch for it, see {@link #isTimestampUnvouched}; or the column of
+     * a long_sequence() read under filters. Projections between the aggregate and its base pass the column through.
+     */
+    private int ascendingInputColumnId(GroupingPlan grouping, LogicalPlan base, boolean isFrameOrderPicked) {
+        int baseColumnId = -1;
+        final PhysicalProperties.ScanDirection direction = scanDirection(base);
+        if ((direction == PhysicalProperties.ScanDirection.FORWARD || isFrameOrderPicked && direction == PhysicalProperties.ScanDirection.BACKWARD)
+                && !isTimestampUnvouched(grouping.getChild())) {
+            final int timestampIndex = timestampIndex(base);
+            if (timestampIndex >= 0) {
+                baseColumnId = base.getOutput().getColumnId(timestampIndex);
+            }
+        }
+        if (baseColumnId < 0) {
+            LogicalPlan source = base;
+            while (source instanceof FilterPlan filter) {
+                source = filter.getChild();
+            }
+            if (source instanceof FunctionSourcePlan function && function.isLongSequence()) {
+                baseColumnId = function.getOutput().getColumnId(0);
+            }
+        }
+        return baseColumnId;
+    }
+
+    /**
+     * True when the scan order, read through projections and filters, does not vouch for the designated timestamp: a
+     * TIMESTAMP clause declares a column its input does not designate, which only the user vouches for, on a projection
+     * or on a table scan, or a table scan reads its rows through an index rather than page frame by page frame.
+     */
+    private static boolean isTimestampUnvouched(LogicalPlan plan) {
+        while (true) {
+            switch (plan) {
+                case ProjectPlan project -> {
+                    if (project.hasTimestampDeclaration() && PhysicalProperties.timestampSource(project) != 0) {
+                        return true;
+                    }
+                    plan = project.getChild();
+                }
+                case FilterPlan filter -> plan = filter.getChild();
+                case ScanPlan scan -> {
+                    final OutputSchema output = scan.getOutput();
+                    return output.getTimestampIndex() >= 0 && output.getTimestampColumnId() != scan.getNativeTimestampColumnId()
+                            || scan.getAccessPath() != ScanPlan.AccessPath.PAGE_FRAMES;
+                }
+                default -> {
+                    return false;
+                }
+            }
+        }
+    }
+
+    /**
+     * Decides whether the GROUP BY streams, see {@link AggregatePlan#getStreamKeyIndex()}, and records it. A GROUP BY
+     * keeps its map when its consumer bounds a sort by one LONG column, or a TIMESTAMP column other than the stream
+     * key, by a top-K count: the long top-K of the map scans the map in place. A stream GROUP BY scans its input
+     * backward for a consumer that requests the key descending, which only the parallel one can, and copies its rows
+     * for a consumer that reads them again or by row id, see {@link AggregatePlan.OutputCopy}.
+     */
+    private void planStream(AggregatePlan aggregate, LogicalPlan base) throws SqlException {
+        final int keyIndex = streamKeyIndex(aggregate, base);
+        final int keyColumnId = keyIndex < 0 ? -1 : aggregate.getOutput().getColumnId(keyIndex);
+        final int requestedColumnId = aggregate.getRequestedOrderColumnId();
+        final int topKColumnId = aggregate.getRequestedTopKColumnId();
+        final LimitPlan topK = aggregate.getRequestedTopK();
+        if (keyIndex < 0 || topK != null && isTopKCount(topK.getLo(), topK.getHi()) && isLongTopKColumn(aggregate.getOutput(), topKColumnId)
+                && (topKColumnId != keyColumnId || aggregate.getOutput().getColumnType(keyIndex) == ColumnType.LONG)) {
+            aggregate.setStreaming(-1, false, AggregatePlan.OutputCopy.NONE);
+            return;
+        }
+        final AggregatePlan.Algorithm algorithm = aggregate.getAlgorithm();
+        final boolean isBackward = requestedColumnId == keyColumnId && aggregate.getRequestedDirection() == SortDirection.DESCENDING
+                && (algorithm == AggregatePlan.Algorithm.PARALLEL || algorithm == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER);
+        aggregate.setStreaming(keyIndex, isBackward, streamOutputCopy(aggregate, keyIndex, isBackward));
+    }
+
+    /**
+     * The copy a stream GROUP BY puts before its consumer, from what the consumer requires, see
+     * {@link AggregatePlan.OutputCopy}: one with row ids for a consumer that reads the rows by row id or again, or that
+     * requests one, see {@link AggregatePlan#getRequestedCopy()}, unless the sort the consumer reads through sorts
+     * and copies the rows itself, as it does when the GROUP BY, streaming by the key at {@code keyIndex}, does not
+     * deliver its order. A LIMIT that counts the rows first copies its own input, see
+     * {@link LimitPlan.Application#COPIED_INPUT}.
+     */
+    static AggregatePlan.OutputCopy streamOutputCopy(AggregatePlan aggregate, int keyIndex, boolean isBackward) {
+        final int requestedColumnId = aggregate.getRequestedOrderColumnId();
+        final boolean isOrderDelivered = requestedColumnId < 0 || requestedColumnId == aggregate.getOutput().getColumnId(keyIndex)
+                && (isBackward || aggregate.getRequestedDirection() != SortDirection.DESCENDING);
+        final AggregatePlan.OutputCopy requested = isOrderDelivered ? aggregate.getRequestedCopy() : AggregatePlan.OutputCopy.NONE;
+        if (aggregate.isRewound() || aggregate.isRandomAccessRequired() && requested == AggregatePlan.OutputCopy.NONE) {
+            return AggregatePlan.OutputCopy.RANDOM_ACCESS;
+        }
+        return requested;
+    }
+
+    /**
+     * The index of the grouping expression a stream GROUP BY can finish its groups by, -1 for none: one that never
+     * decreases along the input rows, see {@link #isAscendingKey}, of a serial or parallel GROUP BY without grouping
+     * sets or shared reads that may stream at all, see {@link #isStreamable}.
+     */
+    private int streamKeyIndex(AggregatePlan aggregate, LogicalPlan base) throws SqlException {
+        final AggregatePlan.Algorithm algorithm = aggregate.getAlgorithm();
+        final boolean isParallel = algorithm == AggregatePlan.Algorithm.PARALLEL || algorithm == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER;
+        if (aggregate.getGroupingExpressions().size() == 0 || aggregate.hasGroupingSets() || aggregate.getSharedSource() != null
+                || aggregate.hasSharedConsumers() || !isParallel && algorithm != AggregatePlan.Algorithm.SERIAL || !isStreamable(aggregate, base)) {
+            return -1;
+        }
+        final int ascendingColumnId = ascendingInputColumnId(aggregate, base, isParallel);
+        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
+        for (int i = 0, n = keys.size(); ascendingColumnId >= 0 && i < n; i++) {
+            if (isAscendingKey(aggregate, base, keys.getQuick(i), ascendingColumnId)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * True when the key never decreases along the input rows of the grouping: a TIMESTAMP, LONG or INT that reads the
+     * ascending column of the input, see {@link #ascendingInputColumnId}, of the same type or through a call that
+     * keeps its order, see {@link #orderSource}.
+     */
+    private boolean isAscendingKey(GroupingPlan grouping, LogicalPlan base, BoundExpression key, int ascendingColumnId) throws SqlException {
+        final int keyType = key.getDataType();
+        if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
+            return false;
+        }
+        final OutputSchema input = grouping.getChild().getOutput();
+        return orderSource(key) instanceof ColumnExpression column && !column.isCast()
+                && column.getDataType() == input.getColumnType(input.getColumnIndexById(column.getColumnId()))
+                && sourceColumnId(grouping.getChild(), base, column.getColumnId()) == ascendingColumnId;
+    }
+
+    /**
+     * True when a stream GROUP BY may aggregate the rows of the grouping: stream GROUP BY is enabled, the input yields
+     * the same rows on every evaluation, every aggregate keeps its whole state in its map value, see
+     * {@link BoundExpression#SELF_CONTAINED_STATE}, and every expression is stable within the execution.
+     */
+    private boolean isStreamable(GroupingPlan grouping, LogicalPlan base) {
+        final SqlExecutionContext executionContext = context.getExecutionContext();
+        final ObjList<BoundExpression> keys = grouping.getGroupingExpressions();
+        final ObjList<FunctionExpression> aggregates = grouping.getAggregates();
+        if (!executionContext.isStreamGroupByEnabled() || !LogicalPlans.isResultStable(base, executionContext.isParallelGroupByEnabled(), null)) {
+            return false;
+        }
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            final int flags = aggregates.getQuick(i).getFunctionFlags();
+            if ((flags & BoundExpression.SELF_CONTAINED_STATE) == 0 || (flags & BoundExpression.STABLE_WITHIN_EXECUTION) == 0) {
+                return false;
+            }
+        }
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (!LogicalPlans.isStableWithinExecution(keys.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * How the stream GROUP BY that aggregates the buckets of an interpolating SAMPLE BY runs, see
+     * {@link SampleByPlan#getPreAggregation()}; null when the interpolating factory aggregates the rows itself. The
+     * SAMPLE BY binds a bucket, see {@link SampleByPlan#getBucket()}, that never decreases along the rows of the base
+     * read forward, see {@link #isAscendingKey}, and may stream, see {@link #isStreamable}, with aggregates whose
+     * fixed-size states the interpolation copies, see {@link BoundExpression#SCALAR_STATE}. It runs in parallel where a
+     * GROUP BY over the base would.
+     */
+    private AggregatePlan.Algorithm preAggregation(SampleByPlan sample, LogicalPlan base) throws SqlException {
+        final BoundExpression bucket = sample.getBucket();
+        if (bucket == null || !LogicalPlans.isStableWithinExecution(bucket) || !isStreamable(sample, base)
+                || !isAscendingKey(sample, base, bucket, ascendingInputColumnId(sample, base, false))) {
+            return null;
+        }
+        final ObjList<FunctionExpression> aggregates = sample.getAggregates();
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if ((aggregates.getQuick(i).getFunctionFlags() & BoundExpression.SCALAR_STATE) == 0) {
+                return null;
+            }
+        }
+        if (!context.getExecutionContext().isParallelGroupByEnabled() || (bucket.getFunctionFlags() & BoundExpression.NO_PARALLELISM) != 0
+                || !hasParallelFunctions(sample)) {
+            return AggregatePlan.Algorithm.SERIAL;
+        }
+        if (isPageFrameSource(base)) {
+            return AggregatePlan.Algorithm.PARALLEL;
+        }
+        return isStolenFilter(base, FilterConsumer.FRAME_REDUCER) ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.SERIAL;
+    }
+
+    /**
+     * The expression whose order the key keeps: the key itself, the timestamp argument of a call whose values keep the
+     * argument's order, see {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, or null for a key that
+     * keeps no order.
+     */
+    private BoundExpression orderSource(BoundExpression key) throws SqlException {
+        if (key instanceof ColumnExpression) {
+            return key;
+        }
+        final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(key);
+        if (factory == null) {
+            return null;
+        }
+        final FunctionExpression call = (FunctionExpression) key;
+        final int index = factory.getTimestampArgumentIndex(call, constantArguments);
+        return index >= 0 && factory.preservesTimestampOrder(call, constantArguments) ? call.argumentAt(index) : null;
+    }
+
     private void planAggregate(AggregatePlan aggregate) throws SqlException {
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
@@ -699,6 +1003,7 @@ final class OperatorPlanning implements Mutable {
                     baseTimestampIndex == timestampIndex && scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD);
         }
         aggregate.setAlgorithm(aggregateAlgorithm(aggregate, base));
+        planStream(aggregate, base);
     }
 
     /**
@@ -755,7 +1060,16 @@ final class OperatorPlanning implements Mutable {
      * Decides how the fill reads the buckets of its input.
      */
     private void planFill(FillPlan fill) {
-        fill.setAlgorithm(isSampleByRowsFill(fill) ? FillPlan.Algorithm.SAMPLE_BY_ROWS : FillPlan.Algorithm.SORTED);
+        final FillPlan.Algorithm algorithm;
+        if (isSampleByRowsFill(fill)) {
+            algorithm = FillPlan.Algorithm.SAMPLE_BY_ROWS;
+            ((SampleByPlan) fill.getChild()).setBaseCopied(isSampleByBaseCopied(fill));
+        } else if (isFillInputOrdered(fill)) {
+            algorithm = FillPlan.Algorithm.INPUT_ORDER;
+        } else {
+            algorithm = FillPlan.Algorithm.SORTED;
+        }
+        fill.setAlgorithm(algorithm);
     }
 
     /**
@@ -821,6 +1135,8 @@ final class OperatorPlanning implements Mutable {
                 case UNNEST -> step.setAlgorithm(JoinInput.Algorithm.UNNEST);
                 case ASOF, LT -> {
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
+                    step.setSlaveCopied(!isFullFatJoins && !isRandomAccess(slave) && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0
+                            && PlanToFactoryRules.copyRejectedColumn(slave.getOutput()) < 0);
                     final JoinInput.Algorithm algorithm = temporalAlgorithm(join, i, step);
                     if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL) {
                         validateFullFatTemporalSlave(step);
@@ -876,7 +1192,7 @@ final class OperatorPlanning implements Mutable {
             readOrder(base, false, true);
             isAscending = PhysicalProperties.scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD;
         }
-        latest.setAlgorithm(!isRandomAccess(base) ? LatestByPlan.Algorithm.MATERIALIZED
+        latest.setAlgorithm(!isRandomAccess(base) || PhysicalProperties.streamRowCopy(base) != null ? LatestByPlan.Algorithm.MATERIALIZED
                 : isAscending ? LatestByPlan.Algorithm.ASCENDING_LIGHT : LatestByPlan.Algorithm.LIGHT);
     }
 
@@ -906,9 +1222,17 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Decides which operator applies the LIMIT and, over a sort, how the sort implements it.
+     * Decides which operator applies the LIMIT and, over a sort, how the sort implements it. A LIMIT operator copies
+     * its input when it would run a stream GROUP BY again, see {@link #isInputCopied}.
      */
     private void planLimit(LimitPlan limit) {
+        planLimitApplication(limit);
+        if (limit.getApplication() == LimitPlan.Application.OPERATOR && isInputCopied(limit)) {
+            limit.setApplication(LimitPlan.Application.COPIED_INPUT);
+        }
+    }
+
+    private void planLimitApplication(LimitPlan limit) {
         final LogicalPlan limited = limit.getChild();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
             if (isInputLimit(limited)) {
@@ -939,10 +1263,18 @@ final class OperatorPlanning implements Mutable {
         }
         final BoundExpression lo = limit.getLo();
         final BoundExpression hi = limit.getHi();
-        if (!isRandomAccess(input) || lo instanceof ConstantExpression loConstant && hi instanceof ConstantExpression hiConstant
-                && LogicalPlans.limitValue(loConstant) >= 0 && LogicalPlans.limitValue(hiConstant) < 0) {
+        final boolean isRandomAccess = isRandomAccess(input);
+        // a LIMIT from a row to n rows before the last needs the size of the sorted rows
+        if (lo instanceof ConstantExpression loConstant && hi instanceof ConstantExpression hiConstant
+                && LogicalPlans.limitValue(loConstant) >= 0 && LogicalPlans.limitValue(hiConstant) < 0
+                || !isRandomAccess && !isEncodedSort(sort)) {
             limit.setApplication(LimitPlan.Application.OPERATOR);
             sort.setAlgorithm(sortAlgorithm(input));
+            return;
+        }
+        if (!isRandomAccess) {
+            limit.setApplication(LimitPlan.Application.SORT);
+            sort.setAlgorithm(SortPlan.Algorithm.COPIED_LIMITED);
             return;
         }
         limit.setApplication(LimitPlan.Application.SORT);
@@ -997,6 +1329,7 @@ final class OperatorPlanning implements Mutable {
         }
         validateTimestampAggregates(sample.getAggregates(), sampled.getOutput(), timestampIndex, baseTimestampIndex == timestampIndex);
         sample.setAlgorithm(sampleByAlgorithm(sample, base));
+        sample.setPreAggregation(sample.getAlgorithm() == SampleByPlan.Algorithm.INTERPOLATE ? preAggregation(sample, base) : null);
     }
 
     /**
@@ -1384,12 +1717,16 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The ASOF or LT join the generator builds: full-fat over a slave without random access, one that steals the
-     * filter of its slave, one that reads the time frames of its slave unless the {@code asof_linear} hint asks for
-     * a linear scan or an LT join is keyed, and a linear scan of the slave otherwise.
+     * The ASOF or LT join the generator builds: a linear scan of the copy of a slave the step copies, see
+     * {@link JoinInput#isSlaveCopied()}; full-fat over a slave without random access, one that steals the filter of its
+     * slave, one that reads the time frames of its slave unless the {@code asof_linear} hint asks for a linear scan or
+     * an LT join is keyed, and a linear scan of the slave otherwise.
      */
     private JoinInput.Algorithm temporalAlgorithm(JoinPlan join, int inputIndex, JoinInput step) {
         final LogicalPlan slave = step.getInput();
+        if (step.isSlaveCopied()) {
+            return JoinInput.Algorithm.TEMPORAL;
+        }
         if (isFullFatJoins || !isRandomAccess(slave)) {
             return JoinInput.Algorithm.FULL_FAT_TEMPORAL;
         }
@@ -1596,8 +1933,8 @@ final class OperatorPlanning implements Mutable {
     /**
      * True when every key and aggregate function of the aggregate supports parallelism.
      */
-    static boolean hasParallelFunctions(AggregatePlan aggregate) {
-        return !hasNoParallelism(aggregate.getGroupingExpressions()) && !hasNoParallelism(aggregate.getAggregates());
+    static boolean hasParallelFunctions(GroupingPlan grouping) {
+        return !hasNoParallelism(grouping.getGroupingExpressions()) && !hasNoParallelism(grouping.getAggregates());
     }
 
     /**
@@ -1660,6 +1997,15 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * True when a LIMIT operator copies the rows of its input, see {@link LimitPlan.Application#COPIED_INPUT}: a bound
+     * may be negative, so the operator counts the rows and rewinds the input, which would run a stream GROUP BY again.
+     */
+    static boolean isInputCopied(LimitPlan limit) {
+        return (LogicalPlans.mayBeNegativeLimit(limit.getLo()) || limit.getHi() != null && LogicalPlans.mayBeNegativeLimit(limit.getHi()))
+                && PhysicalProperties.rewindRecomputes(limit.getChild()) == PhysicalProperties.Capability.YES;
+    }
+
+    /**
      * True when the factory of the plan applies the LIMIT over it: the access path of the table scan the plan
      * filters, under any projections, reads only the rows the LIMIT keeps.
      */
@@ -1694,6 +2040,22 @@ final class OperatorPlanning implements Mutable {
      */
     static boolean isParallelWindowJoinStep(WindowJoinStep step) {
         return !hasNoParallelism(step.getAggregates()) && isKnownYes(PhysicalProperties.supportsConcurrentTimeFrameCursor(step.getSlave()));
+    }
+
+    /**
+     * True when the generator copies the base of the SAMPLE BY the fill reads the rows of, see
+     * {@link SampleByPlan#isBaseCopied()}: the SAMPLE BY groups by a key besides its bucket, and rewinding its base runs
+     * a stream GROUP BY again.
+     */
+    static boolean isSampleByBaseCopied(FillPlan fill) {
+        final SampleByPlan sample = (SampleByPlan) fill.getChild();
+        final ObjList<BoundExpression> keys = sample.getGroupingExpressions();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (((ColumnExpression) keys.getQuick(i)).getColumnId() != sample.getTimestampColumnId()) {
+                return PhysicalProperties.rewindRecomputes(PlanToFactoryRules.sampleByBase(sample)) == PhysicalProperties.Capability.YES;
+            }
+        }
+        return false;
     }
 
     /**

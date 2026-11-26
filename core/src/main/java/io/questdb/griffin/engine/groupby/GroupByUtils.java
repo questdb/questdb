@@ -26,7 +26,11 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
@@ -107,6 +111,28 @@ public class GroupByUtils {
      * @return the per-function empty values, or null when every function reports NULL
      */
     @Nullable
+    public static void aggregateKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            RecordSink sink,
+            ObjList<GroupByFunction> functions,
+            FlyweightPackedMapValue value,
+            long batchAddress,
+            long rowIdsAddress,
+            long lo,
+            long hi,
+            long baseRowId
+    ) {
+        // Entry offsets must remain valid until every function has updated the batch.
+        map.reserveCapacity(hi - lo);
+        final long baseAddress = rowIdsAddress == 0
+                ? map.probeBatch(record, sink, lo, hi, batchAddress)
+                : map.probeBatchFiltered(record, sink, rowIdsAddress, lo, hi, batchAddress);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).computeKeyedBatch(record, value, baseAddress, batchAddress, hi - lo, baseRowId);
+        }
+    }
+
     public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount, IntList emptyValueTypes) {
         emptyValueTypes.clear();
         final int n = functions.size();
@@ -499,6 +525,14 @@ public class GroupByUtils {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).setAllocator(allocator);
             }
+        }
+    }
+
+    public static void setStreamGroupByKey(MapValue value, int index, int type, long key) {
+        if (type == ColumnType.INT) {
+            value.putInt(index, key == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) key);
+        } else {
+            value.putLong(index, key);
         }
     }
 

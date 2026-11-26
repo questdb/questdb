@@ -37,6 +37,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -440,6 +441,50 @@ public class MemoryCARWImplTest {
     public void testEvenPageSize() {
         try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem);
+        }
+    }
+
+    @Test
+    public void testExtendDoublesUpToMaxPages() {
+        final int pageSize = 1024;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, 1024, MemoryTag.NATIVE_DEFAULT)) {
+            final LongList sizes = new LongList();
+            final long longCount = 1000L * pageSize / Long.BYTES;
+            for (long i = 0; i < longCount; i++) {
+                mem.putLong(i);
+                if (sizes.size() == 0 || sizes.getLast() != mem.size()) {
+                    sizes.add(mem.size());
+                }
+            }
+            Assert.assertEquals("[1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576]", sizes.toString());
+            for (long i = 0; i < longCount; i++) {
+                Assert.assertEquals(i, mem.getLong(i * Long.BYTES));
+            }
+        }
+    }
+
+    @Test
+    public void testExtendFallsBackToExactPagesWhenDoublingRunsOutOfMemory() {
+        final int pageSize = 64 * 1024;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, 64, MemoryTag.NATIVE_DEFAULT)) {
+            final long longsPerPage = pageSize / Long.BYTES;
+            long i = 0;
+            for (; i < 32 * longsPerPage; i++) {
+                mem.putLong(i);
+            }
+            Assert.assertEquals(32L * pageSize, mem.size());
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 3L * pageSize);
+            try {
+                for (; i < 34 * longsPerPage; i++) {
+                    mem.putLong(i);
+                }
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+            Assert.assertEquals(34L * pageSize, mem.size());
+            for (long j = 0; j < i; j++) {
+                Assert.assertEquals(j, mem.getLong(j * Long.BYTES));
+            }
         }
     }
 

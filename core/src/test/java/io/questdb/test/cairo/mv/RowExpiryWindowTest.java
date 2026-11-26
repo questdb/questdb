@@ -558,7 +558,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                         B\t10.0\t2024-01-01T01:00:00.000000Z
                         A\t1.0\t2024-01-01T00:00:00.000000Z
                         """);
-                assertQuery("select k, v, ts from " + view + " order by ts desc limit 1").noLeakCheck().timestampDesc("ts").returns("""
+                assertQuery("select k, v, ts from " + view + " order by ts desc limit 1").noLeakCheck().timestampDesc("ts").expectSize().returns("""
                         k\tv\tts
                         B\t10.0\t2024-01-01T01:00:00.000000Z
                         """);

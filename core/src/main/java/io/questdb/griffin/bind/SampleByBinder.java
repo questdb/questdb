@@ -84,6 +84,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.millitime.Dates;
 
 import static io.questdb.griffin.bind.BindContext.*;
 
@@ -144,6 +145,33 @@ final class SampleByBinder {
             }
         }
         return false;
+    }
+
+    /**
+     * True when the SAMPLE BY unit buckets the timestamps by a fixed width, as every unit up to a day does.
+     */
+    private static boolean isFixedWidthUnit(char unit) {
+        return switch (unit) {
+            case 'n', 'U', 'T', 's', 'm', 'h', 'd' -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * True when the SAMPLE BY aligns its buckets to the UTC calendar at no offset: no time zone or a constant UTC one,
+     * and a constant offset of zero.
+     */
+    private static boolean isUtcCalendar(SampleByPlan plan) {
+        if (!(plan.getOffset() instanceof ConstantExpression offset) || offset.getStrValue() == null) {
+            return false;
+        }
+        final long parsed = Dates.parseOffset(offset.getStrValue());
+        if (parsed == Numbers.LONG_NULL || Numbers.decodeLowInt(parsed) != 0) {
+            return false;
+        }
+        final BoundExpression timezone = plan.getTimezone();
+        return timezone == null || timezone instanceof ConstantExpression zone
+                && (zone.getStrValue() == null || Chars.equalsIgnoreCase(zone.getStrValue(), "UTC"));
     }
 
     private static boolean hasSubsampleSourceTimestamp(LogicalPlan plan) {
@@ -884,7 +912,12 @@ final class SampleByBinder {
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
             setPeriodLiteral(plan, sampleBy);
+            TimestampSamplerFactory.validateStride(timestampType, plan.getStride(), plan.getPeriodUnit(), sampleBy.position);
             TimestampSamplerFactory.getSampleByInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
+            if (hasLinearFill(source) && source.getSampleByOffset() != null && source.getSampleByFrom() == null && source.getSampleByTo() == null
+                    && isFixedWidthUnit(plan.getPeriodUnit()) && isUtcCalendar(plan)) {
+                plan.setBucket(bindLinearBucket(source, input.getOutput(), executionContext));
+            }
         } else {
             final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
             if (!(bound instanceof ConstantExpression period)
@@ -892,10 +925,26 @@ final class SampleByBinder {
                 throw SqlException.$(sampleBy.position, "sample by period must be a constant expression of INT or LONG type");
             }
             final long stride = period.getDataType() == ColumnType.INT ? Numbers.intToLong((int) period.getLongValue()) : period.getLongValue();
+            TimestampSamplerFactory.validateStride(timestampType, stride, unit.token.charAt(0), sampleBy.position);
             TimestampSamplerFactory.getSampleByInstance(driver, stride, unit.token.charAt(0), sampleBy.position);
             plan.setPeriod(null, stride, sampleBy.position, unit.token.charAt(0), unit.position);
         }
         return plan;
+    }
+
+    /**
+     * The bucket a stream GROUP BY under the FILL(LINEAR) of {@code source} groups by, see {@link SampleByPlan#getBucket()}:
+     * timestamp_floor of the period literal over the input's timestamp.
+     */
+    private BoundExpression bindLinearBucket(QueryModel source, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode sampleBy = source.getSampleBy();
+        final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor", 0, sampleBy.position);
+        floor.paramCount = 2;
+        final CharacterStoreEntry stride = ctx.characterStore.newEntry();
+        stride.put('\'').put(sampleBy.token).put('\'');
+        floor.lhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, stride.toImmutable(), 0, sampleBy.position);
+        floor.rhs = sampleByTimestamp(input, sampleBy.position);
+        return ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
     }
 
     /**
@@ -917,7 +966,7 @@ final class SampleByBinder {
         final ExpressionNode from = source.getSampleByFrom();
         final int timestampType = input.getColumnType(sampleByTimestampIndex(input));
         markTimestampSubqueries(source, timestampType);
-        bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
+        final BoundExpression boundFrom = bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
         bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
         final ExpressionNode timezoneName = source.getSampleByTimezoneName();
         aggregate.setTimezone(timezoneName != null ? ctx.functionBinder.bindStandalone(timezoneName, executionContext) : null);
@@ -944,6 +993,11 @@ final class SampleByBinder {
             throw e;
         }
         setPeriodLiteral(aggregate, sampleBy);
+        // the bucket floors any stride; a fill steps through its buckets, and so does a grid that starts at a FROM bound
+        // only execution knows, which a microsecond timestamp cannot do in a stride of a fraction of a microsecond
+        if (isFillPlanned(source) || boundFrom != null && !(boundFrom instanceof ConstantExpression)) {
+            TimestampSamplerFactory.validateStride(timestampType, aggregate.getStride(), aggregate.getPeriodUnit(), sampleBy.position);
+        }
         TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(bucket.getDataType()), aggregate.getStride(), aggregate.getPeriodUnit(),
                 aggregate.getPeriodUnitPosition());
         aggregate.setOffset(((FunctionExpression) bucket).argumentAt(3));

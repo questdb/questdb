@@ -76,6 +76,11 @@ public class YearFunctionFactory implements FunctionFactory, MonotonicTimestampF
         return new YearFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        return true;
+    }
+
     public static final class YearFunction extends IntFunction implements UnaryFunction, MonotonicTimestampFunction {
         // yearStart() out-of-range sentinels; neither is a reachable real year-start instant.
         private static final long YEAR_ABOVE_RANGE = Long.MAX_VALUE;
@@ -111,6 +116,11 @@ public class YearFunctionFactory implements FunctionFactory, MonotonicTimestampF
         @Override
         public Function getTimestampArg() {
             return arg;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return true;
         }
 
         @Override

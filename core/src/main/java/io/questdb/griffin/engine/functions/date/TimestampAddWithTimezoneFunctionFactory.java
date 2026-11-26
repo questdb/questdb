@@ -49,6 +49,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 
 public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
@@ -147,6 +148,22 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory,
         );
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        if (getTimestampArgumentIndex(call, arguments) < 0) {
+            return false;
+        }
+        final CharSequence timezone = arguments.constant(call.argumentAt(3)).getStrA(null);
+        final int type = call.getDataType();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(type);
+        final char period = arguments.constant(call.argumentAt(0)).getChar(null);
+        final TimestampDriver.TimestampAddMethod periodAddFunction = timestampDriver.getAddMethod(period);
+        final int stride = arguments.constant(call.argumentAt(1)).getInt(null);
+        assert timezone != null && periodAddFunction != null && stride != Numbers.INT_NULL;
+        return arguments.getTimezoneRules(timestampDriver, timezone) instanceof FixedTimeZoneRule
+                && TimestampAddFunctionFactory.preservesOrder(call.argumentAt(2).getDataType(), type, period, periodAddFunction, stride);
+    }
+
     private static long compute(long timestamp, TimeZoneRules timeZoneRules, int stride, TimestampDriver.TimestampAddMethod periodAddFunction) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
@@ -195,6 +212,12 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory,
         @Override
         public Function getTimestampArg() {
             return timestampFunc;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return timeZoneRules instanceof FixedTimeZoneRule
+                    && TimestampAddFunctionFactory.preservesOrder(timestampFunc.getType(), getType(), period, periodAddFunction, stride);
         }
 
         @Override

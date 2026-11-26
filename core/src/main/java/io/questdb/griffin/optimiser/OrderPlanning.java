@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -85,6 +86,7 @@ final class OrderPlanning implements OptimiserPass {
     private final CairoConfiguration configuration;
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjectPool<OrderRequirement> requirements = new ObjectPool<>(OrderRequirement.FACTORY, 16);
+    private boolean isFullFatJoins;
 
     OrderPlanning(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache, IntHashSet columnIds) {
         this.configuration = configuration;
@@ -173,6 +175,38 @@ final class OrderPlanning implements OptimiserPass {
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
         return plan instanceof AggregatePlan aggregate && aggregate.isSingleGroup();
+    }
+
+    /**
+     * True when a join key of the step has another type on the master than on the slave.
+     */
+    private static boolean hasMixedKeyTypes(OutputSchema master, JoinInput step) {
+        final OutputSchema slave = step.getInput().getOutput();
+        for (int i = 0, n = step.getKeys().size(); i < n; i++) {
+            final JoinKey key = step.getKeys().getQuick(i);
+            if (master.getColumnType(master.getColumnIndexById(key.getMasterColumnId()))
+                    != slave.getColumnType(slave.getColumnIndexById(key.getSlaveColumnId()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The copy a stream GROUP BY gives the master of the join, see {@link OrderRequirement#getStreamCopy()}: a markout
+     * horizon reads its master by row id, and nothing above a CROSS join can copy a slave value no copy holds, such as
+     * a RECORD, so the master keeps the random access and cheap rewind of a hash GROUP BY.
+     */
+    private static AggregatePlan.OutputCopy masterStreamCopy(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            final JoinInput step = ordered.getQuick(i);
+            if (step.getMarkoutTimestampColumnId() >= 0
+                    || step.getJoinType() == JoinKind.CROSS && PlanToFactoryRules.copyRejectedColumn(step.getInput().getOutput()) >= 0) {
+                return AggregatePlan.OutputCopy.RANDOM_ACCESS;
+            }
+        }
+        return AggregatePlan.OutputCopy.NONE;
     }
 
     /**
@@ -485,6 +519,7 @@ final class OrderPlanning implements OptimiserPass {
      */
     private void require(LogicalPlan plan, OrderRequirement requirement) {
         final boolean isRandomAccessRequired = requirement.isRandomAccessRequired();
+        final boolean isRandomAccessSorted = requirement.isRandomAccessSorted();
         requirement.passTo(plan);
         switch (plan) {
             case WindowPlan window ->
@@ -502,11 +537,22 @@ final class OrderPlanning implements OptimiserPass {
                 if (scan != null) {
                     requireScan(scan, SortDirection.DESCENDING, requirements.next().inputOf(requirement));
                 } else {
-                    requireNothing(PlanToFactoryRules.latestByBase(latest), requirement);
+                    // a LATEST BY that does not scan a table reads its input twice, in ascending designated timestamp
+                    // order: the latest row of each key, then the rows at their positions, which the input must
+                    // deliver in the same order again
+                    require(PlanToFactoryRules.latestByBase(latest), requirements.next().inputOf(requirement).reread(true)
+                            .orderBy(latest.getTimestampColumnId(), SortDirection.ASCENDING));
                 }
             }
             case SampleByPlan sample -> requireNothing(PlanToFactoryRules.sampleByBase(sample), requirement);
-            case FillPlan fill -> requireNothing(fill.getChild(), requirement);
+            case FillPlan fill -> {
+                // a fill that reads PREV rows again by row id reads them from a stream GROUP BY's copy, not a sort
+                final OrderRequirement input = requirements.next().inputOf(requirement).orderBy(fill.getTimestampColumnId(), SortDirection.ASCENDING);
+                if (OperatorPlanning.isPrevRowRead(fill)) {
+                    input.randomAccessRequired(true, null);
+                }
+                require(fill.getChild(), input);
+            }
             case ScanPlan scan -> requireScan(scan, requirement.getOrderColumnId() >= 0
                     ? scanDirection(scan, requirement.getOrderColumnId(), requirement.getDirection()) : SortDirection.ASCENDING, requirements.next().inputOf(requirement));
             case FunctionSourcePlan _, DomainReadPlan _ -> {
@@ -514,7 +560,7 @@ final class OrderPlanning implements OptimiserPass {
             case DistinctPlan distinct -> requireNothing(distinct.getChild(), requirement);
             case LimitPlan sortedLimit when LogicalPlans.hasSortUnderStableProjects(sortedLimit.getChild()) ->
                     requireSortedLimit(sortedLimit.getChild(), sortedLimit, requirement);
-            case AggregatePlan aggregate -> requireAggregate(aggregate, requirement);
+            case AggregatePlan aggregate -> requireAggregate(aggregate, requirement, isRandomAccessRequired && !isRandomAccessSorted);
             case JoinPlan join -> requireJoin(join, requirement);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin, requirement);
             case HorizonJoinPlan horizon -> {
@@ -535,9 +581,18 @@ final class OrderPlanning implements OptimiserPass {
 
     /**
      * An aggregate never emits its groups in the order of its input, so it requests no order an access path may
-     * deliver.
+     * deliver. It records what its consumer requires, by which operator planning decides whether it streams, see
+     * {@link AggregatePlan#setConsumerRequirement}.
      */
-    private void requireAggregate(AggregatePlan aggregate, OrderRequirement requirement) {
+    private void requireAggregate(AggregatePlan aggregate, OrderRequirement requirement, boolean isRandomAccessRequired) {
+        aggregate.setConsumerRequirement(
+                requirement.getOrderColumnId(),
+                requirement.getDirection(),
+                isRandomAccessRequired,
+                requirement.isRewound() || requirement.isReread(),
+                requirement.getStreamCopy()
+        );
+        aggregate.setRequestedTopK(requirement.getTopKColumnId(), requirement.getTopK());
         if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
             require(horizon.getMaster(), requirements.next().inputOf(requirement).randomAccessRequired(true, aggregate));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
@@ -583,7 +638,8 @@ final class OrderPlanning implements OptimiserPass {
         final int orderColumnId = requirement.getOrderColumnId();
         final LimitPlan limit = requirement.getLimit();
         final boolean isOrdered = !requirement.getOrder().isEmpty();
-        final OrderRequirement masterRequirement = requirements.next().inputOf(requirement).rewound(rewoundMasterHi > 0);
+        final OrderRequirement masterRequirement = requirements.next().inputOf(requirement).rewound(rewoundMasterHi > 0)
+                .streamCopy(masterStreamCopy(join));
         if (ordered.size() > 1 && ordered.getQuick(1).getJoinType() == JoinKind.SPLICE) {
             masterRequirement.randomAccessRequired(true, null);
         }
@@ -606,10 +662,28 @@ final class OrderPlanning implements OptimiserPass {
                 final boolean isLimited = !isOrdered && limit != null && i == n - 1 && joinType == JoinKind.CROSS
                         && step.getPostJoinFilter() == null && limit.getLo() instanceof ConstantExpression;
                 require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(isSlaveRandomAccessRequired(step))
-                        .rewound(i < rewoundMasterHi || step.isSlaveRewound())
+                        .rewound(i < rewoundMasterHi || step.isSlaveRewound()).streamCopy(slaveStreamCopy(ordered.getQuick(i - 1).getOutput(), step))
                         .limit(isLimited ? limit : null).rowOrderRequired(joinType.isTemporal() || requirement.isRowOrderRequired()));
             }
         }
+    }
+
+    /**
+     * The copy a stream GROUP BY gives the slave of the join step, see {@link OrderRequirement#getStreamCopy()}: unless
+     * full-fat joins are asked for, a hash join reads the row ids of a copy instead of copying the rows into memory
+     * the join budget bounds, and an ASOF or LT join reads the row ids of a copy instead of exposing slave keys of
+     * another type than the master's in the master's type.
+     */
+    private AggregatePlan.OutputCopy slaveStreamCopy(OutputSchema master, JoinInput step) {
+        if (isFullFatJoins) {
+            return AggregatePlan.OutputCopy.NONE;
+        }
+        final JoinKind joinType = step.getJoinType();
+        if (joinType.isRelational()) {
+            return step.isKeyed() ? AggregatePlan.OutputCopy.RANDOM_ACCESS_IN_BATCHES : AggregatePlan.OutputCopy.NONE;
+        }
+        return (joinType == JoinKind.ASOF || joinType == JoinKind.LT) && hasMixedKeyTypes(master, step)
+                ? AggregatePlan.OutputCopy.RANDOM_ACCESS : AggregatePlan.OutputCopy.NONE;
     }
 
     private void requireNothing(LogicalPlan plan, OrderRequirement consumer) {
@@ -633,9 +707,11 @@ final class OrderPlanning implements OptimiserPass {
         operation.setRequestedOrder(orderColumnId, direction);
         final int orderIndex = operation.getOperation() == SetOperationKind.UNION_ALL ? operation.getOutput().getColumnIndexById(orderColumnId) : -1;
         require(operation.getLeft(), requirements.next().inputOf(requirement)
+                .streamCopy(operation.getOperation().isUnion() ? AggregatePlan.OutputCopy.NONE : requirement.getStreamCopy())
                 .orderBy(orderIndex < 0 ? -1 : operation.getLeft().getOutput().getColumnId(orderIndex), direction)
                 .rowOrderRequired(requirement.isRowOrderRequired()));
-        require(operation.getRight(), requirements.next().inputOf(requirement).randomAccessRequired(false, null)
+        final OrderRequirement right = requirements.next().inputOf(requirement).randomAccessRequired(false, null);
+        require(operation.getRight(), (operation.getOperation().isUnion() ? right : right.readOnce())
                 .orderBy(orderIndex < 0 ? -1 : operation.getRight().getOutput().getColumnId(orderIndex), direction)
                 .rowOrderRequired(requirement.isRowOrderRequired()));
     }
@@ -647,7 +723,14 @@ final class OrderPlanning implements OptimiserPass {
         if (requirement.isRandomAccessRequired()) {
             sort.markRowIdRead(requirement.getFrameReader());
         }
-        final OrderRequirement input = requirements.next().inputOf(requirement).rowOrderRequired(false);
+        // a sort that runs copies the rows of an input without random access itself, so a stream GROUP BY under it
+        // copies them only for a single-key sort whose order it delivers, see OperatorPlanning.streamOutputCopy
+        final boolean isSingleKey = sort.getColumnIds().size() == 1;
+        final AggregatePlan.OutputCopy copy = requirement.getStreamCopy() != AggregatePlan.OutputCopy.NONE || !requirement.isRandomAccessRequired()
+                ? requirement.getStreamCopy() : AggregatePlan.OutputCopy.RANDOM_ACCESS;
+        final OrderRequirement input = requirements.next().inputOf(requirement).rowOrderRequired(false).randomAccessSorted()
+                .topK(isSingleKey ? orderColumnId : -1, limit)
+                .streamCopy(isSingleKey ? copy : AggregatePlan.OutputCopy.NONE);
         if (!requirement.isJoinSlaveInput() || direction != SortDirection.DESCENDING || sort.isReversal()) {
             input.orderBy(orderColumnId, direction).order(sort).limit(limit);
         }
@@ -670,6 +753,9 @@ final class OrderPlanning implements OptimiserPass {
         final SortDirection direction = requirement.getDirection();
         final LimitPlan limit = requirement.getLimit();
         final OrderRequirement input = requirements.next().inputOf(requirement);
+        if (plan instanceof FilterPlan || plan instanceof ProjectPlan || plan instanceof LimitPlan) {
+            input.streamCopy(requirement.getStreamCopy());
+        }
         int inputOrderColumnId = -1;
         SortDirection inputDirection = null;
         LimitPlan inputLimit = null;
@@ -691,6 +777,7 @@ final class OrderPlanning implements OptimiserPass {
                 }
                 inputOrderColumnId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
                 inputDirection = inputOrderColumnId < 0 ? null : direction;
+                input.topK(LogicalPlans.projectedSourceColumnId(project, requirement.getTopKColumnId()), requirement.getTopK());
                 final boolean isOrdered = !requirement.getOrder().isEmpty();
                 if (PlanToFactoryRules.hasNativeFilterInput(project)) {
                     input.order(project, requirement);
@@ -820,5 +907,9 @@ final class OrderPlanning implements OptimiserPass {
             horizon.replaceInput(i, removeUnreadOrder(horizon.inputAt(i)));
         }
         horizon.getOutput().setTimestampIndex(horizon.getMaster().getOutput().getTimestampIndex());
+    }
+
+    void setFullFatJoins(boolean isFullFatJoins) {
+        this.isFullFatJoins = isFullFatJoins;
     }
 }

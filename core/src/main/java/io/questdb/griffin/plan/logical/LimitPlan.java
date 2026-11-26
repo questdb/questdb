@@ -88,6 +88,13 @@ public final class LimitPlan extends ForwardingPlan {
          */
         OPERATOR,
         /**
+         * A LIMIT operator over a copy of the input's rows: a LIMIT that may be negative counts the rows and then
+         * rewinds the input, which would run a stream GROUP BY under it again, see
+         * {@link PhysicalProperties#rewindRecomputes}. The copy replays the rows while they fit the query memory limit;
+         * past it, the input computes them again.
+         */
+        COPIED_INPUT,
+        /**
          * A LIMIT operator over a join whose master's parallel filter returns the master's last rows: when the join
          * emits fewer rows than a negative LIMIT selects, the operator rewinds the join over more master rows,
          * until it emits enough or reads them all, see {@link PlanToFactoryRules#masterSuffixJoin}.

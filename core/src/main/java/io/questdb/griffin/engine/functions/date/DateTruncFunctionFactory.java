@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -88,6 +89,16 @@ public class DateTruncFunctionFactory implements FunctionFactory, MonotonicTimes
             return innerFunction;
         }
         return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, unit, timestampType);
+    }
+
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        if (!(call.argumentAt(0) instanceof ConstantExpression)) {
+            return false;
+        }
+        final String unit = unit(arguments.constant(call.argumentAt(0)).getStrA(null), call.argumentAt(0).getPosition());
+        final int type = call.getDataType();
+        return isIdentity(unit, type) || TimestampFloorFunctions.preservesFloorOrder(call.argumentAt(1).getDataType(), type, unit);
     }
 
     private static boolean isIdentity(String unit, int timestampType) {

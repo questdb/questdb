@@ -110,6 +110,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
+    }
+
+    @Override
     public boolean isNonDeterministic() {
         return limit != null && limit.isNonDeterministic() || base.isNonDeterministic();
     }

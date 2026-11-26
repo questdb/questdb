@@ -437,6 +437,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
             constantFills.add(null);
             constantFills.add(null);
             final SampleByFillRecordCursorFactory factory = new SampleByFillRecordCursorFactory(
+                    new BytecodeAssembler(),
                     configuration,
                     metadata,
                     new CloseCountingBaseFactory(metadata),
@@ -480,6 +481,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
 
             final ThrowingCloseFunction aliased = new ThrowingCloseFunction("aliased temporal cleanup failure");
             final SampleByFillRecordCursorFactory aliasedFactory = new SampleByFillRecordCursorFactory(
+                    new BytecodeAssembler(),
                     configuration,
                     metadata,
                     new CloseCountingBaseFactory(metadata),
@@ -535,6 +537,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
             constantFills.add(null);
 
             final SampleByFillRecordCursorFactory factory = new SampleByFillRecordCursorFactory(
+                    new BytecodeAssembler(),
                     configuration,
                     metadata,
                     base,

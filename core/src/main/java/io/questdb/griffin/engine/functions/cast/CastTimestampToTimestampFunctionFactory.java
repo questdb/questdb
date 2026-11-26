@@ -92,6 +92,24 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory,
         return new CastLongToTimestampFunctionFactory.Func(arg, rightTimestampType);
     }
 
+    @Override
+    public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
+        if (getTimestampArgumentIndex(call, arguments) < 0) {
+            return false;
+        }
+        final int fromType = call.argumentAt(0).getDataType();
+        final int toType = call.argumentAt(1).getDataType();
+        return fromType == toType || preservesOrder(fromType, toType);
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of the cast between distinct timestamp types: a nanosecond to microsecond
+     * cast divides, which keeps the order, while the other way may overflow.
+     */
+    private static boolean preservesOrder(int fromType, int toType) {
+        return ColumnType.isTimestampNano(fromType) && ColumnType.isTimestampMicro(toType);
+    }
+
     public static class Func extends AbstractCastToTimestampFunction implements MonotonicTimestampFunction {
         private static final long NANOS_PER_MICRO = 1000;
         private final int leftTimestampType;
@@ -109,6 +127,11 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory,
         @Override
         public Function getTimestampArg() {
             return getArg();
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return preservesOrder(leftTimestampType, getType());
         }
 
         @Override

@@ -301,28 +301,27 @@ public class MultiJoinTest extends AbstractCairoTest {
                             1	11	21
                             """,
                     """
-                            Limit value: 2
-                                Encode sort
-                                  keys: [cid desc, aid, bid]
-                                    SelectedRecord
-                                        Filter filter: a.value<c.v
+                            Encode sort lo: 2
+                              keys: [cid desc, aid, bid]
+                                SelectedRecord
+                                    Filter filter: a.value<c.v
+                                        Hash Join Light
+                                          condition: c.k=b.k
                                             Hash Join Light
-                                              condition: c.k=b.k
-                                                Hash Join Light
-                                                  condition: b.k=a.k
-                                                    VirtualRecord
-                                                      functions: [id,k,v+1]
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: lp_multi_a
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: lp_multi_b
+                                              condition: b.k=a.k
+                                                VirtualRecord
+                                                  functions: [id,k,v+1]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_multi_a
                                                 Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: lp_multi_c
+                                                        Frame forward scan on: lp_multi_b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_multi_c
                             """);
             assertRows("SELECT b.k,count() n,sum(a.v) total FROM lp_multi_a a "
                             + "JOIN lp_multi_b b ON a.k=b.k JOIN lp_multi_c c ON b.k=c.k GROUP BY b.k ORDER BY b.k", false,
