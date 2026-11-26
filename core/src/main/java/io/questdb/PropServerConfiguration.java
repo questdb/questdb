@@ -39,6 +39,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.http.BrowserAllowedOrigins;
+import io.questdb.cutlass.http.HttpAllowedHosts;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -54,7 +56,6 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -279,6 +280,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
+    private final HttpAllowedHosts httpAllowedHosts;
+    private final BrowserAllowedOrigins httpBrowserAllowedOrigins;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
@@ -333,6 +336,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isBrowserTlsTerminationEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -532,8 +536,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
-    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
-    private final boolean qwpBrowserTlsTerminationEnabled;
+    private final BrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
@@ -1612,6 +1615,26 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("HTTP password is set but username is missing. " +
                         "Use the '" + PropertyKey.HTTP_USER.getPropertyPath() + "' configuration property to set a username.");
             }
+            try {
+                this.httpAllowedHosts = HttpAllowedHosts.parse(getString(properties, env, PropertyKey.HTTP_ALLOWED_HOSTS, ""));
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath() + ": " + e.getMessage());
+            }
+            try {
+                this.httpBrowserAllowedOrigins = BrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
+            }
+            // qwp.browser.tls.termination.enabled is the deprecated name of the setting, which only
+            // the QWP WebSocket upgrades read before every HTTP endpoint compared Origin with Host
+            this.isBrowserTlsTerminationEnabled = getBoolean(
+                    properties,
+                    env,
+                    PropertyKey.BROWSER_TLS_TERMINATION_ENABLED,
+                    getBoolean(properties, env, PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED, false)
+            );
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
@@ -2288,18 +2311,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
             try {
-                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                this.qwpBrowserAllowedOrigins = BrowserAllowedOrigins.parse(
                         getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
                 );
             } catch (IllegalArgumentException e) {
                 throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
             }
-            this.qwpBrowserTlsTerminationEnabled = getBoolean(
-                    properties,
-                    env,
-                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
-                    false
-            );
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -4220,6 +4237,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ENABLED);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ROW_COUNT);
+            registerDeprecated(
+                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
+                    PropertyKey.BROWSER_TLS_TERMINATION_ENABLED
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -6637,6 +6658,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public HttpAllowedHosts getAllowedHosts() {
+            return httpAllowedHosts;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
         }
@@ -6644,6 +6670,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindPort() {
             return httpMinBindPort;
+        }
+
+        @Override
+        public BrowserAllowedOrigins getBrowserAllowedOrigins() {
+            return httpBrowserAllowedOrigins;
         }
 
         @Override
@@ -6792,6 +6823,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isBrowserTlsTerminationEnabled() {
+            return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
         public boolean isEnabled() {
             return httpMinServerEnabled;
         }
@@ -6832,6 +6868,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public HttpAllowedHosts getAllowedHosts() {
+            return httpAllowedHosts;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
         }
@@ -6839,6 +6880,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindPort() {
             return httpNetBindPort;
+        }
+
+        @Override
+        public BrowserAllowedOrigins getBrowserAllowedOrigins() {
+            return httpBrowserAllowedOrigins;
         }
 
         @Override
@@ -6997,7 +7043,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        public BrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
             return qwpBrowserAllowedOrigins;
         }
 
@@ -7080,6 +7126,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isBrowserTlsTerminationEnabled() {
+            return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
         public boolean isEnabled() {
             return httpServerEnabled;
         }
@@ -7097,11 +7148,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
-        }
-
-        @Override
-        public boolean isQwpBrowserTlsTerminationEnabled() {
-            return qwpBrowserTlsTerminationEnabled;
         }
 
         @Override

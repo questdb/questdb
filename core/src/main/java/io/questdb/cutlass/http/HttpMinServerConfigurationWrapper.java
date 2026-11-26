@@ -51,6 +51,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public HttpAllowedHosts getAllowedHosts() {
+        return getDelegate().getAllowedHosts();
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -58,6 +63,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     @Override
     public int getBindPort() {
         return getDelegate().getBindPort();
+    }
+
+    @Override
+    public BrowserAllowedOrigins getBrowserAllowedOrigins() {
+        return getDelegate().getBrowserAllowedOrigins();
     }
 
     @Override
@@ -233,6 +243,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     @Override
     public boolean haltOnError() {
         return getDelegate().haltOnError();
+    }
+
+    @Override
+    public boolean isBrowserTlsTerminationEnabled() {
+        return getDelegate().isBrowserTlsTerminationEnabled();
     }
 
     @Override
