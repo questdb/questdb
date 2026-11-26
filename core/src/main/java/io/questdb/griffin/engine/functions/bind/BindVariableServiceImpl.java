@@ -116,9 +116,8 @@ public class BindVariableServiceImpl implements BindVariableService {
      * snapshot() creates an independent deep copy of the given
      * BindVariableService's indexed and named variable values. The returned
      * instance owns its own Function objects, so it is safe to use on a
-     * different thread after the source is cleared. snapshot() does not
-     * deep-copy ARRAY values; these types are not expected in COPY subquery
-     * bind variables.
+     * different thread after the source is cleared. Array snapshots own heap
+     * copies of the shape and values, including sliced and transposed views.
      */
     public static BindVariableServiceImpl snapshot(
             BindVariableService source,
@@ -295,9 +294,16 @@ public class BindVariableServiceImpl implements BindVariableService {
                 copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
                 yield dec;
             }
-            // ARRAY is defined with the type only, no value; LONG128 and INTERVAL are never bind variable
-            // types, and define() rejects them
-            case ARRAY, LONG128, INTERVAL -> {
+            case ARRAY -> {
+                copy.define(index, type, 0);
+                ArrayView array = f.getArray(null);
+                if (!array.isNull()) {
+                    copy.setArray(index, new ArraySnapshot(array));
+                }
+                yield dec;
+            }
+            // LONG128 and INTERVAL are never bind variable types, and define() rejects them
+            case LONG128, INTERVAL -> {
                 copy.define(index, type, 0);
                 yield dec;
             }

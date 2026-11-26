@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -180,9 +181,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public int collectDistinctKeys(DirectBitSet foundKeys) {
-        if (genCount == 0 || keyCount == 0) {
-            return 0;
-        }
         if (entryMaxValue >= 0) {
             // The key-directory fast path can only tell that a key has encoded
             // row ids somewhere in .pv; it cannot tell whether all of them sit
@@ -190,7 +188,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // so full-partition DISTINCT observes the same clamp as cursors.
             return collectDistinctKeysInRange(foundKeys, 0, Long.MAX_VALUE);
         }
-        int newlyFound = 0;
+        int newlyFound = collectColumnTopNullKey(foundKeys, 0, Long.MAX_VALUE);
+        if (genCount == 0 || keyCount == 0) {
+            return newlyFound;
+        }
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
@@ -205,8 +206,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        // The rows below the column top read as NULL whatever the chain entry covers, as in getCursor
+        int newlyFound = collectColumnTopNullKey(foundKeys, rowLo, rowHi);
         if (genCount == 0 || keyCount == 0) {
-            return 0;
+            return newlyFound;
         }
         // Clamp rowHi to the picked chain entry's MAX_VALUE for the same
         // reason PostingIndexFwdReader#getCursor does: dirty (key, rowId)
@@ -216,9 +219,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             rowHi = entryMaxValue;
         }
         if (rowHi < rowLo) {
-            return 0;
+            return newlyFound;
         }
-        int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
@@ -566,10 +568,19 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @Override
+    public boolean isCoveringFrameMaterializationRequired() {
+        return false;
+    }
+
+    @Override
     public boolean isOpen() {
         return keyMem.getFd() != -1;
     }
 
+    /**
+     * A {@code null} columnVersionReader names covering sidecars with {@link TableUtils#COLUMN_NAME_TXN_NONE}, as a
+     * self-contained index bundle does.
+     */
     @Override
     public void of(
             CairoConfiguration configuration,
@@ -1104,6 +1115,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         sidecarFileEndOffsets.clear();
     }
 
+    // The rows below the column top predate the column: they read as NULL, key 0, and hold no posting, see getCursor.
+    // Marks key 0 when [rowLo, rowHi] reaches below the top, and returns 1 when that marks it for the first time.
+    private int collectColumnTopNullKey(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        return rowLo < columnTop && rowLo <= rowHi && !foundKeys.getAndSet(0) ? 1 : 0;
+    }
+
     private int collectDenseGenKeys(long genFileOffset, int genKeyCount, DirectBitSet foundKeys) {
         long genAddr = valueMem.addressOf(genFileOffset);
         int sc = PostingIndexUtils.strideCount(genKeyCount);
@@ -1258,7 +1275,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     continue;
                 }
                 sidecarColumnTypes.add(metadata.getColumnType(denseIdx));
-                sidecarCovTs.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx));
+                sidecarCovTs.add(columnVersionReader != null
+                        ? columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx)
+                        : TableUtils.COLUMN_NAME_TXN_NONE);
             }
             coverCount = count;
         } catch (Throwable e) {
@@ -2291,6 +2310,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         private long[] colCacheBlockAddrs;
         private int[] colCacheCapacities;
         private long[] colPointBlockAddrs;
+        private long varValueAddr;
+        private long varValueSize;
 
         @Override
         public ArrayView getCoveredArray(int includeIdx, int columnType) {
@@ -2550,6 +2571,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 }
             }
             return total;
+        }
+
+        // Preserve the native variable payload, including null/empty markers, during a cover merge.
+        void appendCoveredVar(int includeIdx, MemoryMARW destination) {
+            if (resolveVarSidecar(includeIdx)) {
+                destination.putBlockOfBytes(varValueAddr, varValueSize);
+            }
         }
 
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
@@ -2835,59 +2863,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private BinarySequence getVarSidecarBin(int includeIdx) {
-            MemoryMR mem = sidecarMems.getQuick(includeIdx);
-            if (mem.size() == 0) {
+            if (!resolveVarSidecar(includeIdx)) {
                 return null;
             }
-            int ordinal = isCurrentGenDense
-                    ? denseVarKeyStartCount + cachedSidecarIdx
-                    : cachedSidecarIdx;
-            long blockBase = isCurrentGenDense
-                    ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffsets.getQuick(includeIdx);
-            if (blockBase < 0) {
-                return null;
-            }
-            int rawCount = Unsafe.getInt(mem.addressOf(blockBase));
-            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
-            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
-            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
-            if (ordinal >= count) {
-                return null;
-            }
-
-            if (fsst) {
-                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
-                    return null;
-                }
-                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
-                long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
-                if (lo == hi) {
-                    return null;
-                }
-                long valAddr = fsstDstAddrs[includeIdx] + lo;
-                long len = Unsafe.getLong(valAddr);
-                if (len < 0) {
-                    return null;
-                }
-                return binView.of(valAddr + Long.BYTES, len);
-            }
-
-            long offsetsAddr = mem.addressOf(blockBase + 4);
-            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
-            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
-            if (lo == hi) {
-                return null;
-            }
-            long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
-            long dataAddr = mem.addressOf(dataBase + lo);
-            long len = Unsafe.getLong(dataAddr);
-            if (len < 0) {
-                return null;
-            }
-            return binView.of(dataAddr + Long.BYTES, len);
+            long len = Unsafe.getLong(varValueAddr);
+            return len < 0 ? null : binView.of(varValueAddr + Long.BYTES, len);
         }
 
         private long getVarSidecarBinLen(int includeIdx) {
@@ -3278,6 +3258,56 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long encodedOffset = genFileOffset + PostingIndexUtils.genHeaderSizeSparse(activeKeyCount) + dataOffset;
             long baseAddr = valueMem.addressOf(0);
             return peekDeltaKeyMinValue(baseAddr, encodedOffset);
+        }
+
+        private boolean resolveVarSidecar(int includeIdx) {
+            MemoryMR mem = sidecarMems.getQuick(includeIdx);
+            if (mem.size() == 0) {
+                return false;
+            }
+            int ordinal = isCurrentGenDense
+                    ? denseVarKeyStartCount + cachedSidecarIdx
+                    : cachedSidecarIdx;
+            long blockBase = isCurrentGenDense
+                    ? findDenseVarBlockBase(includeIdx)
+                    : currentGenSidecarOffsets.getQuick(includeIdx);
+            if (blockBase < 0) {
+                return false;
+            }
+            int rawCount = Unsafe.getInt(mem.addressOf(blockBase));
+            boolean fsst = (rawCount & FSSTNative.FSST_BLOCK_FLAG) != 0;
+            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
+            int count = rawCount & ~(FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
+            if (ordinal >= count) {
+                return false;
+            }
+
+            if (fsst) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
+                    return false;
+                }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
+                long offsBase = fsstOffsetsAddrs[includeIdx];
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
+                if (lo == hi) {
+                    return false;
+                }
+                varValueAddr = fsstDstAddrs[includeIdx] + lo;
+                varValueSize = hi - lo;
+                return true;
+            }
+
+            long offsetsAddr = mem.addressOf(blockBase + 4);
+            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
+            if (lo == hi) {
+                return false;
+            }
+            long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
+            varValueAddr = mem.addressOf(dataBase + lo);
+            varValueSize = hi - lo;
+            return true;
         }
 
         protected void cacheSidecarKeyAddrs(int stride, int localKey) {

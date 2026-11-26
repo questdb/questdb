@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import org.jetbrains.annotations.Nullable;
@@ -137,6 +138,13 @@ public interface PageFrameMemory {
      */
     @Nullable
     NullPolicy getSourceColumnNullPolicy(int columnIndex);
+
+    /**
+     * Returns the source-row resolver for the current decoded frame.
+     */
+    default IndexReader.SourceRowResolver getSourceRowResolver() {
+        return IndexReader.SourceRowResolver.NONE;
+    }
 
     /**
      * Returns the source column type tag for a type-cast column, or -1 if

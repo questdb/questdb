@@ -1093,7 +1093,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     PageFrameAddressCache addressCache = new PageFrameAddressCache();
                     PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(configuration)
             ) {
-                addressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+                addressCache.of(metadata, frameCursor);
                 memoryPool.of(addressCache);
                 final PageFrameMemoryRecord record = new PageFrameMemoryRecord();
                 record.of(frameCursor);

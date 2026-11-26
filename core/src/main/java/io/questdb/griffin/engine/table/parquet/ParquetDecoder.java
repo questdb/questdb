@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.sql.DecodeResourceReleaser;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -63,7 +64,7 @@ import io.questdb.std.DirectLongList;
  * @see PageFrameMemoryPool
  * @see ParquetRowGroupSkipper
  */
-public interface ParquetDecoder {
+public interface ParquetDecoder extends DecodeResourceReleaser {
 
     /**
      * Decodes the specified row range from a row group into native buffers.
@@ -155,7 +156,8 @@ public interface ParquetDecoder {
 
     /**
      * Returns the number of columns described in the parquet metadata.
-     * Used to build the column-ID-to-index map during {@code openParquet()}.
+     * Used by {@link io.questdb.cairo.sql.PageFrameMemoryPool} to build the
+     * column-ID-to-index map for a decode projection.
      */
     int getColumnCount();
 
@@ -207,6 +209,7 @@ public interface ParquetDecoder {
      *
      * @param resource an opaque handle from {@link #takeDecodeResource()}
      */
+    @Override
     default void releaseDecodeResource(long resource) {
     }
 

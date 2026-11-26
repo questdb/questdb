@@ -911,6 +911,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     // interpolated rather than spelled "adaptive", so a -Dquestdb.test.commit.mode sweep does not
                                     // fail here on a value this test is not about.
                                     "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\t" + Overrides.TEST_COMMIT_MODE + "\tconf\tfalse\tfalse\n" +
+                                    "cairo.commit.mode.adaptive.downgrade\tQDB_CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
@@ -1187,6 +1188,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.apply.memory.limit.bytes\tQDB_CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "cairo.wal.enabled.default\tQDB_CAIRO_WAL_ENABLED_DEFAULT\tfalse\tconf\tfalse\tfalse\n" +
                                     "cairo.wal.inactive.writer.ttl\tQDB_CAIRO_WAL_INACTIVE_WRITER_TTL\t120000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.view.compile.busy.retry.timeout\tQDB_CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.view.wal.inactive.writer.ttl\tQDB_CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL\t60000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.lag.txn.count\tQDB_CAIRO_WAL_MAX_LAG_TXN_COUNT\t-1\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.segment.file.descriptors.cache\tQDB_CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE\t30\tdefault\tfalse\tfalse\n" +

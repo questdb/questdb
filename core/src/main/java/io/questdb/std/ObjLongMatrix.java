@@ -27,6 +27,10 @@ package io.questdb.std;
 public class ObjLongMatrix<T> {
     private final int bits;
     private long[] data;
+    private int firstMarkedRow;
+    private int markedCount;
+    // one bit per row, set by markDeleted()
+    private long[] markedRows;
     private T[] payload;
     private int pos;
     private int rows;
@@ -37,6 +41,7 @@ public class ObjLongMatrix<T> {
         this.pos = 0;
         this.rows = 512;
         this.data = new long[rows * cc];
+        this.markedRows = new long[rows >>> 6];
         this.payload = (T[]) new Object[rows];
         this.bits = Numbers.msb(cc);
     }
@@ -69,7 +74,43 @@ public class ObjLongMatrix<T> {
         return scanSearch(v, index, low);
     }
 
+    /**
+     * Removes the rows marked by {@link #markDeleted(int)}, keeping the order of the remaining
+     * rows. It visits the marked rows in index order and moves each remaining row at most once,
+     * so removing many rows costs about as much as removing the first of them with
+     * {@link #deleteRow(int)}.
+     *
+     * @return the number of rows removed
+     */
+    public int deleteMarked() {
+        final int count = markedCount;
+        if (count == 0) {
+            return 0;
+        }
+        // rows before the first marked row stay where they are
+        int dst = firstMarkedRow;
+        int src = firstMarkedRow;
+        for (int w = firstMarkedRow >>> 6, remaining = count; remaining > 0; w++) {
+            long word = markedRows[w];
+            if (word != 0) {
+                markedRows[w] = 0;
+                do {
+                    final int r = (w << 6) + Long.numberOfTrailingZeros(word);
+                    dst = moveRows(src, r, dst);
+                    src = r + 1;
+                    word &= word - 1;
+                    remaining--;
+                } while (word != 0);
+            }
+        }
+        moveRows(src, pos, dst);
+        pos -= count;
+        markedCount = 0;
+        return count;
+    }
+
     public void deleteRow(int r) {
+        assert markedCount == 0 : "rows are marked for deleteMarked()";
         if (r < pos - 1) {
             int l = pos - r - 1;
             int next = r + 1;
@@ -90,6 +131,32 @@ public class ObjLongMatrix<T> {
         return payload[r];
     }
 
+    /**
+     * Tells whether row {@code r} is marked for removal by {@link #deleteMarked()}.
+     */
+    public boolean isMarked(int r) {
+        return (markedRows[r >>> 6] & 1L << r) != 0;
+    }
+
+    /**
+     * Marks row {@code r} for removal by {@link #deleteMarked()}. The row keeps its position and
+     * values until then, so lookups and reads still see it, and marking a row again has no
+     * further effect. Rows must not move between the first mark and {@link #deleteMarked()}:
+     * {@link #addRow()} is safe, while {@link #deleteRow(int)} and {@link #zapTop(int)} assert
+     * that no row is marked.
+     */
+    public void markDeleted(int r) {
+        assert r >= 0 && r < pos : "row out of range [r=" + r + ", size=" + pos + ']';
+        final int w = r >>> 6;
+        final long bit = 1L << r;
+        if ((markedRows[w] & bit) == 0) {
+            markedRows[w] |= bit;
+            if (markedCount++ == 0 || r < firstMarkedRow) {
+                firstMarkedRow = r;
+            }
+        }
+    }
+
     public void set(int r, T obj) {
         payload[r] = obj;
     }
@@ -103,6 +170,7 @@ public class ObjLongMatrix<T> {
     }
 
     public void zapTop(int count) {
+        assert markedCount == 0 : "rows are marked for deleteMarked()";
         if (count < pos) {
             System.arraycopy(data, count << bits, data, 0, (pos - count) << bits);
             System.arraycopy(payload, count, payload, 0, pos - count);
@@ -112,6 +180,16 @@ public class ObjLongMatrix<T> {
         }
     }
 
+    // moves rows [lo, hi) to start at row dst, and returns the row after the last one moved
+    private int moveRows(int lo, int hi, int dst) {
+        final int count = hi - lo;
+        if (count > 0) {
+            System.arraycopy(data, lo << bits, data, dst << bits, count << bits);
+            System.arraycopy(payload, lo, payload, dst, count);
+        }
+        return dst + count;
+    }
+
     private int offset(int r, int c) {
         return (r << bits) + c;
     }
@@ -119,10 +197,13 @@ public class ObjLongMatrix<T> {
     @SuppressWarnings("unchecked")
     private int resize() {
         long[] _data = new long[rows << (bits + 1)];
+        long[] _markedRows = new long[rows >>> 5];
         T[] _payload = (T[]) new Object[rows << 1];
         System.arraycopy(data, 0, _data, 0, rows << bits);
+        System.arraycopy(markedRows, 0, _markedRows, 0, rows >>> 6);
         System.arraycopy(payload, 0, _payload, 0, rows);
         this.data = _data;
+        this.markedRows = _markedRows;
         this.payload = _payload;
         this.rows <<= 1;
         return pos++;

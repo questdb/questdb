@@ -240,13 +240,14 @@ Without the `INDEX_ROW_MAP` section, the footer uses the identity map: row group
 preceding row groups' `NUM_ROWS`, and `index_row_count` is the partition row count. Writers that build a new
 `data.parquet` (conversion, rewrite, compaction) always produce the identity map and index the file afresh.
 
-An in-place O3 update changes the row layout of the live file, while readers of the committed snapshot keep
-using the same index files. It therefore keeps the index rows of the row groups it kept (wherever they sit in
-the new footer, matched by the byte offset of their first column chunk) and gives the row groups it wrote fresh
-index rows from `index_row_count` upwards, in row group order. The indexes only ever grow: the update appends
-the rows of the new row groups, and the entries a pinned reader's footer refers to stay as they are. A reader
-asks the index for the index rows of each row group it reads, in footer order, and maps a result back to its
-row group position by subtracting `index_row_lo`.
+An in-place O3 update changes the row layout of the live file. It keeps the index rows of the row groups it
+kept (wherever they sit in the new footer: the parquet writer reports each row group's origin, and the update
+checks it against the byte offset of the first column chunk) and gives the row groups it wrote fresh index rows
+from `index_row_count` upwards, in row group order. A dropped or replaced row group's index rows stay
+unreferenced. The update rebuilds the symbol indexes at these index rows under a new column name txn, next to
+the committed index files that readers of the committed snapshot keep using, and `_cv` moves to the new name in
+the same `_txn`. A reader asks the index for the index rows of each row group it reads, in footer order, and
+maps a result back to its row group position by subtracting `index_row_lo`.
 
 The writer omits the section when the resolved map is the identity map, for example after an update that only
 appended row groups after the last one. The bit is in the required range: a reader that ignored the map would

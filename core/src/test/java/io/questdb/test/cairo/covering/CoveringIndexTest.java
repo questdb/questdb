@@ -87,6 +87,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -116,6 +117,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             k1\tS5\t2022-02-26T01:52:00.000000Z
             k1\tS4\t2022-02-26T03:02:00.000000Z
             """;
+    // The posting indexes the split-removal repair tests build: one without covered columns, and one that covers
+    // a fixed-size and a var-size column.
+    private static final String[] SPLIT_REMOVAL_INDEX_CLAUSES = {"POSTING", "POSTING INCLUDE (v, vc)"};
 
     @Test
     public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsAllVarSizeWal() throws Exception {
@@ -3739,6 +3743,66 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     found.clear();
                     int gen1Only = reader.collectDistinctKeysInRange(found, 500, 599);
                     assertEquals(3, gen1Only);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDistinctKeysReportsColumnTopNulls() throws Exception {
+        // The rows below the column top predate the column: they read as NULL, key 0, and hold no posting
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "dist_top", COLUMN_NAME_TXN_NONE)) {
+                    writer.add(1, 3);
+                    writer.add(2, 4);
+                    writer.add(1, 5);
+                    writer.setMaxValue(5);
+                    writer.commit();
+                    writer.seal();
+                }
+                // An index with no chain entry yet, over a partition whose first 4 rows predate the column
+                new PostingIndexWriter(configuration, path.trimTo(plen), "dist_top_empty", COLUMN_NAME_TXN_NONE).close();
+
+                try (DirectBitSet found = new DirectBitSet(8);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), "dist_top", COLUMN_NAME_TXN_NONE, -1, 3)) {
+                    assertEquals(3, reader.collectDistinctKeys(found));
+                    assertTrue(found.get(0));
+                    assertEquals(0, reader.collectDistinctKeys(found));
+
+                    found.clear();
+                    assertEquals(1, reader.collectDistinctKeysInRange(found, 0, 2));
+                    assertTrue(found.get(0));
+
+                    found.clear();
+                    assertEquals(2, reader.collectDistinctKeysInRange(found, 2, 3));
+                    assertTrue(found.get(0));
+                    assertTrue(found.get(1));
+
+                    found.clear();
+                    assertEquals(2, reader.collectDistinctKeysInRange(found, 3, 5));
+                    assertFalse(found.get(0));
+
+                    found.clear();
+                    assertEquals(0, reader.collectDistinctKeysInRange(found, 2, 1));
+                    assertFalse(found.get(0));
+                }
+
+                try (DirectBitSet found = new DirectBitSet(8);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), "dist_top_empty", COLUMN_NAME_TXN_NONE, -1, 4)) {
+                    assertEquals(1, reader.collectDistinctKeys(found));
+                    assertTrue(found.get(0));
+
+                    found.clear();
+                    assertEquals(1, reader.collectDistinctKeysInRange(found, 3, 9));
+                    assertTrue(found.get(0));
+
+                    found.clear();
+                    assertEquals(0, reader.collectDistinctKeysInRange(found, 4, 9));
+                    assertFalse(found.get(0));
                 }
             }
         });
@@ -9643,6 +9707,79 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringReaderWithoutColumnVersionReader() throws Exception {
+        // A self-contained bundle names its sidecars without covered column txns, such as index.pc0.0.<seal>.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "index";
+                final int plen = path.size();
+                final int rowCount = 4;
+                final long colAddr = Unsafe.malloc((long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 100L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+                        for (int row = 0; row < rowCount; row++) {
+                            writer.add(row % 2, row);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+
+                    final RecordMetadata metadata = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, metadata, null, 0)) {
+                        try (RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
+                            assertTrue(cc.hasNext());
+                            assertEquals(1, cc.next());
+                            assertEquals(101L, cc.getCoveredLong(0));
+                            assertTrue(cc.hasNext());
+                            assertEquals(3, cc.next());
+                            assertEquals(103L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
+                    }
+
+                    // The table's covered column moved to name txn 5, which the sidecars were never written under.
+                    try (
+                            ColumnVersionReader movedCvr = new ColumnVersionReader() {
+                                @Override
+                                public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
+                                    return columnIndex == 1 ? 5 : COLUMN_NAME_TXN_NONE;
+                                }
+                            };
+                            PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                    configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, metadata, movedCvr, 0);
+                            RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})
+                    ) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasNext());
+                        assertEquals(1, cc.next());
+                        cc.getCoveredLong(0);
+                        Assert.fail("expected the sidecar under the moved txn to be missing");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "covering index data is missing");
+                        TestUtils.assertContains(e.getFlyweightMessage(), name + ".pc0.0.5.");
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCoveringRecord_AllColumnTypes() throws Exception {
         // Exercise every column type the covering writer supports
         // (writeCoveredRow's switch enumerates them). assertQueryNoLeakCheck
@@ -11013,6 +11150,52 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                     Frame forward scan on: t_distinct_bmp
                             """);
         });
+    }
+
+    @Test
+    public void testDistinctSymColumnTopNulls() throws Exception {
+        assertDistinctSymColumnTopNulls("BYPASS WAL");
+    }
+
+    @Test
+    public void testDistinctSymColumnTopNullsNonPartitioned() throws Exception {
+        // The only partition gained the column after its first two rows
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_dist_top_np (v LONG)");
+            execute("INSERT INTO t_dist_top_np VALUES (1), (2)");
+            execute("ALTER TABLE t_dist_top_np ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO t_dist_top_np (v, s) VALUES (3, 'a')");
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT DISTINCT s FROM t_dist_top_np")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            a
+                            
+                            """);
+
+            // A column that never took a value: its symbol table is empty, and every row reads as NULL
+            execute("CREATE TABLE t_dist_top_np_null (v LONG)");
+            execute("INSERT INTO t_dist_top_np_null VALUES (1), (2)");
+            execute("ALTER TABLE t_dist_top_np_null ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            engine.releaseAllWriters();
+            assertQuery("SELECT DISTINCT s FROM t_dist_top_np_null")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctSymColumnTopNullsWal() throws Exception {
+        assertDistinctSymColumnTopNulls("WAL");
     }
 
     @Test
@@ -19776,6 +19959,109 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitRemovalRepairMovesWholeParentIntoLastPartitionWal() throws Exception {
+        // Every row of the parent shares one timestamp, so the repair cannot carve a single line off it: it
+        // moves the whole parent into a fresh partition. The emptied split is the last partition and holds more
+        // rows than the parent, so the fresh partition takes its place as the last one with fewer rows than the
+        // writer's transient row count still names.
+        setSplitRemovalRepairProperties();
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < SPLIT_REMOVAL_INDEX_CLAUSES.length; i++) {
+                final String table = "t_split_whole_parent_" + i;
+                execute("""
+                        CREATE TABLE %s AS (
+                            SELECT CASE WHEN x = 18_000 THEN 'last' ELSE 'k' || (x %% 4) END::SYMBOL sym,
+                                x v,
+                                ('vc' || x)::VARCHAR vc,
+                                CASE WHEN x <= 18_000 THEN '2024-01-01'::TIMESTAMP
+                                    ELSE dateadd('s', (x - 18_001)::INT, '2024-01-01T05:00:00'::TIMESTAMP) END ts
+                            FROM long_sequence(20_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """.formatted(table));
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE " + SPLIT_REMOVAL_INDEX_CLAUSES[i]);
+                drainWalQueue();
+                // An O3 write at 04:00 cuts the rows from 05:00 off into a split.
+                execute("""
+                        INSERT INTO %s
+                        SELECT 'k0', x + 100_000, ('o3_' || x)::VARCHAR, timestamp_sequence('2024-01-01T04:00:00', 1_000L)
+                        FROM long_sequence(200)
+                        """.formatted(table));
+                drainWalQueue();
+                // In-order rows grow the split, the last partition, past the parent.
+                execute("""
+                        INSERT INTO %s
+                        SELECT 'k2', x + 200_000, ('grow_' || x)::VARCHAR, timestamp_sequence('2024-01-01T06:00:00', 100_000L)
+                        FROM long_sequence(30_000)
+                        """.formatted(table));
+                drainWalQueue();
+                assertQuery("SELECT name, numRows FROM table_partitions('" + table + "')")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01\t18000
+                                2024-01-01T000000-000001\t32200
+                                """);
+
+                replaceFromOnlySplitWithNoRows(table);
+
+                assertQuery("SELECT name, numRows FROM table_partitions('" + table + "')")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01\t18000
+                                """);
+                assertSplitRemovalRepairIndex(table, i, "2024-01-01T00:00:00.000000Z");
+            }
+        });
+    }
+
+    @Test
+    public void testSplitRemovalRepairOfLastPartitionWal() throws Exception {
+        // testSplitRemovalRepairBuildsCoveredSidecarWal without the row in a later day: the emptied split is the
+        // last partition, so the fresh split that takes the parent's last row becomes the last partition. Its
+        // index reseal runs before the writer's transient row count, which still names the emptied split's rows,
+        // catches up with the fresh split's single row.
+        setSplitRemovalRepairProperties();
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < SPLIT_REMOVAL_INDEX_CLAUSES.length; i++) {
+                final String table = "t_split_last_" + i;
+                execute("""
+                        CREATE TABLE %s AS (
+                            SELECT CASE WHEN x = 18_000 THEN 'last' ELSE 'k' || (x %% 4) END::SYMBOL sym,
+                                x v,
+                                ('vc' || x)::VARCHAR vc,
+                                timestamp_sequence('2024-01-01', 1_000_000L) ts
+                            FROM long_sequence(20_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """.formatted(table));
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE " + SPLIT_REMOVAL_INDEX_CLAUSES[i]);
+                drainWalQueue();
+                // An O3 write well inside the day cuts the rows from 05:00 off into a split.
+                execute("""
+                        INSERT INTO %s
+                        SELECT 'k0', x + 100_000, ('o3_' || x)::VARCHAR, timestamp_sequence('2024-01-01T05:00:00', 1_000L)
+                        FROM long_sequence(200)
+                        """.formatted(table));
+                drainWalQueue();
+
+                replaceFromOnlySplitWithNoRows(table);
+
+                assertQuery("SELECT name, numRows FROM table_partitions('" + table + "')")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01\t17999
+                                2024-01-01T045958-000001\t1
+                                """);
+                assertSplitRemovalRepairIndex(table, i, "2024-01-01T04:59:59.000000Z");
+            }
+        });
+    }
+
+    @Test
     public void testStringPageFrameDataCorrectness() throws Exception {
         // STRING columns also go through the page frame path now
         assertMemoryLeak(() -> {
@@ -21583,6 +21869,32 @@ public class CoveringIndexTest extends AbstractCairoTest {
         return mem == null ? -1 : mem.size();
     }
 
+    /**
+     * Commits a replace of everything from the table's only split up, with no rows: the split, the last
+     * partition, loses every row, and the writer repairs the removal from the split's parent.
+     */
+    private static void replaceFromOnlySplitWithNoRows(String table) throws Exception {
+        final TableToken tableToken = engine.verifyTableName(table);
+        final long splitTs;
+        try (TableReader reader = engine.getReader(tableToken)) {
+            Assert.assertEquals("the O3 write did not split the day", 2, reader.getTxFile().getPartitionCount());
+            splitTs = reader.getTxFile().getPartitionTimestampByIndex(1);
+        }
+        try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+            walWriter.commitWithParams(splitTs, Long.MAX_VALUE, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+        drainWalQueue();
+        Assert.assertFalse("the replace commit suspended " + table, engine.getTableSequencerAPI().isSuspended(tableToken));
+    }
+
+    private static void setSplitRemovalRepairProperties() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1_000);
+        // Merge-append would rewrite the day in place instead of splitting it.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    }
+
     private static long sidecarFileLengthOnDisk(Path basePath, CharSequence name, int includeIdx) {
         int len = basePath.size();
         try {
@@ -21617,6 +21929,78 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .assertsPlanContaining("CoveringIndex", "on: sym with:");
         assertSqlCursors("SELECT /*+ no_covering */" + tail, "SELECT" + tail);
+    }
+
+    // 2024-01-01 predates the column, and 2024-01-02 gained it after its first row: those rows read as NULL, though
+    // the index holds no posting for them.
+    private void assertDistinctSymColumnTopNulls(String walClause) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_dist_top (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO t_dist_top VALUES (1, '2024-01-01T00:00'), (2, '2024-01-01T12:00'), (3, '2024-01-02T00:00')");
+            drainWalQueue();
+            execute("ALTER TABLE t_dist_top ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("""
+                    INSERT INTO t_dist_top (v, ts, s) VALUES
+                    (4, '2024-01-02T12:00', 'a'), (5, '2024-01-03T00:00', 'b'), (6, '2024-01-03T12:00', 'a')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT DISTINCT s FROM t_dist_top")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            a
+                            b
+                            
+                            """);
+            assertQuery("SELECT count() FROM (SELECT DISTINCT s FROM t_dist_top)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            count
+                            3
+                            """);
+            // An interval reads part of a partition: below the column top of 2024-01-02, above it, and part of the
+            // partition that predates the column.
+            assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-02T00'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-02T12'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            a
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-01T00'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            
+                            """);
+        });
+    }
+
+    private void assertLastRows(String sql, boolean isCovering, String plan, String expected) throws Exception {
+        // The covering factory reads the covered values from the index: it knows its size and offers no
+        // random access.
+        final QueryAssertion assertion = assertQuery(sql).timestamp("ts").withPlanContaining(plan);
+        if (isCovering) {
+            assertion.noRandomAccess().expectSize();
+        }
+        assertion.returns(expected);
     }
 
     private void assertNullPrefixQueryOpensNoColumnMappings(String query, String expected) throws Exception {
@@ -21715,6 +22099,53 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .assertsPlanNotContaining("CoveringIndex");
             assertSqlCursors(sql.replace("SELECT ", "SELECT /*+ no_index */ "), sql);
         }
+    }
+
+    /**
+     * Checks the posting index of a table that a split-removal repair left with the row 'last' at lastTs in its
+     * new last partition, then appends a row to that partition and checks that the index takes it.
+     */
+    private void assertSplitRemovalRepairIndex(String table, int clauseIndex, String lastTs) throws Exception {
+        final boolean isCovering = SPLIT_REMOVAL_INDEX_CLAUSES[clauseIndex].contains("INCLUDE");
+        final String plan = isCovering ? "CoveringIndex" : "Index forward scan on: sym";
+        final String lastSql = "SELECT sym, v, vc, ts FROM " + table + " WHERE sym = 'last'";
+        assertLastRows(lastSql, isCovering, plan, """
+                sym\tv\tvc\tts
+                last\t18000\tvc18000\t%s
+                """.formatted(lastTs));
+        // The first symbol of the table, 'k1', has key 0, the key a row past the end of a column file reads as.
+        // The rows left are x in [1, 18_000], and x % 4 = 1 for 4_500 of them, from 1 to 17_997.
+        final String k1Sql = "SELECT count(), min(v), max(v) FROM " + table + " WHERE sym = 'k1'";
+        assertQuery(k1Sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining(plan)
+                .returns("""
+                        count\tmin\tmax
+                        4500\t1\t17997
+                        """);
+        for (String sql : new String[]{lastSql, k1Sql, "SELECT sym, count() FROM " + table + " WHERE sym IN ('k0', 'k1', 'k2', 'k3', 'last') ORDER BY sym"}) {
+            assertSqlCursors(sql.replace("SELECT ", "SELECT /*+ no_index */ "), sql);
+        }
+
+        execute("INSERT INTO " + table + " VALUES ('last', 300_000, 'appended', '2024-01-01T07:00:00')");
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(table)));
+        assertLastRows(lastSql, isCovering, plan, """
+                sym\tv\tvc\tts
+                last\t18000\tvc18000\t%s
+                last\t300000\tappended\t2024-01-01T07:00:00.000000Z
+                """.formatted(lastTs));
+        // The appended row takes the row id past the repaired rows, which an index built over the removed
+        // split's row count would have given to 'k1'.
+        assertQuery(k1Sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining(plan)
+                .returns("""
+                        count\tmin\tmax
+                        4500\t1\t17997
+                        """);
     }
 
     /**

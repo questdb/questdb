@@ -4874,9 +4874,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * {@code _meta.swp -> _meta} rename, either before it ({@code isAfterSwapRename == false}: no {@code _meta},
      * only {@code _meta.prev}) or right after it (the uncommitted new {@code _meta}), with {@code _todo_} armed
      * either way. No in-process rollback runs. Then drops the table's cached sequencer state, as a cold start
-     * has none.
+     * has none. CairoEngineTest uses it on a non-WAL table.
      */
-    private void crashMetaSwap(TableToken tt, boolean isAfterSwapRename) throws Exception {
+    static void crashMetaSwap(TableToken tt, boolean isAfterSwapRename) throws Exception {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
         final AtomicBoolean isArmed = new AtomicBoolean();

@@ -46,6 +46,14 @@ public class PartitionEncoder {
             long writerPtr
     ) throws CairoException;
 
+    /**
+     * Creates a writer that encodes the frames it is given into a Parquet file a row group at a time.
+     *
+     * @param isSymbolDictionaryDense when true, the dictionary of each SYMBOL column chunk holds only the symbols its
+     *                                rows use, and the file does not take dictionary indices for table symbol keys;
+     *                                when false, the dictionary holds an entry for every key up to the largest one
+     *                                the chunk uses
+     */
     public static native long createStreamingParquetWriter(
             long allocator,
             int columnCount,
@@ -63,7 +71,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            boolean isSymbolDictionaryDense
     ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {

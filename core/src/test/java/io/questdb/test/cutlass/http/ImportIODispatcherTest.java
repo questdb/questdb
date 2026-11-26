@@ -34,6 +34,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
@@ -48,7 +49,9 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -828,6 +831,61 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportOverwriteWaitsForViewCompile() throws Exception {
+        // An import with overwrite=true drops the existing non-WAL table and creates it again from
+        // the file. An ALTER of the table queued the recompile of the view over it, and the run
+        // holds the table's reader when the import drops the table: the drop waits for the run
+        // instead of failing the import as busy.
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withAlterTableStartWaitTimeout(Long.MAX_VALUE)
+                .run((engine, sqlExecutionContext) -> {
+                    // loads the view state store and its compile queue, as the server does at startup
+                    engine.load();
+                    engine.execute("CREATE TABLE trips (a INT)", sqlExecutionContext);
+                    engine.execute("INSERT INTO trips VALUES (1), (2)", sqlExecutionContext);
+                    Assert.assertFalse(engine.verifyTableName("trips").isWal());
+                    engine.execute("CREATE VIEW v AS (SELECT * FROM trips)", sqlExecutionContext);
+                    drainViewQueue(engine);
+                    engine.execute("ALTER TABLE trips ADD COLUMN b INT", sqlExecutionContext);
+
+                    final LogCapture capture = new LogCapture();
+                    try {
+                        ViewCompileParker.ofQueueDrain(engine, "trips", PoolListener.SRC_READER).executeWhileHolding(
+                                capture,
+                                "trips",
+                                () -> new SendAndReceiveRequestBuilder().execute(
+                                        ValidImportRequest1.replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&overwrite=true HTTP"),
+                                        ValidImportResponse1
+                                ),
+                                null
+                        );
+                    } finally {
+                        capture.stop();
+                    }
+                    assertQuery("select count() from trips")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n24\n");
+                    // creating the table again queued the compile of the view
+                    drainViewQueue(engine);
+                    final StringSink viewColumns = new StringSink();
+                    try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            viewColumns.put(metadata.getColumnName(i)).put(' ');
+                        }
+                    }
+                    TestUtils.assertEquals("Col1 Pickup_DateTime DropOff_datetime ", viewColumns);
+                });
+    }
+
+    @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -1365,7 +1423,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
                         long min = ((TxnScoreboardV2) txnScoreboard).getMin();
                         Assert.assertTrue(2 == min || min == -1);
-                        Assert.assertTrue(txnScoreboard.acquireTxn(10, 3));
+                        Assert.assertTrue(txnScoreboard.acquireTxn(10, 3, 3));
                         Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });

@@ -32,6 +32,8 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.PartitionFrameDecoder;
+import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
@@ -1340,6 +1342,12 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    /**
+     * Returns the delay, in milliseconds, before the view compiler compiles a view again after its
+     * compile found a table locked, for example by a TRUNCATE, DROP or RENAME of a non-WAL table.
+     */
+    long getViewCompileBusyRetryTimeout();
+
     int getViewLexerPoolCapacity();
 
     int getViewWalWriterPoolMaxSegments();
@@ -1552,6 +1560,16 @@ public interface CairoConfiguration {
      */
     boolean isColumnAliasExpressionEnabled();
 
+    /**
+     * Whether this start prepares the database for an older release
+     * ({@code cairo.commit.mode.adaptive.downgrade}); the server accepts it under {@link CommitMode#NOSYNC} only.
+     * When {@code true}, the start removes the {@code _cv} checksum trailers and the downgrade lock from every
+     * table ({@code RecoveryCoordinator.unlockTablesForDowngrade}), and the instance writes neither while it
+     * runs. When {@code false}, the default, every commit mode stores the trailers and locks the tables it
+     * writes in {@code _meta} ({@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
+     */
+    boolean isCommitModeAdaptiveDowngrade();
+
     boolean isCopierChunkedEnabled();
 
     /**
@@ -1761,8 +1779,32 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
+    default DeltaCheckpoint newDeltaCheckpoint() {
+        return new UnsupportedDeltaCheckpoint(this);
+    }
+
     default ParquetPartitionDecoder newParquetPartitionDecoder() {
         return new ParquetPartitionDecoder();
+    }
+
+    @Nullable
+    default PartitionFrameDecoder newPartitionFrameDecoder() {
+        return null;
+    }
+
+    @Nullable
+    default PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
+        return null;
+    }
+
+    @Nullable
+    default PartitionDeltaWriter newPartitionDeltaWriter() {
+        return null;
+    }
+
+    @Nullable
+    default AbstractTimestampFinder newTimestampFinder() {
+        return null;
     }
 
     boolean useWithinLatestByOptimisation();

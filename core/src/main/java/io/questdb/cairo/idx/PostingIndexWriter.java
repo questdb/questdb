@@ -270,6 +270,7 @@ public class PostingIndexWriter implements IndexWriter {
     private int[] genMetaStrideCounts;
     private boolean hasPendingData;
     private boolean hasSpillData;
+    private boolean isCoverStreaming;
     private boolean isLastRollbackStreaming;
     private boolean isLastSealIncremental;
     private boolean isLastSealSnapshotDeferred;
@@ -310,6 +311,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long postingColumnNameTxn; // host column-instance txn
     private long[] savedSidecarBufs;
     private long[] savedSidecarSizes;
+    private PostingSidecarSource sealCoverSource;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     // sealTxn is the suffix of the .pv file the writer is currently mapped
     // to. Updated on truncate, on switchToSealedValueFile, and at writer
@@ -374,6 +376,46 @@ public class PostingIndexWriter implements IndexWriter {
         // historical .pv.0 filename for a freshly-initialised, never-sealed
         // index.
         initKeyMemory(keyMem, 0L);
+    }
+
+    /**
+     * Writes the header pages of an empty chain whose first entry takes {@code startSealTxn}. The writer maps
+     * {@code .pv.{startSealTxn}} for the data of that entry.
+     */
+    public static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
+        // v2 layout: two 4 KB header pages followed by an empty entry region.
+        // Page A is published with sequence=2 (even, non-zero) and an empty
+        // chain. Page B is zeroed and stays inactive until the first
+        // publish flips the seqlock to it.
+        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
+        // accepts exactly startSealTxn — that lines the first chain entry
+        // up with the .pv.{startSealTxn} file the writer is mapping.
+        keyMem.jumpTo(0);
+        keyMem.truncate();
+
+        // ----- Page A header (active, empty chain) -----
+        keyMem.putLong(2L);                                                  // SEQUENCE_START
+        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
+        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
+        keyMem.putLong(0L);                                                  // ENTRY_COUNT
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
+        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
+        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
+        // (offset 4088). Pad with zeros.
+        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
+                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
+        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
+            keyMem.putLong(0L);
+        }
+        Unsafe.storeFence();
+        keyMem.putLong(2L);                                                  // SEQUENCE_END
+
+        // ----- Page B header (inactive, all zeros) -----
+        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
+            keyMem.putLong(0L);
+        }
+        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
     }
 
     @Override
@@ -633,6 +675,7 @@ public class PostingIndexWriter implements IndexWriter {
                 maxValue = 0;
                 hasPendingData = false;
                 isPoisoned = false;
+                isCoverStreaming = false;
                 isLastSealStreaming = false;
                 isLastSealIncremental = false;
                 isLastSealSnapshotDeferred = false;
@@ -1054,6 +1097,19 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Selects sidecar-based sealing for a new unpublished build. Each input batch must configure its
+     * borrowed covers, add rows, and call commit() before releasing those buffers.
+     * Covers use generated column-name txn -1; existing table indexes keep the normal seal path.
+     */
+    public void enableCoverStreaming() {
+        checkNotPoisoned();
+        if (genCount != 0 || hasPendingData || keyCount != 0) {
+            throw CairoException.critical(0).put("cover streaming requires a new index");
+        }
+        isCoverStreaming = true;
+    }
+
     @TestOnly
     public int getAdaptiveDeltaAtOrAbove() {
         return encodeCtx.adaptiveDeltaAtOrAbove;
@@ -1461,7 +1517,7 @@ public class PostingIndexWriter implements IndexWriter {
                 LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
                 long pvActual = ff.length(pvName);
                 if (valueMemSize > pvActual) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical(CairoException.FILE_TOO_SMALL)
                             .put("posting index value file too short [expected=").put(valueMemSize)
                             .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
                 }
@@ -1587,7 +1643,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // and the chain inconsistent; drop the entry rather than delete the
                 // live head (the C1 endgame this backstops).
                 LOG.critical().$("posting seal-purge skipped: sealTxn is the live chain head [")
-                        .$("indexName=").$(indexName)
+                        .$("indexName=").$safe(indexName)
                         .$(", postingColumnNameTxn=").$(entry.postingColumnNameTxn)
                         .$(", sealTxn=").$(entry.sealTxn)
                         .$(']').$();
@@ -1839,7 +1895,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Incremental seal: gen 0 dense covering every current key, all later
         // gens sparse. sealIncremental writes a fresh .pv via sealValueMem.
-        boolean isIncrementalCandidate = gen0KeyCount >= 0
+        boolean isIncrementalCandidate = !isCoverStreaming && gen0KeyCount >= 0
                 && gen0KeyCount == keyCount
                 && partitionPath.size() > 0;
         if (isIncrementalCandidate) {
@@ -1871,6 +1927,10 @@ public class PostingIndexWriter implements IndexWriter {
 
         boolean isSealed = false;
         try {
+            if (isCoverStreaming && coverCount > 0) {
+                sealCoverSource = new PostingSidecarSource(configuration, Path.getThreadLocal(partitionPath),
+                        indexName, postingColumnNameTxn, coveredColumnIndices, coveredColumnTypes);
+            }
             // Sidecar snapshot lives inside this try so a malloc OOM mid-loop
             // gets cleaned up by the finally instead of leaking partial bufs.
             //
@@ -1932,7 +1992,7 @@ public class PostingIndexWriter implements IndexWriter {
                                                 // snapshots already taken earlier in this loop.
                                                 final long snapshotHeadroom = rssHeadroom();
                                                 if (sealedLen > snapshotHeadroom) {
-                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$(indexName)
+                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$safe(indexName)
                                                             .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                                             .$(", sealTxn=").$(sealTxn)
                                                             .$(", cover=").$(c)
@@ -1967,7 +2027,7 @@ public class PostingIndexWriter implements IndexWriter {
                         break;
                     }
                     if (!isTrusted) {
-                        LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$(indexName)
+                        LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$safe(indexName)
                                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                 .$(", sealTxn=").$(sealTxn)
                                 .$(", cover=").$(c)
@@ -2016,7 +2076,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // publishing a live chain entry at newSealTxn.
                 isPoisoned = true;
                 LOG.error().$("posting index seal post-switch failure, poisoning writer and scheduling orphan purge [")
-                        .$("indexName=").$(indexName)
+                        .$("indexName=").$safe(indexName)
                         .$(", newSealTxn=").$(newSealTxn)
                         .$(']').$();
                 scheduleOrphanPurge(newSealTxn);
@@ -2038,6 +2098,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             throw th;
         } finally {
+            sealCoverSource = Misc.free(sealCoverSource);
             if (haveSavedSidecars) {
                 for (int c = 0; c < coverCount; c++) {
                     if (savedSidecarBufs[c] != 0) {
@@ -2329,42 +2390,6 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private static long encodeCtxPeakBytes(int maxKeyCount) {
         return (long) maxKeyCount * 26L + 2048L;
-    }
-
-    private static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
-        // v2 layout: two 4 KB header pages followed by an empty entry region.
-        // Page A is published with sequence=2 (even, non-zero) and an empty
-        // chain. Page B is zeroed and stays inactive until the first
-        // publish flips the seqlock to it.
-        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
-        // accepts exactly startSealTxn — that lines the first chain entry
-        // up with the .pv.{startSealTxn} file the writer is mapping.
-        keyMem.jumpTo(0);
-        keyMem.truncate();
-
-        // ----- Page A header (active, empty chain) -----
-        keyMem.putLong(2L);                                                  // SEQUENCE_START
-        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
-        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
-        keyMem.putLong(0L);                                                  // ENTRY_COUNT
-        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
-        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
-        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
-        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
-        // (offset 4088). Pad with zeros.
-        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
-                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
-        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
-            keyMem.putLong(0L);
-        }
-        Unsafe.storeFence();
-        keyMem.putLong(2L);                                                  // SEQUENCE_END
-
-        // ----- Page B header (inactive, all zeros) -----
-        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
-            keyMem.putLong(0L);
-        }
-        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
     }
 
     private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
@@ -5052,7 +5077,7 @@ public class PostingIndexWriter implements IndexWriter {
                     // must still leave the half-switched writer poisoned.
                     isPoisoned = true;
                     LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
-                            .$("indexName=").$(indexName)
+                            .$("indexName=").$safe(indexName)
                             .$(", newSealTxn=").$(newSealTxn)
                             .$(']').$();
                     scheduleOrphanPurge(newSealTxn);
@@ -5132,7 +5157,7 @@ public class PostingIndexWriter implements IndexWriter {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
             LOG.critical()
                     .$("posting seal-purge outbox saturated, dropping oldest entry [")
-                    .$("indexName=").$(indexName)
+                    .$("indexName=").$safe(indexName)
                     .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
                     .$(", sealTxn=").$(oldest.sealTxn)
                     .$(", outboxMax=").$(outboxMax)
@@ -5452,7 +5477,7 @@ public class PostingIndexWriter implements IndexWriter {
                             // failure must still leave the half-switched writer poisoned.
                             isPoisoned = true;
                             LOG.error().$("posting index rollback post-switch failure, poisoning writer and scheduling orphan purge [")
-                                    .$("indexName=").$(indexName)
+                                    .$("indexName=").$safe(indexName)
                                     .$(", newSealTxn=").$(newSealTxn)
                                     .$(']').$();
                             scheduleOrphanPurge(newSealTxn);
@@ -6054,7 +6079,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int unlinked = unlinkAbandonedSealFiles(path, plen);
         LOG.info().$("posting index recovery [")
-                .$("indexName=").$(indexName)
+                .$("indexName=").$safe(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
                 .$(", isHeadTrimmed=").$(isHeadTrimmed)
@@ -6082,7 +6107,7 @@ public class PostingIndexWriter implements IndexWriter {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
             LOG.critical()
                     .$("posting seal-purge outbox saturated, dropping oldest entry [")
-                    .$("indexName=").$(indexName)
+                    .$("indexName=").$safe(indexName)
                     .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
                     .$(", sealTxn=").$(oldest.sealTxn)
                     .$(", outboxMax=").$(outboxMax)
@@ -7266,22 +7291,31 @@ public class PostingIndexWriter implements IndexWriter {
                         .put(", decoded=").put(decoded).put(']');
             }
 
+            if (sealCoverSource != null) {
+                sealCoverSource.ofKey(j, c);
+            }
+
             // Materialise this key's covered values into sidecarBuf, then compress. A run of rows
             // with no value (below the column top, or past the mapped data) takes one NULL fill.
             long rawOffset = 0;
             long nullRunOffset = -1;
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
-                long addr = rowId < colTop ? 0 : getCoveredDataReadAddr(c, (rowId - colTop) << shift, valueSize);
-                if (addr != 0) {
-                    if (nullRunOffset >= 0) {
-                        driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
-                        // validity batch site: a column with a validity bitmap would mark these rows NULL here
-                        nullRunOffset = -1;
+                if (sealCoverSource != null) {
+                    // the private build's sidecar holds every row's value, NULLs included
+                    sealCoverSource.copyFixed(rowId, sidecarBuf + rawOffset, colType);
+                } else {
+                    long addr = rowId < colTop ? 0 : getCoveredDataReadAddr(c, (rowId - colTop) << shift, valueSize);
+                    if (addr != 0) {
+                        if (nullRunOffset >= 0) {
+                            driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                            // validity batch site: a column with a validity bitmap would mark these rows NULL here
+                            nullRunOffset = -1;
+                        }
+                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                    } else if (nullRunOffset < 0) {
+                        nullRunOffset = rawOffset;
                     }
-                    Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                } else if (nullRunOffset < 0) {
-                    nullRunOffset = rawOffset;
                 }
                 rawOffset += valueSize;
             }
@@ -7347,6 +7381,10 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
 
+                if (sealCoverSource != null) {
+                    sealCoverSource.ofKey(j, c);
+                }
+
                 // Assemble this key's raw values into sidecarBuf. A run of rows with no value
                 // (below the column top, or past the mapped data) takes one NULL fill.
                 long keyOff = keyOffsets[j];
@@ -7355,16 +7393,21 @@ public class PostingIndexWriter implements IndexWriter {
                 for (int i = 0; i < count; i++) {
                     long rowId = Unsafe.getLong(
                             mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    long addr = rowId < colTop ? 0 : getCoveredDataReadAddr(c, (rowId - colTop) << shift, valueSize);
-                    if (addr != 0) {
-                        if (nullRunOffset >= 0) {
-                            driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
-                            // validity batch site: a column with a validity bitmap would mark these rows NULL here
-                            nullRunOffset = -1;
+                    if (sealCoverSource != null) {
+                        // the private build's sidecar holds every row's value, NULLs included
+                        sealCoverSource.copyFixed(rowId, sidecarBuf + rawOffset, colType);
+                    } else {
+                        long addr = rowId < colTop ? 0 : getCoveredDataReadAddr(c, (rowId - colTop) << shift, valueSize);
+                        if (addr != 0) {
+                            if (nullRunOffset >= 0) {
+                                driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                                // validity batch site: a column with a validity bitmap would mark these rows NULL here
+                                nullRunOffset = -1;
+                            }
+                            Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                        } else if (nullRunOffset < 0) {
+                            nullRunOffset = rawOffset;
                         }
-                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                    } else if (nullRunOffset < 0) {
-                        nullRunOffset = rawOffset;
                     }
                     rawOffset += valueSize;
                 }
@@ -7421,6 +7464,9 @@ public class PostingIndexWriter implements IndexWriter {
             for (int s = 0; s < sc; s++) {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+                if (sealCoverSource != null) {
+                    sealCoverSource.ofStride(strideStart);
+                }
 
                 // Compute per-key counts and base offsets within stride buffer
                 int strideValCount = 0;
@@ -7529,6 +7575,9 @@ public class PostingIndexWriter implements IndexWriter {
             for (int s = 0; s < sc; s++) {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+                if (sealCoverSource != null) {
+                    sealCoverSource.ofStride(strideStart);
+                }
 
                 // hasAnyValues rather than a summed count, see streaming
                 // reencode path for rationale.
@@ -7904,7 +7953,14 @@ public class PostingIndexWriter implements IndexWriter {
                     Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES));
         }
 
-        if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
+        if (sealCoverSource != null) {
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+            }
+        } else if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
             try {
                 for (int c = 0; c < coverCount; c++) {
@@ -7959,7 +8015,14 @@ public class PostingIndexWriter implements IndexWriter {
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
         int[] keyCounts = strideKeyCounts;
 
-        if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
+        if (sealCoverSource != null) {
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+            }
+        } else if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
             try {
                 for (int c = 0; c < coverCount; c++) {
@@ -8053,6 +8116,9 @@ public class PostingIndexWriter implements IndexWriter {
                         .put(", expected=").put(count)
                         .put(", decoded=").put(decoded).put(']');
             }
+            if (sealCoverSource != null && count > 0) {
+                sealCoverSource.ofKey(j, c);
+            }
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
                 long off = mem.getAppendOffset() - dataStart;
@@ -8093,6 +8159,9 @@ public class PostingIndexWriter implements IndexWriter {
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             long keyOff = keyOffsets[j];
+            if (sealCoverSource != null && count > 0) {
+                sealCoverSource.ofKey(j, covIdx);
+            }
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
                 long off = mem.getAppendOffset() - dataStart;
@@ -8109,6 +8178,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, int colType) {
+        if (sealCoverSource != null) {
+            sealCoverSource.appendVar(rowId, mem);
+            return;
+        }
         if (rowId < colTop) {
             return; // NULL — zero-length (offset[i] == offset[i+1])
         }
