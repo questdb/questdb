@@ -4457,7 +4457,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * This method leaves symbol files intact.
      */
     public final void removeAllPartitions() {
-        if (size() == 0) {
+        // Not size(): a Delta partition's rows are in Runs, outside the base row counts.
+        if (txWriter.getPartitionCount() == 0) {
             return;
         }
 
