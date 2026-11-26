@@ -26,7 +26,11 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -63,9 +67,16 @@ import java.util.function.ToLongFunction;
  * and walk them in doReorderTables. Compile time grew as the cube of the table count: about 3 s for
  * 1,280 tables with a CROSS join before every FULL join, against 0.2 s before the outer joins pinned
  * their prefixes. A pass that moves no join key would order the graph that the pass before it ordered, so
- * reorderTables skips it. The testCrossJoins tests count the ordering edges that applyModelOnOrderingConstraints
- * applies, which grow as the square of the chain length when no key moves: doubling the chain multiplies
- * the count by 4, and by 8 when every pass orders the level again, so the tests require a factor below 6.
+ * reorderTables skips it. The testCrossJoins tests count the ordering edges in force at each pass that
+ * applyModelOnOrderingConstraints prepares, which grow as the square of the chain length when no key moves:
+ * doubling the chain multiplies the count by 4, and by 8 when every pass orders the level again, so the tests
+ * require a factor below 6.
+ * <p>
+ * Each of those pins used to take an entry in the join context parents of the outer join, in the dependencies of
+ * the pinned model and in the list of recorded ordering edges, which kept arrays of quadratic size in every pooled
+ * compiler: some 250 MB for a chain of 2,560 FULL joins. SqlOptimiser keeps the pins in OuterJoinOrderingEdges, a
+ * bit per outer join whose whole prefix it pins and a bit per pinned model of the others, so the join contexts,
+ * dependencies and lists grow linearly with the chain.
  */
 public class JoinReorderCompileTimeTest extends AbstractCairoTest {
 
@@ -106,6 +117,88 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
                 .append(" JOIN t").append(a + 2).append(" ON t").append(a + 2).append(".k = t").append(a).append(".k AND t")
                 .append(a + 2).append(".j = t").append(a + 1).append(".j")
                 .append(" RIGHT JOIN t").append(a + 3).append(" ON t").append(a + 3).append(".k > t").append(a + 2).append(".k"));
+    }
+
+    @Test
+    public void testNonEquiFullAndInnerJoinChainKeepsEdgesCompact() throws Exception {
+        // t0 FULL JOIN t1 ON t1.k > t0.k JOIN t2 ON t2.k = t1.k FULL JOIN t3 ON t3.k > t2.k ...: each of the B
+        // non-equi FULL joins pins its whole prefix, 1 + 3 + ... + (2B - 1) = B * B pins, and runs before every later
+        // INNER join, which consumes its rows: B (B + 1) / 2 consumer edges. The join contexts hold the key of each
+        // INNER join, and the dependencies those keys and the link of each FULL join to the model before it.
+        assertMemoryLeak(() -> {
+            createChainTables(80);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (int boundaryCount = 20; boundaryCount <= 40; boundaryCount += 20) {
+                    final long pinCount = (long) boundaryCount * boundaryCount;
+                    assertPinFootprint(
+                            compiler,
+                            nonEquiFullAndInnerChain(boundaryCount),
+                            boundaryCount,
+                            2L * boundaryCount,
+                            pinCount,
+                            0,
+                            pinCount + boundaryCount * (boundaryCount + 1L) / 2
+                    );
+                }
+            }
+            assertQuery(nonEquiFullAndInnerChain(40))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testRepeatedCompileReusesOrderingEdgeBuffers() throws Exception {
+        // A second compile of the same chains fits in the buffers that the first one grew: the optimiser keeps
+        // them and starts every level and statement from empty, without growing them again.
+        assertMemoryLeak(() -> {
+            createChainTables(202);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndCountReads(compiler, fullChain(200), SqlCompilerImpl::getOrderingEdgeApplicationsForTesting);
+                compileAndCountReads(compiler, forwardReadFullChain(200), SqlCompilerImpl::getOrderingEdgeApplicationsForTesting);
+                final int capacity = compiler.getOrderingEdgeCapacityForTesting();
+                for (int i = 0; i < 3; i++) {
+                    compileAndCountReads(compiler, fullChain(200), SqlCompilerImpl::getOrderingEdgeApplicationsForTesting);
+                    compileAndCountReads(compiler, forwardReadFullChain(200), SqlCompilerImpl::getOrderingEdgeApplicationsForTesting);
+                    Assert.assertEquals(capacity, compiler.getOrderingEdgeCapacityForTesting());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRightAndFullJoinPinsStayCompact() throws Exception {
+        // Every FULL join of t0 FULL JOIN t1 ON t1.k = t0.k FULL JOIN t2 ON t2.k = t1.k ... pins its whole prefix,
+        // J(J + 1) / 2 pins for J joins. In t0 JOIN t1 ON t1.k = t(J+2).k FULL JOIN t2 ON t2.k = t0.k ... FULL JOIN
+        // t(J+1) ON t(J+1).k = t0.k JOIN t(J+2) ON t(J+2).k = t0.k, t1 reads a table that every FULL join precedes,
+        // so each FULL join pins its prefix except t1: J(J + 1) / 2 pins again, which take a bit each, in blocks of
+        // 64 joins that hold a word per model below the last join of the block. The join contexts and dependencies
+        // hold the join keys and the deferred edge 0 -> 1 only, and no pin enters the list of recorded edges.
+        assertMemoryLeak(() -> {
+            createChainTables(202);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (int joinCount = 100; joinCount <= 200; joinCount += 100) {
+                    final long pinCount = joinCount * (joinCount + 1L) / 2;
+                    assertPinFootprint(compiler, fullChain(joinCount), joinCount, joinCount, pinCount, 0, pinCount);
+                    // blocks of the joins 2 to 65, 66 to 101, and, for 200 joins, 66 to 129, 130 to 193 and 194 to 201
+                    final int pinWordCount = joinCount == 100 ? 65 + 101 : 65 + 129 + 193 + 201;
+                    assertPinFootprint(compiler, forwardReadFullChain(joinCount), joinCount + 2, joinCount + 2, pinCount, pinWordCount, pinCount + 1);
+                }
+            }
+            assertQuery(forwardReadFullChain(200))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
     }
 
     @Test
@@ -196,6 +289,42 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
         final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0");
         for (int b = 0; b < blocks; b++) {
             appender.append(sb, b * blockSize + 1);
+        }
+        return sb.toString();
+    }
+
+    // t0 JOIN t1 ON t1.k = t(J+2).k FULL JOIN t2 ON t2.k = t0.k ... FULL JOIN t(J+1) ON t(J+1).k = t0.k JOIN t(J+2) ON t(J+2).k = t0.k
+    private static String forwardReadFullChain(int joinCount) {
+        final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0 JOIN t1 ON t1.k = t").append(joinCount + 2).append(".k");
+        for (int t = 2; t <= joinCount + 1; t++) {
+            sb.append(" FULL JOIN t").append(t).append(" ON t").append(t).append(".k = t0.k");
+        }
+        return sb.append(" JOIN t").append(joinCount + 2).append(" ON t").append(joinCount + 2).append(".k = t0.k").toString();
+    }
+
+    // t0 FULL JOIN t1 ON t1.k = t0.k FULL JOIN t2 ON t2.k = t1.k ... FULL JOIN tJ ON tJ.k = t(J-1).k
+    private static String fullChain(int joinCount) {
+        final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0");
+        for (int t = 1; t <= joinCount; t++) {
+            sb.append(" FULL JOIN t").append(t).append(" ON t").append(t).append(".k = t").append(t - 1).append(".k");
+        }
+        return sb.toString();
+    }
+
+    // the join level of the optimised model: the first model on the nested chain that joins several models
+    private static IQueryModel joinLevel(IQueryModel model) {
+        while (model.getJoinModels().size() < 2) {
+            model = model.getNestedModel();
+        }
+        return model;
+    }
+
+    // t0 FULL JOIN t1 ON t1.k > t0.k JOIN t2 ON t2.k = t1.k ... FULL JOIN t(2B-1) ON t(2B-1).k > t(2B-2).k JOIN t2B ON t2B.k = t(2B-1).k
+    private static String nonEquiFullAndInnerChain(int boundaryCount) {
+        final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0");
+        for (int t = 1; t <= 2 * boundaryCount; t++) {
+            sb.append(t % 2 == 1 ? " FULL JOIN t" : " JOIN t").append(t).append(" ON t").append(t)
+                    .append(t % 2 == 1 ? ".k > t" : ".k = t").append(t - 1).append(".k");
         }
         return sb.toString();
     }
@@ -306,11 +435,47 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
         );
     }
 
+    // The entries of the join context parents and the dependencies of the level, the ordering edges that
+    // reorderTables indexed, the pins and their words, and the ordering edges in force at the one ordering pass
+    // of the level.
+    private void assertPinFootprint(
+            SqlCompilerImpl compiler,
+            String sql,
+            long parentCount,
+            long dependencyCount,
+            long pinCount,
+            int pinWordCount,
+            long edgeCount
+    ) throws Exception {
+        final long edgesBefore = compiler.getOrderingEdgeApplicationsForTesting();
+        final ExecutionModel executionModel = compiler.generateExecutionModel(sql, sqlExecutionContext);
+        final ObjList<IQueryModel> joinModels = joinLevel((IQueryModel) executionModel).getJoinModels();
+        long parents = 0;
+        long dependencies = 0;
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final JoinContext jc = joinModels.getQuick(i).getJoinContext();
+            parents += jc != null ? jc.parents.size() : 0;
+            dependencies += joinModels.getQuick(i).getDependencies().size();
+        }
+        Assert.assertEquals(sql, parentCount, parents);
+        Assert.assertEquals(sql, dependencyCount, dependencies);
+        Assert.assertEquals(sql, edgeCount, compiler.getOrderingEdgeApplicationsForTesting() - edgesBefore);
+        Assert.assertEquals(sql, 0, compiler.getOrderingEdgeListSizeForTesting());
+        Assert.assertEquals(sql, pinCount, compiler.getOuterJoinPinCountForTesting());
+        Assert.assertEquals(sql, pinWordCount, compiler.getOuterJoinPinWordCountForTesting());
+    }
+
     private long compileAndCountReads(SqlCompilerImpl compiler, String sql, ToLongFunction<SqlCompilerImpl> reads) throws Exception {
         final long readsBefore = reads.applyAsLong(compiler);
         final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
         Misc.free(factory);
         return reads.applyAsLong(compiler) - readsBefore;
+    }
+
+    private void createChainTables(int lastTable) throws Exception {
+        for (int i = 0; i <= lastTable; i++) {
+            execute("CREATE TABLE t" + i + " (k INT, j INT)");
+        }
     }
 
     @FunctionalInterface

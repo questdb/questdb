@@ -72,6 +72,10 @@ public class QueryModel implements IQueryModel {
     private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
+    // The join models that SqlOptimiser orders after this one. The pins of RIGHT/FULL OUTER join prefixes and the
+    // edges from non-equi RIGHT/FULL joins to the joins that consume their rows are not here: SqlOptimiser keeps
+    // them in OuterJoinOrderingEdges and reads the ordering graph through hasOrderingDependents() and the other
+    // ordering-graph readers.
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expiryWindowPartitionBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();

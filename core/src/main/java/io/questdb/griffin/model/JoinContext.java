@@ -44,7 +44,11 @@ public class JoinContext implements Mutable, Plannable {
     public final IntList bIndexes = new IntList();
     public final ObjList<CharSequence> bNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<ExpressionNode> bNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
-    // indexes of parent join clauses
+    // Indexes of the join models that SqlOptimiser orders before this join: the models of its keys and the
+    // other ordering edges into it. The pins of RIGHT/FULL OUTER join prefixes and the edges from non-equi
+    // RIGHT/FULL joins to the joins that consume their rows are not here: SqlOptimiser keeps them in
+    // OuterJoinOrderingEdges and reads the ordering graph through hasOrderingParents() and the other
+    // ordering-graph readers.
     public final IntHashSet parents = new IntHashSet(4);
     public int inCount;
     public int slaveIndex = -1;

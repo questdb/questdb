@@ -70,6 +70,10 @@ import java.util.stream.Stream;
  *     <li>{@code full}: t0 FULL JOIN t1 ON t1.k = t0.k FULL JOIN t2 ON t2.k = t1.k ..., no CROSS join</li>
  *     <li>{@code cross_inner}: t0 CROSS JOIN t1 JOIN t2 ON t2.k = t1.k AND t2.j = t0.j CROSS JOIN t3 ..., no
  *     outer join</li>
+ *     <li>{@code nonequi_full_inner}: t0 FULL JOIN t1 ON t1.k &gt; t0.k JOIN t2 ON t2.k = t1.k FULL JOIN t3 ON
+ *     t3.k &gt; t2.k ..., every INNER join consuming the rows of every non-equi FULL join before it</li>
+ *     <li>{@code fwd_full}: t0 JOIN t1 ON t1.k = tN.k FULL JOIN t2 ON t2.k = t0.k ... JOIN tN ON tN.k = t0.k, every
+ *     FULL join leaving t1, which reads the last table, unpinned</li>
  * </ul>
  * The class uses only APIs that predate it, so it runs unchanged against a base commit.
  */
@@ -91,7 +95,7 @@ import java.util.stream.Stream;
         "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
 })
 public class JoinChainCompileBenchmark {
-    @Param({"cross_full", "cross_right_t0", "cross_inner_full", "cross_full_non_equi", "full", "cross_inner"})
+    @Param({"cross_full", "cross_right_t0", "cross_inner_full", "cross_full_non_equi", "full", "cross_inner", "nonequi_full_inner", "fwd_full"})
     public String shape;
     @Param({"320", "1280"})
     public int tables;
@@ -133,6 +137,7 @@ public class JoinChainCompileBenchmark {
             engine.execute("CREATE TABLE t" + i + ("cross_inner".equals(shape) ? " (k INT, j INT)" : " (k INT)"), ctx);
         }
         final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0");
+        final int lastTable = tables - 1;
         for (int i = 1; i < tables; i++) {
             switch (shape) {
                 case "cross_full" -> appendCrossOrOuter(sb, i, i % 2 == 1, "FULL", "=", i - 1);
@@ -153,6 +158,22 @@ public class JoinChainCompileBenchmark {
                     } else {
                         sb.append(" JOIN t").append(i).append(" ON t").append(i).append(".k = t").append(i - 1)
                                 .append(".k AND t").append(i).append(".j = t0.j");
+                    }
+                }
+                case "nonequi_full_inner" -> {
+                    if (i % 2 == 1) {
+                        appendCrossOrOuter(sb, i, false, "FULL", ">", i - 1);
+                    } else {
+                        sb.append(" JOIN t").append(i).append(" ON t").append(i).append(".k = t").append(i - 1).append(".k");
+                    }
+                }
+                case "fwd_full" -> {
+                    if (i == 1) {
+                        sb.append(" JOIN t1 ON t1.k = t").append(lastTable).append(".k");
+                    } else if (i < lastTable) {
+                        appendCrossOrOuter(sb, i, false, "FULL", "=", 0);
+                    } else {
+                        sb.append(" JOIN t").append(i).append(" ON t").append(i).append(".k = t0.k");
                     }
                 }
                 default -> throw new IllegalArgumentException("unknown shape: " + shape);

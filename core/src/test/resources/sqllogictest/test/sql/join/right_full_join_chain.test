@@ -1,0 +1,261 @@
+# Chains of RIGHT and FULL joins, with and without join keys, with CROSS joins between them and INNER
+# and CROSS joins after them that consume their rows. SqlOptimiser orders each RIGHT or FULL join after
+# every table before it, and a non-equi one before every later join that consumes its rows.
+# The expected rows come from DuckDB with every = rewritten to IS NOT DISTINCT FROM, because QuestDB
+# treats NULL = NULL as true in join keys and filters, as it does NULL >= NULL and NULL <= NULL. QuestDB
+# also accepts an ON clause that reads a table joined after it, which leaves that join unpinned by the
+# RIGHT and FULL joins between them; such queries are not standard SQL and stay out of this file. The
+# tables are not partitioned, so they are not WAL tables and inserted rows are visible at once.
+
+statement ok
+DROP TABLE IF EXISTS a
+
+statement ok
+DROP TABLE IF EXISTS b
+
+statement ok
+DROP TABLE IF EXISTS c
+
+statement ok
+DROP TABLE IF EXISTS d
+
+statement ok
+DROP TABLE IF EXISTS e
+
+statement ok
+CREATE TABLE a (rn INT, k INT, j INT)
+
+statement ok
+CREATE TABLE b (rn INT, k INT, j INT)
+
+statement ok
+CREATE TABLE c (rn INT, k INT, j INT)
+
+statement ok
+CREATE TABLE d (rn INT, k INT, j INT)
+
+statement ok
+CREATE TABLE e (rn INT, k INT, j INT)
+
+statement ok
+INSERT INTO a VALUES (1, 1, 10), (2, 2, 20), (3, NULL, 30), (4, 3, 10)
+
+statement ok
+INSERT INTO b VALUES (1, 1, 1), (2, 3, 2), (3, NULL, 3), (4, 5, 4)
+
+statement ok
+INSERT INTO c VALUES (1, 1, 10), (2, 2, 20), (3, NULL, 30)
+
+statement ok
+INSERT INTO d VALUES (1, 2, 10), (2, NULL, 20), (3, 4, 40)
+
+statement ok
+INSERT INTO e VALUES (1, 1, 1), (2, 4, 2), (3, NULL, 3)
+
+# A chain of FULL joins with join keys: each FULL join pins every table before it
+query IIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr FROM a FULL JOIN b ON b.k = a.k FULL JOIN c ON c.k = b.k FULL JOIN d ON d.k = c.k
+----
+1	1	1	NULL
+2	NULL	3	2
+3	3	3	2
+4	2	NULL	2
+NULL	4	NULL	2
+NULL	NULL	2	1
+NULL	NULL	NULL	3
+
+# RIGHT joins with join keys, each after a CROSS join that it pins
+query IIIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr, e.rn er FROM a CROSS JOIN b RIGHT JOIN c ON c.k = b.k CROSS JOIN d RIGHT JOIN e ON e.k = d.k
+----
+1	1	1	2	3
+1	1	1	3	2
+1	3	3	2	3
+1	3	3	3	2
+2	1	1	2	3
+2	1	1	3	2
+2	3	3	2	3
+2	3	3	3	2
+3	1	1	2	3
+3	1	1	3	2
+3	3	3	2	3
+3	3	3	3	2
+4	1	1	2	3
+4	1	1	3	2
+4	3	3	2	3
+4	3	3	3	2
+NULL	NULL	2	2	3
+NULL	NULL	2	3	2
+NULL	NULL	NULL	NULL	1
+
+# Non-equi FULL joins, each followed by an INNER join that consumes its rows
+query IIIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr, e.rn er FROM a FULL JOIN b ON b.k > a.k JOIN c ON c.k = b.k FULL JOIN d ON d.k > c.k JOIN e ON e.k = d.k
+----
+3	NULL	3	NULL	3
+NULL	1	1	3	2
+NULL	3	3	NULL	3
+NULL	NULL	NULL	2	3
+
+# A CROSS join that a later FULL join pins consumes the rows of an earlier non-equi FULL join;
+# the last CROSS join consumes nothing
+query IIIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr, e.rn er FROM a FULL JOIN b ON b.k > a.k CROSS JOIN c FULL JOIN d ON d.k = c.k CROSS JOIN e
+----
+1	2	1	NULL	1
+1	2	1	NULL	2
+1	2	1	NULL	3
+1	2	2	1	1
+1	2	2	1	2
+1	2	2	1	3
+1	2	3	2	1
+1	2	3	2	2
+1	2	3	2	3
+1	4	1	NULL	1
+1	4	1	NULL	2
+1	4	1	NULL	3
+1	4	2	1	1
+1	4	2	1	2
+1	4	2	1	3
+1	4	3	2	1
+1	4	3	2	2
+1	4	3	2	3
+2	2	1	NULL	1
+2	2	1	NULL	2
+2	2	1	NULL	3
+2	2	2	1	1
+2	2	2	1	2
+2	2	2	1	3
+2	2	3	2	1
+2	2	3	2	2
+2	2	3	2	3
+2	4	1	NULL	1
+2	4	1	NULL	2
+2	4	1	NULL	3
+2	4	2	1	1
+2	4	2	1	2
+2	4	2	1	3
+2	4	3	2	1
+2	4	3	2	2
+2	4	3	2	3
+3	NULL	1	NULL	1
+3	NULL	1	NULL	2
+3	NULL	1	NULL	3
+3	NULL	2	1	1
+3	NULL	2	1	2
+3	NULL	2	1	3
+3	NULL	3	2	1
+3	NULL	3	2	2
+3	NULL	3	2	3
+4	4	1	NULL	1
+4	4	1	NULL	2
+4	4	1	NULL	3
+4	4	2	1	1
+4	4	2	1	2
+4	4	2	1	3
+4	4	3	2	1
+4	4	3	2	2
+4	4	3	2	3
+NULL	1	1	NULL	1
+NULL	1	1	NULL	2
+NULL	1	1	NULL	3
+NULL	1	2	1	1
+NULL	1	2	1	2
+NULL	1	2	1	3
+NULL	1	3	2	1
+NULL	1	3	2	2
+NULL	1	3	2	3
+NULL	3	1	NULL	1
+NULL	3	1	NULL	2
+NULL	3	1	NULL	3
+NULL	3	2	1	1
+NULL	3	2	1	2
+NULL	3	2	1	3
+NULL	3	3	2	1
+NULL	3	3	2	2
+NULL	3	3	2	3
+NULL	NULL	NULL	3	1
+NULL	NULL	NULL	3	2
+NULL	NULL	NULL	3	3
+
+# An INNER join after a non-equi FULL join and a CROSS join, keyed to both the CROSS join and the
+# first table
+query IIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr FROM a FULL JOIN b ON b.k > a.k CROSS JOIN c JOIN d ON d.k = c.k AND d.j = a.j
+----
+1	2	2	1
+1	4	2	1
+2	2	3	2
+2	4	3	2
+4	4	2	1
+
+# A LEFT join whose implied key reads a CROSS join that consumes the rows of a non-equi RIGHT
+# join, before a non-equi FULL join. b.k >= a.k holds where both keys are NULL, which DuckDB writes as
+# b.k > a.k OR b.k IS NOT DISTINCT FROM a.k
+query IIIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr, e.rn er FROM a RIGHT JOIN b ON b.k >= a.k CROSS JOIN c LEFT JOIN d ON d.j = c.j AND d.j = a.j FULL JOIN e ON e.k > a.k
+----
+1	1	1	1	2
+1	1	2	NULL	2
+1	1	3	NULL	2
+1	2	1	1	2
+1	2	2	NULL	2
+1	2	3	NULL	2
+1	4	1	1	2
+1	4	2	NULL	2
+1	4	3	NULL	2
+2	2	1	NULL	2
+2	2	2	2	2
+2	2	3	NULL	2
+2	4	1	NULL	2
+2	4	2	2	2
+2	4	3	NULL	2
+3	3	1	NULL	NULL
+3	3	2	NULL	NULL
+3	3	3	NULL	NULL
+4	2	1	1	2
+4	2	2	NULL	2
+4	2	3	NULL	2
+4	4	1	1	2
+4	4	2	NULL	2
+4	4	3	NULL	2
+NULL	NULL	NULL	NULL	1
+NULL	NULL	NULL	NULL	3
+
+# A non-equi RIGHT join consumed by an INNER join, then a RIGHT join with a join key
+query IIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr FROM a RIGHT JOIN b ON b.k < a.k JOIN c ON c.k = b.k RIGHT JOIN d ON d.k = c.k
+----
+NULL	3	3	2
+NULL	NULL	NULL	1
+NULL	NULL	NULL	3
+
+# A LEFT join without join keys before FULL joins with join keys, which leave it unpinned and
+# pin the rest of their prefixes
+query IIIII rowsort
+SELECT a.rn ar, b.rn br, c.rn cr, d.rn dr, e.rn er FROM a JOIN b ON b.k = a.k LEFT JOIN c ON c.j > 15 FULL JOIN d ON d.k = b.k FULL JOIN e ON e.k = a.k
+----
+1	1	2	NULL	1
+1	1	3	NULL	1
+3	3	2	2	3
+3	3	3	2	3
+4	2	2	NULL	NULL
+4	2	3	NULL	NULL
+NULL	NULL	NULL	1	3
+NULL	NULL	NULL	3	3
+NULL	NULL	NULL	NULL	2
+
+statement ok
+DROP TABLE a
+
+statement ok
+DROP TABLE b
+
+statement ok
+DROP TABLE c
+
+statement ok
+DROP TABLE d
+
+statement ok
+DROP TABLE e

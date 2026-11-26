@@ -796,6 +796,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public int getOrderingEdgeCapacityForTesting() {
+        return optimiser.getOrderingEdgeCapacityForTesting();
+    }
+
+    @TestOnly
+    public int getOrderingEdgeListSizeForTesting() {
+        return optimiser.getOrderingEdgeListSizeForTesting();
+    }
+
+    @TestOnly
+    public long getOuterJoinPinCountForTesting() {
+        return optimiser.getOuterJoinPinCountForTesting();
+    }
+
+    @TestOnly
+    public int getOuterJoinPinWordCountForTesting() {
+        return optimiser.getOuterJoinPinWordCountForTesting();
+    }
+
+    @TestOnly
+    public int getScratchReferenceCountForTesting() {
+        return optimiser.getScratchReferenceCountForTesting();
+    }
+
+    @TestOnly
     public int getWhereClauseParserPoolSizeForTesting() {
         return codeGenerator.getWhereClauseParserPoolSizeForTesting();
     }

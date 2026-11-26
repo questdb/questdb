@@ -53,7 +53,9 @@ import java.util.regex.Pattern;
  * evaluates the joins in the order written; it cannot express a time-series join after an outer join,
  * which loses the designated timestamp. The prefix form wraps only the tables before the last join,
  * so the optimiser plans the prefix as written, time-series joins included. The queries use standard
- * SQL: every ON clause reads tables joined before it, and every name resolves to one table. The data
+ * SQL: every ON clause reads tables joined before it, and every name resolves to one table. The
+ * forward-read queries are the exception: an INNER join reads the table of a later INNER join, which
+ * QuestDB applies where that table joins, and their nested form writes the conjunct there. The data
  * holds NULL keys and rows that do not match. A reference may fail only where it cannot express its
  * query, see isUnsupportedReference(); any other failure of either query fails the test.
  * An ON clause may also hold a conjunct cX = cY + cZ or cX = cY - cZ over earlier tables, mostly in an INNER
@@ -88,6 +90,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     private static final int FOLDED_PREDICATE_CORPUS_SIZE = 1_000;
     // the end of the predicate of appendFoldedPredicate()
     private static final String FOLDED_PREDICATE_END = " IS NULL AND false) OR $1 > 0)";
+    // queries of the fuzz test whose flat form reads a later table in the ON clause of an INNER join
+    private static final int FORWARD_READ_QUERY_COUNT = 300;
     // a FULL join whose slave a later INNER join ties to an earlier table, with WHERE on the slave only
     private static final Pattern FULL_JOIN_SLAVE_ONLY_REJECTED = Pattern.compile(
             "FULL JOIN t(\\d) ON [^J]*\\d JOIN t(\\d) ON c\\d = c\\2 AND c\\1 = c\\2 [^W]*WHERE c\\1 > 0$"
@@ -95,6 +99,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // queries that the generator coverage test draws from a fixed seed
     private static final int IMPLIED_KEY_CORPUS_SIZE = 1_000;
     private static final int IMPLIED_KEY_QUERY_COUNT = 300;
+    // a conjunct of an ON clause of the flat form that compares bare columns of two tables, a join key
+    private static final Pattern KEY_CONJUNCT = Pattern.compile("(?<![+-] )[cv](\\d) = [cv](\\d)(?= AND |$)");
     // LIMIT shapes that the LIMIT coverage test draws from a fixed seed
     private static final int LIMIT_CORPUS_SIZE = 1_000;
     // index of the LIMIT-fenced reference query in the array that generateQueries() returns
@@ -114,6 +120,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // index of the reference query in the array that generateQueries() returns
     private static final int NESTED = 1;
     private static final int NESTED_QUERY_COUNT = 300;
+    // queries that the ordering edge shape coverage test draws from a fixed seed
+    private static final int ORDERING_EDGE_CORPUS_SIZE = 1_000;
     private static final int PREFIX_SUB_QUERY = 2;
     // the reordering that the prefix form checks needs four joins of particular types to line up
     private static final int PREFIX_SUB_QUERY_COUNT = 1_000;
@@ -136,27 +144,32 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testFlatJoinKeyedThroughLaterInnerJoinReturnsRowsOfNestedJoin() throws Exception {
-        assertFlatJoinReturnsRowsOf(NESTED, IMPLIED_KEY_QUERY_COUNT, true, false);
+        assertFlatJoinReturnsRowsOf(NESTED, IMPLIED_KEY_QUERY_COUNT, true, false, false);
+    }
+
+    @Test
+    public void testFlatJoinReadingLaterInnerJoinReturnsRowsOfNestedJoin() throws Exception {
+        assertFlatJoinReturnsRowsOf(NESTED, FORWARD_READ_QUERY_COUNT, false, false, true);
     }
 
     @Test
     public void testFlatJoinReturnsRowsOfNestedJoin() throws Exception {
-        assertFlatJoinReturnsRowsOf(NESTED, NESTED_QUERY_COUNT, false, false);
+        assertFlatJoinReturnsRowsOf(NESTED, NESTED_QUERY_COUNT, false, false, false);
     }
 
     @Test
     public void testFlatJoinReturnsRowsOfPrefixSubQuery() throws Exception {
-        assertFlatJoinReturnsRowsOf(PREFIX_SUB_QUERY, PREFIX_SUB_QUERY_COUNT, false, false);
+        assertFlatJoinReturnsRowsOf(PREFIX_SUB_QUERY, PREFIX_SUB_QUERY_COUNT, false, false, false);
     }
 
     @Test
     public void testFlatJoinWhereReturnsRowsOfLimitFencedQuery() throws Exception {
-        assertFlatJoinReturnsRowsOf(LIMIT_FENCED, WHERE_QUERY_COUNT, false, true);
+        assertFlatJoinReturnsRowsOf(LIMIT_FENCED, WHERE_QUERY_COUNT, false, true, false);
     }
 
     @Test
     public void testFlatJoinWhereReturnsRowsOfNestedJoin() throws Exception {
-        assertFlatJoinReturnsRowsOf(NESTED, WHERE_QUERY_COUNT, false, true);
+        assertFlatJoinReturnsRowsOf(NESTED, WHERE_QUERY_COUNT, false, true, false);
     }
 
     @Test
@@ -310,6 +323,58 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         final String counts = "sumOnLeft=" + sumOnLeftCount + ", sumOnRight=" + sumOnRightCount + " of " + MULTI_TABLE_CORPUS_SIZE;
         Assert.assertTrue(counts, sumOnLeftCount * 25 >= MULTI_TABLE_CORPUS_SIZE);
         Assert.assertTrue(counts, sumOnRightCount * 25 >= MULTI_TABLE_CORPUS_SIZE);
+    }
+
+    @Test
+    public void testQueriesCoverOuterJoinOrderingEdgeShapes() {
+        // The shapes that SqlOptimiser keeps in OuterJoinOrderingEdges other than the whole prefixes of the RIGHT and
+        // FULL joins: two RIGHT or FULL joins with join keys after a LEFT join without join keys, which they leave
+        // unpinned and pin the rest of their prefixes, and a CROSS join that a RIGHT or FULL join with a join key pins
+        // after a non-equi RIGHT or FULL join, whose rows it then consumes. The queries that read a later table add a
+        // RIGHT or FULL join with a join key between the reader and that table, which leaves the reader unpinned; a
+        // non-equi RIGHT or FULL join that reads the reader before such a join, which is a parent of every later
+        // consumer and stays unpinned as well; and an INNER join after a non-equi RIGHT or FULL join and a CROSS join,
+        // tied to the CROSS join and to another table, whose key the CROSS join may take while the edges from the
+        // RIGHT or FULL join are pending. A hundredth of the queries suffices for each shape.
+        final Rnd rnd = new Rnd(42, 4242);
+        int partialPinCount = 0;
+        int pinnedCrossConsumerCount = 0;
+        int pendingConsumerKeyCount = 0;
+        for (int i = 0; i < ORDERING_EDGE_CORPUS_SIZE; i++) {
+            final FlatJoins joins = FlatJoins.of(generateQueries(rnd, false, false, false, false)[0]);
+            if (joins.hasKeyedOuterJoinsAfterKeylessLeftJoin()) {
+                partialPinCount++;
+            }
+            if (joins.hasCrossJoinPinnedAfterNonEquiOuterJoin()) {
+                pinnedCrossConsumerCount++;
+            }
+        }
+        final Rnd forwardRnd = new Rnd(42, 4242);
+        int forwardPartialPinCount = 0;
+        int unpinnedNullingBoundaryCount = 0;
+        for (int i = 0; i < ORDERING_EDGE_CORPUS_SIZE; i++) {
+            final FlatJoins joins = FlatJoins.of(generateQueries(forwardRnd, false, false, false, false, true)[0]);
+            final int reader = joins.getForwardReader();
+            Assert.assertTrue(joins.toString(), reader != -1);
+            final int target = joins.getForwardTarget(reader);
+            if (joins.hasKeyedOuterJoinBetween(reader, target)) {
+                forwardPartialPinCount++;
+            }
+            if (joins.hasNonEquiOuterJoinReadingBeforeKeyedOuterJoin(reader, target)) {
+                unpinnedNullingBoundaryCount++;
+            }
+            if (joins.hasInnerJoinKeyedToCrossJoinAfterNonEquiOuterJoin()) {
+                pendingConsumerKeyCount++;
+            }
+        }
+        final String counts = "partialPin=" + partialPinCount + ", pinnedCrossConsumer=" + pinnedCrossConsumerCount
+                + ", pendingConsumerKey=" + pendingConsumerKeyCount + ", forwardPartialPin=" + forwardPartialPinCount
+                + ", unpinnedNullingBoundary=" + unpinnedNullingBoundaryCount + " of " + ORDERING_EDGE_CORPUS_SIZE;
+        Assert.assertTrue(counts, partialPinCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, pinnedCrossConsumerCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, pendingConsumerKeyCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, forwardPartialPinCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, unpinnedNullingBoundaryCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
     }
 
     @Test
@@ -522,7 +587,25 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             boolean isWhereHeavy,
             boolean isFirstTableWhere
     ) {
-        final int modelCount = isOuterJoinHeavy ? 4 + rnd.nextInt(5) : 3 + rnd.nextInt(6);
+        return generateQueries(rnd, isOuterJoinHeavy, isImpliedKeyHeavy, isWhereHeavy, isFirstTableWhere, false);
+    }
+
+    // With isForwardReadHeavy, the queries also write an INNER join whose ON clause reads only the table of a later
+    // INNER join, c_reader = c_target, which SqlOptimiser applies where the later table joins, so the nested form
+    // writes the conjunct in the ON clause of the later join and the reader as a CROSS join. Each RIGHT or FULL join
+    // written between the two leaves the reader unpinned, and the joins there mostly are RIGHT and FULL joins, half
+    // of whose conditions read the reader's table, which leaves them unpinned at a later RIGHT or FULL join too. An
+    // INNER join after a CROSS join there, the later join included, ties the CROSS join to another table, and the
+    // conditions favour non-equi comparisons, as with isOuterJoinHeavy.
+    private static String[] generateQueries(
+            Rnd rnd,
+            boolean isOuterJoinHeavy,
+            boolean isImpliedKeyHeavy,
+            boolean isWhereHeavy,
+            boolean isFirstTableWhere,
+            boolean isForwardReadHeavy
+    ) {
+        final int modelCount = isForwardReadHeavy ? 5 + rnd.nextInt(4) : isOuterJoinHeavy ? 4 + rnd.nextInt(5) : 3 + rnd.nextInt(6);
         final int[] tables = new int[TABLE_COUNT];
         for (int i = 0; i < TABLE_COUNT; i++) {
             tables[i] = i;
@@ -533,6 +616,13 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             tables[i] = tables[j];
             tables[j] = tmp;
         }
+        // the INNER join that reads the table of a later INNER join, and that join, with a join between them and one
+        // after the later join
+        final int forwardTarget = isForwardReadHeavy ? 3 + rnd.nextInt(modelCount - 4) : -1;
+        final int forwardReader = isForwardReadHeavy ? 1 + rnd.nextInt(forwardTarget - 2) : -1;
+        // positions in onTables of the table of the reader and of the last CROSS join between the reader and its target
+        int forwardReaderOnTable = -1;
+        int forwardCrossOnTable = -1;
         final boolean isLatestOn = isWhereHeavy && rnd.nextInt(4) == 0;
         final String firstTable = isLatestOn
                 ? "(SELECT * FROM t" + tables[0] + " LATEST ON ts PARTITION BY k) t" + tables[0]
@@ -564,6 +654,15 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             final String joinType;
             if (isLast) {
                 joinType = rnd.nextInt(3) == 0 ? "FULL JOIN" : "RIGHT JOIN";
+            } else if (joined == forwardReader || joined == forwardTarget) {
+                joinType = "JOIN";
+            } else if (joined > forwardReader && joined < forwardTarget) {
+                joinType = switch (rnd.nextInt(6)) {
+                    case 0, 1 -> "RIGHT JOIN";
+                    case 2, 3 -> "FULL JOIN";
+                    case 4 -> "JOIN";
+                    default -> "CROSS JOIN";
+                };
             } else if (isImpliedKeyHeavy) {
                 joinType = switch (rnd.nextInt(4)) {
                     case 0 -> "JOIN";
@@ -592,9 +691,21 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                 }
             }
             final StringBuilder join = new StringBuilder().append(' ').append(joinType).append(" t").append(tables[joined]);
-            if (!joinType.equals("CROSS JOIN") && !joinType.equals("ASOF JOIN") && !joinType.equals("LT JOIN")) {
+            // the join of the nested form when it differs from the flat one
+            String nestedJoin = null;
+            if (joined == forwardReader) {
+                join.append(" ON c").append(tables[forwardReader]).append(" = c").append(tables[forwardTarget]);
+                nestedJoin = " CROSS JOIN t" + tables[joined];
+                forwardReaderOnTable = onTableCount;
+            } else if (!joinType.equals("CROSS JOIN") && !joinType.equals("ASOF JOIN") && !joinType.equals("LT JOIN")) {
                 join.append(" ON ");
-                if (isImpliedKeyHeavy && joinType.equals("JOIN") && joined > 1) {
+                if (joined > forwardReader && joined <= forwardTarget && joinType.equals("JOIN") && forwardCrossOnTable != -1) {
+                    // ties the CROSS join to another table, so that SqlOptimiser may move the key onto the CROSS join
+                    // while the edge from a non-equi RIGHT or FULL join before it is pending
+                    final int other = rnd.nextInt(onTableCount - 1);
+                    join.append('c').append(onTables[forwardCrossOnTable]).append(" = c").append(tables[joined]).append(" AND c")
+                            .append(onTables[other < forwardCrossOnTable ? other : other + 1]).append(" = c").append(tables[joined]);
+                } else if (isImpliedKeyHeavy && joinType.equals("JOIN") && joined > 1) {
                     impliedKeyMaster = tables[rnd.nextInt(joined - 1)];
                     impliedKeySlave = tables[joined - 1];
                     join.append('c').append(impliedKeyMaster).append(" = c").append(tables[joined])
@@ -621,7 +732,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                 } else {
                     // a RIGHT or FULL join after the movable LEFT join has a join key
                     final boolean isKeyed = movableLeftJoined != -1 && (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN"));
-                    appendCondition(rnd, join, onTables, onTableCount, rnd.nextInt(onTableCount), isOuterJoinHeavy, isKeyed);
+                    final boolean isReadingForwardReader = forwardReaderOnTable != -1 && joined < forwardTarget && rnd.nextBoolean();
+                    appendCondition(rnd, join, onTables, onTableCount, isReadingForwardReader ? forwardReaderOnTable : rnd.nextInt(onTableCount), isOuterJoinHeavy || isForwardReadHeavy, isKeyed);
                     if (rnd.nextInt(3) == 0) {
                         join.append(" AND ");
                         appendCondition(rnd, join, onTables, onTableCount, rnd.nextInt(onTableCount), isOuterJoinHeavy, false);
@@ -647,18 +759,23 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             if (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN")) {
                 outerJoined = onTableCount;
                 isOuterJoinAfterMovableLeftJoin = movableLeftJoined != -1;
+            } else if (joinType.equals("CROSS JOIN") && joined > forwardReader && joined < forwardTarget) {
+                forwardCrossOnTable = onTableCount;
             }
             // no ON clause reads the movable LEFT join, nor a LEFT join without = after it, which SqlOptimiser would
             // then run before the outer join, and the movable LEFT join before it
             if (joined != movableLeftJoined && (movableLeftJoined == -1 || !joinType.equals("LEFT JOIN") || join.indexOf(" = ") != -1)) {
                 onTableCount++;
             }
+            if (joined == forwardTarget) {
+                nestedJoin = join + " AND c" + tables[forwardReader] + " = c" + tables[forwardTarget];
+            }
             if (isLast) {
                 prefixSubQuery = "SELECT * FROM (SELECT * FROM " + firstTable + joins + ") p" + join;
             }
             flat.append(join);
             joins.append(join);
-            nested = "SELECT * FROM (" + nested + ") n" + joined + join;
+            nested = "SELECT * FROM (" + nested + ") n" + joined + (nestedJoin != null ? nestedJoin : join);
         }
         final String latestOn = isLatestOn ? " LATEST ON ts PARTITION BY k" : "";
         String limitFenced = "SELECT * FROM (" + flat + latestOn + " LIMIT 1_000_000_000) f";
@@ -963,7 +1080,13 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         return String.join("\n", rows);
     }
 
-    private void assertFlatJoinReturnsRowsOf(int referenceIndex, int queryCount, boolean isImpliedKeyHeavy, boolean isWhereHeavy) throws Exception {
+    private void assertFlatJoinReturnsRowsOf(
+            int referenceIndex,
+            int queryCount,
+            boolean isImpliedKeyHeavy,
+            boolean isWhereHeavy,
+            boolean isForwardReadHeavy
+    ) throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             createTables();
@@ -972,7 +1095,14 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             int checkedCount = 0;
             int runCount = 0;
             for (int i = 0; i < queryCount; i++) {
-                final String[] queries = generateQueries(rnd, referenceIndex == PREFIX_SUB_QUERY || isImpliedKeyHeavy, isImpliedKeyHeavy, isWhereHeavy, false);
+                final String[] queries = generateQueries(
+                        rnd,
+                        referenceIndex == PREFIX_SUB_QUERY || isImpliedKeyHeavy,
+                        isImpliedKeyHeavy,
+                        isWhereHeavy,
+                        false,
+                        isForwardReadHeavy
+                );
                 final String flat = queries[0];
                 final String reference = queries[referenceIndex];
                 // a query with bind variables runs with two sets of values
@@ -1054,6 +1184,179 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                     + " CASE WHEN (x + " + t + ") % 5 = 0 THEN NULL ELSE ((x * " + (t + 1) + ") % 4) * 1.5 END,"
                     + " CASE WHEN (x + " + t + ") % 4 = 1 THEN NULL WHEN (x * " + (t + 1) + ") % 3 = 0 THEN 'a' WHEN (x * " + (t + 1) + ") % 3 = 1 THEN 'b' ELSE 'c' END,"
                     + " timestamp_sequence(" + (t * 1000) + ", 1000000) FROM long_sequence(" + (3 + t % 4) + ")");
+        }
+    }
+
+    // The joins of a flat form, the first table included as a join of type FROM: their types, tables and ON
+    // clauses, which the shape checks of testQueriesCoverOuterJoinOrderingEdgeShapes() read.
+    private static final class FlatJoins {
+        private final List<String> onClauses = new ArrayList<>();
+        private final List<String> tables = new ArrayList<>();
+        private final List<String> types = new ArrayList<>();
+
+        static FlatJoins of(String flat) {
+            final FlatJoins joins = new FlatJoins();
+            final int whereIndex = flat.indexOf(" WHERE ");
+            final int end = whereIndex == -1 ? flat.length() : whereIndex;
+            joins.types.add("FROM");
+            joins.tables.add(String.valueOf(flat.charAt("SELECT * FROM t".length())));
+            joins.onClauses.add("");
+            final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, end);
+            int onStart = -1;
+            while (joinMatcher.find()) {
+                if (onStart != -1) {
+                    joins.onClauses.add(flat.substring(onStart, joinMatcher.start()));
+                }
+                joins.types.add(joinMatcher.group(1));
+                joins.tables.add(joinMatcher.group(2));
+                onStart = joinMatcher.end();
+            }
+            if (onStart != -1) {
+                joins.onClauses.add(flat.substring(onStart, end));
+            }
+            return joins;
+        }
+
+        // the INNER join whose ON clause compares its table with a table joined after it, or -1
+        int getForwardReader() {
+            for (int i = 1, n = types.size(); i < n; i++) {
+                if (types.get(i).equals("JOIN") && getForwardTarget(i) != -1) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        // the later join whose table the ON clause of the join at reader reads, or -1
+        int getForwardTarget(int reader) {
+            final Matcher key = KEY_CONJUNCT.matcher(onClauses.get(reader));
+            while (key.find()) {
+                for (int group = 1; group <= 2; group++) {
+                    final int target = tables.indexOf(key.group(group));
+                    if (target > reader) {
+                        return target;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        // a CROSS join between a non-equi RIGHT or FULL join and a later RIGHT or FULL join with a join key
+        boolean hasCrossJoinPinnedAfterNonEquiOuterJoin() {
+            for (int nulling = 1, n = types.size(); nulling < n; nulling++) {
+                if (isNonEquiOuterJoin(nulling)) {
+                    for (int cross = nulling + 1; cross < n; cross++) {
+                        if (types.get(cross).equals("CROSS JOIN") && hasKeyedOuterJoinBetween(cross, n)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // an INNER join after a non-equi RIGHT or FULL join and a CROSS join, with a join key on the CROSS join
+        // and one on another table
+        boolean hasInnerJoinKeyedToCrossJoinAfterNonEquiOuterJoin() {
+            for (int nulling = 1, n = types.size(); nulling < n; nulling++) {
+                if (!isNonEquiOuterJoin(nulling)) {
+                    continue;
+                }
+                for (int cross = nulling + 1; cross < n; cross++) {
+                    if (!types.get(cross).equals("CROSS JOIN")) {
+                        continue;
+                    }
+                    for (int inner = cross + 1; inner < n; inner++) {
+                        if (types.get(inner).equals("JOIN") && isKeyedTo(inner, cross) && isKeyedToOtherThan(inner, cross)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // a RIGHT or FULL join with a join key strictly between the joins at lo and hi
+        boolean hasKeyedOuterJoinBetween(int lo, int hi) {
+            for (int i = lo + 1; i < hi; i++) {
+                if (isOuterJoin(i) && KEY_CONJUNCT.matcher(onClauses.get(i)).find()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // a LEFT join without join keys, whose table no later ON clause reads, followed by two RIGHT or FULL joins
+        // with join keys, and no time-series join after it
+        boolean hasKeyedOuterJoinsAfterKeylessLeftJoin() {
+            for (int left = 1, n = types.size(); left < n; left++) {
+                if (!types.get(left).equals("LEFT JOIN") || onClauses.get(left).contains(" = ")) {
+                    continue;
+                }
+                final Pattern leftColumn = Pattern.compile("[cv]" + tables.get(left) + "(?!\\d)");
+                int keyedOuterJoinCount = 0;
+                boolean isMovable = true;
+                for (int i = left + 1; i < n && isMovable; i++) {
+                    isMovable = !leftColumn.matcher(onClauses.get(i)).find()
+                            && !types.get(i).equals("ASOF JOIN") && !types.get(i).equals("LT JOIN");
+                    if (isOuterJoin(i) && KEY_CONJUNCT.matcher(onClauses.get(i)).find()) {
+                        keyedOuterJoinCount++;
+                    }
+                }
+                if (isMovable && keyedOuterJoinCount >= 2) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // a non-equi RIGHT or FULL join between the reader and its target whose ON clause reads the reader's table,
+        // followed by a RIGHT or FULL join with a join key before the target
+        boolean hasNonEquiOuterJoinReadingBeforeKeyedOuterJoin(int reader, int target) {
+            final Pattern readerColumn = Pattern.compile("[cv]" + tables.get(reader) + "(?!\\d)");
+            for (int nulling = reader + 1; nulling < target; nulling++) {
+                if (isNonEquiOuterJoin(nulling) && readerColumn.matcher(onClauses.get(nulling)).find()
+                        && hasKeyedOuterJoinBetween(nulling, target)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            return types + " " + tables + " " + onClauses;
+        }
+
+        private boolean isKeyedTo(int join, int other) {
+            final Matcher key = KEY_CONJUNCT.matcher(onClauses.get(join));
+            while (key.find()) {
+                if (key.group(1).equals(tables.get(other)) || key.group(2).equals(tables.get(other))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean isKeyedToOtherThan(int join, int other) {
+            final Matcher key = KEY_CONJUNCT.matcher(onClauses.get(join));
+            while (key.find()) {
+                for (int group = 1; group <= 2; group++) {
+                    final String table = key.group(group);
+                    if (!table.equals(tables.get(other)) && !table.equals(tables.get(join))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private boolean isNonEquiOuterJoin(int join) {
+            return isOuterJoin(join) && !KEY_CONJUNCT.matcher(onClauses.get(join)).find();
+        }
+
+        private boolean isOuterJoin(int join) {
+            return types.get(join).equals("RIGHT JOIN") || types.get(join).equals("FULL JOIN");
         }
     }
 }
