@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.cairo.TableToken;
 import io.questdb.client.QuestDB;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.TransactionTooLargeException;
 import io.questdb.test.tools.TestUtils;
@@ -250,6 +251,39 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testPooledStrictLeaseReturnDiscardsSplitFailedDuringOutage() throws Exception {
+        // Returning the lease discards the strict transaction with no rollback() call: the
+        // table the split sent must not commit with the next borrower's transaction.
+        assertMemoryLeak(() -> {
+            int port = RestartableQwpServer.pickFreePort();
+            int fillers;
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                server.start();
+                try (QuestDB db = QuestDB.connect(splitOutageConf(port) + "transaction=strict;sender_pool_max=1;"
+                        + "query_pool_min=0;")) {
+                    Sender lease = db.borrowSender();
+                    server.stop();
+                    fillers = fillRingDuringOutage(lease);
+                    sendPartOfSplitDuringOutage(lease);
+                    lease.close();
+                    server.start();
+                    try (Sender next = db.borrowSender()) {
+                        writeSymbolRows(next, "t", 10_000, 10);
+                        next.flush();
+                        Assert.assertTrue(next.drain(60_000));
+                    }
+                }
+            }
+            assertSplitDiscarded(fillers);
+        });
+    }
+
+    @Test
+    public void testResetDiscardsSplitFailedDuringOutage() throws Exception {
+        assertSplitFailedDuringOutageDiscarded("transaction=on;", Sender::reset);
+    }
+
+    @Test
     public void testResetDuringServerOutageDiscardsTransaction() throws Exception {
         // reset() used to wait 30 s for the server to ack the rollback, then abort the
         // transaction, so every later row and flush threw even after the server came back.
@@ -285,8 +319,39 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testRetryOfSplitFailedDuringOutageCommitsEachRowOnce() throws Exception {
+        // flush() of a split that failed partway used to send the whole batch again, so
+        // the table that had reached the client buffer committed twice.
+        assertRetryOfSplitFailedDuringOutageCommitsEachRowOnce("transaction=on;");
+    }
+
+    @Test
+    public void testRollbackDiscardsSplitFailedDuringOutage() throws Exception {
+        // The server is down and the client buffer full, so a split sends its first
+        // table's frame into the room left in the last segment and fails on the second.
+        // rollback() used to find no open transaction and publish nothing, so once the
+        // server was back, the next transaction's commit committed the first table.
+        assertSplitFailedDuringOutageDiscarded("transaction=on;", Sender::rollback);
+    }
+
+    @Test
     public void testRollbackDuringServerOutageDiscardsTransaction() throws Exception {
         assertDiscardDuringOutage("transaction=strict;", Sender::rollback);
+    }
+
+    @Test
+    public void testStrictResetDiscardsSplitFailedDuringOutage() throws Exception {
+        assertSplitFailedDuringOutageDiscarded("transaction=strict;", Sender::reset);
+    }
+
+    @Test
+    public void testStrictRetryOfSplitFailedDuringOutageCommitsEachRowOnce() throws Exception {
+        assertRetryOfSplitFailedDuringOutageCommitsEachRowOnce("transaction=strict;");
+    }
+
+    @Test
+    public void testStrictRollbackDiscardsSplitFailedDuringOutage() throws Exception {
+        assertSplitFailedDuringOutageDiscarded("transaction=strict;", Sender::rollback);
     }
 
     @Test
@@ -539,6 +604,54 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=300000;";
     }
 
+    // With the server down, commits fillers of ~78 KB until the client buffer refuses one,
+    // discards that one, and returns how many reached the ring. Each filler takes a
+    // segment of its own and leaves ~52 KB of it free. They are the sender's first
+    // frames, so the last one has FSN fillers - 1.
+    private static int fillRingDuringOutage(Sender sender) {
+        for (int frames = 0; frames < 100; frames++) {
+            writeRows(sender, "filler", frames * 780, 780);
+            try {
+                sender.flush();
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "cursor SF append failed");
+                sender.reset();
+                Assert.assertTrue("the ring must take a filler", frames > 0);
+                return frames;
+            }
+        }
+        Assert.fail("the ring must fill");
+        return -1;
+    }
+
+    // Writes split_a (~39 KB), split_b (~78 KB) and split_c (~30 KB), past the server's
+    // 128 KiB frame cap, into a ring fillRingDuringOutage filled. The split sends split_a
+    // into the room left in the last segment, and split_b needs a segment the full ring
+    // cannot add. The fillers carry no symbols, so split_a's frame carries the batch's
+    // new symbols, which the other tables and the next transaction reference.
+    private static void sendPartOfSplitDuringOutage(Sender sender) {
+        writeSymbolRows(sender, "split_a", 0, 390);
+        writeSymbolRows(sender, "split_b", 0, 780);
+        writeSymbolRows(sender, "split_c", 0, 300);
+        try {
+            sender.flush();
+            Assert.fail("the split's second frame cannot reach the full ring");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "cursor SF append failed");
+            TestUtils.assertContains(e.getCause().getMessage(), "cursor ring backpressured");
+        }
+    }
+
+    // A server that goes down after the handshake, and no auto-flush trigger that cuts a
+    // batch: flush() splits a batch past the server's 128 KiB frame cap per table. 512 KiB
+    // of 128 KiB segments hold a few fillers, and a refused append fails after 500 ms.
+    private static String splitOutageConf(int port) {
+        return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=1000;"
+                + "reconnect_initial_backoff_millis=10;reconnect_max_backoff_millis=50;"
+                + "auto_flush_bytes=off;auto_flush_rows=100000;auto_flush_interval=off;"
+                + "sf_max_segment_bytes=128k;sf_max_total_bytes=512k;sf_append_deadline_millis=500;";
+    }
+
     // For a server that is down when the sender starts: reconnects within milliseconds once
     // the server is up, and keeps frames well within the server's cap before the sender has
     // learned it. Each test drains before it closes, so the short close drain only bounds
@@ -624,6 +737,92 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    // The split's first table reached the server, and was discarded with the transaction.
+    // Only the fillers and the transaction after the discard commit.
+    private void assertSplitDiscarded(int fillers) throws Exception {
+        drainWalQueue();
+        // split_a's frame created the table, but none of its rows committed, and the other
+        // two tables never reached the server.
+        assertQuery("SELECT count() FROM split_a").noLeakCheck().noRandomAccess().expectSize()
+                .returns("count\n0\n");
+        Assert.assertNull(engine.getTableTokenIfExists("split_b"));
+        Assert.assertNull(engine.getTableTokenIfExists("split_c"));
+        // The next transaction's symbols were registered by split_a's frame, which the
+        // rollback discarded: its rows commit with their own symbols.
+        StringBuilder expected = new StringBuilder("v\tk\n");
+        for (int v = 10_000; v < 10_010; v++) {
+            expected.append(v).append("\tk").append(v % 7).append('\n');
+        }
+        assertQuery("SELECT v, k FROM t ORDER BY v").noLeakCheck().expectSize().returns(expected.toString());
+        assertQuery("SELECT count(), count_distinct(v) FROM filler").noLeakCheck().noRandomAccess().expectSize()
+                .returns("count\tcount_distinct\n" + fillers * 780 + '\t' + fillers * 780 + '\n');
+    }
+
+    // Each of the table's rows committed once, with its own symbol.
+    private void assertSplitTableCommittedOnce(String table, int rows) throws Exception {
+        assertQuery("SELECT count(), count_distinct(v), min(v), max(v), count_distinct(k) FROM " + table).noLeakCheck()
+                .noRandomAccess().expectSize()
+                .returns("count\tcount_distinct\tmin\tmax\tcount_distinct1\n" + rows + '\t' + rows + "\t0\t" + (rows - 1)
+                        + "\t7\n");
+        assertQuery("SELECT count() FROM " + table + " WHERE k <> concat('k', v % 7)").noLeakCheck().noRandomAccess()
+                .expectSize().returns("count\n0\n");
+    }
+
+    // The server goes down after the handshake, fillers fill the client buffer, a split
+    // fails after its first frame, and the transaction is discarded. The server comes
+    // back, and the next transaction commits.
+    private void assertSplitFailedDuringOutageDiscarded(String mode, Consumer<Sender> discard) throws Exception {
+        assertMemoryLeak(() -> {
+            int port = RestartableQwpServer.pickFreePort();
+            int fillers;
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                server.start();
+                try (Sender sender = Sender.fromConfig(splitOutageConf(port) + mode)) {
+                    server.stop();
+                    fillers = fillRingDuringOutage(sender);
+                    sendPartOfSplitDuringOutage(sender);
+                    // Must not wait for the server: the rollback frame fits the room the
+                    // first table's frame left in the last segment.
+                    discard.accept(sender);
+                    server.start();
+                    writeSymbolRows(sender, "t", 10_000, 10);
+                    sender.flush();
+                    Assert.assertTrue(sender.drain(60_000));
+                }
+            }
+            assertSplitDiscarded(fillers);
+        });
+    }
+
+    // As assertSplitFailedDuringOutageDiscarded, but flush() retries the split once the
+    // server is back: every row of the batch commits once.
+    private void assertRetryOfSplitFailedDuringOutageCommitsEachRowOnce(String mode) throws Exception {
+        assertMemoryLeak(() -> {
+            int port = RestartableQwpServer.pickFreePort();
+            int fillers;
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                server.start();
+                try (Sender sender = Sender.fromConfig(splitOutageConf(port) + mode)) {
+                    server.stop();
+                    fillers = fillRingDuringOutage(sender);
+                    sendPartOfSplitDuringOutage(sender);
+                    server.start();
+                    // The ring replays, and the server's acks of the fillers make room.
+                    Assert.assertTrue(sender.awaitAckedFsn(fillers - 1, 60_000));
+                    sender.flush();
+                    Assert.assertTrue(sender.drain(60_000));
+                }
+            }
+            drainWalQueue();
+            // The retry sends split_b and split_c, whose symbols split_a's frame registered.
+            assertSplitTableCommittedOnce("split_a", 390);
+            assertSplitTableCommittedOnce("split_b", 780);
+            assertSplitTableCommittedOnce("split_c", 300);
+            assertQuery("SELECT count() FROM filler").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n" + fillers * 780 + '\n');
+        });
+    }
+
     // Runs task(0) .. task(threads - 1) on as many threads at once and rethrows the
     // first failure. A failing thread breaks the others' barriers, so none waits for it.
     private static void runOnThreads(int threads, ThreadTask task) throws Exception {
@@ -660,6 +859,13 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     private static void writeRows(Sender sender, String table, int from, int count) {
         for (int i = from, n = from + count; i < n; i++) {
             sender.table(table).longColumn("v", i).stringColumn("s", PAD).atNow();
+        }
+    }
+
+    // As writeRows, with a SYMBOL column k of seven values, derived from v.
+    private static void writeSymbolRows(Sender sender, String table, int from, int count) {
+        for (int i = from, n = from + count; i < n; i++) {
+            sender.table(table).symbol("k", "k" + (i % 7)).longColumn("v", i).stringColumn("s", PAD).atNow();
         }
     }
 

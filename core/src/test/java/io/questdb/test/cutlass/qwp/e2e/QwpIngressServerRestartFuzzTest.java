@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.TransactionTooLargeException;
 import io.questdb.log.Log;
@@ -359,6 +360,20 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // count each spelling apart, so the server committed such a transaction in parts,
         // and discarding it kept them.
         assertTransactionsAcrossBounces(TestUtils.generateRandom(LOG), "transaction=strict;", "", 400, 300);
+    }
+
+    @Test
+    public void testSplitTransactionsFailPartwayWhileServerBounces() throws Exception {
+        // A transactional sender with no byte trigger flushes transactions of up to 12,000
+        // rows under three spellings of the table name, a client buffer each, so a
+        // transaction past the server's 128 KiB frame cap goes out as one frame per
+        // spelling. The client buffer holds about two of the largest, and refuses an
+        // append after 20 ms when full, so while the server is down a flush often fails
+        // after some of its frames reached the buffer. The producer then retries the flush
+        // or discards the transaction. The sender used to lose track of the frames that had
+        // reached the buffer: a discard sent no rollback frame for them, and the next
+        // commit committed them.
+        assertSplitTransactionsAcrossBounces(TestUtils.generateRandom(LOG));
     }
 
     @Test
@@ -865,6 +880,205 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 } else {
                     Assert.assertEquals("no transaction reaches the default row limit", 0, refusedTransactions.get());
                 }
+
+                drainWalQueue();
+                engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
+                // Ids are distinct across transactions: a leaked discarded row raises the
+                // count, a lost committed row lowers it, and the sum catches a swap.
+                assertQuery("SELECT count() c, count_distinct(id) d, sum(id) s FROM " + TABLE_NAME)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("c\td\ts\n" + committedRows.get() + "\t" + committedRows.get() + "\t"
+                                + committedIdSum.get() + "\n");
+                assertTagsIntact();
+            }
+        });
+    }
+
+    // A transactional sender flushes transactions that split per spelling of the table
+    // name, while another thread bounces the server for long enough to fill the client
+    // buffer. The producer retries a flush that fails until it lands, or gives up on it,
+    // and rolls back or resets the transactions it gives up on and some others, retrying
+    // while the client buffer has no room for the rollback frame. The bouncer goes on until
+    // the producer both committed and discarded a transaction whose flush failed partway.
+    // Once the server is stable, the table must hold exactly the rows of the committed
+    // transactions.
+    private void assertSplitTransactionsAcrossBounces(Rnd rnd) throws Exception {
+        assertMemoryLeak(() -> {
+            createTargetTable();
+            int port = RestartableQwpServer.pickFreePort();
+            String mode = rnd.nextBoolean() ? "transaction=on;" : "transaction=strict;";
+            // flush() sends each transaction: no trigger fires within one. 512 KiB of
+            // 128 KiB segments hold about two transactions of 12,000 rows, ~240 KB each, and
+            // too few to make a transaction=on transaction commit in parts. In memory: on
+            // disk the persisted symbol dictionary takes 4 MiB of sf_max_total_bytes.
+            String connect = "ws::addr=localhost:" + port + ";" + mode
+                    + "auto_flush_bytes=off;auto_flush_rows=100000;auto_flush_interval=off;"
+                    + "sf_max_segment_bytes=128k;sf_max_total_bytes=512k;sf_append_deadline_millis=20;"
+                    + "reconnect_initial_backoff_millis=10;reconnect_max_backoff_millis=50;"
+                    + "reconnect_max_duration_millis=120000;close_flush_timeout_millis=120000;";
+            long producerSeed0 = rnd.nextLong();
+            long producerSeed1 = rnd.nextLong();
+            long tsBase = 1_700_000_000_000_000_000L;
+            LOG.info().$("split transactions across bounces [connect=").$(connect).I$();
+
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+                server.start();
+
+                AtomicBoolean stopProducer = new AtomicBoolean();
+                AtomicReference<Throwable> producerError = new AtomicReference<>();
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                AtomicLong committedRows = new AtomicLong();
+                AtomicLong committedIdSum = new AtomicLong();
+                AtomicLong discardedRows = new AtomicLong();
+                // Transactions whose flush failed after some of their frames had reached
+                // the client buffer, and that a retried flush then committed or that the
+                // producer discarded.
+                AtomicLong partlySentCommits = new AtomicLong();
+                AtomicLong partlySentDiscards = new AtomicLong();
+                CountDownLatch producerDone = new CountDownLatch(1);
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+                CountDownLatch firstCommitAcked = new CountDownLatch(1);
+
+                Thread producer = new Thread(() -> {
+                    Rnd producerRnd = new Rnd(producerSeed0, producerSeed1);
+                    try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(connect)) {
+                        long id = 0;
+                        while (!stopProducer.get()) {
+                            int rows = 1 + producerRnd.nextInt(12_000);
+                            // The first transaction always commits, so the table exists and
+                            // the oracle below never sees an empty sum.
+                            boolean isCommit = firstCommitAcked.getCount() > 0 || producerRnd.nextInt(3) > 0;
+                            long firstId = id;
+                            Assert.assertEquals(rows, writeTransactionRows(sender, producerRnd, firstId, rows,
+                                    tsBase + firstId * 1000L));
+                            id += rows;
+                            boolean isPartlySent = false;
+                            boolean isRetried = false;
+                            while (isCommit) {
+                                long published = sender.getCursorEngineForTesting().publishedFsn();
+                                try {
+                                    sender.flush();
+                                    break;
+                                } catch (LineSenderException e) {
+                                    // The client buffer is full and the server is away.
+                                    TestUtils.assertContains(e.getMessage(), "cursor SF append failed");
+                                    isPartlySent |= sender.getCursorEngineForTesting().publishedFsn() > published;
+                                    // At the first failure, retry until the flush lands, or
+                                    // give the transaction up.
+                                    isRetried = isRetried || producerRnd.nextBoolean();
+                                    isCommit = isRetried;
+                                    Os.sleep(5);
+                                }
+                            }
+                            if (isCommit) {
+                                committedRows.addAndGet(rows);
+                                // ids firstId .. id - 1
+                                committedIdSum.addAndGet((firstId + id - 1) * rows / 2);
+                                if (isPartlySent) {
+                                    partlySentCommits.incrementAndGet();
+                                }
+                                if (firstCommitAcked.getCount() > 0) {
+                                    Assert.assertTrue("the first transaction must drain before the first bounce",
+                                            sender.drain(30_000));
+                                    firstCommitAcked.countDown();
+                                }
+                            } else {
+                                // A part committed on its own would stay committed.
+                                Assert.assertEquals("no transaction commits in parts",
+                                        0, sender.getTxnRowsCommittedInPartsForTesting());
+                                boolean isRollback = producerRnd.nextBoolean();
+                                while (true) {
+                                    try {
+                                        if (isRollback) {
+                                            sender.rollback();
+                                        } else {
+                                            sender.reset();
+                                        }
+                                        break;
+                                    } catch (LineSenderException e) {
+                                        // No room for the rollback frame yet.
+                                        TestUtils.assertContains(e.getMessage(), "cursor SF append failed");
+                                        Os.sleep(5);
+                                    }
+                                }
+                                discardedRows.addAndGet(rows);
+                                if (isPartlySent) {
+                                    partlySentDiscards.incrementAndGet();
+                                }
+                            }
+                            Os.sleep(producerRnd.nextInt(10));
+                        }
+                        // End on a commit, so a frame a discard left on the server would
+                        // commit with it and show in the count, rather than hold drain() up.
+                        long firstId = id;
+                        writeTransactionRows(sender, producerRnd, firstId, 10, tsBase + firstId * 1000L);
+                        id += 10;
+                        while (true) {
+                            try {
+                                sender.flush();
+                                break;
+                            } catch (LineSenderException e) {
+                                // The client buffer has not drained yet.
+                                TestUtils.assertContains(e.getMessage(), "cursor SF append failed");
+                                Os.sleep(5);
+                            }
+                        }
+                        committedRows.addAndGet(10);
+                        committedIdSum.addAndGet((firstId + id - 1) * 10 / 2);
+                        Assert.assertTrue("everything committed must drain once the server is stable",
+                                sender.drain(120_000));
+                    } catch (Throwable t) {
+                        producerError.set(t);
+                    } finally {
+                        producerDone.countDown();
+                        Path.clearThreadLocals();
+                    }
+                }, "qwp-txn-split-producer");
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        Assert.assertTrue("producer's first transaction never drained",
+                                firstCommitAcked.await(60, TimeUnit.SECONDS));
+                        // Long enough down for the producer to fill the client buffer.
+                        for (int i = 0; i < 3 || (i < 60 && (partlySentCommits.get() == 0 || partlySentDiscards.get() == 0)); i++) {
+                            server.stop();
+                            Os.sleep(100 + rnd.nextInt(150)); // 100..249 ms downtime
+                            server.start();
+                            Os.sleep(120 + rnd.nextInt(200)); // 120..319 ms uptime
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-txn-split-bouncer");
+
+                producer.start();
+                bouncer.start();
+                if (!bouncerDone.await(180, TimeUnit.SECONDS)) {
+                    stopProducer.set(true);
+                    throw new AssertionError("bouncer did not finish within 180s");
+                }
+                if (bouncerError.get() != null) {
+                    stopProducer.set(true);
+                    throw new AssertionError("bouncer failed", bouncerError.get());
+                }
+                Os.sleep(200);
+                stopProducer.set(true);
+                if (!producerDone.await(180, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producer did not finish within 180s");
+                }
+                if (producerError.get() != null) {
+                    throw new AssertionError("the producer must not fail across server bounces", producerError.get());
+                }
+                LOG.info().$("split transactions across bounces done [committedRows=").$(committedRows.get())
+                        .$(", discardedRows=").$(discardedRows.get())
+                        .$(", partlySentCommits=").$(partlySentCommits.get())
+                        .$(", partlySentDiscards=").$(partlySentDiscards.get()).I$();
+                Assert.assertTrue("a transaction whose flush failed partway must commit", partlySentCommits.get() > 0);
+                Assert.assertTrue("a transaction whose flush failed partway must be discarded", partlySentDiscards.get() > 0);
 
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
