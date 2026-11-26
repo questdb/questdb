@@ -352,6 +352,14 @@ public class WorkerPool implements Closeable {
         return groupCount;
     }
 
+    /**
+     * Per group, the CPUs its workers run on, or null if the pool leaves placement to the worker
+     * affinity.
+     */
+    public @Nullable int[][] getGroupCpus() {
+        return groupCpus;
+    }
+
     @TestOnly
     public int getFreeOnExitJobCount() {
         return freeOnExit.size();

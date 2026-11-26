@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CpuTopology;
 import io.questdb.std.Os;
+import io.questdb.test.tools.CpuTopologyFixture;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -46,7 +47,6 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
@@ -91,7 +91,7 @@ public class NetworkSplitConfigurationTest {
                 .getSharedWorkerPoolNetworkConfiguration();
         Assert.assertEquals(1, byDefault.getGroupCount());
         Assert.assertNull(byDefault.getGroupCpus());
-        final WorkerPoolConfiguration oneGroup = FixtureConfiguration.create(properties(190, 1), twoSockets(96))
+        final WorkerPoolConfiguration oneGroup = CpuTopologyFixture.configuration(root, properties(190, 1), twoSockets(96), LOG)
                 .getSharedWorkerPoolNetworkConfiguration();
         Assert.assertEquals(1, oneGroup.getGroupCount());
         Assert.assertNull(oneGroup.getGroupCpus());
@@ -168,7 +168,7 @@ public class NetworkSplitConfigurationTest {
     public void testSplitIgnoresAffinityOfMinusOne() throws Exception {
         final Properties properties = properties(64, 2);
         properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_AFFINITY.getPropertyPath(), "-1,".repeat(63) + "-1");
-        final WorkerPoolConfiguration network = FixtureConfiguration.create(properties, twoSockets(96)).getSharedWorkerPoolNetworkConfiguration();
+        final WorkerPoolConfiguration network = CpuTopologyFixture.configuration(root, properties, twoSockets(96), LOG).getSharedWorkerPoolNetworkConfiguration();
         Assert.assertEquals(2, network.getGroupCount());
         Assert.assertNotNull(network.getGroupCpus());
     }
@@ -232,7 +232,7 @@ public class NetworkSplitConfigurationTest {
         // two sockets on one NUMA node don't look like real hardware, so the groups aren't pinned
         final Path fixture = fixture("0-191");
         for (int cpu = 0; cpu < 192; cpu++) {
-            cpu(fixture, cpu, cpu / 96, 0);
+            CpuTopologyFixture.cpu(fixture, cpu, cpu / 96, 0);
         }
         assertSplitUnpinned(
                 fixture,
@@ -277,7 +277,7 @@ public class NetworkSplitConfigurationTest {
         );
         final Path threeSockets = fixture("0-23");
         for (int cpu = 0; cpu < 24; cpu++) {
-            cpu(threeSockets, cpu, cpu / 8, cpu / 8);
+            CpuTopologyFixture.cpu(threeSockets, cpu, cpu / 8, cpu / 8);
         }
         assertSplitUnpinned(
                 threeSockets,
@@ -310,7 +310,7 @@ public class NetworkSplitConfigurationTest {
         final Properties properties = new Properties();
         properties.setProperty(GROUPS_KEY, groupCount);
         try {
-            FixtureConfiguration.create(properties, twoSockets(96));
+            CpuTopologyFixture.configuration(root, properties, twoSockets(96), LOG);
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), expectedMessage);
@@ -321,13 +321,6 @@ public class NetworkSplitConfigurationTest {
         final WorkerPoolConfiguration network = create(fixture, properties(workerCount, groupCount), expectedLog);
         Assert.assertEquals(groupCount, network.getGroupCount());
         Assert.assertNull(network.getGroupCpus());
-    }
-
-    private static void cpu(Path fixture, int cpu, int socket, int node) throws IOException {
-        final Path dir = fixture.resolve("sys/devices/system/cpu/cpu" + cpu);
-        Files.createDirectories(dir.resolve("topology"));
-        Files.writeString(dir.resolve("topology/physical_package_id"), socket + "\n");
-        Files.createDirectories(dir.resolve("node" + node));
     }
 
     private static WorkerPoolConfiguration create(@Nullable Path fixture, Properties properties, String... expectedLogs) throws Exception {
@@ -343,7 +336,7 @@ public class NetworkSplitConfigurationTest {
         final LogCapture capture = new LogCapture();
         capture.start();
         try {
-            final PropServerConfiguration configuration = FixtureConfiguration.create(properties, fixture);
+            final PropServerConfiguration configuration = CpuTopologyFixture.configuration(root, properties, fixture, LOG);
             for (String expectedLog : expectedLogs) {
                 capture.waitFor(expectedLog, 10_000);
             }
@@ -359,13 +352,7 @@ public class NetworkSplitConfigurationTest {
 
     // the allowed CPUs are all online
     private static Path fixture(String allowed) throws IOException {
-        final Path fixture = temp.newFolder().toPath();
-        Files.createDirectories(fixture.resolve("proc/self"));
-        Files.writeString(fixture.resolve("proc/self/status"), "Name:\tjava\nCpus_allowed_list:\t" + allowed + "\n");
-        final Path cpuDir = fixture.resolve("sys/devices/system/cpu");
-        Files.createDirectories(cpuDir);
-        Files.writeString(cpuDir.resolve("online"), allowed + "\n");
-        return fixture;
+        return CpuTopologyFixture.create(temp.newFolder().toPath(), allowed, allowed);
     }
 
     private static Properties properties(int workerCount, int groupCount) {
@@ -386,39 +373,12 @@ public class NetworkSplitConfigurationTest {
     private static Path singleSocket() throws IOException {
         final Path fixture = fixture("0-31");
         for (int cpu = 0; cpu < 32; cpu++) {
-            cpu(fixture, cpu, 0, 0);
+            CpuTopologyFixture.cpu(fixture, cpu, 0, 0);
         }
         return fixture;
     }
 
     private static Path twoSockets(int cpusPerSocket) throws IOException {
-        final Path fixture = fixture("0-" + (2 * cpusPerSocket - 1));
-        for (int cpu = 0; cpu < 2 * cpusPerSocket; cpu++) {
-            cpu(fixture, cpu, cpu / cpusPerSocket, cpu / cpusPerSocket);
-        }
-        return fixture;
-    }
-
-    // Reads the CPU layout from a fixture /proc and /sys tree, or reports the split as
-    // unsupported when there is none.
-    private static class FixtureConfiguration extends PropServerConfiguration {
-        // createCpuTopology() runs inside the super constructor, before this class's own fields
-        // are set, so the fixture travels in a static field; the tests of a class run one at a time
-        private static volatile Path fixture;
-
-        private FixtureConfiguration(Properties properties) throws Exception {
-            super(root, properties, null, LOG, new BuildInformationHolder());
-        }
-
-        static PropServerConfiguration create(Properties properties, @Nullable Path fixture) throws Exception {
-            FixtureConfiguration.fixture = fixture;
-            return new FixtureConfiguration(properties);
-        }
-
-        @Override
-        protected @Nullable CpuTopology createCpuTopology() {
-            final Path fixture = FixtureConfiguration.fixture;
-            return fixture != null ? new CpuTopology(fixture.resolve("proc"), fixture.resolve("sys")) : null;
-        }
+        return CpuTopologyFixture.twoSockets(temp.newFolder().toPath(), cpusPerSocket);
     }
 }

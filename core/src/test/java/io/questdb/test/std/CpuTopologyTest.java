@@ -25,7 +25,10 @@
 package io.questdb.test.std;
 
 import io.questdb.std.CpuTopology;
+import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -34,6 +37,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class CpuTopologyTest {
     @Rule
@@ -137,6 +142,37 @@ public class CpuTopologyTest {
                 Assert.assertTrue(e.getMessage(), e.getMessage().startsWith("malformed CPU list"));
             }
         }
+    }
+
+    @Test
+    public void testReadsProcessCpusOnRestrictedThread() throws Exception {
+        // a configuration reload can run on a worker restricted to one socket's CPUs, and must read
+        // the same layout as startup did, so the topology comes from the process's CPU set
+        Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
+        final int[] allowed = TestUtils.getThreadAllowedCpus();
+        Assume.assumeTrue("needs at least 2 allowed CPUs", allowed.length > 1);
+        final CpuTopology.Layout expected = new CpuTopology().read();
+        final AtomicReference<CpuTopology.Layout> actual = new AtomicReference<>();
+        final AtomicReference<int[]> threadCpus = new AtomicReference<>();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread thread = new Thread(() -> {
+            try {
+                Assert.assertEquals(0, Os.setCurrentThreadCpus(new int[]{allowed[0]}));
+                threadCpus.set(TestUtils.getThreadAllowedCpus());
+                actual.set(new CpuTopology().read());
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        });
+        thread.start();
+        thread.join(TimeUnit.SECONDS.toMillis(30));
+        Assert.assertFalse("reader thread still running", thread.isAlive());
+        if (failure.get() != null) {
+            throw new AssertionError(failure.get());
+        }
+        Assert.assertArrayEquals(new int[]{allowed[0]}, threadCpus.get());
+        Assert.assertEquals(expected.getDescription(), actual.get().getDescription());
+        Assert.assertEquals(expected.getRefusal(), actual.get().getRefusal());
     }
 
     @Test
