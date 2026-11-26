@@ -40,9 +40,10 @@ import org.jetbrains.annotations.Nullable;
  * the same way.
  * <p>
  * It exists because a compiled {@link Function} has no identity of its own worth the name.
- * {@link Function#isEquivalentTo} is documented as best-effort and compares a node's arguments
- * without comparing the node - two {@link io.questdb.griffin.engine.functions.BinaryFunction}s
- * over one pair of columns answer true whether they add or subtract - so a proof built on it
+ * {@code Function.isEquivalentTo()}, which the shared runtime no longer has, was best-effort and
+ * compared a node's arguments without comparing the node - two
+ * {@link io.questdb.griffin.engine.functions.BinaryFunction}s over one pair of columns answered
+ * true whether they added or subtracted - so a proof built on it
  * would fuse {@code partition by a + b} with {@code partition by a - b}. What is canonical here
  * is the <b>parsed tree</b> the compiler handed the function parser, resolved against the
  * metadata that parse ran under:
