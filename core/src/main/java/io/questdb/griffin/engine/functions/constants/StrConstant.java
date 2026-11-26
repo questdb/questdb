@@ -43,7 +43,7 @@ public class StrConstant extends StrFunction implements ConstantFunction {
         this(value, true);
     }
 
-    private StrConstant(CharSequence value, boolean isSqlLiteral) {
+    protected StrConstant(CharSequence value, boolean isSqlLiteral) {
         if (value == null) {
             this.value = null;
             this.length = TableUtils.NULL_LEN;

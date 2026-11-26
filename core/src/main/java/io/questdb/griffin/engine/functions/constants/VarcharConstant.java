@@ -44,7 +44,7 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
         this(value, true);
     }
 
-    private VarcharConstant(Utf8Sequence value, boolean isSqlLiteral) {
+    protected VarcharConstant(Utf8Sequence value, boolean isSqlLiteral) {
         if (value == null) {
             this.value = null;
             this.utf16Value = null;

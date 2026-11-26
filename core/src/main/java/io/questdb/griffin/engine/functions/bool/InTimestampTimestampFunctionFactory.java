@@ -40,8 +40,10 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalTextConstant;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
+import io.questdb.griffin.model.IntervalSearch;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
@@ -52,6 +54,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 
@@ -71,21 +74,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
      * Parses into {@code out}, which it clears first, the intervals a constant text element of a TIMESTAMP IN list
      * spells when it is not a timestamp; false when the text spells no interval free of date variables.
      */
-    /**
-     * True when the constant interval text of an IN over a key of {@code timestampType} holds no instant at that
-     * precision, e.g. '2024-01-06#workday', where the day filter drops the only day, a Saturday: no row matches,
-     * NULL included, and {@link #newInstance} folds the IN to false. A text with a date variable resolves its
-     * instants at execution.
-     */
-    public static boolean holdsNoInstant(int timestampType, CharSequence text, int position, CairoConfiguration configuration) throws SqlException {
-        if (text == null || DateExpressionEvaluator.containsDateVariable(text, 0, text.length())) {
-            return false;
-        }
-        final LongList intervals = new LongList();
-        IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(timestampType), configuration, text, intervals, position, new StringSink());
-        return intervals.size() == 0;
-    }
-
     public static boolean parseIntervalElement(
             TimestampDriver driver,
             CairoConfiguration configuration,
@@ -119,7 +107,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Keeps a tick expression with date variables built: vetting it would compile it once more.
+     * Keeps a tick expression with date variables built: vetting it would compile it once more. The intervals the
+     * binder parsed need no vetting.
      */
     @Override
     public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
@@ -128,6 +117,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return listKind != LIST_INTERVAL;
         }
         final int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
+        final IntervalSearch search = boundIntervalSearch(args, timestampType);
+        if (search != null) {
+            return search.getCompiledExpr() == null;
+        }
         final LongList values = VETTED_VALUES.get();
         values.clear();
         if (!isIntervalSearch(args)) {
@@ -160,6 +153,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
         assert ColumnType.isTimestamp(timestampType);
         if (listKind == LIST_CONSTANT) {
+            final IntervalSearch search = boundIntervalSearch(args, timestampType);
+            if (search != null) {
+                final CompiledTickExpression compiledExpr = search.getCompiledExpr();
+                return compiledExpr != null ? new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiledExpr, timestampType)
+                        : new EqTimestampStrConstantFunction(args.getQuick(0), search.getIntervals());
+            }
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
@@ -167,7 +166,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
-                    return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
+                    return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled, timestampType);
                 }
                 final EqTimestampStrConstantFunction func = new EqTimestampStrConstantFunction(
                         args.getQuick(0),
@@ -241,6 +240,19 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         if (driver.isExactFrom(value, type)) {
             values.add(driver.ceilFrom(value, type));
         }
+    }
+
+    /**
+     * The intervals the binder parsed from the text of an interval search at the key's precision, or null when the
+     * right operand carries none, as in a call the legacy planner builds.
+     */
+    private static @Nullable IntervalSearch boundIntervalSearch(ObjList<Function> args, int timestampType) {
+        if (args.size() == 2 && args.getQuick(1) instanceof IntervalTextConstant text) {
+            final IntervalSearch search = text.getIntervalSearch();
+            assert search.getTimestampType() == timestampType : "interval search parsed at another precision";
+            return search;
+        }
+        return null;
     }
 
     private static boolean isElementEqual(Function func, Record rec, long ts, TimestampDriver driver, int position) {
@@ -372,10 +384,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final CompiledTickExpression compiledExpr;
         private final LongList intervals = new LongList();
         private final Function left;
+        private final int timestampType;
 
-        public EqTimestampCompiledTickExprFunction(Function left, CompiledTickExpression compiledExpr) {
+        public EqTimestampCompiledTickExprFunction(Function left, CompiledTickExpression compiledExpr, int timestampType) {
             this.left = left;
             this.compiledExpr = compiledExpr;
+            this.timestampType = timestampType;
         }
 
         @Override
@@ -392,8 +406,21 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             intervals.clear();
-            compiledExpr.init(symbolTableSource, executionContext);
-            compiledExpr.evaluate(intervals);
+            compiledExpr.evaluate(intervals, executionContext.getNow(timestampType));
+        }
+
+        /**
+         * The intervals follow the clock, so a constant key makes the IN constant within an execution only, never a
+         * value to fold before {@link #init} evaluates them.
+         */
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return left.isConstant() || left.isRuntimeConstant();
         }
 
         @Override

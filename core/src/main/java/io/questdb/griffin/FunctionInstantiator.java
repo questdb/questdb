@@ -65,6 +65,8 @@ import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalStrConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalVarcharConstant;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
@@ -158,9 +160,15 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     /**
-     * The constant function the generator builds for a bound constant.
+     * The constant function the generator builds for a bound constant; the right operand of an interval IN keeps the
+     * intervals the binder parsed.
      */
     public static Function constantFunction(ConstantExpression constant) {
+        if (constant.getIntervalSearch() != null) {
+            return ColumnType.tagOf(constant.getDataType()) == ColumnType.STRING
+                    ? new IntervalStrConstant(constant.getStrValue(), constant.getIntervalSearch())
+                    : new IntervalVarcharConstant(constant.getVarcharValue(), constant.getIntervalSearch());
+        }
         return switch (ColumnType.tagOf(constant.getDataType())) {
             case ColumnType.TIMESTAMP -> TimestampConstant.newInstance(constant.getLongValue(), constant.getDataType());
             case ColumnType.STRING -> StrConstant.fromValue(constant.getStrValue());

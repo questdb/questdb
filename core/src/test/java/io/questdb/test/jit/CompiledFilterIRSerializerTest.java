@@ -3050,8 +3050,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testTemporalInUnquotedIntegerDeclinesJit() throws Exception {
         // InTimestampTimestampFunctionFactory reads an unquoted integer as a point, while the tick
-        // expression parser reads four digits as a year. Only a quoted string or NULL is an
-        // interval expression.
+        // expression parser reads four digits as a year. The binder parses text alone as intervals,
+        // so an integer carries none, and the JIT reads NULL as a point.
         for (String c : new String[]{"adate", "atimestamp", "atimestampns"}) {
             for (String element : new String[]{"2024", "1970", "0", "2024_000"}) {
                 try {
@@ -3065,6 +3065,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             assertIRStackBalanced();
             serialize(c + " IN NULL");
             assertIR("(i64 -9223372036854775808L)(i64 " + c + ")(=)(ret)");
+        }
+        // An unparenthesised IN over a key of another type is no interval search either.
+        for (String filter : new String[]{"anint IN 5", "along IN 5"}) {
+            try {
+                serialize(filter);
+                Assert.fail("JIT must decline " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid operator: in");
+            }
         }
     }
 

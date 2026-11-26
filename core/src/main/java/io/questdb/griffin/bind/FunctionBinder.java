@@ -59,6 +59,8 @@ import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalStrConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalVarcharConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -66,6 +68,7 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.model.IntervalSearch;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -624,6 +627,15 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return SqlKeywords.isAndKeyword(name) || SqlKeywords.isOrKeyword(name);
     }
 
+    /**
+     * An IN that InTimestampTimestampFunctionFactory reads as an interval search: a column or expression key of
+     * TIMESTAMP, TIMESTAMP_NS or DATE type and a constant STRING or VARCHAR text.
+     */
+    private static boolean isIntervalSearch(FunctionFactoryDescriptor overload, ObjList<Function> args) {
+        return overload.getFactory() instanceof InTimestampTimestampFunctionFactory && args.size() == 2
+                && isTemporalOperand(args.getQuick(0)) && args.getQuick(1).isConstant() && ColumnType.isVarcharOrString(args.getQuick(1).getType());
+    }
+
     private static boolean isLiteral(BoundExpression expression) {
         if (expression instanceof FunctionExpression call) {
             return isNegatedLiteral(call.getName(), call.getArguments());
@@ -739,6 +751,18 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (unconstructedIndex.putIfAbsent(expression, expression)) {
             unconstructed.add(expression);
         }
+    }
+
+    /**
+     * Records the intervals of an interval IN on its bound text, for the JIT, and hands them to the factory through the
+     * text's constant, which the generator adopts or builds again from the bound text.
+     */
+    private void attachIntervalSearch(ObjList<Function> args, IntervalSearch search) {
+        ((ConstantExpression) arguments.getQuick(1)).withIntervalSearch(search);
+        final Function text = args.getQuick(1);
+        args.setQuick(1, ColumnType.tagOf(text.getType()) == ColumnType.STRING ? new IntervalStrConstant(text.getStrA(null), search)
+                : new IntervalVarcharConstant(text.getVarcharA(null), search));
+        Misc.free(text);
     }
 
     private void beginArguments(int count) {
@@ -1074,9 +1098,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (SqlKeywords.isInKeyword(operator) && (count > 2 || count == 2 && !isCaseText(args.getQuick(1).getType()))) {
             return canonicalizeTemporalIn(args, positions);
         }
-        if (SqlKeywords.isInKeyword(operator) && count == 2) {
-            return foldEmptyIntervalIn(args, positions);
-        }
         return null;
     }
 
@@ -1293,7 +1314,20 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final int staticType;
         try {
             validateTimestampText(overload, name, args, sqlExecutionContext);
-            final Function folded = canonicalizeTemporalComparison(name, args, positions);
+            Function folded = canonicalizeTemporalComparison(name, args, positions);
+            IntervalSearch intervalSearch = null;
+            if (folded == null && isIntervalSearch(overload, args)) {
+                assert arguments.getQuick(1) instanceof ConstantExpression : "constant text bound to a non-constant";
+                final int keyType = args.getQuick(0).getType();
+                // A string literal over a TIMESTAMP key parses in its quoted spelling, as interval extraction parses it.
+                final boolean isQuotedSpelling = ColumnType.tagOf(keyType) == ColumnType.TIMESTAMP
+                        && IntervalExtractor.isStringLiteral((ConstantExpression) arguments.getQuick(1));
+                intervalSearch = IntervalSearch.parse(ColumnType.getTimestampType(keyType), sqlExecutionContext.getCairoEngine().getConfiguration(),
+                        args.getQuick(1).getStrA(null), isQuotedSpelling, positions.getQuick(1));
+                if (intervalSearch == null) {
+                    folded = BooleanConstant.FALSE;
+                }
+            }
             if (folded != null) {
                 Misc.freeObjList(args);
                 dropLeaves(callLeafMark(), leafMark());
@@ -1323,6 +1357,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                         || arguments.getQuick(i).getDataType() != type) {
                     throw new IllegalStateException("bound argument does not match its function");
                 }
+            }
+            if (intervalSearch != null) {
+                attachIntervalSearch(args, intervalSearch);
             }
             if (count == 2 && scope.keySubqueryColumnIds.size() > 0 && SqlKeywords.isInKeyword(name)) {
                 validateKeySubquery();
@@ -1528,21 +1565,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             Misc.free(argument, th);
             throw th;
         }
-    }
-
-    /**
-     * Folds an interval IN whose constant text holds no instant at the operand's precision to false, as its factory
-     * does, see {@link InTimestampTimestampFunctionFactory#holdsNoInstant}, so that the enclosing AND, OR and NOT fold
-     * with it; returns null for any other IN over text.
-     */
-    private Function foldEmptyIntervalIn(ObjList<Function> args, IntList positions) throws SqlException {
-        final Function operand = args.getQuick(0);
-        final Function text = args.getQuick(1);
-        if (!isTemporalOperand(operand) || !text.isConstant() || !ColumnType.isVarcharOrString(text.getType())) {
-            return null;
-        }
-        return InTimestampTimestampFunctionFactory.holdsNoInstant(ColumnType.getTimestampType(operand.getType()), text.getStrA(null),
-                positions != null ? positions.getQuick(1) : 0, sqlExecutionContext.getCairoEngine().getConfiguration()) ? BooleanConstant.FALSE : null;
     }
 
     private Function foldRoot(Function function, int position) {
@@ -2205,9 +2227,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     /**
      * Raises, where the call binds, the error of TIMESTAMP text that converts neither to a timestamp nor, where
-     * the call reads intervals, to an interval: a SYMBOL constant compared with a TIMESTAMP, the string literal of a
-     * single-interval TIMESTAMP IN parsed in its quoted spelling, as interval extraction parses it, so a bare
-     * number is an invalid interval rather than an epoch, and a text element of a TIMESTAMP IN list, last to first.
+     * the call reads intervals, to an interval: a SYMBOL constant compared with a TIMESTAMP, and a text element of a
+     * TIMESTAMP IN list, last to first. {@link #createFunction} parses the text of a single-interval IN once, and
+     * {@link IntervalSearch#parse} raises its error.
      */
     private void validateTimestampText(FunctionFactoryDescriptor overload, CharSequence operator, ObjList<Function> args,
                                        SqlExecutionContext executionContext) throws SqlException {
@@ -2231,20 +2253,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 || ColumnType.tagOf(args.getQuick(0).getType()) != ColumnType.TIMESTAMP) {
             return;
         }
-        final TimestampDriver driver = ColumnType.getTimestampDriver(args.getQuick(0).getType());
         if (count == 2 && ColumnType.isVarcharOrString(args.getQuick(1).getType())) {
-            final BoundExpression argument = arguments.getQuick(1);
-            final CharSequence text = args.getQuick(1).isConstant() && argument instanceof ConstantExpression constant
-                    && IntervalExtractor.isStringLiteral(constant) ? literalText(argument) : null;
-            if (text != null && !InTimestampTimestampFunctionFactory.containsDateVariable(text)) {
-                final CharSequence seq = intervalSpelling(argument, text);
-                parsedIntervals.clear();
-                IntervalUtils.parseTickExpr(driver, executionContext.getCairoEngine().getConfiguration(), seq, 1, seq.length() - 1,
-                        argument.getPosition(), parsedIntervals, intervalSink);
-                parsedIntervals.clear();
-            }
             return;
         }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(args.getQuick(0).getType());
         for (int i = count - 1; i > 0; i--) {
             final Function element = args.getQuick(i);
             final BoundExpression argument = arguments.getQuick(i);

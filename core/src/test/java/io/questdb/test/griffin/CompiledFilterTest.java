@@ -1017,6 +1017,79 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInIntervalTextSpellings() throws Exception {
+        // The binder parses the text of an interval IN once, at the key's precision, and the Java filter and the JIT
+        // search the intervals it parsed, however the query spells the text.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'", keys(1, 2), true);
+                // A text folded from an expression, a cast included, runs on the Java filter.
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'::VARCHAR", keys(1, 2), false);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02'::VARCHAR)", keys(1, 2), false);
+                assertFilterWithAndWithoutJit(c + " IN '2024-01' || '-02'", keys(1, 2), false);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01' || '-02')", keys(1, 2), false);
+                // A bare number in quotes is a year, never a point or an epoch.
+                assertFilterWithAndWithoutJit(c + " IN '2024'", keys(1, 2, 3, 5), true);
+                assertFilterWithAndWithoutJit(c + " NOT IN '2024'", keys(4), true);
+                assertFilterWithAndWithoutJit(c + " IN NULL", keys(4), true);
+                assertFilterWithAndWithoutJit(c + " NOT IN NULL", keys(1, 2, 3, 5), true);
+                // A text that holds no instant folds the IN to false: 2024-01-06 is a Saturday.
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-06#workday'", "k\n", false);
+                assertFilterWithAndWithoutJit(c + " NOT IN '2024-01-06#workday' AND k < 3", keys(1, 2), true);
+                // A text bound to a variable resolves when the cursor opens.
+                bindVariableService.clear();
+                bindVariableService.setStr("t", "2024-01-02");
+                assertFilterWithAndWithoutJit(c + " IN :t", keys(1, 2), false);
+                bindVariableService.clear();
+            }
+            // A SYMBOL text is an IN list element, a timestamp rather than the day it spells.
+            assertFilterWithAndWithoutJit("tm IN '2024-01-02'::SYMBOL", keys(2), false);
+            // The copy of the IN that filter pushdown gives the NULL-extended side of a RIGHT JOIN keeps the intervals.
+            execute("CREATE TABLE y (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES (1, '2024-01-01T00:00:00.000000Z'), (3, '2024-01-01T01:00:00.000000Z'), (6, '2024-01-01T02:00:00.000000Z')");
+            assertQuery("SELECT x.k, y.k yk FROM x RIGHT JOIN y ON x.k = y.k WHERE x.tm IN '2024-01-[02..03]' ORDER BY yk")
+                    .noLeakCheck()
+                    .withPlanContaining("Async JIT Filter")
+                    .returns("""
+                            k\tyk
+                            1\t1
+                            3\t3
+                            """);
+            // A declared text binds once per key, each time at the key's precision.
+            assertQuery("DECLARE @d := '2024-01-02' SELECT k FROM x WHERE dt IN @d AND tm IN @d AND tn IN @d").noLeakCheck().returns(keys(1, 2));
+            setCurrentMicros(Micros.toMicros(2024, 1, 2, 1, 0));
+            assertQuery("DECLARE @d := '$today' SELECT k FROM x WHERE dt IN @d AND tm IN @d AND tn IN @d").noLeakCheck().returns(keys(1, 2));
+        });
+    }
+
+    @Test
+    public void testInIntervalTextWithoutParsedIntervals() throws Exception {
+        // InTimestampTimestampFunctionFactory parses the text itself when no binding parsed it: over a constant key
+        // and on the legacy planner. Over a constant key, a date variable follows the clock as over a column.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            setCurrentMicros(Micros.toMicros(2024, 1, 2, 1, 0));
+            final String constantKeys = "SELECT '2024-01-02T12:00:00.000000Z'::TIMESTAMP IN '$today' a, '2024-01-03T12:00:00.000000Z'::TIMESTAMP IN '$today' b";
+            try (RecordCursorFactory factory = select(constantKeys)) {
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("a\tb\ntrue\tfalse\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 3, 1, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("a\tb\nfalse\ttrue\n");
+            }
+            assertQuery("SELECT '2024-01-02T12:00:00.000000Z'::TIMESTAMP IN '2024-01-02' a, '2024-01-03T12:00:00.000000Z'::TIMESTAMP IN '2024-01-02' b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\ntrue\tfalse\n");
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'", keys(1, 2), true);
+                assertFilterFollowsClock(c + " IN '$today'", true, Micros.toMicros(2024, 1, 2, 1, 0), keys(1, 2),
+                        Micros.toMicros(2024, 1, 3, 1, 0), keys(3));
+            }
+        });
+    }
+
+    @Test
     public void testInShortCircuitDoesNotLeakColumnCacheAfterEndSc() throws Exception {
         assertMemoryLeak(() -> {
             // Multi-value IN() in a scalar AND chain emits BEGIN_SC, EQ pairs

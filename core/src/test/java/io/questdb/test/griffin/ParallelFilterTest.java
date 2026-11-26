@@ -51,6 +51,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -503,6 +504,61 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             .noRandomAccess()
                             .expectSize()
                             .returns("count\n" + ROW_COUNT + "\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testDateVariableIntervalInParallelFilterFollowsClock() throws Exception {
+        // The per-worker filters of an interval IN share the intervals and the compiled tick expression the binder
+        // parsed once, and evaluate the expression against the "now" of each execution at the same time.
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE x (tm TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                    // tm is 2024-01-01 plus x % 3 days: 33_334 rows on 2024-01-02, 33_333 on 2024-01-03.
+                    engine.execute(
+                            "INSERT INTO x SELECT dateadd('d', (x % 3)::INT, '2024-01-01'::TIMESTAMP), x::TIMESTAMP FROM long_sequence("
+                                    + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
+                            sqlExecutionContext
+                    );
+                    try {
+                        for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_DISABLED}) {
+                            sqlExecutionContext.setJitMode(mode);
+                            // A text cast to VARCHAR is no literal, so it runs on the Java filter in every mode.
+                            for (String filter : new String[]{"tm IN '$today'", "tm IN ('$today')", "tm IN '[$yesterday, $today]#tue,wed'", "tm IN '$today'::VARCHAR"}) {
+                                final String query = "SELECT count() FROM x WHERE " + filter;
+                                final boolean isJit = mode != SqlJitMode.JIT_MODE_DISABLED && !filter.contains("VARCHAR");
+                                assertQuery(query)
+                                        .withEngine(engine)
+                                        .withContext(sqlExecutionContext)
+                                        .noLeakCheck()
+                                        .assertsPlanContaining(isJit ? "Async JIT Filter workers: 4" : "Async Filter workers: 4");
+                                setCurrentMicros(Micros.toMicros(2024, 1, 2, 1, 0));
+                                sqlExecutionContext.initNow();
+                                try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                                    assertFactory(factory).withEngine(engine).withContext(sqlExecutionContext).noLeakCheck()
+                                            .noRandomAccess().expectSize().returns("count\n33334\n");
+                                    setCurrentMicros(Micros.toMicros(2024, 1, 3, 1, 0));
+                                    sqlExecutionContext.initNow();
+                                    assertFactory(factory).withEngine(engine).withContext(sqlExecutionContext).noLeakCheck()
+                                            .noRandomAccess().expectSize().returns(filter.contains("yesterday") ? "count\n66667\n" : "count\n33333\n");
+                                }
+                            }
+                            assertQuery("SELECT count() FROM x WHERE tm IN '2024-01-02'")
+                                    .withEngine(engine)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n33334\n");
+                        }
+                    } finally {
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                    }
                 },
                 configuration,
                 LOG

@@ -25,6 +25,7 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.model.IntervalSearch;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -46,6 +47,7 @@ public final class ConstantExpression extends BoundExpression {
     private RequirementFact administrativeFact;
     private long hh;
     private long hl;
+    private IntervalSearch intervalSearch;
     private boolean isLiteral;
     private long lh;
     private long longValue;
@@ -74,6 +76,7 @@ public final class ConstantExpression extends BoundExpression {
         hh = 0;
         hl = 0;
         lh = 0;
+        intervalSearch = null;
         isLiteral = false;
         source = null;
         longValue = 0;
@@ -129,6 +132,14 @@ public final class ConstantExpression extends BoundExpression {
 
     public long getIntervalHi() {
         return lh;
+    }
+
+    /**
+     * The intervals the binder parsed from the text of the constant, the right operand of an interval IN, see
+     * {@link #withIntervalSearch}; null for any other constant.
+     */
+    public IntervalSearch getIntervalSearch() {
+        return intervalSearch;
     }
 
     /**
@@ -263,8 +274,8 @@ public final class ConstantExpression extends BoundExpression {
     }
 
     /**
-     * Copies the value of the constant and its administrative fact; the copy reads the given folded expression,
-     * which is the caller's copy of the original's source.
+     * Copies the value of the constant, its interval search and its administrative fact; the copy reads the given
+     * folded expression, which is the caller's copy of the original's source.
      */
     public ConstantExpression of(ConstantExpression that, FunctionExpression source) {
         configure(that.getDataType(), that.getPosition(), that.getFunctionFlags());
@@ -273,6 +284,7 @@ public final class ConstantExpression extends BoundExpression {
         lh = that.lh;
         longValue = that.longValue;
         isLiteral = that.isLiteral;
+        intervalSearch = that.intervalSearch;
         administrativeFact = that.administrativeFact;
         if (that.value == that.long256) {
             long256.copyFrom(that.long256);
@@ -432,6 +444,15 @@ public final class ConstantExpression extends BoundExpression {
      */
     public ConstantExpression withAdministrativeFact(RequirementFact fact) {
         administrativeFact = fact;
+        return this;
+    }
+
+    /**
+     * Records the intervals the text of the constant spells at the precision of the key of the interval IN the
+     * constant is the right operand of, which the Java filter and the JIT read instead of the text.
+     */
+    public ConstantExpression withIntervalSearch(IntervalSearch intervalSearch) {
+        this.intervalSearch = intervalSearch;
         return this;
     }
 

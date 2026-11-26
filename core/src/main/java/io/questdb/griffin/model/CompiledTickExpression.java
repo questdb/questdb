@@ -203,20 +203,12 @@ public class CompiledTickExpression extends UntypedFunction {
 
     /**
      * Evaluates the tick expression with the given "now" timestamp and appends
-     * the resulting [lo, hi] interval pairs to outIntervals. For callers that
-     * read "now" themselves, and for tests without a SqlExecutionContext.
+     * the resulting [lo, hi] interval pairs to outIntervals. It reads and writes
+     * no state of the expression, so the functions that share one compiled
+     * expression, such as the per-worker copies of a filter, can evaluate it
+     * at the same time. Pure long arithmetic, no string parsing.
      */
     public void evaluate(LongList outIntervals, long now) {
-        this.now = now;
-        evaluate(outIntervals);
-    }
-
-    /**
-     * Evaluates the tick expression using the captured "now" timestamp and appends
-     * the resulting [lo, hi] interval pairs to outIntervals. Pure long arithmetic,
-     * no string parsing.
-     */
-    public void evaluate(LongList outIntervals) {
         int outStart = outIntervals.size();
 
         // Phase 1: Emit intervals for each date variable element
@@ -225,12 +217,12 @@ public class CompiledTickExpression extends UntypedFunction {
             long word = ir.getQuick(pos);
             long tag = word & TAG_MASK;
             if (tag == TAG_SINGLE_VAR) {
-                emitSingleVar(word, outIntervals);
+                emitSingleVar(word, outIntervals, now);
                 pos++;
             } else if (tag == TAG_STATIC) {
                 pos += 3;
             } else {
-                emitRange(word, ir.getQuick(pos + 1), outIntervals);
+                emitRange(word, ir.getQuick(pos + 1), outIntervals, now);
                 pos += 2;
             }
         }
@@ -266,6 +258,13 @@ public class CompiledTickExpression extends UntypedFunction {
         if (outIntervals.size() > outStart + 2) {
             IntervalUtils.unionBracketExpandedIntervals(outIntervals, outStart);
         }
+    }
+
+    /**
+     * Evaluates the tick expression with the "now" {@link #init} captured, see {@link #evaluate(LongList, long)}.
+     */
+    public void evaluate(LongList outIntervals) {
+        evaluate(outIntervals, now);
     }
 
     /**
@@ -528,10 +527,10 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
-    private void emitRange(long startEncoded, long endEncoded, LongList out) {
+    private void emitRange(long startEncoded, long endEncoded, LongList out, long now) {
         boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
-        long start = evaluateExpr(startEncoded);
-        long end = evaluateExpr(endEncoded);
+        long start = evaluateExpr(startEncoded, now);
+        long end = evaluateExpr(endEncoded, now);
 
         long startDay = timestampDriver.startOfDay(start, 0);
         long endDay = timestampDriver.startOfDay(end, 0);
@@ -558,8 +557,8 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
-    private void emitSingleVar(long encoded, LongList out) {
-        long timestamp = evaluateExpr(encoded);
+    private void emitSingleVar(long encoded, LongList out, long now) {
+        long timestamp = evaluateExpr(encoded, now);
         boolean isDayLevel = (timestamp == timestampDriver.startOfDay(timestamp, 0));
 
         if (isDayLevel) {
@@ -588,7 +587,7 @@ public class CompiledTickExpression extends UntypedFunction {
         return utc;
     }
 
-    private long evaluateExpr(long encoded) {
+    private long evaluateExpr(long encoded, long now) {
         int varType = (int) ((encoded >>> IR_VAR_SHIFT) & 0x3);
         long base = switch (varType) {
             case DateVariableExpr.VAR_NOW -> now;
