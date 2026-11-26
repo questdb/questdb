@@ -45,6 +45,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -60,6 +61,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
@@ -70,9 +72,15 @@ import static io.questdb.griffin.bind.TemporalJoinBinder.joinIndex;
 final class PivotBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
+    // per PIVOT cell, the value the cell reads when no row reaches it, or null when the merge already reads it
+    private final ObjList<BoundExpression> cellFillers = new ObjList<>();
+    // per combination of IN values, whether a row reaches the cell, or null when no measure of the cell needs it
+    private final ObjList<FunctionExpression> cellPresences = new ObjList<>();
     private final SqlCompilerImpl compiler;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
+    private final ObjList<ExpressionNode> fillerNodes = new ObjList<>();
+    private final ObjList<BoundExpression> fillerValues = new ObjList<>();
     private final JoinBinder joinBinder;
     private final StringSink pivotValueSink;
     private final CharSequenceHashSet pivotValues;
@@ -106,7 +114,32 @@ final class PivotBinder implements Mutable {
 
     @Override
     public void clear() {
+        cellFillers.clear();
+        cellPresences.clear();
+        fillerNodes.clear();
+        fillerValues.clear();
         windowJoinPivotAggregatePool.clear();
+    }
+
+    /**
+     * Whether the PIVOT merge of a cell reads {@code filler} where no row reaches the cell: a NULL, or false for a
+     * BOOLEAN, which the merge reads as false. Answers false for a value it cannot classify, which costs a presence
+     * test the cell does not need but never a wrong value.
+     */
+    private static boolean isNullOverNoRows(BoundExpression filler) {
+        if (!(filler instanceof ConstantExpression constant)) {
+            return false;
+        }
+        return switch (ColumnType.tagOf(constant.getDataType())) {
+            case ColumnType.NULL -> true;
+            case ColumnType.BOOLEAN -> constant.getLongValue() == 0;
+            case ColumnType.INT -> (int) constant.getLongValue() == Numbers.INT_NULL;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> constant.getLongValue() == Numbers.LONG_NULL;
+            case ColumnType.DOUBLE -> Double.isNaN(constant.getDoubleValue());
+            case ColumnType.FLOAT -> Float.isNaN(constant.getFloatValue());
+            case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> constant.getText() == null;
+            default -> false;
+        };
     }
 
     private static CharSequence pivotAggregateName(ExpressionNode aggregate, ObjList<QueryColumn> measures) {
@@ -281,6 +314,53 @@ final class PivotBinder implements Mutable {
      * An aggregate over a window function ranks the pivot input first; the measure then
      * aggregates the window output column.
      */
+    /**
+     * Binds whether a row of {@code measured} reaches the cell of the current combination of IN values, as an
+     * aggregate of the PIVOT: false over a group with no such row, including the one group of a PIVOT without GROUP BY
+     * over no rows.
+     */
+    private FunctionExpression bindPivotCellPresence(ObjList<PivotForColumn> forColumns, OutputSchema measured, int position,
+                                                     SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode presence = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "bool_or", 0, position);
+        presence.paramCount = 1;
+        presence.rhs = pivotCellCondition(forColumns, position);
+        return (FunctionExpression) ctx.functionBinder.bindGroupByExpression(presence, measured, null, executionContext);
+    }
+
+    /**
+     * Binds the value {@code measure} takes over a group of no rows, the value of a cell no row reaches, over
+     * {@code output}, the output of the PIVOT: each aggregate reads the value its factory declares over no rows, a
+     * GROUP BY key reads the column of the PIVOT, and a FOR key the IN value of the current combination.
+     */
+    private BoundExpression bindPivotFiller(QueryColumn measure, QueryModel input, AggregatePlan grouped, OutputSchema output,
+                                            ObjList<PivotForColumn> forColumns, int groupByCount, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final ExpressionNode ast = measure.getAst();
+        fillerNodes.clear();
+        fillerValues.clear();
+        try {
+            aggregateBinder.collectAggregateOutputs(ast, input, grouped);
+            final OutputSchema groupedOutput = grouped.getOutput();
+            final int keyCount = grouped.getGroupingExpressions().size();
+            for (int i = 0, n = scope.substitutionNodes.size(); i < n; i++) {
+                // Only the aggregation of a query level retains a projection, keyed by the nodes of its own select list.
+                assert scope.aggregateSubstitutions.getQuick(i) instanceof ColumnExpression : "a PIVOT measure reads a retained projection";
+                final ColumnExpression column = (ColumnExpression) scope.aggregateSubstitutions.getQuick(i);
+                final ExpressionNode node = scope.substitutionNodes.getQuick(i);
+                final int index = groupedOutput.getColumnIndexById(column.getColumnId());
+                final int type = groupedOutput.getColumnType(index);
+                fillerNodes.add(node);
+                fillerValues.add(index < keyCount
+                        ? pivotKeySubstitute(index, type, node.position, output, forColumns, groupByCount, executionContext)
+                        : emptyGroupConstant(ctx.functionFactoryCache.getEmptyGroupValue(node.token), type, node.position, output, executionContext));
+            }
+        } finally {
+            scope.substitutionNodes.clear();
+            scope.aggregateSubstitutions.clear();
+        }
+        return ctx.functionBinder.bindValue(ast, output, null, fillerNodes, fillerValues, executionContext);
+    }
+
     private LogicalPlan bindPivotWindows(QueryModel pivot, QueryModel windowScope, LogicalPlan source, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         WindowPlan window = null;
@@ -367,6 +447,21 @@ final class PivotBinder implements Mutable {
     }
 
     /**
+     * The value an aggregate of {@code type} reports over no rows, as its factory declares it, see
+     * {@link FunctionFactory#getEmptyGroupValue()}: a NULL of that type, its zero, or true.
+     */
+    private BoundExpression emptyGroupConstant(FunctionFactory.EmptyGroupValue value, int type, int position, OutputSchema output,
+                                               SqlExecutionContext executionContext) throws SqlException {
+        return switch (value) {
+            case NULL -> ctx.functionBinder.bindCall("cast", position, ctx.planNodes.constants.next().ofNull(position),
+                    ctx.planNodes.types.next().of(type, position), output, executionContext);
+            case ZERO -> ColumnType.tagOf(type) == ColumnType.DOUBLE
+                    ? ctx.planNodes.constants.next().ofDouble(0.0, position) : ctx.planNodes.constants.next().ofLong(0, position);
+            case TRUE -> ctx.planNodes.constants.next().ofBoolean(true, position);
+        };
+    }
+
+    /**
      * Advances the IN value index of each FOR column to the next combination, the last column fastest.
      */
     private void nextPivotCombination(ObjList<PivotForColumn> forColumns) {
@@ -387,6 +482,22 @@ final class PivotBinder implements Mutable {
                 configuration.getColumnAliasGeneratedMaxSize());
         scope.aliases.add(alias);
         return alias;
+    }
+
+    /**
+     * The condition that selects the rows of the cell of the current combination of IN values: each FOR key equals
+     * its IN value.
+     */
+    private ExpressionNode pivotCellCondition(ObjList<PivotForColumn> forColumns, int position) {
+        final BindScope scope = ctx.scope();
+        ExpressionNode condition = null;
+        for (int i = 0, n = forColumns.size(); i < n; i++) {
+            final ExpressionNode equals = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
+                    ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(i)), 0, position),
+                    forColumns.getQuick(i).getValueList().getQuick(scope.pivotIndexes.getQuick(i)), position);
+            condition = condition == null ? equals : ctx.binaryNode(ExpressionNode.OPERATION, "and", 0, condition, equals, 0);
+        }
+        return condition;
     }
 
     private ExpressionNode pivotFilter(QueryModel pivot) {
@@ -410,12 +521,33 @@ final class PivotBinder implements Mutable {
         return filter;
     }
 
-    private ExpressionNode pivotMeasure(ObjList<PivotForColumn> forColumns, QueryColumn measure, ExpressionNode measured, int measuredType) {
+    /**
+     * The value grouping key {@code index} of the inner aggregate reads in a cell no row reaches, over {@code output}:
+     * the column of a GROUP BY key, or the IN value of the current combination for a FOR key, as a value of the key's
+     * {@code type}.
+     */
+    private BoundExpression pivotKeySubstitute(int index, int type, int position, OutputSchema output, ObjList<PivotForColumn> forColumns,
+                                               int groupByCount, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
-        final ExpressionNode ast = measure.getAst();
-        final int position = ast.position;
-        final FunctionFactory.EmptyGroupValue emptyValue = ast.type == ExpressionNode.FUNCTION
-                ? ctx.functionFactoryCache.getEmptyGroupValue(ast.token) : FunctionFactory.EmptyGroupValue.NULL;
+        final int key = scope.pivotKeyIndexes.indexOf(index, 0, scope.pivotKeyIndexes.size());
+        assert key >= 0 : "a grouping key of the PIVOT is no GROUP BY or FOR key";
+        if (key < groupByCount) {
+            return ctx.planNodes.columns.next().of(output.getColumnId(key), output.getColumnType(key), position);
+        }
+        final int forColumn = key - groupByCount;
+        final BoundExpression value = ctx.functionBinder.bindValue(
+                forColumns.getQuick(forColumn).getValueList().getQuick(scope.pivotIndexes.getQuick(forColumn)), output, null, executionContext);
+        return value.getDataType() == type ? value
+                : ctx.functionBinder.bindCall("cast", position, value, ctx.planNodes.types.next().of(type, position), output, executionContext);
+    }
+
+    /**
+     * The aggregate of the PIVOT that merges the measure of the current combination of IN values from the rows of
+     * {@code measured}: a cell matches at most one row, and the merge reads {@code emptyValue} where none does.
+     */
+    private ExpressionNode pivotMeasure(ObjList<PivotForColumn> forColumns, ExpressionNode measured, int measuredType,
+                                        FunctionFactory.EmptyGroupValue emptyValue, int position) {
+        final BindScope scope = ctx.scope();
         final CharSequence emptyToken = switch (emptyValue) {
             case NULL -> "null";
             case ZERO -> "0";
@@ -432,18 +564,11 @@ final class PivotBinder implements Mutable {
             choice.args.add(forColumns.getQuick(0).getValueList().getQuick(scope.pivotIndexes.getQuick(0)));
             choice.args.add(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(0)), 0, position));
         } else {
-            ExpressionNode condition = null;
-            for (int i = 0, n = forColumns.size(); i < n; i++) {
-                final ExpressionNode equals = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
-                        ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(scope.pivotForAliases.getQuick(i)), 0, position),
-                        forColumns.getQuick(i).getValueList().getQuick(scope.pivotIndexes.getQuick(i)), position);
-                condition = condition == null ? equals : ctx.binaryNode(ExpressionNode.OPERATION, "and", 0, condition, equals, 0);
-            }
             choice = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "case", 0, position);
             choice.paramCount = 3;
             choice.args.add(otherwise);
             choice.args.add(value);
-            choice.args.add(condition);
+            choice.args.add(pivotCellCondition(forColumns, position));
         }
         // A cell matches at most one row, so sum and bool_and read the zero and the true of an absent cell; BOOLEAN has no
         // NULL for first_not_null to skip, and bool_or reads an absent cell as false.
@@ -480,6 +605,55 @@ final class PivotBinder implements Mutable {
                     .put(", limit is ").put(limit);
         }
         return combinations;
+    }
+
+    /**
+     * Projects the output of the PIVOT, reading the filler of each cell that has one where no row reaches the cell:
+     * the PIVOT appends the presence test of each combination of IN values that needs one as a hidden aggregate, and
+     * the projection reads the merge where the test holds and the filler otherwise. The merge alone cannot tell a cell
+     * no row reaches from one whose value is NULL.
+     */
+    private ProjectPlan projectPivotFillers(AggregatePlan pivoted, int groupByCount, int measureCount, int fillerBase, int presenceBase,
+                                            SqlExecutionContext executionContext) throws SqlException {
+        final OutputSchema output = pivoted.getOutput();
+        final int columnCount = output.getColumnCount();
+        final int position = pivoted.getPosition();
+        ctx.scope().resetAliases(output);
+        for (int i = presenceBase, n = cellPresences.size(); i < n; i++) {
+            final FunctionExpression presence = cellPresences.getQuick(i);
+            if (presence != null) {
+                pivoted.getAggregates().add(presence);
+                output.add(ctx.planNodes.nextColumnId(), ctx.createOutputName("pivot_cell_present"), presence.getDataType(), false);
+            }
+        }
+        final ProjectPlan project = ctx.planNodes.projects.next().of(pivoted, position);
+        final OutputSchema projected = project.getOutput();
+        int presenceIndex = columnCount - 1;
+        for (int i = 0; i < columnCount; i++) {
+            final ColumnExpression column = ctx.planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position);
+            final int cell = i - groupByCount;
+            if (cell >= 0 && cell % measureCount == 0 && cellPresences.getQuick(presenceBase + cell / measureCount) != null) {
+                presenceIndex++;
+            }
+            final BoundExpression filler = cell < 0 ? null : cellFillers.getQuick(fillerBase + cell);
+            if (filler == null) {
+                project.getExpressions().add(column);
+                projected.addColumnAs(output, i, ctx.planNodes.nextColumnId(), output.getColumnName(i), true);
+                continue;
+            }
+            final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+            arguments.clear();
+            arguments.add(ctx.planNodes.columns.next().of(output.getColumnId(presenceIndex), output.getColumnType(presenceIndex), position));
+            arguments.add(column);
+            arguments.add(filler);
+            final BoundExpression value = ctx.functionBinder.bindCall("case", position, output, executionContext);
+            project.getExpressions().add(value);
+            projected.add(ctx.planNodes.nextColumnId(), output.getColumnName(i), value.getDataType(), true);
+            if (output.isNameProtected(i)) {
+                projected.protectName(projected.getColumnCount() - 1);
+            }
+        }
+        return project;
     }
 
     private CharSequence quotedPivotName(CharSequence name) {
@@ -764,8 +938,13 @@ final class PivotBinder implements Mutable {
         for (int i = 0, n = measures.size(); i < n && isDirect; i++) {
             isDirect = scope.aggregateNodes.getQuick(i) == measures.getQuick(i).getAst();
         }
+        if (!isDirect) {
+            // Two aggregates of one name, such as count(x) and count(), read as columns of distinct names.
+            scope.resetAliases(grouped.getOutput());
+        }
         for (int i = 0, n = scope.aggregateNodes.size(); i < n; i++) {
-            final CharSequence name = isDirect ? SqlUtil.toColumnName(measures.getQuick(i).getAlias()) : pivotAggregateName(scope.aggregateNodes.getQuick(i), measures);
+            final CharSequence name = isDirect ? SqlUtil.toColumnName(measures.getQuick(i).getAlias())
+                    : ctx.createOutputName(pivotAggregateName(scope.aggregateNodes.getQuick(i), measures));
             grouped.getOutput().add(ctx.planNodes.nextColumnId(), name, grouped.getAggregates().getQuick(i).getDataType(), isDirect);
         }
         if (windowJoin != null) {
@@ -792,12 +971,37 @@ final class PivotBinder implements Mutable {
             pivoted.getGroupingExpressions().add(ctx.planNodes.columns.next().of(measuredOutput.getColumnId(i), measuredOutput.getColumnType(i), groupBy.getQuick(i).position));
             pivoted.getOutput().add(ctx.planNodes.nextColumnId(), measuredOutput.getColumnName(i), measuredOutput.getColumnType(i), measuredOutput.getMetadata(i), true);
         }
+        final int fillerBase = cellFillers.size();
+        final int presenceBase = cellPresences.size();
+        boolean hasFiller = false;
         scope.pivotIndexes.setAll(forColumns.size(), 0);
         for (int combination = 0; combination < combinations; combination++) {
+            FunctionExpression presence = null;
             for (int k = 0, m = measures.size(); k < m; k++) {
                 final QueryColumn measure = measures.getQuick(k);
                 final int measureIndex = firstMeasureIndex + k;
-                final int position = measure.getAst().position;
+                final ExpressionNode ast = measure.getAst();
+                final int position = ast.position;
+                // Only a lone aggregate in a group, which always has rows, merges its value over no rows without a presence test.
+                final boolean isAggregateCall = ctx.isAggregate(ast);
+                final FunctionFactory.EmptyGroupValue emptyValue = isAggregateCall
+                        ? ctx.functionFactoryCache.getEmptyGroupValue(ast.token) : FunctionFactory.EmptyGroupValue.NULL;
+                BoundExpression filler = null;
+                if (!isAggregateCall) {
+                    filler = bindPivotFiller(measure, input, grouped, pivoted.getOutput(), forColumns, groupBy.size(), executionContext);
+                } else if (groupBy.size() == 0 && emptyValue != FunctionFactory.EmptyGroupValue.NULL) {
+                    filler = emptyGroupConstant(emptyValue, measuredOutput.getColumnType(measureIndex), position, pivoted.getOutput(), executionContext);
+                }
+                if (filler != null && isNullOverNoRows(filler)) {
+                    filler = null;
+                }
+                cellFillers.add(filler);
+                if (filler != null) {
+                    hasFiller = true;
+                    if (presence == null) {
+                        presence = bindPivotCellPresence(forColumns, measuredOutput, pivot.getModelPosition(), executionContext);
+                    }
+                }
                 scope.substitutionNodes.clear();
                 scope.substitutionColumns.clear();
                 final WindowJoinPivotAggregate aggregate = windowJoin != null && isDirect ? scope.windowJoinPivotAggregates.getQuick(k) : null;
@@ -806,10 +1010,12 @@ final class PivotBinder implements Mutable {
                         : ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, quotedPivotName(measuredOutput.getColumnName(measureIndex)), 0, position);
                 final int valueType = aggregate != null && aggregate.carriedType != aggregate.value.getDataType()
                         ? aggregate.value.getDataType() : measuredOutput.getColumnType(measureIndex);
-                final ExpressionNode call = pivotMeasure(forColumns, measure, value, valueType);
+                final ExpressionNode call = pivotMeasure(forColumns, value, valueType,
+                        filler != null ? FunctionFactory.EmptyGroupValue.NULL : emptyValue, position);
                 final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, measuredOutput, scope.substitutionNodes, scope.substitutionColumns, executionContext);
                 pivoted.getAggregates().add((FunctionExpression) bound);
             }
+            cellPresences.add(presence);
             nextPivotCombination(forColumns);
         }
         scope.pivotIndexes.setAll(forColumns.size(), 0);
@@ -834,7 +1040,12 @@ final class PivotBinder implements Mutable {
             }
             nextPivotCombination(forColumns);
         }
-        return pivoted;
+        try {
+            return hasFiller ? projectPivotFillers(pivoted, groupBy.size(), measures.size(), fillerBase, presenceBase, executionContext) : pivoted;
+        } finally {
+            cellFillers.setPos(fillerBase);
+            cellPresences.setPos(presenceBase);
+        }
     }
 
     static final class WindowJoinPivotAggregate implements Mutable {

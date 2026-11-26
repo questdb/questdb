@@ -1656,14 +1656,24 @@ final class AggregateBinder implements Mutable {
      */
     BoundExpression bindAggregateOutput(ExpressionNode expression, QueryModel source, GroupingPlan aggregate, SqlExecutionContext context) throws SqlException {
         final BindScope scope = ctx.scope();
-        scope.substitutionNodes.clear();
-        scope.substitutionColumns.clear();
-        scope.aggregateSubstitutions.clear();
-        collectAggregateSubstitutions(expression, source, aggregate);
+        collectAggregateOutputs(expression, source, aggregate);
         if (scope.substitutionNodes.size() == 1 && scope.substitutionNodes.getQuick(0) == expression) {
             return scope.aggregateSubstitutions.getQuick(0);
         }
         return ctx.functionBinder.bindValue(expression, aggregate.getOutput(), null, scope.substitutionNodes, scope.aggregateSubstitutions, context);
+    }
+
+    /**
+     * Collects the subtrees of {@code expression} that read an output of {@code aggregate} into the scope's
+     * substitution nodes, each with what {@link #bindAggregateOutput} replaces it with in the scope's aggregate
+     * substitutions: the column of {@code aggregate} it reads, or the expression the query level retained for it.
+     */
+    void collectAggregateOutputs(ExpressionNode expression, QueryModel source, GroupingPlan aggregate) throws SqlException {
+        final BindScope scope = ctx.scope();
+        scope.substitutionNodes.clear();
+        scope.substitutionColumns.clear();
+        scope.aggregateSubstitutions.clear();
+        collectAggregateSubstitutions(expression, source, aggregate);
     }
 
     /**

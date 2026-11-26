@@ -5141,6 +5141,173 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotAbsentCellReadsExpressionMeasureOverNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES + ", timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3)");
+            execute("CREATE TABLE czw_empty AS (SELECT * FROM czw_prices WHERE false) TIMESTAMP(ts) PARTITION BY DAY");
+            final String[] measures = {
+                    "count(l)", "isOrdered(l)", "count(l) + 1", "coalesce(sum(l), 0)", "sum(l) + 1", "count(l) + sum(l)",
+                    "CASE WHEN count() > 1 THEN NULL ELSE count() END", "count(l) = 0", "isOrdered(l) AND count(l) > 0",
+                    "NOT isOrdered(l)", "haversine_dist_deg(d, d, tsx) + count(l)", "count_distinct(s) * 2", "first(s) || count(l)",
+                    "coalesce(first(v), 'none')", "count(l)::int + 1", "approx_count_distinct(l) / 2.0", "-min(f)", "min(i) + 1",
+                    "upper(first(s))", "first(d64) + 1"
+            };
+            for (String table : new String[]{"czw_prices", "czw_empty"}) {
+                for (String measure : measures) {
+                    try {
+                        assertSqlCursors(
+                                "SELECT x.v a, y.v z FROM (SELECT " + measure + " v FROM " + table + " WHERE sym = 'a') x "
+                                        + "CROSS JOIN (SELECT " + measure + " v FROM " + table + " WHERE sym = 'z') y",
+                                "SELECT * FROM " + table + " PIVOT (" + measure + " FOR sym IN ('a', 'z'))"
+                        );
+                    } catch (AssertionError e) {
+                        throw new AssertionError(table + ": " + measure, e);
+                    }
+                }
+            }
+            assertQuery("SELECT * FROM czw_prices PIVOT (CASE WHEN count() > 1 THEN NULL END FOR sym IN ('a', 'z'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tz
+                            \t
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotAbsentCellReadsExpressionMeasureOverNoRowsPerGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, g INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 0, 5, 1_000_000), ('a', 0, null, 2_000_000),
+                        ('b', 1, 2, 3_000_000), ('a', 1, 3, 4_000_000), ('a', 1, 4, 5_000_000)
+                    """);
+            final String expected = """
+                    g\ta_c1\ta_c2\ta_c3\ta_c4\ta_c5\tb_c1\tb_c2\tb_c3\tb_c4\tb_c5
+                    0\t2\t5\tnull\tfalse\t1\t1\t0\t0\ttrue\t0
+                    1\t3\t7\tnull\tfalse\t3\t2\t2\t1\tfalse\t2
+                    """;
+            final String measures = """
+                    count(x) + 1 c1, coalesce(sum(x), 0) c2, CASE WHEN count() > 1 THEN NULL ELSE count() END c3,
+                    count(x) = 0 c4, count(x) + g c5""";
+            assertQuery("SELECT * FROM t PIVOT (" + measures + " FOR k IN ('a', 'b') GROUP BY g) ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [g]
+                                VirtualRecord
+                                  functions: [g,case([pivot_cell_present,a_c1,1L]),case([pivot_cell_present,a_c2,0L]),case([pivot_cell_present,a_c3,0L]),case([pivot_cell_present,a_c4,true]),case([pivot_cell_present,a_c5,0L+g]),case([pivot_cell_present1,b_c1,1L]),case([pivot_cell_present1,b_c2,0L]),case([pivot_cell_present1,b_c3,0L]),case([pivot_cell_present1,b_c4,true]),case([pivot_cell_present1,b_c5,0L+g])]
+                                    GroupBy vectorized: false
+                                      keys: [g]
+                                      values: [first_not_null(case([c1,nullL,k,switch(k,'a',c1,nullL)])),first_not_null(case([c2,nullL,k,switch(k,'a',c2,nullL)])),first_not_null(case([c3,nullL,k,switch(k,'a',c3,nullL)])),bool_or(case([c4,false,k,switch(k,'a',c4,false)])),first_not_null(case([c5,nullL,k,switch(k,'a',c5,nullL)])),first_not_null(case([c1,nullL,k,switch(k,'b',c1,nullL)])),first_not_null(case([c2,nullL,k,switch(k,'b',c2,nullL)])),first_not_null(case([c3,nullL,k,switch(k,'b',c3,nullL)])),bool_or(case([c4,false,k,switch(k,'b',c4,false)])),first_not_null(case([c5,nullL,k,switch(k,'b',c5,nullL)])),bool_or(k='a'),bool_or(k='b')]
+                                        VirtualRecord
+                                          functions: [g,k,count+1,coalesce(sum,0),case([1<count1,null,count1]),count=0,count+g]
+                                            Async JIT Group By workers: 1
+                                              keys: [g,k]
+                                              values: [count(x),sum(x),count(*)]
+                                              filter: k in [a,b]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                            """)
+                    .returns(expected);
+            assertQuery("WITH p AS (SELECT * FROM t PIVOT (" + measures + " FOR k IN (SELECT DISTINCT k FROM t ORDER BY k) GROUP BY g)) SELECT * FROM p ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            execute("CREATE VIEW pv AS (SELECT * FROM t PIVOT (" + measures + " FOR k IN ('a', 'b') GROUP BY g))");
+            assertQuery("SELECT * FROM pv ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT * FROM t PIVOT (count(x) FOR k IN ('a', 'b') GROUP BY g) ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ta\tb
+                            0\t1\t0
+                            1\t2\t1
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (count(x) + 1 FOR k IN ('a', 'b') g IN (0, 1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_0\ta_1\tb_0\tb_1
+                            2\t3\t1\t2
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(x) + 1 FOR k IN ('a', 'b') GROUP BY g) ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [g]
+                                GroupBy vectorized: false
+                                  keys: [g]
+                                  values: [first_not_null(case([sum(x) + 1,nullL,k,switch(k,'a',sum(x) + 1,nullL)])),first_not_null(case([sum(x) + 1,nullL,k,switch(k,'b',sum(x) + 1,nullL)]))]
+                                    VirtualRecord
+                                      functions: [g,k,sum+1]
+                                        Async JIT Group By workers: 1
+                                          keys: [g,k]
+                                          values: [sum(x)]
+                                          filter: k in [a,b]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """)
+                    .returns("""
+                            g\ta\tb
+                            0\t6\tnull
+                            1\t8\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotAbsentCellReadsForKeyOfExpressionMeasure() throws Exception {
+        assertQuery("cities PIVOT (count(population) + year FOR year IN (2000, 2030) GROUP BY country) ORDER BY country")
+                .ddl(ddlCities)
+                .mutateWith(dmlCities)
+                .expectSize()
+                .returns("""
+                        country\t2000\t2030
+                        """, """
+                        country\t2000\t2030
+                        NL\t2001\t2030
+                        US\t2002\t2030
+                        """);
+        assertQuery("cities PIVOT (count(population) || country FOR country IN ('NL', 'XX') GROUP BY year) ORDER BY year")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        year\tNL\tXX
+                        2000\t1NL\t0XX
+                        2010\t1NL\t0XX
+                        2020\t1NL\t0XX
+                        """);
+        assertQuery("cities PIVOT (CASE WHEN year = 2000 THEN count(population) END FOR year IN (2000, 2030) GROUP BY country) ORDER BY country")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        country\t2000\t2030
+                        NL\t1\tnull
+                        US\t2\tnull
+                        """);
+        assertQuery("cities PIVOT (count(population) + 1 FOR name IN ('Seattle', 'St. Louis') GROUP BY country) ORDER BY country")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        country\tSeattle\tSt. Louis
+                        US\t4\t1
+                        """);
+    }
+
+    @Test
     public void testPivotWithIsOrderedAndHaversineEmptyCells() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k SYMBOL, g INT, v LONG, ip IPV4, lat DOUBLE, lon DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5415,19 +5582,21 @@ public class PivotTest extends AbstractSqlParserTest {
                 .noRandomAccess()
                 .expectSize()
                 .withPlan("""
-                        GroupBy vectorized: false
-                          values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]
-                            Async Group By workers: 1
-                              keys: [year,country]
-                              values: [sum(population),count(population)]
-                              filter: (year in [2000,2010] and country in [NL,US])
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cities
+                        VirtualRecord
+                          functions: [2000_NL_total,case([pivot_cell_present,2000_NL_count,0L]),2000_US_total,case([pivot_cell_present1,2000_US_count,0L]),2010_NL_total,case([pivot_cell_present2,2010_NL_count,0L]),2010_US_total,case([pivot_cell_present3,2010_US_count,0L])]
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([(year=2000 and country='NL'),total,null])),first_not_null(case([(year=2000 and country='NL'),count,null])),first_not_null(case([(year=2000 and country='US'),total,null])),first_not_null(case([(year=2000 and country='US'),count,null])),first_not_null(case([(year=2010 and country='NL'),total,null])),first_not_null(case([(year=2010 and country='NL'),count,null])),first_not_null(case([(year=2010 and country='US'),total,null])),first_not_null(case([(year=2010 and country='US'),count,null])),bool_or((year=2000 and country='NL')),bool_or((year=2000 and country='US')),bool_or((year=2010 and country='NL')),bool_or((year=2010 and country='US'))]
+                                Async Group By workers: 1
+                                  keys: [year,country]
+                                  values: [sum(population),count(population)]
+                                  filter: (year in [2000,2010] and country in [NL,US])
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cities
                         """)
                 .returns("""
                         2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count
-                        null\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                        null\t0\tnull\t0\tnull\t0\tnull\t0
                         """, """
                         2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count
                         1005\t1\t8579\t2\t1065\t1\t8783\t2
@@ -5559,19 +5728,21 @@ public class PivotTest extends AbstractSqlParserTest {
                 .noRandomAccess()
                 .expectSize()
                 .withPlan("""
-                        GroupBy vectorized: false
-                          values: [first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT(population),0]))]
-                            Async Group By workers: 1
-                              keys: [year,name,country]
-                              values: [sum(population),count(population)]
-                              filter: (year in [2000,2010,2020] and name in [Amsterdam,Seattle,New York City] and country in [NL,US])
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cities
+                        VirtualRecord
+                          functions: [2000_Amsterdam_NL_SUM(population),case([pivot_cell_present,2000_Amsterdam_NL_COUNT(population),0L]),2000_Amsterdam_US_SUM(population),case([pivot_cell_present1,2000_Amsterdam_US_COUNT(population),0L]),2000_Seattle_NL_SUM(population),case([pivot_cell_present2,2000_Seattle_NL_COUNT(population),0L]),2000_Seattle_US_SUM(population),case([pivot_cell_present3,2000_Seattle_US_COUNT(population),0L]),2000_New York City_NL_SUM(population),case([pivot_cell_present4,2000_New York City_NL_COUNT(population),0L]),2000_New York City_US_SUM(population),case([pivot_cell_present5,2000_New York City_US_COUNT(population),0L]),2010_Amsterdam_NL_SUM(population),case([pivot_cell_present6,2010_Amsterdam_NL_COUNT(population),0L]),2010_Amsterdam_US_SUM(population),case([pivot_cell_present7,2010_Amsterdam_US_COUNT(population),0L]),2010_Seattle_NL_SUM(population),case([pivot_cell_present8,2010_Seattle_NL_COUNT(population),0L]),2010_Seattle_US_SUM(population),case([pivot_cell_present9,2010_Seattle_US_COUNT(population),0L]),2010_New York City_NL_SUM(population),case([pivot_cell_present10,2010_New York City_NL_COUNT(population),0L]),2010_New York City_US_SUM(population),case([pivot_cell_present11,2010_New York City_US_COUNT(population),0L]),2020_Amsterdam_NL_SUM(population),case([pivot_cell_present12,2020_Amsterdam_NL_COUNT(population),0L]),2020_Amsterdam_US_SUM(population),case([pivot_cell_present13,2020_Amsterdam_US_COUNT(population),0L]),2020_Seattle_NL_SUM(population),case([pivot_cell_present14,2020_Seattle_NL_COUNT(population),0L]),2020_Seattle_US_SUM(population),case([pivot_cell_present15,2020_Seattle_US_COUNT(population),0L]),2020_New York City_NL_SUM(population),case([pivot_cell_present16,2020_New York City_NL_COUNT(population),0L]),2020_New York City_US_SUM(population),case([pivot_cell_present17,2020_New York City_US_COUNT(population),0L])]
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),SUM(population),null])),first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),SUM(population),null])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),COUNT(population),null])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),COUNT(population),null])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2000 and name='New York City' and country='US'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City' and country='US'),COUNT(population),null])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),COUNT(population),null])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),COUNT(population),null])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2010 and name='New York City' and country='US'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City' and country='US'),COUNT(population),null])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),COUNT(population),null])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),COUNT(population),null])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),COUNT(population),null])),first_not_null(case([(year=2020 and name='New York City' and country='US'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City' and country='US'),COUNT(population),null])),bool_or((year=2000 and name='Amsterdam' and country='NL')),bool_or((year=2000 and name='Amsterdam' and country='US')),bool_or((year=2000 and name='Seattle' and country='NL')),bool_or((year=2000 and name='Seattle' and country='US')),bool_or((year=2000 and name='New York City' and country='NL')),bool_or((year=2000 and name='New York City' and country='US')),bool_or((year=2010 and name='Amsterdam' and country='NL')),bool_or((year=2010 and name='Amsterdam' and country='US')),bool_or((year=2010 and name='Seattle' and country='NL')),bool_or((year=2010 and name='Seattle' and country='US')),bool_or((year=2010 and name='New York City' and country='NL')),bool_or((year=2010 and name='New York City' and country='US')),bool_or((year=2020 and name='Amsterdam' and country='NL')),bool_or((year=2020 and name='Amsterdam' and country='US')),bool_or((year=2020 and name='Seattle' and country='NL')),bool_or((year=2020 and name='Seattle' and country='US')),bool_or((year=2020 and name='New York City' and country='NL')),bool_or((year=2020 and name='New York City' and country='US'))]
+                                Async Group By workers: 1
+                                  keys: [year,name,country]
+                                  values: [sum(population),count(population)]
+                                  filter: (year in [2000,2010,2020] and name in [Amsterdam,Seattle,New York City] and country in [NL,US])
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cities
                         """)
                 .returns("""
                         2000_Amsterdam_NL_SUM(population)	2000_Amsterdam_NL_COUNT(population)	2000_Amsterdam_US_SUM(population)	2000_Amsterdam_US_COUNT(population)	2000_Seattle_NL_SUM(population)	2000_Seattle_NL_COUNT(population)	2000_Seattle_US_SUM(population)	2000_Seattle_US_COUNT(population)	2000_New York City_NL_SUM(population)	2000_New York City_NL_COUNT(population)	2000_New York City_US_SUM(population)	2000_New York City_US_COUNT(population)	2010_Amsterdam_NL_SUM(population)	2010_Amsterdam_NL_COUNT(population)	2010_Amsterdam_US_SUM(population)	2010_Amsterdam_US_COUNT(population)	2010_Seattle_NL_SUM(population)	2010_Seattle_NL_COUNT(population)	2010_Seattle_US_SUM(population)	2010_Seattle_US_COUNT(population)	2010_New York City_NL_SUM(population)	2010_New York City_NL_COUNT(population)	2010_New York City_US_SUM(population)	2010_New York City_US_COUNT(population)	2020_Amsterdam_NL_SUM(population)	2020_Amsterdam_NL_COUNT(population)	2020_Amsterdam_US_SUM(population)	2020_Amsterdam_US_COUNT(population)	2020_Seattle_NL_SUM(population)	2020_Seattle_NL_COUNT(population)	2020_Seattle_US_SUM(population)	2020_Seattle_US_COUNT(population)	2020_New York City_NL_SUM(population)	2020_New York City_NL_COUNT(population)	2020_New York City_US_SUM(population)	2020_New York City_US_COUNT(population)
-                        null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null	null
+                        null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0	null	0
                         """, """
                         2000_Amsterdam_NL_SUM(population)	2000_Amsterdam_NL_COUNT(population)	2000_Amsterdam_US_SUM(population)	2000_Amsterdam_US_COUNT(population)	2000_Seattle_NL_SUM(population)	2000_Seattle_NL_COUNT(population)	2000_Seattle_US_SUM(population)	2000_Seattle_US_COUNT(population)	2000_New York City_NL_SUM(population)	2000_New York City_NL_COUNT(population)	2000_New York City_US_SUM(population)	2000_New York City_US_COUNT(population)	2010_Amsterdam_NL_SUM(population)	2010_Amsterdam_NL_COUNT(population)	2010_Amsterdam_US_SUM(population)	2010_Amsterdam_US_COUNT(population)	2010_Seattle_NL_SUM(population)	2010_Seattle_NL_COUNT(population)	2010_Seattle_US_SUM(population)	2010_Seattle_US_COUNT(population)	2010_New York City_NL_SUM(population)	2010_New York City_NL_COUNT(population)	2010_New York City_US_SUM(population)	2010_New York City_US_COUNT(population)	2020_Amsterdam_NL_SUM(population)	2020_Amsterdam_NL_COUNT(population)	2020_Amsterdam_US_SUM(population)	2020_Amsterdam_US_COUNT(population)	2020_Seattle_NL_SUM(population)	2020_Seattle_NL_COUNT(population)	2020_Seattle_US_SUM(population)	2020_Seattle_US_COUNT(population)	2020_New York City_NL_SUM(population)	2020_New York City_NL_COUNT(population)	2020_New York City_US_SUM(population)	2020_New York City_US_COUNT(population)
                         1005	1	null	0	null	0	564	1	null	0	8015	1	1065	1	null	0	null	0	608	1	null	0	8175	1	1158	1	null	0	null	0	738	1	null	0	8772	1
