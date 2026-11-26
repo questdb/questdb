@@ -238,8 +238,9 @@ public class QwpWalAppenderTest {
     @Test
     public void testMapQwpTypeToQuestDBDecimalScaleComesOnlyFromValues() throws Exception {
         // A decimal column that holds only NULLs carries a scale byte that means
-        // nothing: the Java client sends 255, the Rust row API 0, and the Rust
-        // column sender its own scale. Only a block with a value sets the scale.
+        // nothing: the Java client sends 0 (1.3.12 and older send 255), the Rust
+        // row API 0, and the Rust column sender its own scale. Only a block with
+        // a value sets the scale.
         final byte[] typeCodes = {TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256};
         final int[] tags = {ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256};
         final String[] namesWithValue = {"DECIMAL(18,2)", "DECIMAL(38,2)", "DECIMAL(76,2)"};
@@ -405,7 +406,7 @@ public class QwpWalAppenderTest {
                 // [null bitmap present][rows 0-2 NULL][scale placeholder]
                 assertEquals(1, Unsafe.getByte(address + size - 3));
                 assertEquals(0b111, Unsafe.getByte(address + size - 2));
-                assertEquals((byte) 0xFF, Unsafe.getByte(address + size - 1));
+                assertEquals((byte) 0, Unsafe.getByte(address + size - 1));
                 Unsafe.putByte(address + size - 1, (byte) wireScale);
             } else if (wireScale >= 0) {
                 // [null bitmap present][row 1 holds a value][scale][value]
