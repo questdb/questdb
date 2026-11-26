@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -51,7 +52,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
@@ -137,7 +138,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final PartitionCompactionRequestQueue.Request request = new PartitionCompactionRequestQueue.Request();
     private final LongList rewriteRanges = new LongList();
     private final Rnd rnd;
-    private final Utf8StringSink sidecarName = new Utf8StringSink();
+    private final StringSink sidecarName = new StringSink();
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
     private final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
     private final long squashIdleTimeoutMicros;
@@ -171,7 +172,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private long publishedWriterId;
     private long remainingIoBudget;
     private LongHashSet retiringCleanParquetPartitions = new LongHashSet();
+    private ColumnVersionReader sidecarColumnVersionReader;
     private int sidecarDstLen;
+    private TableReaderMetadata sidecarMetadata;
+    private long sidecarPartitionTimestamp;
     private int sidecarSrcLen;
     private long sweepDeadline;
     private int sweepDispatchCount;
@@ -680,7 +684,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         engine.getResolvedCommitMode()
                 );
             } else {
-                copyParquetPartitionSidecars(path, other);
+                copyParquetPartitionSidecars(
+                        path,
+                        other,
+                        reader.getMetadata(),
+                        reader.getColumnVersionReader(),
+                        partitionTimestamp
+                );
             }
         } catch (Throwable e) {
             if (ff.exists(other.$())) {
@@ -1225,18 +1235,23 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * One entry of the source partition directory: everything but {@code data.parquet}, {@code _pm} and their staging
-     * pair is an index file and is carried into the staging directory, hard-linked where the file system allows.
+     * pair is an index file and is carried into the staging directory, hard-linked where the file system allows. Skips
+     * superseded index versions (column name txn other than the snapshot's {@code _cv}): {@link ColumnPurgeJob} purges
+     * them from the source directory, so a copy in the new directory would leak.
      */
     private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
         if (!Files.notDots(pUtf8NameZ)) {
             return;
         }
         sidecarName.clear();
-        Utf8s.utf8ZCopy(pUtf8NameZ, sidecarName);
-        if (Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
-                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)
-                || Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_STAGING_NAME, sidecarName)
-                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_STAGING_FILE_NAME, sidecarName)) {
+        Utf8s.utf8ToUtf16Z(pUtf8NameZ, sidecarName);
+        if (Chars.equals(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
+                || Chars.equals(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)
+                || Chars.equals(TableUtils.PARQUET_PARTITION_STAGING_NAME, sidecarName)
+                || Chars.equals(TableUtils.PARQUET_METADATA_STAGING_FILE_NAME, sidecarName)) {
+            return;
+        }
+        if (type != Files.DT_DIR && TableUtils.isSupersededIndexFile(sidecarName, sidecarMetadata, sidecarColumnVersionReader, sidecarPartitionTimestamp)) {
             return;
         }
         path.trimTo(sidecarSrcLen).concat(pUtf8NameZ).$();
@@ -1257,15 +1272,26 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    private void copyParquetPartitionSidecars(Path srcPartitionDir, Path dstPartitionDir) {
+    private void copyParquetPartitionSidecars(
+            Path srcPartitionDir,
+            Path dstPartitionDir,
+            TableReaderMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
         assert srcPartitionDir == path && dstPartitionDir == other;
         sidecarSrcLen = srcPartitionDir.size();
         sidecarDstLen = dstPartitionDir.size();
+        sidecarMetadata = metadata;
+        sidecarColumnVersionReader = columnVersionReader;
+        sidecarPartitionTimestamp = partitionTimestamp;
         try {
             ff.iterateDir(srcPartitionDir.$(), sidecarVisitor);
         } finally {
             srcPartitionDir.trimTo(sidecarSrcLen);
             dstPartitionDir.trimTo(sidecarDstLen);
+            sidecarMetadata = null;
+            sidecarColumnVersionReader = null;
         }
     }
 
