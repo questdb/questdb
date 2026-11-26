@@ -59,10 +59,10 @@ pub fn are_bytes_ascii(bytes: &[u8]) -> bool {
     ARE_BYTES_ASCII_CALLS.with(|calls| calls.set(calls.get() + 1));
     const LANES: usize = 64;
     const BLOCK: usize = 4096;
-    let mut blocks = bytes.chunks_exact(BLOCK);
-    for block in &mut blocks {
+    let (blocks, remainder) = bytes.as_chunks::<BLOCK>();
+    for block in blocks {
         let mut acc = [0u8; LANES];
-        for chunk in block.chunks_exact(LANES) {
+        for chunk in block.as_chunks::<LANES>().0 {
             for (acc, &byte) in acc.iter_mut().zip(chunk) {
                 *acc |= byte;
             }
@@ -71,7 +71,7 @@ pub fn are_bytes_ascii(bytes: &[u8]) -> bool {
             return false;
         }
     }
-    blocks.remainder().is_ascii()
+    remainder.is_ascii()
 }
 
 pub fn append_varchar(

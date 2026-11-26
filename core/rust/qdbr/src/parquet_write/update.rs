@@ -7520,7 +7520,9 @@ mod tests {
                 flags.push(
                     bufs.column_buffers()[0]
                         .aux_vec
-                        .chunks_exact(16)
+                        .as_chunks::<16>()
+                        .0
+                        .iter()
                         .map(|entry| entry[0] & 0b10 != 0)
                         .collect(),
                 );
@@ -7541,7 +7543,9 @@ mod tests {
             assert_eq!(rows, 4 * row_group_count);
             let range_flags: Vec<bool> = bufs.column_buffers()[0]
                 .aux_vec
-                .chunks_exact(16)
+                .as_chunks::<16>()
+                .0
+                .iter()
                 .map(|entry| entry[0] & 0b10 != 0)
                 .collect();
             assert_eq!(range_flags, flags.concat());
