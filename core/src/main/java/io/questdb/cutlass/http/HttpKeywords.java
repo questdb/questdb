@@ -65,6 +65,46 @@ public class HttpKeywords {
                 && (tok.byteAt(2) | 32) == 'n';
     }
 
+    /**
+     * Returns true when the value of a Connection header lists the close option, with which
+     * the client asks the server to close the connection after the response (RFC 9112, 9.6).
+     * The value is a comma-separated list of case-insensitive tokens, with optional
+     * whitespace around each, and empty list elements, which are skipped (RFC 9110, 5.6.1).
+     */
+    public static boolean isConnectionClose(@Nullable Utf8Sequence connection) {
+        if (connection == null) {
+            return false;
+        }
+        final int size = connection.size();
+        int lo = 0;
+        while (lo < size) {
+            final byte b = connection.byteAt(lo);
+            if (b == ',' || b == ' ' || b == '\t') {
+                lo++;
+                continue;
+            }
+            int hi = lo + 1;
+            while (hi < size && connection.byteAt(hi) != ',') {
+                hi++;
+            }
+            int tokenHi = hi;
+            // the token starts with a byte other than whitespace, so trimming stops before lo
+            while (connection.byteAt(tokenHi - 1) == ' ' || connection.byteAt(tokenHi - 1) == '\t') {
+                tokenHi--;
+            }
+            if (tokenHi - lo == 5
+                    && (connection.byteAt(lo) | 32) == 'c'
+                    && (connection.byteAt(lo + 1) | 32) == 'l'
+                    && (connection.byteAt(lo + 2) | 32) == 'o'
+                    && (connection.byteAt(lo + 3) | 32) == 's'
+                    && (connection.byteAt(lo + 4) | 32) == 'e') {
+                return true;
+            }
+            lo = hi;
+        }
+        return false;
+    }
+
     public static boolean isContentTypeMultipartFormData(@Nullable Utf8Sequence tok) {
         return tok != null && tok.size() == 19
                 && (tok.byteAt(0) | 32) == 'm'
