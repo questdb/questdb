@@ -2190,10 +2190,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                 "1.5", "-1.5", "127.5", "-128.5", "300.5", "32767.5", "-32768.5",
                 "2147483647.5", "-2147483648.5", "1e300", "1e-50", "-0.0",
                 "NULL::INT", "NULL::LONG", "NULL::DOUBLE", "NULL::STRING", "NULL::CHAR",
-                // ::FLOAT follows PostgreSQL and yields DOUBLE; CAST(... AS FLOAT) yields FLOAT
-                "CAST(1.5 AS FLOAT)", "CAST(127.5 AS FLOAT)", "CAST(-128.5 AS FLOAT)", "CAST(300.5 AS FLOAT)",
-                "CAST(32767.5 AS FLOAT)", "CAST(-32768.5 AS FLOAT)",
-                "CAST(2147483647 AS FLOAT)", "CAST(-2147483648 AS FLOAT)",
+                // ::FLOAT follows PostgreSQL and yields DOUBLE; ::FLOAT4 yields FLOAT
+                "1.5::FLOAT4", "127.5::FLOAT4", "(-128.5)::FLOAT4", "300.5::FLOAT4",
+                "32767.5::FLOAT4", "(-32768.5)::FLOAT4", "2147483647::FLOAT4", "(-2147483648)::FLOAT4",
                 "65::BYTE", "65::SHORT", "true",
                 "'5'", "'a'", "'s'", "''", "'300'", "'1.5'", "'abc'", "'5'::VARCHAR", "'abc'::VARCHAR", "'abc'::SYMBOL",
                 "'2024-01-05'", "'2024-01-05T00:00:00.000Z'", "'0x01'", "'1.2.3.4'", "'11111111-1111-1111-1111-111111111111'",
@@ -2392,8 +2391,8 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueRejectedForInconvertibleValue() throws Exception {
-        // INSERT rejects these values; the fill does too, at compile time, pointing at the
-        // literal and naming the literal's own type and the aggregate's type.
+        // INSERT rejects these values with the same messages; the fill rejects them at compile
+        // time, pointing at the literal.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_fv_bad (
@@ -2404,12 +2403,13 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertInconvertibleFill("first(b)", "'300'", "inconvertible value: `300` [STRING -> BYTE]");
             assertInconvertibleFill("first(l)", "'abc'", "inconvertible value: `abc` [STRING -> LONG]");
             assertInconvertibleFill("first(f)", "1e300", "inconvertible value: 1.0E300 [DOUBLE -> FLOAT]");
-            // a FLOAT is range-checked before truncation, as INSERT does
-            assertInconvertibleFill("first(s)", "CAST(32767.5 AS FLOAT)", "inconvertible value: 32767.5 [FLOAT -> SHORT]");
             assertInconvertibleFill("first(dt)", "'a'", "inconvertible value: a [CHAR -> DATE]");
             assertInconvertibleFill("first(dt)", "'abc'", "inconvertible value: `abc` [STRING -> DATE]");
             assertInconvertibleFill("first(g)", "'a'", "inconvertible value: a [CHAR -> GEOHASH(1c)]");
             assertInconvertibleFill("first(ip)", "'1.2.3'", "invalid IPv4 format: 1.2.3");
+            // a FLOAT is range-checked before truncation, as INSERT does; the error points at ::
+            final String sql = "SELECT ts, first(s) v FROM t_fv_bad SAMPLE BY 1h FILL(32767.5::FLOAT4)";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "inconvertible value: 32767.5 [FLOAT -> SHORT]");
         });
     }
 
