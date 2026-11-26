@@ -683,63 +683,22 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
 
     @Test
     public void testInsertSymbolTableDoesNotExist() throws Exception {
-        assertTypeNoTable("""
-                        value\ttimestamp
-                        e\t1970-01-01T00:00:01.000000Z
-                        xxx\t1970-01-01T00:00:02.000000Z
-                        paff\t1970-01-01T00:00:03.000000Z
-                        yyy\t1970-01-01T00:00:04.000000Z
-                        tt"tt\t1970-01-01T00:00:05.000000Z
-                        null\t1970-01-01T00:00:06.000000Z
-                        A\t1970-01-01T00:00:07.000000Z
-                        @plant2\t1970-01-01T00:00:08.000000Z
-                        @plant\t1970-01-01T00:00:09.000000Z
-                        \t1970-01-01T00:00:11.000000Z
-                        """,
-                new String[]{
-                        "e", // valid
-                        "xxx", // valid
-                        "paff", // valid
-                        "yyy", // valid
-                        "tt\"tt", // valid
-                        "null", // valid
-                        "A", // valid
-                        "@plant2", // valid
-                        "@plant", // valid
-                        "\"@plant\"", // discarded bad type string
-                        "" // valid null
-                });
+        assertSymbolTypes(ColumnType.UNDEFINED, false);
+    }
+
+    @Test
+    public void testInsertSymbolTableDoesNotExistVarcharDefault() throws Exception {
+        assertSymbolTypes(ColumnType.UNDEFINED, true);
     }
 
     @Test
     public void testInsertSymbolTableExists() throws Exception {
-        assertType(ColumnType.SYMBOL,
-                """
-                        value\ttimestamp
-                        e\t1970-01-01T00:00:01.000000Z
-                        xxx\t1970-01-01T00:00:02.000000Z
-                        paff\t1970-01-01T00:00:03.000000Z
-                        yyy\t1970-01-01T00:00:04.000000Z
-                        tt"tt\t1970-01-01T00:00:05.000000Z
-                        null\t1970-01-01T00:00:06.000000Z
-                        A\t1970-01-01T00:00:07.000000Z
-                        @plant2\t1970-01-01T00:00:08.000000Z
-                        @plant\t1970-01-01T00:00:09.000000Z
-                        \t1970-01-01T00:00:11.000000Z
-                        """,
-                new String[]{
-                        "e", // valid
-                        "xxx", // valid
-                        "paff", // valid
-                        "yyy", // valid
-                        "tt\"tt", // valid
-                        "null", // valid
-                        "A", // valid
-                        "@plant2", // valid
-                        "@plant", // valid
-                        "\"@plant\"", // discarded bad type string
-                        "" // valid null
-                });
+        assertSymbolTypes(ColumnType.SYMBOL, false);
+    }
+
+    @Test
+    public void testInsertSymbolTableExistsVarcharDefault() throws Exception {
+        assertSymbolTypes(ColumnType.SYMBOL, true);
     }
 
     @Test
@@ -829,6 +788,43 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
         useLegacyString = !varchar;
         assertStringTypes(ColumnType.UNDEFINED);
         useLegacyString = true; // restore default
+    }
+
+    // a quoted string is a VARCHAR on a server and a STRING with the legacy setting; it loses its quotes either way
+    private static void assertSymbolTypes(int columnType, boolean varchar) throws Exception {
+        useLegacyString = !varchar;
+        try {
+            assertType(columnType,
+                    """
+                            value\ttimestamp
+                            e\t1970-01-01T00:00:01.000000Z
+                            xxx\t1970-01-01T00:00:02.000000Z
+                            paff\t1970-01-01T00:00:03.000000Z
+                            yyy\t1970-01-01T00:00:04.000000Z
+                            tt"tt\t1970-01-01T00:00:05.000000Z
+                            null\t1970-01-01T00:00:06.000000Z
+                            A\t1970-01-01T00:00:07.000000Z
+                            @plant2\t1970-01-01T00:00:08.000000Z
+                            @plant\t1970-01-01T00:00:09.000000Z
+                            @plant\t1970-01-01T00:00:10.000000Z
+                            \t1970-01-01T00:00:11.000000Z
+                            """,
+                    new String[]{
+                            "e", // valid
+                            "xxx", // valid
+                            "paff", // valid
+                            "yyy", // valid
+                            "tt\"tt", // valid
+                            "null", // valid
+                            "A", // valid
+                            "@plant2", // valid
+                            "@plant", // valid
+                            "\"@plant\"", // valid, a quoted string loses its quotes
+                            "" // valid null
+                    });
+        } finally {
+            useLegacyString = true; // restore default
+        }
     }
 
     private static void assertType(int columnType, String expected, String[] values) throws Exception {

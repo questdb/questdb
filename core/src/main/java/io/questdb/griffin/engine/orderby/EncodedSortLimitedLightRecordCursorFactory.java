@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -35,9 +36,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Encoded-key top-K replacement for {@link LimitedSizeSortedLightRecordCursorFactory}.
@@ -55,9 +58,15 @@ import org.jetbrains.annotations.Nullable;
  * Used only when {@link SortKeyEncoder#isSupported(RecordMetadata,
  * io.questdb.std.IntList)} accepts the sort key. The legacy tree-chain
  * factory remains the fallback for unsupported keys.
+ * <p>
+ * Given a record sink, the factory serves a base without random access: the
+ * cursor copies only the rows that enter the top-K and emits from the copies,
+ * replacing a full sort of the base followed by a limit.
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Function hiFunction;
+    private final boolean isCopying;
+    private final int limitPosition;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
@@ -70,18 +79,30 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             RecordCursorFactory base,
             Function loFunction,
             @Nullable Function hiFunction,
+            int limitPosition,
             ListColumnFilter sortColumnFilter,
-            int timestampIndex
+            int timestampIndex,
+            @Nullable RecordSink recordSink, // copies the kept rows of a base without random access
+            long valueMaxBytes
     ) {
         super(metadata);
-        // The build phase never calls recordAt, but emit re-fetches the kept rows from the base.
-        assert base.recordCursorSupportsRandomAccess();
+        // The build phase never calls recordAt, but without copies emit re-fetches the kept rows from the base.
+        assert recordSink != null || base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.loFunction = loFunction;
         this.hiFunction = hiFunction;
+        this.limitPosition = limitPosition;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex);
+        this.isCopying = recordSink != null;
+        final boolean isScanAgainstOrder = timestampIndex != -1
+                && base.getScanDirection() != SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
+        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, isScanAgainstOrder, recordSink, valueMaxBytes);
+    }
+
+    @TestOnly
+    public long getCompactionCount() {
+        return cursor.getCompactionCount();
     }
 
     @Override
@@ -130,7 +151,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Encode sort light");
+        sink.type(isCopying ? "Encode sort" : "Encode sort light");
         sink.meta("lo").val(loFunction);
         if (hiFunction != null) {
             sink.meta("hi").val(hiFunction);
@@ -182,11 +203,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             }
         } else {
             final long hi = hiFunction.getLong(null);
-            // A NULL lo with a non-NULL hi means "from the start": LIMIT null,3 returns
-            // the first 3 rows. Without this, NULL falls into the lo < 0 branch and the
-            // query returns the full set instead of the head slice. A NULL lo with a
-            // NULL hi must stay raw so the lo == hi check below yields the empty result.
-            final long lo = rawLo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL ? 0 : rawLo;
+            final long lo = LimitRecordCursorFactory.resolveLo(rawLo, hi, limitPosition);
             if (lo < 0) {
                 // Negative range, e.g. -10,-5: five rows ending five rows from the
                 // tail. lo == hi is an invalid bottom range, e.g. -3,-3: empty result.

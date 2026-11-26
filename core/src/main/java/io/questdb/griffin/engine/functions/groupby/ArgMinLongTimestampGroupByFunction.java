@@ -140,4 +140,9 @@ public class ArgMinLongTimestampGroupByFunction extends LongFunction implements 
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

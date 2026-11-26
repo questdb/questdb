@@ -877,8 +877,7 @@ mod tests {
             )
             .parquet_footer(0, 0);
 
-        for rg_idx in 0..num_row_groups {
-            let rg_meta = &metadata.row_groups[rg_idx];
+        for rg_meta in &metadata.row_groups {
             let col_chunk = &rg_meta.columns()[0];
             let (byte_range_start, total_compressed) = col_chunk.byte_range();
             let num_values = col_chunk.num_values().max(0) as u64;
