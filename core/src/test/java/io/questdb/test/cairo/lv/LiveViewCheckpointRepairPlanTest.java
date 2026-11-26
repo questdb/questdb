@@ -1780,6 +1780,104 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testTriggerCorrectionClampsToStartFrom() throws SqlException {
+        // A trigger commit that reaches below the view's boundary at 1_000 corrects the view from
+        // the boundary, below the residual's floor at 1_500.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        planResidualAboveStartFrom(plan);
+
+        plan.bindCorrectionToTrigger(500, 1_000);
+        Assert.assertEquals(1_000, plan.getCorrectionTs());
+        Assert.assertEquals(1_500, plan.getRetireLowTs());
+        Assert.assertEquals(1_500, plan.getOutputLowTs());
+        Assert.assertEquals(1_400, plan.getReplayLowTs());
+        Assert.assertTrue(plan.isLocalized());
+    }
+
+    @Test
+    public void testTriggerCorrectionKeepsTheResidualFloor() throws SqlException {
+        // A residual whose floor at 600 is a row apply raced past the trigger at 800, which an
+        // eviction on the same apply may have taken. The residual's floor bounds what the repair
+        // re-reads, re-emits and re-versions: R = 600, L = R - W = 500 and H = 850 + W + 1 = 951.
+        // What a boundary rebuild may delete below the lowest row it re-emits stays the trigger's.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        planResidualBelowTheTrigger(plan);
+        Assert.assertEquals(600, plan.getCorrectionTs());
+        Assert.assertEquals(600, plan.getRetireLowTs());
+
+        plan.bindCorrectionToTrigger(800, BEGINNING);
+        Assert.assertEquals(800, plan.getCorrectionTs());
+        Assert.assertEquals(600, plan.getRetireLowTs());
+        Assert.assertEquals(600, plan.getOutputLowTs());
+        Assert.assertEquals(500, plan.getReplayLowTs());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(951, plan.getHighTsExclusive());
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD, plan.getDisposition());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NONE, plan.getDenialReason());
+    }
+
+    @Test
+    public void testTriggerCorrectionLowersCBelowTheResidualFloor() throws SqlException {
+        // A trigger below the residual's floor, in a closed segment the loop already repaired,
+        // corrects the view from the trigger, while the residual keeps its own floor.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        planResidualAboveStartFrom(plan);
+
+        plan.bindCorrectionToTrigger(1_200, 1_000);
+        Assert.assertEquals(1_200, plan.getCorrectionTs());
+        Assert.assertEquals(1_500, plan.getRetireLowTs());
+        Assert.assertEquals(1_500, plan.getOutputLowTs());
+        Assert.assertEquals(1_400, plan.getReplayLowTs());
+        Assert.assertTrue(plan.isLocalized());
+    }
+
+    @Test
+    public void testTriggerCorrectionOfANonDataTrigger() throws SqlException {
+        // A trigger that carries no timestamp authorises no deletion, whatever the view's boundary.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        planResidualAboveStartFrom(plan);
+
+        plan.bindCorrectionToTrigger(Numbers.LONG_NULL, 1_000);
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getCorrectionTs());
+        Assert.assertEquals(1_500, plan.getRetireLowTs());
+        Assert.assertEquals(1_500, plan.getOutputLowTs());
+    }
+
+    @Test
+    public void testTriggerCorrectionSurvivesTheRemovedOutputFloorDenial() throws SqlException {
+        // The denial turns the localized rebuild into the boundary rebuild, which replaces from the
+        // lower of the trigger and the lowest row its replay emits.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        planResidualBelowTheTrigger(plan);
+        plan.bindCorrectionToTrigger(800, BEGINNING);
+
+        plan.denyRemovedOutputFloor(BEGINNING);
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD, plan.getDisposition());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_REMOVED_OUTPUT_FLOOR, plan.getDenialReason());
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(800, plan.getCorrectionTs());
+        Assert.assertEquals(600, plan.getRetireLowTs());
+        Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
+        Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testTriggerCorrectionTravelsWithACopy() throws SqlException {
+        // A parked repair runs on its own copy of the plan.
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+        planResidualBelowTheTrigger(plan);
+        plan.bindCorrectionToTrigger(800, BEGINNING);
+
+        final LiveViewCheckpointRepairPlan copy = newPlan();
+        copy.copyFrom(plan);
+        Assert.assertEquals(800, copy.getCorrectionTs());
+        Assert.assertEquals(600, copy.getRetireLowTs());
+        Assert.assertEquals(600, copy.getOutputLowTs());
+        Assert.assertEquals(500, copy.getReplayLowTs());
+    }
+
+    @Test
     public void testApplyAheadClassificationIsRequiredOnlyWhenItCanChangeThePlan() {
         // No gap: nothing to classify.
         Assert.assertFalse(LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(100, 7, 7));
@@ -1899,6 +1997,24 @@ public class LiveViewCheckpointRepairPlanTest {
             Assert.assertEquals(plan.hasOutputKeyDomain(), copy.hasOutputKeyDomain());
             return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - before;
         }
+    }
+
+    /**
+     * A preclassified residual of a view whose {@code START FROM} boundary is 1_000: floor 1_500,
+     * ceiling 1_600, a RANGE look-behind of 100, so R = 1_500 and L = 1_400.
+     */
+    private static void planResidualAboveStartFrom(LiveViewCheckpointRepairPlan plan) throws SqlException {
+        plan.of(new TestAnchors(), 1_500, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, 2_000, 1_600, 2_000, UNPRICED);
+        Assert.assertEquals(1_500, plan.getCorrectionTs());
+        Assert.assertTrue(plan.isLocalized());
+    }
+
+    /**
+     * A preclassified residual of a {@code START FROM BEGINNING} view: floor 600, ceiling 850, a
+     * RANGE look-behind of 100, and the durable output and the runtime at 1_000.
+     */
+    private static void planResidualBelowTheTrigger(LiveViewCheckpointRepairPlan plan) throws SqlException {
+        plan.of(new TestAnchors(), 600, BEGINNING, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, NO_ANCHOR, true, 1_000, 850, 1_000, UNPRICED);
     }
 
     /**

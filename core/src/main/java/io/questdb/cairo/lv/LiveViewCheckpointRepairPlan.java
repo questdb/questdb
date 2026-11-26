@@ -372,6 +372,24 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     }
 
     /**
+     * Gives {@code C} back to the trigger after {@link #of} planned a preclassified residual of an
+     * open anchor segment from the residual's own floor. That floor takes in the rows of commits
+     * apply raced past the trigger, among them rows a TTL eviction on the same apply took, which
+     * have no view row to replace. It bounds what the repair re-reads, re-emits and re-versions,
+     * and keeps doing so: {@code retireLowTs}, {@code R}, {@code L}, {@code H}, the anchor and the
+     * disposition stay as {@link #of} derived them. {@code C}, what a boundary rebuild may delete
+     * below the lowest row it re-emits, is the trigger's own timestamp, as it is for the change
+     * set's union range.
+     *
+     * @param triggerTs               the lowest row of the commits the refresh drained, or
+     *                                {@link Numbers#LONG_NULL} for a non-DATA trigger
+     * @param viewLowerBoundTimestamp START FROM boundary S
+     */
+    public void bindCorrectionToTrigger(long triggerTs, long viewLowerBoundTimestamp) {
+        correctionTs = correctionFloorOf(triggerTs, viewLowerBoundTimestamp);
+    }
+
+    /**
      * Frees the output key domain's native memory. The plan stays usable: the next
      * {@link #of} derives a fresh domain. Idempotent.
      */
@@ -532,7 +550,9 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     /**
      * @return {@code C}: the earliest timestamp whose existing output may have
      * changed, clamped up to the view's {@code START FROM} boundary, or
-     * {@link Numbers#LONG_NULL} for a non-DATA / recovery trigger.
+     * {@link Numbers#LONG_NULL} for a non-DATA / recovery trigger. The trigger's own
+     * timestamp: apply-ahead rows and the rows of a preclassified residual lower
+     * {@link #getRetireLowTs()}, not {@code C}. See {@link #bindCorrectionToTrigger}.
      */
     public long getCorrectionTs() {
         return correctionTs;
@@ -834,9 +854,7 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
         // boundary - those rows are simply not the view's - so the raw trigger is
         // clamped up; for a BEGINNING view the clamp is an identity. A non-DATA /
         // recovery trigger carries no timestamp and authorises no deletion.
-        correctionTs = lateRowTs == Numbers.LONG_NULL
-                ? Numbers.LONG_NULL
-                : Math.max(lateRowTs, viewLowerBoundTimestamp);
+        correctionTs = correctionFloorOf(lateRowTs, viewLowerBoundTimestamp);
         final boolean applyAhead = pinnedSeqTxn != triggerSeqTxn;
         final boolean classified = isApplyAheadClassificationRequired(lateRowTs, triggerSeqTxn, pinnedSeqTxn);
         this.applyAheadMinTs = classified ? applyAheadMinTs : Numbers.LONG_NULL;
@@ -1017,6 +1035,17 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
                     : DENIAL_FRONTIER_BELOW_CONVERGENCE;
         }
         return localized;
+    }
+
+    /**
+     * {@code C} for a trigger at {@code triggerTs}: the trigger clamped up to the view's
+     * {@code START FROM} boundary, and {@link Numbers#LONG_NULL} for a trigger that carries no
+     * timestamp.
+     */
+    private static long correctionFloorOf(long triggerTs, long viewLowerBoundTimestamp) {
+        return triggerTs == Numbers.LONG_NULL
+                ? Numbers.LONG_NULL
+                : Math.max(triggerTs, viewLowerBoundTimestamp);
     }
 
     /**

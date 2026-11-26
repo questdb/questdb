@@ -40,6 +40,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
@@ -436,6 +437,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // sequence, for the same reason: see departNewestRows.
     private static final long DEPARTED_OWED_ROOT_SALT0 = 0x6C62272E07BB0142L;
     private static final long DEPARTED_OWED_ROOT_SALT1 = 0x62B821756295C58DL;
+    // Salt the draws of a lagging TTL episode apart from the run's sequence, for the same reason:
+    // see runLaggingTtlEpisode.
+    private static final long LAGGING_TTL_EPISODE_SALT0 = 0xFF51AFD7ED558CCDL;
+    private static final long LAGGING_TTL_EPISODE_SALT1 = 0xC4CEB9FE1A85EC53L;
     // What handleRefreshFailure logs when a recovery a turn ran met the refresh breaker: see
     // cancelADriftRecoveryByShutdown.
     private static final String RECOVERY_CANCELLED_LINE = "live view refresh cancelled during recovery [view=lv, dropped=false, invalid=false]";
@@ -649,6 +654,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Runs of testFuzzBaseDdlInvalidation whose invalid view a second invalidating operation reached:
     // see invalidateBaseAgain.
     private int secondBaseInvalidations;
+    // Lagging TTL episodes a batch ran, the ones the open anchor segment's residual repaired, and of
+    // those the ones that fell back to the boundary rebuild over the rows a TTL eviction froze: see
+    // runLaggingTtlEpisode.
+    private int laggingTtlEpisodes;
+    private int laggingTtlResidualRepairs;
+    private int laggingTtlResidualBoundaryRebuilds;
     // Set while testFuzzDedup or testFuzzReplaceRange runs: every other owed-seal episode of its
     // batch, from the first, counted rather than drawn, so a pinned-seed batch of another test
     // draws what it drew before, ends on a second late row whose replacement commit fails inside
@@ -873,13 +884,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // over an indexed key, the correction's keys, with the repair knobs drawn per run (see
         // LiveViewFuzzKnobs). Phase two stays in timestamp order, as there, because TTL keeps
         // evicting behind it, so the oracle is the whole logical dataset bucketed by the anchor.
+        // The first run, and every later one with even odds, ends on a lagging repair over an
+        // hour the TTL evicted from the view's open anchor segment: see runLaggingTtlEpisode.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             for (int i = 0; i < 3; i++) {
                 runAnchoredRemovalFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
-                        REMOVAL_TTL, rnd.nextBoolean(), false, rnd.nextBoolean());
+                        REMOVAL_TTL, rnd.nextBoolean(), false, rnd.nextBoolean(), i == 0 || rnd.nextBoolean());
             }
         });
+        assertReachedLaggingTtlResidualBoundaryRebuilds();
     }
 
     @Test
@@ -1496,7 +1510,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             for (int i = 0; i < 4; i++) {
                 runAnchoredRemovalFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
                         rnd.nextBoolean() ? REMOVAL_TRUNCATE : REMOVAL_DROP_PARTITION,
-                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), false);
             }
         });
         assertReachedTwoCommitDepartures();
@@ -3823,6 +3837,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue("no first departure took the head miss", twoCommitDepartureHeadMisses > 0);
     }
 
+    // The lagging TTL episodes of testFuzzBaseTtlAnchored's batch: see runLaggingTtlEpisode.
+    private void assertReachedLaggingTtlResidualBoundaryRebuilds() {
+        LOG.info().$("LV fuzz lagging TTL episodes [episodes=").$(laggingTtlEpisodes)
+                .$(", residualRepairs=").$(laggingTtlResidualRepairs)
+                .$(", residualBoundaryRebuilds=").$(laggingTtlResidualBoundaryRebuilds).I$();
+        Assert.assertTrue(
+                "no lagging TTL episode's open segment residual fell back to the boundary rebuild",
+                laggingTtlResidualBoundaryRebuilds > 0
+        );
+    }
+
     // The declined-chain second departures of the departure arm's batch: see departAPeriodInTwoCommits.
     private void assertReachedDeclinedChainTwoCommitDepartures() {
         Assert.assertTrue(
@@ -3861,6 +3886,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // run's without advancing it.
     private static Rnd departedOwedRootRnd(Rnd rnd) {
         return new Rnd(rnd.getSeed0() ^ DEPARTED_OWED_ROOT_SALT0, rnd.getSeed1() ^ DEPARTED_OWED_ROOT_SALT1);
+    }
+
+    // The sequence a lagging TTL episode draws from, drawn from the run's without advancing it.
+    private static Rnd laggingTtlEpisodeRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ LAGGING_TTL_EPISODE_SALT0, rnd.getSeed1() ^ LAGGING_TTL_EPISODE_SALT1);
     }
 
     private static Rnd twoCommitDepartureRnd(Rnd rnd) {
@@ -9961,7 +9991,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // (every row ever inserted, held in a shadow table), whatever repaired it. Below that, the
     // log and the view's state speak for the run.
     // TTL keeps evicting behind phase two, so a TTL run keeps phase two in timestamp order and
-    // its whole output equals the recompute over the logical dataset.
+    // its whole output equals the recompute over the logical dataset. A TTL run with
+    // isLaggingTtlEpisode partitions its base by the hour under a daily anchor, and ends on
+    // runLaggingTtlEpisode once that check passed.
     //
     // Every run must end ACTIVE, except that a restart after the removal may stop the view as
     // rebuild_blocked when it finds no checkpoint to restore: the rebuild would drop rows the
@@ -9974,15 +10006,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int removal,
             boolean restart,
             boolean seed,
-            boolean inMemory
+            boolean inMemory,
+            boolean isLaggingTtlEpisode
     ) throws Exception {
+        Assert.assertTrue("only a TTL run ends on a lagging TTL episode", !isLaggingTtlEpisode || removal == REMOVAL_TTL);
+        // Drawn apart from the run's sequence, which drawing it leaves where it was.
+        final Rnd laggingTtlEpisodeRnd = laggingTtlEpisodeRnd(rnd);
+        final int ttlHours = isLaggingTtlEpisode ? 1 + laggingTtlEpisodeRnd.nextInt(3) : 0;
         final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
         knobs.apply(AbstractLiveViewTest::setProperty);
         final StringSink knobLog = new StringSink();
         knobs.toSink(knobLog);
         // The 1970 shape is left out: a TTL run moves the clock above the data, which for 1970
-        // data is a clock the next run cannot pin below its own.
-        final LiveViewFuzzAnchor anchor = LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH));
+        // data is a clock the next run cannot pin below its own. A lagging TTL episode needs a
+        // daily anchor, whose segment spans several hour partitions.
+        final LiveViewFuzzAnchor anchor = LiveViewFuzzAnchor.draw(
+                rnd,
+                isLaggingTtlEpisode
+                        ? LiveViewFuzzAnchor.DAILY_PLAIN + rnd.nextInt(2)
+                        : rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH)
+        );
         setCurrentMicros(anchor.clockMicros);
         final boolean isIndexed = rnd.nextInt(4) != 0;
         final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
@@ -10020,14 +10063,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", ties=").$(rows.getTieCount()).$(", splitPoint=").$(splitPoint)
                 .$(", phaseTwoO3=").$(isPhaseTwoO3).$(", maxLateness=").$(maxLateness)
                 .$(", restart=").$(restart).$(", preCount=").$(preCount).$(", inMem=").$(inMemory)
-                .$(", pinPct=").$(pinPct).$(", knobs=[").$(knobLog).$("]").$();
+                .$(", pinPct=").$(pinPct).$(", laggingTtlEpisode=").$(isLaggingTtlEpisode)
+                .$(", ttlHours=").$(ttlHours).$(", knobs=[").$(knobLog).$("]").$();
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("DROP TABLE IF EXISTS shadow");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL" + (isIndexed ? " INDEX" : "")
-                + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY"
-                + (removal == REMOVAL_TTL ? " TTL 1 DAY" : "") + " WAL");
+                + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY "
+                + (isLaggingTtlEpisode ? "HOUR TTL " + ttlHours + " HOURS" : "DAY" + (removal == REMOVAL_TTL ? " TTL 1 DAY" : ""))
+                + " WAL");
 
         final StringSink sink = new StringSink();
         long maxRemovedTs = Numbers.LONG_NULL;
@@ -10224,10 +10269,177 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 }
             }
             execute("DROP TABLE shadow");
+            if (isLaggingTtlEpisode) {
+                runLaggingTtlEpisode(laggingTtlEpisodeRnd, oracleProjection, symCount, ttlHours);
+                assertNoLiveViewCriticalLineAfter(walApplySuspensionRule.getCapture(), runMarker);
+            }
         }
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+    }
+
+    // The episode a TTL run of runAnchoredRemovalFuzz with isLaggingTtlEpisode ends on, over its
+    // base partitioned by the hour with a TTL of ttlHours: a lagging out-of-order repair whose open
+    // anchor segment holds an hour the TTL evicted and hours that survive it. In one daily segment
+    // above every row of the run: rows in the segment's first whole hour H0, which the view emits;
+    // rows three hours up, in H3; and a row at F, by whose apply the TTL has evicted H0 while the
+    // view holds its rows. Then the base applies an out-of-order row in H3, below F (the trigger), a
+    // late row into H0, which the apply evicts again, and an in-order row, before one refresh
+    // drains them.
+    //
+    // Whatever repaired the pass, the view rows below the base's minimum keep their emitted values,
+    // and the rows from there up pair one to one with the base's rows. A boundary rebuild replaces
+    // from the lower of the trigger and the lowest row its replay emits, the base's minimum, so its
+    // rows from there up equal the anchored recompute over the base as it stands. Any other route
+    // may resume from a root that counts the evicted rows. Every other episode of a batch, from the
+    // first, has the open anchor segment's residual repair the pass whatever the run drew, and
+    // lands its late row below the newest row of H0, so the residual's floor sits below a row the
+    // view holds and the repair falls back to the boundary rebuild: see
+    // assertReachedLaggingTtlResidualBoundaryRebuilds. The other episodes land it anywhere in H0.
+    private void runLaggingTtlEpisode(Rnd episodeRnd, String oracleProjection, int symCount, int ttlHours) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        if (instance == null
+                || instance.isInvalid()
+                || instance.isCheckpointRecoveryBlocked()
+                || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE
+                || instance.getAnchorWindow() == null
+                || instance.getAnchorWindow().getCheckpointAnchorPlan() == null) {
+            return;
+        }
+        final LiveViewCheckpointAnchorPlan anchorPlan = instance.getAnchorWindow().getCheckpointAnchorPlan();
+        final long floorTs = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
+        final long segmentStartTs = anchorPlan.getSegmentStart(floorTs - floorTs % Micros.DAY_MICROS + 2 * Micros.DAY_MICROS);
+        if (segmentStartTs == Long.MIN_VALUE) {
+            return;
+        }
+        final long hour0Ts = segmentStartTs - segmentStartTs % Micros.HOUR_MICROS + Micros.HOUR_MICROS;
+        final long hour3Ts = hour0Ts + 3 * Micros.HOUR_MICROS;
+        // TTL measures a partition's age from its ceiling, against the lower of the newest row and
+        // the clock, which the episode moves with its rows. So F evicts H0, whose partition ends
+        // ttlHours and two hours below it, and the in-order row keeps H3, whose partition ends 35
+        // minutes short of ttlHours below it.
+        final long frontierTs = hour3Ts + ttlHours * Micros.HOUR_MICROS + 5 * Micros.MINUTE_MICROS;
+        final long inOrderTs = frontierTs + 20 * Micros.MINUTE_MICROS;
+        if (anchorPlan.getSegmentStart(inOrderTs) != segmentStartTs) {
+            return;
+        }
+        // H0's and H3's rows sit on whole seconds, and the trigger and the late row off them, so no
+        // two rows of the episode tie.
+        final StringSink hour0Rows = new StringSink();
+        final int hour0RowCount = 2 + episodeRnd.nextInt(3);
+        long hour0MaxTs = Numbers.LONG_NULL;
+        for (int r = 0; r < hour0RowCount; r++) {
+            hour0MaxTs = hour0Ts + (5 + 12L * r) * Micros.MINUTE_MICROS + episodeRnd.nextInt(60) * Micros.SECOND_MICROS;
+            appendLaggingTtlEpisodeRow(episodeRnd, hour0Rows, hour0MaxTs, symCount);
+        }
+        final StringSink hour3Rows = new StringSink();
+        final int hour3RowCount = 1 + episodeRnd.nextInt(3);
+        long hour3MinTs = Numbers.LONG_NULL;
+        for (int r = 0; r < hour3RowCount; r++) {
+            final long ts = hour3Ts + (10 + 15L * r) * Micros.MINUTE_MICROS + episodeRnd.nextInt(60) * Micros.SECOND_MICROS;
+            if (r == 0) {
+                hour3MinTs = ts;
+            }
+            appendLaggingTtlEpisodeRow(episodeRnd, hour3Rows, ts, symCount);
+        }
+        final StringSink frontierRow = new StringSink();
+        appendLaggingTtlEpisodeRow(episodeRnd, frontierRow, frontierTs, symCount);
+        final long triggerTs = hour3Ts + (1 + episodeRnd.nextInt(55)) * Micros.MINUTE_MICROS + 1 + episodeRnd.nextInt(999_999);
+        final StringSink triggerRow = new StringSink();
+        appendLaggingTtlEpisodeRow(episodeRnd, triggerRow, triggerTs, symCount);
+        final boolean isResidualForced = laggingTtlEpisodes % 2 == 0;
+        final long lateCeilingTs = isResidualForced ? hour0MaxTs : hour0Ts + Micros.HOUR_MICROS;
+        final long lateTs = hour0Ts + episodeRnd.nextLong((lateCeilingTs - hour0Ts) / Micros.SECOND_MICROS) * Micros.SECOND_MICROS
+                + 1 + episodeRnd.nextInt(999_998);
+        final StringSink lateRow = new StringSink();
+        appendLaggingTtlEpisodeRow(episodeRnd, lateRow, lateTs, symCount);
+        final StringSink inOrderRow = new StringSink();
+        appendLaggingTtlEpisodeRow(episodeRnd, inOrderRow, inOrderTs, symCount);
+        final long baseMinTs = Math.min(hour3MinTs, triggerTs);
+
+        LOG.info().$("LV fuzz lagging TTL episode [hour0Ts=").$ts(hour0Ts)
+                .$(", hour0MaxTs=").$ts(hour0MaxTs)
+                .$(", lateTs=").$ts(lateTs)
+                .$(", triggerTs=").$ts(triggerTs)
+                .$(", frontierTs=").$ts(frontierTs)
+                .$(", ttlHours=").$(ttlHours)
+                .$(", residualForced=").$(isResidualForced).I$();
+        final long faultsBefore = instance.getRefreshFaultCount();
+        final boolean isPerSegmentEnabled = engine.getConfiguration().isLiveViewCheckpointRepairPerSegmentEnabled();
+        final boolean isOpenSegmentKeyedEnabled = engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
+        if (isResidualForced) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
+        }
+        final StringSink frozenRows = new StringSink();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            setCurrentMicros(hour0Ts + Micros.HOUR_MICROS);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + hour0Rows);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            setCurrentMicros(hour3Ts + Micros.HOUR_MICROS);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + hour3Rows);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            setCurrentMicros(frontierTs);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + frontierRow);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("the TTL must have evicted H0", hour3MinTs, queryTimestamp("SELECT min(ts) FROM base"));
+            printSql("(SELECT * FROM lv WHERE ts < " + baseMinTs + ") ORDER BY 1, 2", frozenRows);
+
+            setCurrentMicros(inOrderTs);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + triggerRow);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + lateRow);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + inOrderRow);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, String.valueOf(isPerSegmentEnabled));
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, String.valueOf(isOpenSegmentKeyedEnabled));
+        }
+
+        Assert.assertFalse("view invalid: " + instance.getInvalidationReason(), instance.isInvalid());
+        Assert.assertEquals("the lagging repair must not fault", faultsBefore, instance.getRefreshFaultCount());
+        Assert.assertEquals("the apply must have evicted the late row", baseMinTs, queryTimestamp("SELECT min(ts) FROM base"));
+        final StringSink viewRows = new StringSink();
+        printSql("(SELECT * FROM lv WHERE ts < " + baseMinTs + ") ORDER BY 1, 2", viewRows);
+        TestUtils.assertEquals("a lagging repair must keep the view rows a TTL eviction froze", frozenRows, viewRows);
+        final int denialReason = instance.getCheckpointRepairLastDenialReason();
+        final boolean isBoundaryRebuild = instance.getCheckpointRepairLastDisposition() == LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD
+                && denialReason != LiveViewCheckpointRepairPlan.DENIAL_NONE;
+        if (isBoundaryRebuild) {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "(SELECT " + oracleProjection + " FROM base) ORDER BY 1, 2",
+                    "(SELECT * FROM lv WHERE ts >= " + baseMinTs + ") ORDER BY 1, 2", LOG, true);
+        } else {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "(SELECT ts, sym FROM base) ORDER BY 1, 2",
+                    "(SELECT ts, sym FROM lv WHERE ts >= " + baseMinTs + ") ORDER BY 1, 2", LOG, true);
+        }
+        // The open segment's residual plans from its own floor, the late row, where the change set's
+        // union range plans from the trigger: see LiveViewRefreshJob.repairChangeSetResidual.
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        final boolean isResidualRepair = capture.countOccurrences("live view O3 replay [view=lv, lateRowTs=" + lateTs + ",") > 0;
+        laggingTtlEpisodes++;
+        if (isResidualRepair) {
+            laggingTtlResidualRepairs++;
+            if (isBoundaryRebuild
+                    && (denialReason == LiveViewCheckpointRepairPlan.DENIAL_REMOVED_OUTPUT_FLOOR
+                    || denialReason == LiveViewCheckpointRepairPlan.DENIAL_UNFLUSHED_OUTPUT)) {
+                laggingTtlResidualBoundaryRebuilds++;
+            }
+        }
+        LOG.info().$("LV fuzz lagging TTL episode repaired [residual=").$(isResidualRepair)
+                .$(", disposition=").$(LiveViewCheckpointRepairPlan.dispositionName(instance.getCheckpointRepairLastDisposition(), denialReason))
+                .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(denialReason)).I$();
+    }
+
+    // Appends one (ts, sym, i, x) row of a lagging TTL episode, over one of the run's keys.
+    private static void appendLaggingTtlEpisodeRow(Rnd episodeRnd, StringSink values, long ts, int symCount) {
+        appendEpisodeRow(values, ts, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), (1 + episodeRnd.nextInt(1000)) / 8.0);
     }
 
     // One refresh pass of runAnchoredRemovalFuzz: a pinned flush now and then, so a lead is

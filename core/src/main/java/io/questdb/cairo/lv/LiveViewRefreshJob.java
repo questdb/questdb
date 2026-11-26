@@ -7727,7 +7727,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final boolean isPreclassified = segmentRepair == SEGMENT_REPAIR_RESIDUAL;
                 // The residual's own floor and ceiling, which the decomposition derived row by
                 // row over the whole range including anything apply raced past the trigger.
-                // Rows below the view's boundary are already out of them.
+                // Rows below the view's boundary are already out of them. The floor bounds what
+                // the repair re-reads; what it may delete stays the trigger's, lateRowTs.
+                // See planO3Repair.
                 final long residualLateRowTs = isPreclassified ? segmentChangeSet.getResidualMinTs() : lateRowTs;
                 final long residualChangeMaxTs = isPreclassified ? segmentChangeSet.getResidualMaxTs() : changeMaxTs;
                 suspended = repairChangeSetResidual(
@@ -7950,7 +7952,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * localized rebuild; ROWS discovery remains subject to its own scan budget.
      *
      * @param triggerTs the lowest row of the commits the refresh drained, which a
-     *                  preclassified residual's {@code lateRowTs} may sit above or below
+     *                  preclassified residual's {@code lateRowTs} may sit above or below. It
+     *                  stays the repair's correction floor {@code C} on that route as well
      */
     private void planO3Repair(
             LiveViewInstance instance,
@@ -8083,6 +8086,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 runtimeFrontierTs,
                 scanCost
         );
+        if (isChangeSetPreclassified) {
+            // The residual's floor takes in rows of commits apply raced past the trigger, among
+            // them a row a TTL eviction on the same apply took again, below rows the view emitted
+            // and keeps. It bounds what the repair re-reads, re-emits and re-versions, while the
+            // authority of a boundary rebuild to delete below the lowest row it re-emits stays the
+            // trigger's, as on the union range. repairChangeSetSegments takes no residual for a
+            // trigger without a timestamp, and a parked segment loop carries the same trigger.
+            assert triggerTs != Numbers.LONG_NULL : "a preclassified residual has a DATA trigger";
+            repairPlan.bindCorrectionToTrigger(triggerTs, viewLowerBoundTimestamp);
+        }
         // A TTL eviction the apply of a DATA commit performed leaves the change set
         // insert-only, yet it may have retired the rows at a floor below the trigger that a
         // localized rebuild or a resume replaces from, together with base rows the view
