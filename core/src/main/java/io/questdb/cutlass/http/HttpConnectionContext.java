@@ -84,7 +84,15 @@ import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
+    private static final String CROSS_ORIGIN_REQUEST_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED = "cross-origin browser request rejected: Origin is the https origin of Host, but the connection is plaintext; behind a TLS-terminating proxy, set browser.tls.termination.enabled=true";
+    private static final String CROSS_ORIGIN_REQUEST_FROM_HTTP_ORIGIN_OF_HOST_REJECTED = "cross-origin browser request rejected: Origin is the http origin of Host, but browser.tls.termination.enabled says that browsers reach the server through a TLS-terminating proxy, over https; open the page through the proxy, or set browser.tls.termination.enabled=false if browsers also reach the server directly";
+    private static final String CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
+    private static final String CROSS_ORIGIN_REQUEST_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
+    private static final String CROSS_SITE_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
+    private static final String CROSS_SITE_REQUEST_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not listed in http.browser.allowed.origins";
+    private static final String CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and the request has no Origin, like any link or embedded resource on another site, so http.browser.allowed.origins cannot admit it; open the URL directly";
     private static final String FALSE = "false";
+    private static final String HOST_NAME_REJECTED = "host name rejected: without authentication, the server serves only IP addresses, single-label names, special-use domains such as localhost, and the names listed in http.allowed.hosts";
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private static final int NO_RESUME_PROCESSOR = Integer.MIN_VALUE;
     private static final String QWP_CREDENTIAL_MALFORMED = "QWP browser credential rejected: the questdb.qwp.authorization subprotocol must carry exactly one unpadded base64url Authorization value";
@@ -93,6 +101,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private static final String QWP_CREDENTIAL_WITH_AUTHORIZATION_HEADER = "QWP browser credential rejected: the upgrade also carries an Authorization header";
     private static final String QWP_CROSS_ORIGIN_WITHOUT_CREDENTIAL = QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED
             + "; a cross-origin browser upgrade cannot authenticate with cookies or an Authorization header, only with the questdb.qwp.authorization subprotocol from an origin listed in qwp.browser.allowed.origins";
+    private static final String SEC_FETCH_SITE_NONE = "none";
+    private static final String SEC_FETCH_SITE_SAME_ORIGIN = "same-origin";
     private static final String TRUE = "true";
     private final ActiveConnectionTracker activeConnectionTracker;
     private final HttpAuthenticator authenticator;
@@ -131,6 +141,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private boolean forceDisconnectOnComplete;
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
+    // true when the connection ends as soon as its socket has sent what the responses wrote to it
+    private boolean isClosingAfterSend;
+    // true when the current request asks to close the connection after its response
+    private boolean isConnectionCloseRequested;
     private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
     // true when the authenticator has just verified the Authorization header of the request
     private boolean isRequestCredentialVerified;
@@ -277,6 +291,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.multipartContentHeaderParser.close();
         }
         this.forceDisconnectOnComplete = false;
+        this.isClosingAfterSend = false;
+        this.isConnectionCloseRequested = false;
         this.localValueMap.disconnect();
         // SECURITY: these unconditional resets are the safety net for the conditional skips in
         // reset(), which preserve securityContext and the circuit breaker while isProtocolSwitched
@@ -484,17 +500,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             default -> throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
         };
 
-        boolean useful = keepGoing;
         if (keepGoing) {
-            if (keepConnectionAlive()) {
-                do {
-                    keepGoing = handleClientRecv(selector, rescheduleContext);
-                } while (keepGoing);
-            } else {
-                throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
-            }
+            serveNextRequests(selector, rescheduleContext);
         }
-        return useful;
+        return keepGoing;
     }
 
     @Override
@@ -596,6 +605,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public void switchProtocol() {
         this.isProtocolSwitched = true;
         this.resumeHandlerId = currentHandlerId;
+        // the upgrade answers the request, and the close option of HTTP does not carry over to
+        // the protocol the connection switches to
+        this.isConnectionCloseRequested = false;
     }
 
     @Override
@@ -629,11 +641,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             } catch (PeerDisconnectedException ignore) {
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
             } catch (PeerIsSlowToReadException e2) {
-                LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
-                        .$(", thread=").$(Thread.currentThread().threadId()).I$();
-                processor.parkRequest(this, false);
-                resumeHandlerId = (processor instanceof RejectProcessor)
-                        ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
+                // a connection that waits only for its socket to send the rest of the responses before
+                // it closes has no request to park
+                if (!isClosingAfterSend) {
+                    LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
+                            .$(", thread=").$(Thread.currentThread().threadId()).I$();
+                    processor.parkRequest(this, false);
+                    resumeHandlerId = (processor instanceof RejectProcessor)
+                            ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
+                }
                 throw registerDispatcherWrite();
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
@@ -685,15 +701,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return failQwpBrowserAuthentication(QWP_CREDENTIAL_NOT_AUTHENTICATED);
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         reset();
-        if (keepConnectionAlive()) {
-            while (handleClientRecv(selector, rescheduleContext)) ;
-        } else {
-            throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
-        }
+        serveNextRequests(selector, rescheduleContext);
     }
 
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
@@ -733,6 +744,87 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     .I$();
         }
         return processor;
+    }
+
+    // A web page can make the browser of its visitor send requests to any QuestDB
+    // the browser reaches, such as one on localhost that runs without
+    // authentication. The browser names the site that sent the request in
+    // Sec-Fetch-Site, which it sends to https and localhost URLs, and in Origin,
+    // which it sends with cross-origin fetches and with any method other than GET
+    // and HEAD. Non-browser clients send neither header.
+    private HttpRequestProcessor checkCrossSiteRequest(HttpRequestProcessor processor) {
+        if (processor == rejectProcessor || processor.isCrossSiteRequestAccepted()) {
+            return processor;
+        }
+        final DirectUtf8Sequence origin = headerParser.getHeader(HEADER_ORIGIN);
+        final DirectUtf8Sequence secFetchSite = headerParser.getHeader(HEADER_SEC_FETCH_SITE);
+        if (secFetchSite != null) {
+            // Sec-Fetch-Site decides over Origin: behind a TLS-terminating proxy the
+            // browser reports same-origin, while its https Origin does not match the
+            // plaintext connection. Another site gets in only with a listed Origin,
+            // which the browser sends with every cross-origin fetch.
+            if (Utf8s.equalsAscii(SEC_FETCH_SITE_SAME_ORIGIN, secFetchSite)
+                    || Utf8s.equalsAscii(SEC_FETCH_SITE_NONE, secFetchSite)
+                    || configuration.getBrowserAllowedOrigins().isAllowed(origin)) {
+                return processor;
+            }
+            // A link or an embedded resource on another site sends no Origin, and a file:
+            // page or a sandboxed frame sends null, so no entry of http.browser.allowed.origins
+            // can admit either. The message says so, rather than send the operator to list
+            // an origin.
+            final String reason;
+            if (origin == null) {
+                reason = CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED;
+            } else if (BrowserAllowedOrigins.hasHttpScheme(origin)) {
+                reason = CROSS_SITE_REQUEST_REJECTED;
+            } else {
+                reason = CROSS_SITE_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED;
+            }
+            return rejectProcessor.reject(HTTP_FORBIDDEN, reason);
+        }
+        // A cross-origin request carries an Origin. Behind a TLS-terminating proxy the
+        // connection is plaintext while the page has an https origin, which a browser
+        // that sends no Sec-Fetch-Site, or a proxy that drops it, leaves to compare.
+        final boolean isTlsSessionStarted = socket.isTlsSessionStarted();
+        final boolean isBrowserTlsTerminationEnabled = configuration.isBrowserTlsTerminationEnabled();
+        final boolean isSecureConnection = isTlsSessionStarted || isBrowserTlsTerminationEnabled;
+        if (QwpIngressHttpProcessor.isCrossOrigin(headerParser, isSecureConnection)
+                && !configuration.getBrowserAllowedOrigins().isAllowed(origin)) {
+            final DirectUtf8Sequence host = headerParser.getHeader(HEADER_HOST);
+            final String reason;
+            if (!BrowserAllowedOrigins.hasHttpScheme(origin)) {
+                reason = CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED;
+            } else if (!isSecureConnection && QwpIngressHttpProcessor.isSameOrigin(origin, host, true)) {
+                // the page came through a TLS-terminating proxy that the server has not been told about
+                reason = CROSS_ORIGIN_REQUEST_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED;
+            } else if (isBrowserTlsTerminationEnabled && !isTlsSessionStarted && QwpIngressHttpProcessor.isSameOrigin(origin, host, false)) {
+                // the page came over plain HTTP, past the TLS-terminating proxy that the server has been told about
+                reason = CROSS_ORIGIN_REQUEST_FROM_HTTP_ORIGIN_OF_HOST_REJECTED;
+            } else {
+                reason = CROSS_ORIGIN_REQUEST_REJECTED;
+            }
+            return rejectProcessor.reject(HTTP_FORBIDDEN, reason);
+        }
+        return processor;
+    }
+
+    // DNS rebinding: a web page whose host name its owner re-points at this
+    // server's address afterwards reads the server's responses as same-origin
+    // ones, so neither Sec-Fetch-Site nor Origin gives it away, but its requests
+    // carry that host name in Host. Authentication stops it, because the browser
+    // sends no credential of this server to another host name. Without
+    // authentication, the server serves only the host names an attacker cannot
+    // point at it in public DNS, and the ones listed in http.allowed.hosts.
+    private HttpRequestProcessor checkHostName(HttpRequestProcessor processor) {
+        if (processor == rejectProcessor || authenticator.isCredentialRequired()) {
+            return processor;
+        }
+        final DirectUtf8Sequence host = headerParser.getHeader(HEADER_HOST);
+        if (configuration.getAllowedHosts().isAllowed(host)) {
+            return processor;
+        }
+        LOG.info().$("host name rejected [fd=").$(getFd()).$(", host=").$safe(host).I$();
+        return rejectProcessor.reject(HTTP_FORBIDDEN, HOST_NAME_REJECTED);
     }
 
     private void clearRequestSession() {
@@ -859,14 +951,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (read > 0) {
                 lo = chunkedContentParser.handleRecv(lo, hi, processor);
                 if (lo == Long.MAX_VALUE) {
-                    // done
+                    // done, serveNextRequests() decides whether the connection serves another request
                     processor.onRequestComplete(this);
                     reset();
-                    if (keepConnectionAlive()) {
-                        return true;
-                    } else {
-                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                    }
+                    return true;
                 } else if (lo == Long.MIN_VALUE) {
                     // protocol violation
                     LOG.error().$("cannot parse chunk length, chunked protocol violation, disconnecting [fd=").$(getFd()).I$();
@@ -943,13 +1031,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                     }
 
+                    // serveNextRequests() decides whether the connection serves another request
                     processor.onRequestComplete(this);
                     reset();
-                    if (keepConnectionAlive()) {
-                        return true;
-                    } else {
-                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                    }
+                    return true;
                 }
             }
 
@@ -1124,6 +1209,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw registerDispatcherDisconnect(reason);
     }
 
+    // Returns the exception that ends the connection, once its socket has sent everything the responses
+    // wrote to it. An encrypted socket reports a send complete as soon as its TLS session has taken the
+    // bytes, while the session may still hold records of them, which only a later tlsIO() on a writable
+    // socket sends. Closing the socket now would drop those records, and the client would get a response
+    // without its end. So, until the session holds none, the connection waits for the socket to become
+    // writable, and handleClientSend() sends them.
+    private ServerDisconnectException disconnectOnceSent() throws PeerIsSlowToReadException {
+        if (socket.wantsTlsWrite()) {
+            isClosingAfterSend = true;
+            throw registerDispatcherWrite();
+        }
+        return registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
+    }
+
     private void dumpBuffer(long buffer, int size) {
         if (dumpNetworkTraffic && size > 0) {
             StdoutSink.INSTANCE.put('>');
@@ -1220,6 +1319,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true, false);
                 }
                 requestValidator.of(headerParser);
+                // A client that sends the close option reads the response until the connection
+                // ends, so the server closes it once the response has been sent (RFC 9112, 9.6).
+                isConnectionCloseRequested = HttpKeywords.isConnectionClose(headerParser.getHeader(HEADER_CONNECTION));
+                responseSink.setConnectionCloseRequested(isConnectionCloseRequested);
             }
 
             requestValidator.validateRequestHeader(rejectProcessor);
@@ -1235,6 +1338,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             try {
                 if (newRequest) {
+                    final HttpRequestProcessor routedProcessor = processor;
+                    processor = checkHostName(processor);
+                    processor = checkCrossSiteRequest(processor);
+                    // When a browser check rejects a request that needs no credential, because the
+                    // endpoint serves requests without one or the server runs without authentication,
+                    // the 403 and its reason stand: authenticating the request would turn a missing
+                    // credential, or a QWP browser credential offered to the reject processor, into a
+                    // 401, which only an endpoint that needs a credential answers.
+                    final boolean isAuthenticationSkipped = processor != routedProcessor
+                            && (!routedProcessor.requiresAuthentication() || !authenticator.isCredentialRequired());
                     final boolean isQwpCredentialOffered = QwpBrowserAuthorization.hasCredential(
                             headerParser.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL));
                     final boolean isQwpCrossOriginUpgrade = processor.isCrossOriginBrowserUpgrade(this);
@@ -1253,7 +1366,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // request on this connection behind
                     clearRequestSession();
                     try {
-                        if (processor.requiresAuthentication()
+                        if (!isAuthenticationSkipped
+                                && processor.requiresAuthentication()
                                 && !configureSecurityContext(processor, isQwpCredentialOffered, isQwpCrossOriginUpgrade)) {
                             final byte requiredAuthType = processor.getRequiredAuthType();
                             processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
@@ -1358,6 +1472,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean handleClientSend(HttpRequestProcessorSelector selector) throws PeerIsSlowToReadException, ServerDisconnectException {
+        if (isClosingAfterSend) {
+            // the socket is writable, send the TLS records the session still holds
+            if (socket.tlsIO(Socket.WRITE_FLAG) < 0) {
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            }
+            throw disconnectOnceSent();
+        }
         if (resumeHandlerId != NO_RESUME_PROCESSOR) {
             final HttpRequestProcessor proc = resolveResumeProcessor(selector);
             try {
@@ -1428,8 +1549,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return Utf8s.equalsNcAscii(FALSE, getRequestHeader().getUrlParam(URL_PARAM_SESSION));
     }
 
+    // A connection that switched to another protocol, such as WebSocket, belongs to that protocol, and
+    // the keep-alive setting of HTTP no longer applies to it.
     private boolean keepConnectionAlive() {
-        return !forceDisconnectOnComplete && configuration.getHttpContextConfiguration().getServerKeepAlive();
+        return !forceDisconnectOnComplete
+                && !isConnectionCloseRequested
+                && (isProtocolSwitched || configuration.getHttpContextConfiguration().getServerKeepAlive());
     }
 
     private boolean parseMultipartResult(
@@ -1464,6 +1589,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         HttpRequestProcessor processor = selector.resolveProcessorById(resumeHandlerId, headerParser);
         return processor != null ? processor : rejectProcessor;
+    }
+
+    // Serves the requests that follow on this connection until no whole request is left to read. Before
+    // each, it ends the connection when the server does not keep connections alive, or when the request
+    // just served asked to close it.
+    private void serveNextRequests(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
+            throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
+        do {
+            if (!keepConnectionAlive()) {
+                throw disconnectOnceSent();
+            }
+        } while (handleClientRecv(selector, rescheduleContext));
     }
 
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
