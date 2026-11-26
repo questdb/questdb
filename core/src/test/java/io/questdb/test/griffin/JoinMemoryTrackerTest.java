@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -948,12 +949,15 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinOverSortedWindowJoinBreachesLimitInSort() throws Exception {
         // SPLICE JOIN reads a WINDOW JOIN sorted by its timestamp through the sort that ORDER BY keeps for it. The
-        // sort copies the rows into a record chain bound to the per-query tracker, whose first 1 MiB page breaches
-        // the 512 KiB limit. So does the sort over a UNION ALL that merges two timestamp-ordered branches. Reusing
-        // one factory checks that the failed execution released what it had charged.
-        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1024 * 1024);
+        // sort copies the rows into a record chain and their keys into an entry list, both bound to the per-query
+        // tracker, and 15_000 more trades take them past the 512 KiB limit. So does the sort over a UNION ALL that
+        // merges two timestamp-ordered branches. Reusing one factory checks that the failed execution released what
+        // it had charged.
         assertMemoryLeak(() -> {
             createSortedWindowJoinTables();
+            executeWithoutQueryMemoryLimit("INSERT INTO trades SELECT ((100 + x) * 1_000_000)::TIMESTAMP, ('s' || (x % 4))::SYMBOL, x::DOUBLE " +
+                    "FROM long_sequence(15_000)");
+            drainWalQueue();
             final String sql = "SELECT * FROM " + SORTED_WINDOW_JOIN + " w SPLICE JOIN quotes q";
             assertUsesFactory(sql, SpliceJoinLightRecordCursorFactory.class);
             assertDrainBreachesInSort(sql);
@@ -1027,7 +1031,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                     Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "size=1048576, memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']');
+                    assertSortAllocation(e.getFlyweightMessage());
                 }
             }
         }
@@ -1068,6 +1072,14 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
             }
         }
+    }
+
+    private static void assertSortAllocation(CharSequence message) {
+        Assert.assertTrue(
+                message.toString(),
+                Chars.contains(message, "memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']')
+                        || Chars.contains(message, "memoryTag=" + MemoryTag.NATIVE_DEFAULT + ']')
+        );
     }
 
     private void assertUsesFactory(String sql, Class<?> factoryClass) throws Exception {

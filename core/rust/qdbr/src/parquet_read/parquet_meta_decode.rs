@@ -2231,13 +2231,17 @@ mod tests {
     fn decoded_values(bufs: &RowGroupBuffers, to_type: ColumnType) -> Vec<Option<i64>> {
         let data = bufs.column_bufs[0].data_vec.as_slice();
         if to_type.tag() == ColumnTypeTag::Int {
-            data.chunks_exact(4)
-                .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| i32::from_le_bytes(*c))
                 .map(|v| (v != i32::MIN).then_some(v as i64))
                 .collect()
         } else {
-            data.chunks_exact(8)
-                .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            data.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| i64::from_le_bytes(*c))
                 .map(|v| (v != i64::MIN).then_some(v))
                 .collect()
         }

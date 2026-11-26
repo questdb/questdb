@@ -1378,9 +1378,9 @@ mod tests {
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.row_group_count(), metadata.row_groups.len() as u32);
 
-        for i in 0..reader.row_group_count() as usize {
+        for (i, expected) in metadata.row_groups.iter().enumerate() {
             let rg = reader.row_group(i).unwrap();
-            assert_eq!(rg.num_rows(), metadata.row_groups[i].num_rows() as u64);
+            assert_eq!(rg.num_rows(), expected.num_rows() as u64);
         }
     }
 

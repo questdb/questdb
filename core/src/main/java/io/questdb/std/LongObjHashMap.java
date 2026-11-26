@@ -34,12 +34,12 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
     }
 
     public LongObjHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5f);
+        this(initialCapacity, 0.5f, noEntryKey);
     }
 
     @SuppressWarnings("unchecked")
-    private LongObjHashMap(int initialCapacity, double loadFactor) {
-        super(initialCapacity, loadFactor);
+    public LongObjHashMap(int initialCapacity, double loadFactor, long noKeyValue) {
+        super(initialCapacity, loadFactor, noKeyValue);
         values = (V[]) new Object[keys.length];
         clear();
     }
