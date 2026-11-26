@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -254,17 +255,19 @@ public final class HashJoinGroupByCandidate {
      * build table holds more rows than the probe table; see {@link #isKeyCapacityPresized()}.
      */
     public static boolean isSupportedValueType(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
-                 ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
-                 ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL, ColumnType.IPv4,
-                 ColumnType.UUID, ColumnType.LONG256, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
-                 ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
-                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
-                 ColumnType.DECIMAL256 -> true;
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        // a pseudo type and VARCHAR_SLICE have no stored accessor
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, IPv4, UUID, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256 -> true;
             // STRING, VARCHAR, BINARY and ARRAY are variable-size, so the row heap cannot copy
-            // them. INTERVAL is not persisted, so no base-table column carries one.
-            default -> false;
+            // them. INTERVAL is not persisted, so no base-table column carries one. The row heap
+            // has no copy arm for LONG128.
+            case STRING, VARCHAR, BINARY, ARRAY, INTERVAL, LONG128 -> false;
         };
     }
 

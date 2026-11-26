@@ -27,7 +27,10 @@
 #include "simd.h"
 
 // Used to clean up noise in the switch statement
-#define macro_dispatch_fixed_to_fixed(a, b) case pack_column_types(a, b): return convert_from_type_to_type<a, b>(src, dst, row_count)
+#define macro_dispatch_fixed_to_fixed(a, b) case pack_column_types(a, b): { \
+    static_assert(is_fixed_convertible(a) && is_fixed_convertible(b), "conversion row for an unclassified type"); \
+    return convert_from_type_to_type<a, b>(src, dst, row_count); \
+}
 
 void convert_us_to_ms(int64_t *dest, const int64_t *src, const int64_t count) {
     constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;

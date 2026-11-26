@@ -301,6 +301,7 @@ pub fn can_skip_row_group(
 
                 let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                 let is_date = col_type_tag == ColumnTypeTag::Date as i32;
+                let is_unsigned = ParquetDecoder::is_qdb_unsigned(col_type_tag);
                 let is_third_party_unsigned = false;
                 if !is_third_party_unsigned {
                     if let (Some(min_b), Some(max_b)) = (min_bytes, max_bytes) {
@@ -309,6 +310,7 @@ pub fn can_skip_row_group(
                             &filter_desc,
                             has_nulls,
                             is_decimal,
+                            is_unsigned,
                             is_ipv4,
                             is_date,
                             Some(min_b),
@@ -322,11 +324,13 @@ pub fn can_skip_row_group(
             FILTER_OP_LT | FILTER_OP_LE | FILTER_OP_GT | FILTER_OP_GE | FILTER_OP_BETWEEN => {
                 let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                 let is_date = col_type_tag == ColumnTypeTag::Date as i32;
+                let is_unsigned = ParquetDecoder::is_qdb_unsigned(col_type_tag);
                 if let (Some(min_b), Some(max_b)) = (min_bytes, max_bytes) {
                     if ParquetDecoder::value_outside_range(
                         &physical_type,
                         &filter_desc,
                         is_decimal,
+                        is_unsigned,
                         is_ipv4,
                         is_date,
                         op,

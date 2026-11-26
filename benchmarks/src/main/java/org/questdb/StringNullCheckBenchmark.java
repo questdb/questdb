@@ -63,9 +63,11 @@ import java.util.concurrent.TimeUnit;
 @Warmup(iterations = 1, time = 2)
 @Measurement(iterations = 5, time = 1)
 @Timeout(time = 5)
-@Fork(1)
+@Fork(value = 1, jvmArgsAppend = "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED")
 public class StringNullCheckBenchmark {
     private static final int NUM_ROWS = 10_000_000;
+    // Own table name: SqlJitCompilerSimdBenchmark keeps its table "x" in the same java.io.tmpdir root.
+    private static final String TABLE_NAME = "string_null_check";
     private static final CairoConfiguration configuration =
             new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
 
@@ -103,9 +105,9 @@ public class StringNullCheckBenchmark {
                                     -1,
                                     null
                             );
-            engine.execute("drop table if exists x", sqlExecutionContext);
+            engine.execute("drop table if exists " + TABLE_NAME, sqlExecutionContext);
             engine.execute(
-                    "create table x as (select" +
+                    "create table " + TABLE_NAME + " as (select" +
                             " rnd_str(70, 140, " + a_nullFreq + ") string_value," +
                             " rnd_varchar(70, 140, " + a_nullFreq + ") varchar_value," +
                             " rnd_long(1, 10, 0) long_value1," +
@@ -143,7 +145,13 @@ public class StringNullCheckBenchmark {
     public void setup(Blackhole blackHole) throws Exception {
         this.blackHole = blackHole;
         engine = new CairoEngine(configuration);
-        ctx = new SqlExecutionContextImpl(engine, 1);
+        ctx = new SqlExecutionContextImpl(engine, 1).with(
+                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                null,
+                null,
+                -1,
+                null
+        );
         compiler = new SqlCompilerImpl(engine);
 
         boolean shouldBeJitCompiled;
@@ -164,7 +172,7 @@ public class StringNullCheckBenchmark {
                 throw new RuntimeException("unreachable");
         }
         compiler = new SqlCompilerImpl(engine);
-        stringFilterFactory = compiler.compile("select count(*) from x where " +
+        stringFilterFactory = compiler.compile("select count(*) from " + TABLE_NAME + " where " +
                 (b_useComplexFilter ? "long_value1 > 0 and long_value2 > 0 and" : "") +
                 " string_value is null", ctx).getRecordCursorFactory();
         if (stringFilterFactory.usesCompiledFilter() != shouldBeJitCompiled) {
@@ -172,7 +180,7 @@ public class StringNullCheckBenchmark {
                     "expected=" + shouldBeJitCompiled +
                     ", actual=" + stringFilterFactory.usesCompiledFilter());
         }
-        varcharFilterFactory = compiler.compile("select count(*) from x where " +
+        varcharFilterFactory = compiler.compile("select count(*) from " + TABLE_NAME + " where " +
                 (b_useComplexFilter ? "long_value1 > 0 and long_value2 > 0 and" : "") +
                 " varchar_value is null", ctx).getRecordCursorFactory();
         if (varcharFilterFactory.usesCompiledFilter() != shouldBeJitCompiled) {

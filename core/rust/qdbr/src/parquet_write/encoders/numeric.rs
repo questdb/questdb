@@ -38,6 +38,10 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
@@ -176,6 +180,10 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => slice_to_page_notnull(
             slice,
@@ -396,6 +404,10 @@ pub trait SimdEncodable: NativeType {
     ) -> ParquetResult<Vec<u8>> {
         let non_null_count = slice.len() - null_count;
 
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+        )]
         match encoding {
             Encoding::Plain => {
                 // An all-null page has no values to write. PLAIN reads the empty

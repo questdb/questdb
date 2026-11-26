@@ -27,7 +27,7 @@ package io.questdb.test.std;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableWriterSegmentCopyInfo;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
@@ -708,6 +708,7 @@ public class VectFuzzTest {
                                     address,
                                     0,
                                     ColumnType.SYMBOL,
+                                    NullPolicy.SENTINEL,
                                     4,
                                     0
                             );
@@ -806,6 +807,7 @@ public class VectFuzzTest {
                                 block,
                                 0,
                                 ColumnType.STRING,
+                                NullPolicy.SENTINEL,
                                 -1, // var-len marker
                                 0   // column top
                         );
@@ -1875,7 +1877,7 @@ public class VectFuzzTest {
             src.add(20);
             src.add(20);
             src.add(30);
-            TableUtils.setNull(keyType, keyData.getAddress(), 4);
+            ColumnType.getTypeDriver(keyType).setNull(keyData.getAddress(), 4);
             putDedupKey(keySize, keyData.getAddress(), 2, 1);
             putDedupKey(keySize, keyData.getAddress(), 3, 1);
 
@@ -1888,7 +1890,7 @@ public class VectFuzzTest {
             index.add(2);
             index.add(20);
             index.add(3);
-            TableUtils.setNull(keyType, keyO3.getAddress(), 4);
+            ColumnType.getTypeDriver(keyType).setNull(keyO3.getAddress(), 4);
             putDedupKey(keySize, keyO3.getAddress(), 2, 1);
             putDedupKey(keySize, keyO3.getAddress(), 3, 2);
 
@@ -1901,11 +1903,11 @@ public class VectFuzzTest {
             Vect.memset(records.getAddress(), records.getCapacity() * Long.BYTES, 0);
             final long recordsAddr = ((records.getAddress() + 15) & ~15L) + recordShift;
             if (keyCount == 2) {
-                final long otherKeyAddr = DedupColumnCommitAddresses.setColValues(recordsAddr, 1 - keySlot, ColumnType.INT, Integer.BYTES, 0);
+                final long otherKeyAddr = DedupColumnCommitAddresses.setColValues(recordsAddr, 1 - keySlot, ColumnType.INT, NullPolicy.SENTINEL, Integer.BYTES, 0);
                 DedupColumnCommitAddresses.setColAddressValues(otherKeyAddr, otherKeyData.getAddress());
                 DedupColumnCommitAddresses.setO3DataAddressValues(otherKeyAddr, otherKeyO3.getAddress());
             }
-            final long keyAddr = DedupColumnCommitAddresses.setColValues(recordsAddr, keySlot, keyType, keySize, 2);
+            final long keyAddr = DedupColumnCommitAddresses.setColValues(recordsAddr, keySlot, keyType, ColumnType.getTypeDriver(keyType).getNullPolicy(), keySize, 2);
             DedupColumnCommitAddresses.setColAddressValues(keyAddr, keyData.getAddress());
             DedupColumnCommitAddresses.setO3DataAddressValues(keyAddr, keyO3.getAddress());
 
@@ -2070,6 +2072,7 @@ public class VectFuzzTest {
                                 dedupColBuffPtr,
                                 k,
                                 ColumnType.SYMBOL,
+                                NullPolicy.SENTINEL,
                                 4,
                                 0
                         );

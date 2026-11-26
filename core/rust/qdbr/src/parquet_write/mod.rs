@@ -1,3 +1,9 @@
+// A match on `ColumnTypeTag` names every tag or states why it does not, so a new tag fails the
+// build at each match that must decide for it. The lint cannot tell a tag match from any other enum
+// match, so a wildcard match on another enum (parquet2's, for example) carries an `allow` with its
+// reason.
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use num_traits::AsPrimitive;
 use qdb_core::col_type::nulls;
 
@@ -4819,6 +4825,10 @@ mod tests {
                 Long(Vec<i64>),
             }
 
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "test helper: builds only the tags its cases name"
+            )]
             let (col, owned) = match tag {
                 ColumnTypeTag::Int => {
                     let data: Vec<i32> = (0..100i32).collect();
@@ -5155,6 +5165,10 @@ mod tests {
                     .expect("row group reader")
                     .get_column_page_reader(0)
                     .expect("page reader");
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "not a tag match: arrow-rs Page; every page but a dictionary page fails here"
+                )]
                 match page_reader
                     .get_next_page()
                     .expect("page")

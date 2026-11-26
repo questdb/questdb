@@ -1,0 +1,121 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+${IMPORTS}/**
+ * The type driver of ${NAME}, a var-size type: its facts, as its facts file declares them, and
+ * every other answer, each a name javac reports until the author writes it. utils/type-probe wrote
+ * it from the facts file (utils/type-probe/README.md, "The type driver").
+ */
+public final class ${CLASS} implements ColumnTypeDriver {
+    public static final ${CLASS} INSTANCE = new ${CLASS}();
+
+    private ${CLASS}() {
+    }
+
+    @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return ${ACCESSOR};
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return ${ARITHMETIC};
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return ${IMPLICIT_CASTS};
+    }
+
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return ${MOVEMENT};
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return ColumnType.tagOf(columnType) == ColumnType.${NAME} ? "${NAME}" : ColumnType.UNKNOWN_NAME;
+    }
+
+    @Override
+    public long getNullAsLong() {
+        return ${NULL_WORD};
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return ${NULL_WORD};
+    }
+
+    @Override
+    public NullPolicy getNullPolicy() {
+        return ${NULL_POLICY};
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return ${PG_ARRAY_OID};
+    }
+
+    @Override
+    public int getPgOid() {
+        return ${PG_OID};
+    }
+
+    @Override
+    public int getRelationBits() {
+        return ${RELATION_BITS};
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return ${RELATION_KIND};
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return ${SIGNATURE_CHAR};
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ${TAG};
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return ${WIRE_KIND};
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return switch (${CAST_TARGET}) {
+            case ALWAYS -> true;
+            case FROM_NULL_ONLY -> isFromNull;
+            case NEVER -> false;
+        };
+    }
+${ANSWERS}}

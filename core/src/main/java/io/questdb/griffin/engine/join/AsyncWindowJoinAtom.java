@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -313,7 +312,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = func.getComputeBatchArg();
-                    final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
+                    final var funcArgType = GroupByColumnSink.argTag(func.getComputeBatchArgType());
                     final int index = findFunctionWithSameArg(ownerGroupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
                     if (index < 0) {
                         groupByFunctionTypes.add(funcArgType);

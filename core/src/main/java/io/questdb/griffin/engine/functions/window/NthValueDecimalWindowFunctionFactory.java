@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
@@ -131,19 +132,24 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         if (rowsHi < rowsLo) {
             boolean isRange = windowContext.getFramingMode() == WindowExpression.FRAMING_RANGE;
             VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-            return switch (tag) {
-                case ColumnType.DECIMAL8 ->
+            return switch (ColumnTypeTag.of(argType)) {
+                case DECIMAL8 ->
                         new Decimal8NullFunction(args.get(0), NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL16 ->
+                case DECIMAL16 ->
                         new Decimal16NullFunction(args.get(0), NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL32 ->
+                case DECIMAL32 ->
                         new Decimal32NullFunction(args.get(0), NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL64 ->
+                case DECIMAL64 ->
                         new Decimal64NullFunction(args.get(0), NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL128 ->
+                case DECIMAL128 ->
                         new Decimal128NullFunction(args.get(0), NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                default ->
+                case DECIMAL256 ->
                         new Decimal256NullFunction(args.get(0), NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
+                case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
+                     LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                     LONG128, IPv4, VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                     INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                        throw SqlException.$(argPositions.getQuick(0), "nth_value is not yet implemented for ").put(ColumnType.nameOf(tag));
             };
         }
 

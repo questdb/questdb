@@ -1,0 +1,19 @@
+$ cmake --build /repo/utils/target/type-probe/NN_INT/cmake-build --config Release -j 16
+[  1%] Building CXX object CMakeFiles/questdb.dir/src/main/c/share/converters.cpp.o
+[  2%] Building C object CMakeFiles/questdb.dir/src/main/c/share/files.c.o
+In file included from /repo/core/src/main/c/share/converters.cpp:25:
+/repo/core/src/main/c/share/column_type.h:110:13: error: enumeration value 'NN_INT' not handled in switch [-Werror,-Wswitch]
+  110 |     switch (static_cast<ColumnType>(column_type)) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/repo/core/src/main/c/share/converters.h:63:13: error: enumeration value 'NN_INT' not handled in switch [-Werror,-Wswitch]
+   63 |     switch (src_type) {
+      |             ^~~~~~~~
+/repo/core/src/main/c/share/converters.cpp:119:9: warning: unused variable 'scale' [-Wunused-variable]
+In file included from /repo/core/src/main/c/share/dedup.cpp:26:
+/repo/core/src/main/c/share/column_type.h:110:13: error: enumeration value 'NN_INT' not handled in switch [-Werror,-Wswitch]
+  110 |     switch (static_cast<ColumnType>(column_type)) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2 errors generated.
+gmake[2]: *** [CMakeFiles/questdb.dir/build.make:90: CMakeFiles/questdb.dir/src/main/c/share/converters.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:117: CMakeFiles/questdb.dir/all] Error 2
+gmake: *** [Makefile:91: all] Error 2

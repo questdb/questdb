@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="io.questdb.test.cairo.types.RelationCoverageTest" time="0.4" tests="3" errors="1" skipped="0" failures="1">
+  <testcase name="testUnionHasACastForEveryAdmittedPair" classname="io.questdb.test.cairo.types.RelationCoverageTest" time="0.016">
+    <failure message="expected:&lt;&gt; but was:&lt;BINARY with NN_INT: CairoException [0] no UNION cast for NN_INT to STRING at UNION: implement the cast or refuse the pair in the UNION matrix" type="java.lang.AssertionError"><![CDATA[java.lang.AssertionError: expected:<> but was:<BINARY with NN_INT: CairoException [0] no UNION cast for NN_INT to STRING at UNION: implement the cast or refuse the pair in the UNION matrix
+BINARY with UINT32: CairoException [0] no UNION cast for UINT32 to STRING at UNION: implement the cast or refuse the pair in the UNION matrix
+>
+]]></failure>
+  </testcase>
+  <testcase name="testOpcodeFunctionsHandleEveryType" classname="io.questdb.test.cairo.types.GeneratedAccessorCoverageTest" time="0.010">
+    <error message="expected:&lt;[]&gt; but was:&lt;[keyKind: UINT32 is not handled ]&gt;" type="org.junit.ComparisonFailure"><![CDATA[org.junit.ComparisonFailure: expected:<[]> but was:<[keyKind: UINT32 is not handled ]>
+]]></error>
+  </testcase>
+  <testcase name="testCaseEscalationHasAnImplementation" classname="io.questdb.test.cairo.types.RelationCoverageTest" time="0.007"/>
+</testsuite>

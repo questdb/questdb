@@ -403,7 +403,19 @@ public class RecordToRowCopierBenchmark {
 
         @Override
         public TableColumnMetadata getColumnMetadata(int columnIndex) {
-            return null;
+            return new TableColumnMetadata(
+                    getColumnName(columnIndex),
+                    types[columnIndex],
+                    IndexType.NONE,
+                    0,
+                    false,
+                    null,
+                    columnIndex,
+                    false,
+                    0,
+                    true,
+                    0
+            );
         }
 
         @Override

@@ -27,6 +27,7 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -123,7 +124,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
      */
     public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount, boolean isNoSentinelToTextAllowed) {
         final boolean isSymbolAllowed = estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL;
-        if (isNoSentinelToTextAllowed && ColumnType.isNoNullSentinelFixedType(columnType) && rnd.nextBoolean()) {
+        if (isNoSentinelToTextAllowed && ColumnType.getTypeDriver(columnType).getNullPolicy() == NullPolicy.NONE && rnd.nextBoolean()) {
             return generateNextType(columnType, textColumnTypes, rnd, isSymbolAllowed, true);
         }
         return switch (columnType) {
@@ -394,7 +395,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         // disallow conversions from non-nullable to nullable, but for BOOLEAN, BYTE and SHORT to text when allowed
         while (nextColType == columnType
                 || (isNullable(columnType) != isNullable(nextColType)
-                && !(isNoSentinelToTextAllowed && ColumnType.isNoNullSentinelFixedType(columnType) && isText(nextColType)))
+                && !(isNoSentinelToTextAllowed && ColumnType.getTypeDriver(columnType).getNullPolicy() == NullPolicy.NONE && isText(nextColType)))
                 || (!symbolsAllowed && ColumnType.isSymbol(nextColType))) {
             nextColType = convertableColumnTypes[rnd.nextInt(convertableColumnTypes.length)];
         }

@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
@@ -125,40 +126,51 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         if (rowsHi < rowsLo) {
             boolean isRange = windowContext.getFramingMode() == WindowExpression.FRAMING_RANGE;
             VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-            return switch (tag) {
-                case ColumnType.DECIMAL8 ->
+            return switch (ColumnTypeTag.of(argType)) {
+                case DECIMAL8 ->
                         new Decimal8NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL16 ->
+                case DECIMAL16 ->
                         new Decimal16NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL32 ->
+                case DECIMAL32 ->
                         new Decimal32NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL64 ->
+                case DECIMAL64 ->
                         new Decimal64NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                case ColumnType.DECIMAL128 ->
+                case DECIMAL128 ->
                         new Decimal128NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
-                default -> new Decimal256NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
+                case DECIMAL256 ->
+                        new Decimal256NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, argType);
+                case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
+                     LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                     LONG128, IPv4, VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                     INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                        throw SqlException.$(argPositions.getQuick(0), "first_value is not yet implemented for ").put(ColumnType.nameOf(tag));
             };
         }
 
-        return switch (tag) {
-            case ColumnType.DECIMAL8 -> windowContext.isIgnoreNulls()
+        return switch (ColumnTypeTag.of(argType)) {
+            case DECIMAL8 -> windowContext.isIgnoreNulls()
                     ? generateDecimal8IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal8RespectNulls(position, args, configuration, windowContext, argType);
-            case ColumnType.DECIMAL16 -> windowContext.isIgnoreNulls()
+            case DECIMAL16 -> windowContext.isIgnoreNulls()
                     ? generateDecimal16IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal16RespectNulls(position, args, configuration, windowContext, argType);
-            case ColumnType.DECIMAL32 -> windowContext.isIgnoreNulls()
+            case DECIMAL32 -> windowContext.isIgnoreNulls()
                     ? generateDecimal32IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal32RespectNulls(position, args, configuration, windowContext, argType);
-            case ColumnType.DECIMAL64 -> windowContext.isIgnoreNulls()
+            case DECIMAL64 -> windowContext.isIgnoreNulls()
                     ? generateDecimal64IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal64RespectNulls(position, args, configuration, windowContext, argType);
-            case ColumnType.DECIMAL128 -> windowContext.isIgnoreNulls()
+            case DECIMAL128 -> windowContext.isIgnoreNulls()
                     ? generateDecimal128IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal128RespectNulls(position, args, configuration, windowContext, argType);
-            default -> windowContext.isIgnoreNulls()
+            case DECIMAL256 -> windowContext.isIgnoreNulls()
                     ? generateDecimal256IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal256RespectNulls(position, args, configuration, windowContext, argType);
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
+                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                 LONG128, IPv4, VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw SqlException.$(argPositions.getQuick(0), "first_value is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
     }
 

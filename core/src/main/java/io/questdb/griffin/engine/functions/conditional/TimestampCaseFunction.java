@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -48,7 +47,6 @@ class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        Function f = picker.pick(rec);
-        return timestampDriver.from(f.getTimestamp(rec), ColumnType.getTimestampType(f.getType()));
+        return picker.pick(rec).getTimestamp(rec);
     }
 }

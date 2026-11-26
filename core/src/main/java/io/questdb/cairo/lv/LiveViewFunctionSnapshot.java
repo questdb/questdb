@@ -272,49 +272,30 @@ public final class LiveViewFunctionSnapshot {
         return offset + pageLength;
     }
 
+    /**
+     * Walks one key row by the codec's slot widths ({@link LiveViewSnapshotKeyCodec#byteSizeOfType}),
+     * STRING as its length-prefixed exception, checking every slot against {@code payloadEnd}.
+     */
     private static long validateKey(MemoryR source, long offset, long payloadEnd, ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
-            final int bytes;
-            switch (type) {
-                case ColumnType.BYTE:
-                case ColumnType.BOOLEAN:
-                case ColumnType.GEOBYTE:
-                    bytes = Byte.BYTES;
-                    break;
-                case ColumnType.SHORT:
-                case ColumnType.CHAR:
-                case ColumnType.GEOSHORT:
-                    bytes = Short.BYTES;
-                    break;
-                case ColumnType.INT:
-                case ColumnType.SYMBOL:
-                case ColumnType.IPv4:
-                case ColumnType.GEOINT:
-                case ColumnType.FLOAT:
-                    bytes = Integer.BYTES;
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                case ColumnType.GEOLONG:
-                case ColumnType.DOUBLE:
-                    bytes = Long.BYTES;
-                    break;
-                case ColumnType.STRING:
-                    ensureAvailable(offset, Integer.BYTES, payloadEnd, "string key length");
-                    final int strLen = source.getInt(offset);
-                    offset += Integer.BYTES;
-                    if (strLen >= 0) {
-                        final long stringBytes = (long) strLen * Character.BYTES;
-                        ensureAvailable(offset, stringBytes, payloadEnd, "string key");
-                        offset += stringBytes;
-                    }
-                    continue;
-                default:
-                    throw CairoException.critical(0)
-                            .put("live view function checkpoint key type unsupported, type=")
-                            .put(ColumnType.nameOf(type));
+            final int columnType = keyTypes.getColumnType(i);
+            final int type = ColumnType.tagOf(columnType);
+            if (type == ColumnType.STRING) {
+                ensureAvailable(offset, Integer.BYTES, payloadEnd, "string key length");
+                final int strLen = source.getInt(offset);
+                offset += Integer.BYTES;
+                if (strLen >= 0) {
+                    final long stringBytes = (long) strLen * Character.BYTES;
+                    ensureAvailable(offset, stringBytes, payloadEnd, "string key");
+                    offset += stringBytes;
+                }
+                continue;
+            }
+            final int bytes = LiveViewSnapshotKeyCodec.byteSizeOfType(columnType);
+            if (bytes < 0) {
+                throw CairoException.critical(0)
+                        .put("live view function checkpoint key type unsupported, type=")
+                        .put(ColumnType.nameOf(type));
             }
             ensureAvailable(offset, bytes, payloadEnd, "key");
             offset += bytes;

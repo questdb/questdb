@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -796,6 +797,62 @@ public class MemoryPARWImplTest {
     }
 
     @Test
+    public void testLong256TextReadsOptionalPrefix() throws Exception {
+        // the text entry points read an optional 0x or 0X, then hex digits; with 64-byte pages a value
+        // at offset 0 fits in the first page, one at offset 48 crosses into the second, and only the
+        // page-straddling decoder writes that one
+        final String[][] values = {
+                {"0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20", "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},
+                {"0X0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20", "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},
+                {"2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90", "0x2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90"},
+                {"12", "0x12"},
+                {"abc", "0x0abc"},
+                {"f", "0x0f"},
+                {"", ""},
+                {null, ""}
+        };
+        final String[] refused = {"zz", "u33d", "0x", " 12", "1" + "0".repeat(64)};
+        TestUtils.assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                for (long offset : new long[]{0, 48}) {
+                    for (boolean utf8 : new boolean[]{false, true}) {
+                        for (String[] value : values) {
+                            // a value the put must replace
+                            mem.jumpTo(offset);
+                            mem.putLong256(1, 2, 3, 4);
+                            mem.jumpTo(offset);
+                            putLong256Text(mem, value[0], utf8);
+                            assertEquals(offset + Long256.BYTES, mem.getAppendOffset());
+                            sink.clear();
+                            Numbers.appendLong256(mem.getLong256A(offset), sink);
+                            assertEquals(value[0], value[1], sink.toString());
+                        }
+                        for (String text : refused) {
+                            mem.jumpTo(offset);
+                            mem.putLong256(1, 2, 3, 4);
+                            mem.jumpTo(offset);
+                            try {
+                                putLong256Text(mem, text, utf8);
+                                Assert.fail(text);
+                            } catch (ImplicitCastException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `" + text + "` [STRING -> LONG256]");
+                            }
+                            // a refused text writes nothing and leaves the append position where it was
+                            assertEquals(offset, mem.getAppendOffset());
+                            final Long256 kept = mem.getLong256A(offset);
+                            assertEquals(1, kept.getLong0());
+                            assertEquals(2, kept.getLong1());
+                            assertEquals(3, kept.getLong2());
+                            assertEquals(4, kept.getLong3());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLongCompatibility() {
         long pageSize = 64;
         try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
@@ -1078,6 +1135,14 @@ public class MemoryPARWImplTest {
             }
         } finally {
             Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void putLong256Text(MemoryPARWImpl mem, String text, boolean utf8) {
+        if (utf8) {
+            mem.putLong256Utf8(text == null ? null : new Utf8String(text));
+        } else {
+            mem.putLong256(text);
         }
     }
 

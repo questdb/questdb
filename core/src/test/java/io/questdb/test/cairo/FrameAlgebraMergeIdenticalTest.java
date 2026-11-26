@@ -26,7 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.StringTypeDriver;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArray;
@@ -384,11 +384,12 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
 
     private static void putNull(MemoryCARW mem, int type) {
         final int size = ColumnType.sizeOf(type);
+        final TypeDriver driver = ColumnType.getTypeDriver(type);
         if (size <= Long.BYTES) {
-            putLong(mem, size, TableUtils.getNullLong(type, 0));
+            putLong(mem, size, driver.getNullLong(0));
         } else {
             for (int i = 0; i < size / Long.BYTES; i++) {
-                mem.putLong(TableUtils.getNullLong(type, i));
+                mem.putLong(driver.getNullLong(i));
             }
         }
     }

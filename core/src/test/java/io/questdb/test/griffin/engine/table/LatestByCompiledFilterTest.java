@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -43,6 +44,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -383,6 +385,12 @@ public class LatestByCompiledFilterTest extends AbstractTest {
         @Override
         public long getRowIdOffset() {
             return 777;
+        }
+
+        @Override
+        public @Nullable NullPolicy getSourceColumnNullPolicy(int columnIndex) {
+            // no column is a type-cast column here (getSourceColumnType is -1)
+            return null;
         }
 
         @Override

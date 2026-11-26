@@ -25,6 +25,7 @@
 package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -142,7 +143,7 @@ public enum ParquetExportMode {
         ObjList<Function> functions = vf.getFunctions();
         RecordMetadata meta = vf.getMetadata();
         for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) != ColumnType.BINARY) {
+            if (PhysicalDescriptor.accessorOpcodeOf(meta.getColumnType(i)) != ColumnType.BINARY) {
                 continue;
             }
             Function func = functions.getQuick(i);
@@ -182,7 +183,7 @@ public enum ParquetExportMode {
 
     private static boolean hasBinaryColumn(RecordMetadata metadata) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.BINARY) {
+            if (PhysicalDescriptor.accessorOpcodeOf(metadata.getColumnType(i)) == ColumnType.BINARY) {
                 return true;
             }
         }

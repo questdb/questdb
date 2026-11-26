@@ -30,8 +30,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -138,6 +140,8 @@ public class LiveViewWindow implements QuietCloseable {
     // different Map implementation can still mirror the survivors into a probe of its
     // own implementation -- the sink writes through per-column putters and never casts.
     private final RecordSink anchorKeySink;
+    // the accessor family's opcode of the anchor type, the arm readAnchorValue() takes
+    private final int anchorOpcode;
     private final int anchorValueType;
     private final CairoConfiguration cairoConfiguration;
     // The fixed segment boundary the compiler derived from the anchor expression, or
@@ -258,6 +262,7 @@ public class LiveViewWindow implements QuietCloseable {
         this.windowName = windowName;
         this.anchorExpression = anchorExpression;
         this.anchorValueType = anchorValueType;
+        this.anchorOpcode = PhysicalDescriptor.accessorOpcodeOf(anchorValueType);
         this.partitionKeyTypes = partitionKeyTypes;
         this.anchorMap = anchorMap;
         this.partitionKeySink = partitionKeySink;
@@ -285,6 +290,25 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public static ColumnTypes anchorMapValueTypes() {
         return AnchorMapValueTypes.INSTANCE;
+    }
+
+    /**
+     * Whether an anchor expression may return this type, i.e. whether {@link #readAnchorValue} has
+     * an arm for it. The CREATE-time check ({@code CairoEngine.validateAnchorReturnType}) and
+     * {@link #build} both call it.
+     */
+    public static boolean isAnchorType(int type) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // the anchor orders rows, so the type must order as its family does
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
+            return false;
+        }
+        return switch (driver.getAccessor()) {
+            case TIMESTAMP, LONG, INT -> true;
+            case BOOLEAN, BYTE, SHORT, CHAR, DATE, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL -> false;
+        };
     }
 
     /**
@@ -479,8 +503,7 @@ public class LiveViewWindow implements QuietCloseable {
         // the two implementations through it. See retainPartitions.
         Map map = createTrackedAnchorMap(configuration, mapKeyTypes, memoryTracker);
         int returnType = anchorExpression.getType();
-        int tag = ColumnType.tagOf(returnType);
-        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
+        if (!isAnchorType(returnType)) {
             Misc.free(map);
             // Same wording as the CREATE-time check in
             // CairoEngine.validateAnchorReturnType. CREATE validates this, but
@@ -1612,15 +1635,17 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     private long readAnchorValue(Record record) {
-        // build() restricts anchorValueType to TIMESTAMP, LONG, or INT; INT
+        // build() admits only isAnchorType() types: TIMESTAMP, LONG, or INT; INT
         // widens cleanly into the LONG slot via getInt's int-to-long promotion.
-        switch (ColumnType.tagOf(anchorValueType)) {
+        switch (anchorOpcode) {
             case ColumnType.TIMESTAMP:
                 return anchorExpression.getTimestamp(record);
             case ColumnType.INT:
                 return anchorExpression.getInt(record);
-            default:
+            case ColumnType.LONG:
                 return anchorExpression.getLong(record);
+            default:
+                throw new IllegalStateException("no anchor arm [type=" + ColumnType.nameOf(anchorValueType) + "]");
         }
     }
 

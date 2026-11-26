@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 
@@ -68,15 +69,16 @@ public final class HashJoinGroupByKeys {
      * joins and groups them itself.
      */
     public static boolean isSupportedKeyType(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
-                 ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
-                 ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL, ColumnType.STRING,
-                 ColumnType.VARCHAR, ColumnType.LONG128, ColumnType.LONG256, ColumnType.UUID,
-                 ColumnType.IPv4, ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT,
-                 ColumnType.GEOLONG, ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> true;
-            default -> false;
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        // a pseudo type and VARCHAR_SLICE have no stored accessor
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, STRING, VARCHAR,
+                 LONG128, LONG256, UUID, IPv4, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16, DECIMAL32,
+                 DECIMAL64, DECIMAL128, DECIMAL256 -> true;
+            case BINARY, ARRAY, INTERVAL -> false;
         };
     }
 

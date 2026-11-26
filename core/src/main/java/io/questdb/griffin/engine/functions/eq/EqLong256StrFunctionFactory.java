@@ -70,7 +70,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         Function strFunc = args.getQuick(1);
         if (strFunc.isConstant()) {
             CharSequence value = strFunc.getStrA(null);
-            if (value == null) {
+            if (value == null || value.isEmpty()) {
                 return new ConstStrFunc(long256Func);
             }
             Long256ConstDecoder decoder = DECODER.get();
@@ -144,7 +144,8 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         }
 
         private void decode(CharSequence hexLong256) {
-            Long256FromCharSequenceDecoder.decode(hexLong256, 2, hexLong256.length(), decoder);
+            final int len = hexLong256.length();
+            Long256FromCharSequenceDecoder.decode(hexLong256, Long256FromCharSequenceDecoder.hexDigitsLo(hexLong256, len), len, decoder);
         }
     }
 
@@ -183,13 +184,14 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
             CharSequence value = strFunc.getStrA(null);
-            if (value == null) {
+            final int len;
+            if (value == null || (len = value.length()) == 0) {
                 constLong0 = Long256Impl.NULL_LONG256.getLong0();
                 constLong1 = Long256Impl.NULL_LONG256.getLong1();
                 constLong2 = Long256Impl.NULL_LONG256.getLong2();
                 constLong3 = Long256Impl.NULL_LONG256.getLong3();
             } else {
-                Long256FromCharSequenceDecoder.decode(value, 2, value.length(), decoder);
+                Long256FromCharSequenceDecoder.decode(value, Long256FromCharSequenceDecoder.hexDigitsLo(value, len), len, decoder);
             }
         }
 

@@ -32,6 +32,11 @@
 //! decoder, which serves CONVERT TO NATIVE, must read a conversion to a type with a NULL as the
 //! `_pm` decode does, and takes the leading column top of the file metadata for the others.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "test helpers: build and read only the tags their cases name"
+)]
+
 use crate::allocator::TestAllocatorState;
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};

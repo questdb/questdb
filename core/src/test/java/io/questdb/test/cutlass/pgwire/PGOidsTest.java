@@ -53,6 +53,13 @@ public class PGOidsTest extends AbstractTest {
     }
 
     @Test
+    public void testNoOidForDecimal256Array() {
+        // an array takes its element type's array OID, which a DECIMAL256 element lacks;
+        // TypeDriverTest.testProtocolAnswers pins the OID of every tag
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DECIMAL256, 1, false)));
+    }
+
+    @Test
     public void testPgTypeToSizeEndianityMatches() {
         for (int i = 0; i < MAX_OIDS; i++) {
             short le = PGOids.PG_TYPE_TO_SIZE_MAP.get(i);

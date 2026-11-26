@@ -203,7 +203,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 // One element wide, holding this type's NULL pattern - one kernel per width covers every
                 // fixed type that way.
                 nullValueAddress = Unsafe.malloc(1L << shl, MemoryTag.NATIVE_O3);
-                TableUtils.setNull(columnType, nullValueAddress, 1);
+                ColumnType.getTypeDriver(columnType).setNull(nullValueAddress, 1);
                 mergeShuffleWithTop(
                         src1Address,
                         src2Address,
@@ -214,6 +214,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                         nullValueAddress,
                         shl
                 );
+                // validity batch site: a column with a validity bitmap would mark the rows below the column top NULL here
             } else {
                 mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
             }
@@ -285,8 +286,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
         if (sourceColumnTop > 0) {
             final long mappedAddress = mapWritable((rowCount + sourceColumnTop) << shl) + (rowCount << shl);
-            TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
+            ColumnType.getTypeDriver(columnType).setNull(mappedAddress, sourceColumnTop);
             markWritten(commitMode, (rowCount + sourceColumnTop) << shl);
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
         }
     }
 

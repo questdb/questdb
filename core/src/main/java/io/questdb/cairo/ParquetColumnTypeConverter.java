@@ -50,14 +50,90 @@ final class ParquetColumnTypeConverter {
     private ParquetColumnTypeConverter() {
     }
 
+    /**
+     * Picks the {@link #writeFixedParsedValue} / {@link #writeFixedNull} arm for a var-to-fixed
+     * conversion target, once per column, from the target's {@link PhysicalDescriptor.Accessor}
+     * family. Families with a parse arm yield their opcode; the rest yield UNDEFINED, which no arm
+     * handles. A type that reads through an existing family takes that family's arm, NULL included,
+     * only when it is like the family's namesake; for any other type {@link
+     * PhysicalDescriptor#familyArmOf} throws before the caller's row loop writes any target memory.
+     */
+    private static int fixedTargetOpcode(int targetType) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(targetType);
+        if (driver == null) {
+            // the pseudo tags and VARCHAR_SLICE are no conversion target
+            return ColumnType.UNDEFINED;
+        }
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "Parquet conversion");
+        return switch (accessor) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, IPv4, UUID,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();
+            // no parse arm and no NULL arm: the target memory stays as allocated
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
+                 INTERVAL -> ColumnType.UNDEFINED;
+        };
+    }
+
+    private static int maxCharsPerRow(WireKind kind, int sourceType) {
+        return switch (kind) {
+            case BOOLEAN -> 5;
+            case BYTE -> 4;
+            case SHORT -> 6;
+            case CHAR -> 1;
+            case INT -> 11;
+            case LONG -> 20;
+            case FLOAT -> 15;
+            case DOUBLE -> 25;
+            case DATE, TIMESTAMP -> 30;
+            case IPV4 -> 15;
+            case UUID -> 36;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    ColumnType.getDecimalPrecision(sourceType) + 3;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
+                 INTERVAL -> 40;
+        };
+    }
+
+    private static int maxUtf8BytesPerRow(WireKind kind, int sourceType) {
+        return switch (kind) {
+            case BOOLEAN, BYTE, SHORT, CHAR -> 0;
+            case INT -> 11;
+            case LONG -> 20;
+            case FLOAT -> 15;
+            case DOUBLE -> 25;
+            case DATE, TIMESTAMP -> 30;
+            case IPV4 -> 15;
+            case UUID -> 36;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    ColumnType.getDecimalPrecision(sourceType) + 3;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
+                 INTERVAL -> 40;
+        };
+    }
+
+    // the size allowance for a type without a wire kind: the DECIMAL pseudo tag gets its precision
+    // plus 3, every other pseudo tag and VARCHAR_SLICE 40
+    private static int noKindAllowance(int sourceType) {
+        return ColumnType.tagOf(sourceType) == ColumnType.DECIMAL ? ColumnType.getDecimalPrecision(sourceType) + 3 : 40;
+    }
+
     // Bound `side` (0 = lo, 1 = hi) of column-top run `run` of the `runCount` runs at `topRowsAddress`;
     // Long.MAX_VALUE past the last run, so a row below it is a row outside every run.
     private static long topRowsBound(long topRowsAddress, long runCount, long run, int side) {
         return run < runCount ? Unsafe.getLong(topRowsAddress + (2 * run + side) * Long.BYTES) : Long.MAX_VALUE;
     }
 
-    private static void writeFixedNull(int targetType, long targetAddress, int rowIndex) {
-        switch (ColumnType.tagOf(targetType)) {
+    // Column-top rows of a no-NULL source decode to 0 or false, which the converter cannot tell
+    // from a value, so its column-top runs convert to NULL; a sentinel source decodes them to its NULL.
+    private static long topRunCount(NullPolicy sourceNullPolicy, long topRowCount) {
+        return switch (sourceNullPolicy) {
+            case SENTINEL -> 0;
+            case NONE -> topRowCount;
+        };
+    }
+
+    private static void writeFixedNull(int targetOpcode, long targetAddress, int rowIndex) {
+        switch (targetOpcode) {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) 0);
             case ColumnType.SHORT -> Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) 0);
             case ColumnType.CHAR -> Unsafe.putChar(targetAddress + ((long) rowIndex << 1), (char) 0);
@@ -90,10 +166,15 @@ final class ParquetColumnTypeConverter {
                 Unsafe.putLong(address + 2L * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
                 Unsafe.putLong(address + 3L * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
             }
+            default -> {
+                // fixedTargetOpcode() yields UNDEFINED for a target with no NULL arm: nothing is
+                // written
+            }
         }
     }
 
     private static void writeFixedParsedValue(
+            int targetOpcode,
             int targetType,
             long targetAddress,
             int rowIndex,
@@ -103,11 +184,11 @@ final class ParquetColumnTypeConverter {
             Decimal256 decimal256
     ) {
         if (value == null) {
-            writeFixedNull(targetType, targetAddress, rowIndex);
+            writeFixedNull(targetOpcode, targetAddress, rowIndex);
             return;
         }
         try {
-            switch (ColumnType.tagOf(targetType)) {
+            switch (targetOpcode) {
                 case ColumnType.BOOLEAN ->
                         Unsafe.putByte(targetAddress + rowIndex, (byte) (SqlKeywords.isTrueKeyword(value) ? 1 : 0));
                 case ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) Numbers.parseInt(value));
@@ -168,10 +249,10 @@ final class ParquetColumnTypeConverter {
                     Unsafe.putLong(address + 2L * Long.BYTES, decimal256.getLh());
                     Unsafe.putLong(address + 3L * Long.BYTES, decimal256.getLl());
                 }
-                default -> writeFixedNull(targetType, targetAddress, rowIndex);
+                default -> writeFixedNull(targetOpcode, targetAddress, rowIndex);
             }
         } catch (NumericException e) {
-            writeFixedNull(targetType, targetAddress, rowIndex);
+            writeFixedNull(targetOpcode, targetAddress, rowIndex);
         }
     }
 
@@ -213,6 +294,7 @@ final class ParquetColumnTypeConverter {
      */
     static void convertFixedColumnToString(
             int sourceType,
+            NullPolicy sourceNullPolicy,
             long sourceDataAddress,
             int rowCount,
             long topRowsAddress,
@@ -230,7 +312,7 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final long runCount = ColumnType.isNoNullSentinelFixedType(sourceType) ? topRowCount : 0;
+        final long runCount = topRunCount(sourceNullPolicy, topRowCount);
         long run = 0;
         long runLo = topRowsBound(topRowsAddress, runCount, run, 0);
         long runHi = topRowsBound(topRowsAddress, runCount, run, 1);
@@ -271,6 +353,7 @@ final class ParquetColumnTypeConverter {
      */
     static void convertFixedColumnToVarchar(
             int sourceType,
+            NullPolicy sourceNullPolicy,
             long sourceDataAddress,
             int rowCount,
             long topRowsAddress,
@@ -286,7 +369,7 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final long runCount = ColumnType.isNoNullSentinelFixedType(sourceType) ? topRowCount : 0;
+        final long runCount = topRunCount(sourceNullPolicy, topRowCount);
         long run = 0;
         long runLo = topRowsBound(topRowsAddress, runCount, run, 0);
         long runHi = topRowsBound(topRowsAddress, runCount, run, 1);
@@ -360,13 +443,14 @@ final class ParquetColumnTypeConverter {
             Decimal256 decimal256
     ) {
         final boolean isVarchar = ColumnType.isVarchar(sourceType);
+        final int targetOpcode = fixedTargetOpcode(targetType);
         for (int i = 0; i < rowCount; i++) {
             final CharSequence value;
             if (isVarchar) {
                 final long auxEntryAddress = auxAddress + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
                 final int header = Unsafe.getInt(auxEntryAddress);
                 if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-                    writeFixedNull(targetType, targetAddress, i);
+                    writeFixedNull(targetOpcode, targetAddress, i);
                     continue;
                 }
                 final int size = header >>> 4;
@@ -376,7 +460,7 @@ final class ParquetColumnTypeConverter {
                 final long offset = Unsafe.getLong(auxAddress + (long) i * Long.BYTES);
                 final int length = Unsafe.getInt(dataAddress + offset);
                 if (length < 0) {
-                    writeFixedNull(targetType, targetAddress, i);
+                    writeFixedNull(targetOpcode, targetAddress, i);
                     continue;
                 }
                 utf16Sink.clear();
@@ -386,44 +470,22 @@ final class ParquetColumnTypeConverter {
                 }
                 value = utf16Sink;
             }
-            writeFixedParsedValue(targetType, targetAddress, i, value, decimal64, decimal128, decimal256);
+            writeFixedParsedValue(targetOpcode, targetType, targetAddress, i, value, decimal64, decimal128, decimal256);
         }
     }
 
+    // Upper bound on the UTF-16 chars a fixed-size value renders to. The source's WireKind picks
+    // it, because the text form decides the length.
     static long estimateStringDataSize(int sourceType, int rowCount) {
-        final int maxCharsPerRow = ColumnType.isDecimal(sourceType)
-                ? ColumnType.getDecimalPrecision(sourceType) + 3
-                : switch (sourceType) {
-            case ColumnType.BOOLEAN -> 5;
-            case ColumnType.BYTE -> 4;
-            case ColumnType.SHORT -> 6;
-            case ColumnType.CHAR -> 1;
-            case ColumnType.INT -> 11;
-            case ColumnType.LONG -> 20;
-            case ColumnType.FLOAT -> 15;
-            case ColumnType.DOUBLE -> 25;
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
-            case ColumnType.IPv4 -> 15;
-            case ColumnType.UUID -> 36;
-            default -> 40;
-        };
+        final WireKind kind = WireKind.of(sourceType);
+        final int maxCharsPerRow = kind != null ? maxCharsPerRow(kind, sourceType) : noKindAllowance(sourceType);
         return (long) (Integer.BYTES + maxCharsPerRow * Character.BYTES) * rowCount;
     }
 
+    // Upper bound on the UTF-8 bytes a fixed-size value renders to, see estimateStringDataSize().
     static long estimateVarcharDataSize(int sourceType, int rowCount) {
-        final int maxBytesPerRow = ColumnType.isDecimal(sourceType)
-                ? ColumnType.getDecimalPrecision(sourceType) + 3
-                : switch (sourceType) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR -> 0;
-            case ColumnType.INT -> 11;
-            case ColumnType.LONG -> 20;
-            case ColumnType.FLOAT -> 15;
-            case ColumnType.DOUBLE -> 25;
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
-            case ColumnType.IPv4 -> 15;
-            case ColumnType.UUID -> 36;
-            default -> 40;
-        };
+        final WireKind kind = WireKind.of(sourceType);
+        final int maxBytesPerRow = kind != null ? maxUtf8BytesPerRow(kind, sourceType) : noKindAllowance(sourceType);
         return (long) maxBytesPerRow * rowCount;
     }
 
@@ -473,6 +535,7 @@ final class ParquetColumnTypeConverter {
                         }
                         convertFixedColumnToVarchar(
                                 sourceType,
+                                decoder.metadata().getColumnNullPolicy(parquetIndex),
                                 columnDataAddress,
                                 rowGroupSize,
                                 topRowsAddress,
@@ -493,6 +556,7 @@ final class ParquetColumnTypeConverter {
                         ownedBuffers.setQuick(slot + 3, dataSize);
                         convertFixedColumnToString(
                                 sourceType,
+                                decoder.metadata().getColumnNullPolicy(parquetIndex),
                                 columnDataAddress,
                                 rowGroupSize,
                                 topRowsAddress,
@@ -564,7 +628,9 @@ final class ParquetColumnTypeConverter {
             } else if (columnDataAddress == 0) {
                 final long nullFixedSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
                 final long nullFixedBuffer = Unsafe.malloc(nullFixedSize, memoryTag);
-                TableUtils.setNull(columnType, nullFixedBuffer, rowGroupSize);
+                final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
+                typeDriver.setNull(nullFixedBuffer, rowGroupSize);
+                // validity batch site: a column with a validity bitmap would mark these rows NULL here
                 columnDataAddress = nullFixedBuffer;
                 ownedBuffers.setQuick(slot, nullFixedBuffer);
                 ownedBuffers.setQuick(slot + 1, nullFixedSize);

@@ -101,7 +101,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 0; i < argsSize; i++) {
-            args.setQuick(i, CaseCommon.getCastToCommonTypeFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            final Function arg = args.getQuick(i);
+            // a timestamp argument keeps its unit: the timestamp coalesce converts only the value it
+            // returns, which is cheaper than converting every argument it reads
+            if (!ColumnType.isTimestamp(returnType) || !ColumnType.isTimestamp(arg.getType())) {
+                args.setQuick(i, CaseCommon.getCastToCommonTypeFunction(arg, argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            }
         }
 
         return switch (tagOf(returnType)) {
@@ -594,6 +599,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     }
 
     private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
+        private final IntList argTypes;
         private final ObjList<Function> args;
         private final int size;
 
@@ -601,6 +607,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             super(columnType);
             this.args = args;
             this.size = args.size();
+            this.argTypes = new IntList(size);
+            for (int i = 0; i < size; i++) {
+                argTypes.add(ColumnType.getTimestampType(args.getQuick(i).getType()));
+            }
         }
 
         @Override
@@ -614,7 +624,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 Function arg = args.getQuick(i);
                 long value = arg.getTimestamp(rec);
                 if (value != Numbers.LONG_NULL) {
-                    return timestampDriver.from(value, ColumnType.getTimestampType(arg.getType()));
+                    return timestampDriver.from(value, argTypes.getQuick(i));
                 }
             }
             return Numbers.LONG_NULL;

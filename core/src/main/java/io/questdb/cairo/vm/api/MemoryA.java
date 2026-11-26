@@ -79,10 +79,21 @@ public interface MemoryA extends Closeable {
 
     void putLong256(Long256 value);
 
+    /**
+     * Appends LONG256 text: an optional {@code 0x} or {@code 0X}, then 1 to 64 hex digits. NULL and
+     * empty text append NULL; other text throws an ImplicitCastException and appends nothing.
+     */
     void putLong256(@Nullable CharSequence hexString);
 
+    /**
+     * Appends the hex digits between {@code start} and {@code end}; the caller has found them, so no
+     * prefix is read.
+     */
     void putLong256(@NotNull CharSequence hexString, int start, int end);
 
+    /**
+     * Appends LONG256 text given as UTF-8, read as {@link #putLong256(CharSequence)} reads it.
+     */
     void putLong256Utf8(@Nullable Utf8Sequence hexString);
 
     long putNullBin();

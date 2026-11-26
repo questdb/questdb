@@ -474,23 +474,48 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("create table src_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
             execute("create table dst_l256 (ts timestamp, l long256) timestamp(ts) partition by DAY");
 
-            execute("insert into src_vc values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'), (1000, null)");
+            // hex digits with and without 0x, as STRING reads them
+            execute("""
+                    INSERT INTO src_vc VALUES
+                        (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+                        (500, 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210'),
+                        (1000, NULL)
+                    """);
             execute("insert into dst_l256 select * from src_vc");
 
-            assertQuery("select count(*) from dst_l256")
+            assertQuery("dst_l256")
                     .noLeakCheck()
+                    .timestamp("ts")
                     .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n2\n");
+                    .returns("""
+                            ts\tl
+                            1970-01-01T00:00:00.000000Z\t0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+                            1970-01-01T00:00:00.000500Z\t0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+                            1970-01-01T00:00:00.001000Z\t
+                            """);
 
             // Varchar expression (cast) to Long256 - tests non-DirectUtf8Sequence path
             execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
             execute("create table dst_l256_cast (ts timestamp, l long256) timestamp(ts) partition by DAY");
 
-            execute("insert into src_str values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'), (1000, null)");
+            execute("""
+                    INSERT INTO src_str VALUES
+                        (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+                        (500, 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210'),
+                        (1000, NULL)
+                    """);
             execute("insert into dst_l256_cast select ts, s::varchar from src_str");
 
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "dst_l256 order by ts", "dst_l256_cast order by ts", LOG);
+            assertQuery("dst_l256_cast")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tl
+                            1970-01-01T00:00:00.000000Z\t0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+                            1970-01-01T00:00:00.000500Z\t0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+                            1970-01-01T00:00:00.001000Z\t
+                            """);
 
             // Negative test: non-ASCII varchar to Long256 should fail
             execute("create table src_non_ascii (ts timestamp, s string) timestamp(ts) partition by DAY");

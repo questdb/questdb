@@ -2324,6 +2324,33 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMixedUnits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tanc as (select x, (x * 1000)::timestamp a, (x * 1000)::timestamp_ns b from long_sequence(4))");
+            assertQuery("select x, case x when 1 then a when 2 then b when 3 then null else a end k from tanc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tk
+                            1\t1970-01-01T00:00:00.001000000Z
+                            2\t1970-01-01T00:00:00.000002000Z
+                            3\t
+                            4\t1970-01-01T00:00:00.004000000Z
+                            """);
+            assertQuery("select x, case b when '1970-01-01T00:00:00.000002Z'::timestamp then 'two' else 'other' end k from tanc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tk
+                            1\tother
+                            2\ttwo
+                            3\tother
+                            4\tother
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampOrElse() throws Exception {
         assertQuery("""
                 select\s

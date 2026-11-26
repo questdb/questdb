@@ -1283,6 +1283,10 @@ mod tests {
     /// Returns the Column plus a Box owning the underlying Vec, which the
     /// caller must keep alive for the duration of the Column.
     fn build_column(tag: ColumnTypeTag) -> (Column, Box<dyn std::any::Any>) {
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "test helper: builds only the tags its cases name"
+        )]
         match tag {
             ColumnTypeTag::Boolean => {
                 let data: Vec<u8> = (0..100u8).map(|i| i % 2).collect();
