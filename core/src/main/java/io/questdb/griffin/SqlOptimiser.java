@@ -681,6 +681,18 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // Adds the bytes of each row of a column, more, to bytes, see scannedBytesPerRowOfLiterals(): -1 stands for no
+    // column, and the sum stops at Integer.MAX_VALUE, which stands for a column whose values vary in size.
+    private static long addScannedBytes(long bytes, long more) {
+        if (more < 0) {
+            return bytes;
+        }
+        if (bytes < 0) {
+            return more;
+        }
+        return Math.min(bytes + more, Integer.MAX_VALUE);
+    }
+
     private static boolean allOrderByColumnsPresentIn(IQueryModel src, IQueryModel target) {
         final LowerCaseCharSequenceObjHashMap<QueryColumn> targetMap = target.getAliasToColumnMap();
         final ObjList<QueryColumn> projection = src.getColumns();
@@ -895,17 +907,8 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    /**
-     * Returns true when rewriteSampleBy moved a non-NONE FILL list onto
-     * baseModel.fillValues. Callers use this to detect SAMPLE BY FILL in the
-     * rewritten-by-rewriteSampleBy form, where groupByModel.sampleByFill is
-     * still empty because moveSampleByFrom has not run.
-     */
-    private static boolean hasNonNoneRewrittenFill(IQueryModel baseModel) {
-        if (baseModel.getFillStride() == null) {
-            return false;
-        }
-        final ObjList<ExpressionNode> fill = baseModel.getFillValues();
+    // Whether a FILL list holds a value other than NONE, which fills the empty buckets of a SAMPLE BY with rows.
+    private static boolean hasNonNoneFill(@Nullable ObjList<ExpressionNode> fill) {
         if (fill == null) {
             return false;
         }
@@ -915,6 +918,16 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns true when rewriteSampleBy moved a non-NONE FILL list onto
+     * baseModel.fillValues. Callers use this to detect SAMPLE BY FILL in the
+     * rewritten-by-rewriteSampleBy form, where groupByModel.sampleByFill is
+     * still empty because moveSampleByFrom has not run.
+     */
+    private static boolean hasNonNoneRewrittenFill(IQueryModel baseModel) {
+        return baseModel.getFillStride() != null && hasNonNoneFill(baseModel.getFillValues());
     }
 
     // Returns true when every leaf in the expression tree is a literal constant
@@ -1535,6 +1548,45 @@ public class SqlOptimiser implements Mutable {
         translatingModel.addBottomUpColumn(column);
     }
 
+    // Gives a model that projects, selects no column as is and has no top-down columns the one column its rows need,
+    // see addRowColumnIfNoTopDownColumns(): the column it computes from the fewest bytes of each row of its source, the
+    // first of them when several read as few. Every read computes the keys of a model that groups, see
+    // retainGroupByKeysAsTopDownColumns(), so the source reads what the keys read whichever column the model keeps, and
+    // a key adds nothing to it. A column, or the keys, computed from no column of a source that projects leaves that
+    // source every column, more than any column that names some of them reads, and of a table, which gives its rows
+    // with no column, none.
+    private void addComputedRowColumn(IQueryModel model, @Nullable IQueryModel source) {
+        final boolean isRowFree = source == null || (source.getNestedModel() == null && source.getTableNameExpr() != null);
+        // above what any set of columns of the source reads, see addScannedBytes()
+        final long everyColumnBytes = Integer.MAX_VALUE + 1L;
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        long keyBytes = -1;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (isGroupingKey(model, column)) {
+                keyBytes = addScannedBytes(keyBytes, scannedBytesPerRowOfColumn(column, source));
+            }
+        }
+        QueryColumn rowColumn = null;
+        long rowColumnBytes = Long.MAX_VALUE;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            long bytes = isGroupingKey(model, column)
+                    ? keyBytes
+                    : addScannedBytes(keyBytes, scannedBytesPerRowOfColumn(column, source));
+            if (bytes < 0) {
+                bytes = isRowFree ? 0 : everyColumnBytes;
+            }
+            if (bytes < rowColumnBytes) {
+                rowColumn = column;
+                rowColumnBytes = bytes;
+            }
+        }
+        if (rowColumn != null) {
+            addTopDownColumn(rowColumn.getAlias(), model);
+        }
+    }
+
     private QueryColumn addCursorFunctionAsCrossJoin(
             ExpressionNode node,
             @Nullable CharSequence alias,
@@ -2115,8 +2167,11 @@ public class SqlOptimiser implements Mutable {
     // Gives a model that projects and has no top-down columns the one column its rows need, so that it keeps that
     // column rather than every column, see QueryModel.getColumns(): the designated timestamp of its source if it
     // selects that as is, or else the narrowest column it selects as is, see scannedBytesPerRow(), the first of them
-    // when several are as narrow. A model that selects no column as is keeps every column, and so does a model that
-    // reads a SAMPLE BY with FILL, see hasSampleByFill().
+    // when several are as narrow. A column of a join counts as the designated timestamp only when it comes from the
+    // first table of the join, which holds that timestamp: another table of the join may have a column of the name. A
+    // model that selects no column as is keeps the column it computes from the fewest bytes of each row, see
+    // addComputedRowColumn(). A model that reads a SAMPLE BY whose FILL fills empty buckets keeps every column, see
+    // hasSampleByFill().
     private void addRowColumnIfNoTopDownColumns(IQueryModel model) {
         if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
                 || model.getTopDownColumns().size() > 0
@@ -2130,6 +2185,7 @@ public class SqlOptimiser implements Mutable {
                 break;
             }
         }
+        final IQueryModel source = model.getNestedModel();
         QueryColumn rowColumn = null;
         int rowColumnBytes = Integer.MAX_VALUE;
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
@@ -2140,13 +2196,19 @@ public class SqlOptimiser implements Mutable {
                 final CharSequence token = ast.token;
                 // the name of the column, which a column of a join qualifies with the alias of its table
                 final int nameLo = Chars.indexOfLastUnquoted(token, '.') + 1;
-                if (timestampName != null && Chars.equalsIgnoreCase(timestampName, token, nameLo, token.length())) {
+                if (timestampName != null
+                        && Chars.equalsIgnoreCase(timestampName, token, nameLo, token.length())
+                        && (nameLo == 0 || source == null || source.getModelAliasIndex(token, 0, nameLo - 1) < 1)) {
                     rowColumn = column;
                     break;
                 }
                 // The scan reads every value of the column it keeps: one of an array or VARCHAR column can cost many
                 // times what a LONG does, most of all in a parquet partition, which the scan decodes.
-                final int bytes = scannedBytesPerRow(getQueryColumnType(model, column));
+                int columnType = column.getColumnType();
+                if (columnType < 0 && source != null) {
+                    columnType = getSourceColumnType(source, token);
+                }
+                final int bytes = scannedBytesPerRow(columnType);
                 if (rowColumn == null || bytes < rowColumnBytes) {
                     rowColumn = column;
                     rowColumnBytes = bytes;
@@ -2155,6 +2217,8 @@ public class SqlOptimiser implements Mutable {
         }
         if (rowColumn != null) {
             addTopDownColumn(rowColumn.getAlias(), model);
+        } else {
+            addComputedRowColumn(model, source);
         }
     }
 
@@ -6568,6 +6632,52 @@ public class SqlOptimiser implements Mutable {
         return column != null ? column.getColumnType() : -1;
     }
 
+    // The type of the column of the FROM clause of a model, source, that a column name names, resolved through the
+    // models under it like getQueryColumnType() does: of the join model a qualified name names, or else of the one join
+    // model that has a column of the name, or -1 when the optimiser has not resolved it. getQueryColumnType() looks a
+    // name up in the first model of a join only.
+    private int getSourceColumnType(IQueryModel source, CharSequence token) {
+        final ObjList<IQueryModel> joinModels = source.getJoinModels();
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        final int joinIndex = dot > -1 ? source.getModelAliasIndex(token, 0, dot) : -1;
+        IQueryModel model = source;
+        QueryColumn column = null;
+        if (joinIndex > -1) {
+            model = joinModels.getQuick(joinIndex);
+            column = model.getAliasToColumnMap().get(token, dot + 1, token.length());
+        } else if (dot == -1 && joinModels.size() > 1) {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                final QueryColumn joinColumn = joinModel.getAliasToColumnMap().get(token);
+                if (joinColumn != null) {
+                    if (column != null) {
+                        // ambiguous
+                        return -1;
+                    }
+                    model = joinModel;
+                    column = joinColumn;
+                }
+            }
+        } else {
+            column = findOutputColumn(source, token);
+            if (column == null) {
+                final CharSequence alias = source.getColumnNameToAliasMap().get(token);
+                if (alias != null) {
+                    column = source.getAliasToColumnMap().get(alias);
+                }
+            }
+        }
+        if (column == null) {
+            return -1;
+        }
+        if (column.getColumnType() > -1) {
+            return column.getColumnType();
+        }
+        final ExpressionNode ast = column.getAst();
+        final IQueryModel nested = model.getNestedModel();
+        return ast != null && ast.type == LITERAL && nested != null ? getSourceColumnType(nested, ast.token) : -1;
+    }
+
     /**
      * Gets the timestamp column name for pushdown validation.
      * Returns the timestamp alias or designated timestamp token.
@@ -6664,11 +6774,11 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    // Whether the model, or a model it reads, is a SAMPLE BY with FILL. Code generation fills the empty buckets of a
-    // SAMPLE BY with the fill values of the aggregates the query keeps of it, see SqlCodeGenerator.generateSampleBy(),
-    // and keeps none of a list of fill values when the query keeps no aggregate, as with only the one column
-    // addRowColumnIfNoTopDownColumns() picks: the SAMPLE BY would return no filled bucket. A model that reads a SAMPLE
-    // BY with FILL keeps every column instead, whatever the fill.
+    // Whether the model, or a model it reads, is a SAMPLE BY whose FILL fills its empty buckets. Code generation fills
+    // the empty buckets of a SAMPLE BY with the fill values of the aggregates the query keeps of it, see
+    // SqlCodeGenerator.generateSampleBy(), and keeps none of a list of fill values when the query keeps no aggregate,
+    // as with only the one column addRowColumnIfNoTopDownColumns() picks: the SAMPLE BY would return no filled bucket.
+    // A model that reads such a SAMPLE BY keeps every column instead, whatever the fill.
     private boolean hasSampleByFill(IQueryModel model) {
         try {
             return hasSampleByFill0(model);
@@ -6677,10 +6787,12 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // The optimiser shares models, as it does the left side of a LATERAL join, so the walk visits each model once.
+    // The optimiser shares models, as it does the left side of a LATERAL join, so the walk visits each model once. A
+    // SAMPLE BY with no FILL, or with FILL(NONE), fills no bucket, also once rewriteSampleBy() has given it the stride of
+    // its buckets, so its rows do not depend on the aggregates the query keeps.
     private boolean hasSampleByFill0(@Nullable IQueryModel model) {
         for (IQueryModel m = model; m != null && tempSampleByFillModels.add(m); m = m.getNestedModel()) {
-            if (m.getSampleByFill().size() > 0 || m.getFillStride() != null) {
+            if (hasNonNoneFill(m.getSampleByFill()) || hasNonNoneRewrittenFill(m)) {
                 return true;
             }
             final ObjList<IQueryModel> joinModels = m.getJoinModels();
@@ -16193,6 +16305,49 @@ public class SqlOptimiser implements Mutable {
         } finally {
             sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
         }
+    }
+
+    // The bytes a scan of source reads for each row to compute a column of the model over it, see
+    // addComputedRowColumn(): those of the columns of source its expression, and the window of a window function,
+    // name, see scannedBytesPerRow(), or -1 when they name none.
+    private long scannedBytesPerRowOfColumn(QueryColumn column, @Nullable IQueryModel source) {
+        if (source == null) {
+            return -1;
+        }
+        long bytes = scannedBytesPerRowOfLiterals(column.getAst(), source);
+        if (column.isWindowExpression()) {
+            final WindowExpression windowExpression = (WindowExpression) column;
+            final ObjList<ExpressionNode> partitionBy = windowExpression.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                bytes = addScannedBytes(bytes, scannedBytesPerRowOfLiterals(partitionBy.getQuick(i), source));
+            }
+            final ObjList<ExpressionNode> orderBy = windowExpression.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                bytes = addScannedBytes(bytes, scannedBytesPerRowOfLiterals(orderBy.getQuick(i), source));
+            }
+        }
+        return bytes;
+    }
+
+    // The bytes a scan of source reads for each row of the columns of source the expression names, or -1 when it names
+    // none. A sub-query of the expression reads the columns of its own FROM clause.
+    private long scannedBytesPerRowOfLiterals(@Nullable ExpressionNode node, IQueryModel source) {
+        if (node == null || node.queryModel != null) {
+            return -1;
+        }
+        if (node.type == LITERAL) {
+            return scannedBytesPerRow(getSourceColumnType(source, node.token));
+        }
+        long bytes = -1;
+        if (node.paramCount < 3) {
+            bytes = addScannedBytes(bytes, scannedBytesPerRowOfLiterals(node.lhs, source));
+            bytes = addScannedBytes(bytes, scannedBytesPerRowOfLiterals(node.rhs, source));
+        } else {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                bytes = addScannedBytes(bytes, scannedBytesPerRowOfLiterals(node.args.getQuick(i), source));
+            }
+        }
+        return bytes;
     }
 
     /**

@@ -624,11 +624,55 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n12\n");
+            // the SAMPLE BY on the right side of a join, and in a later branch of a set operation, which the sub-query
+            // reaches through a model other than the one it reads first
+            assertQuery("SELECT count() FROM (SELECT 'c' b FROM (SELECT s.ts, s.s FROM long_sequence(2) l CROSS JOIN (" + sampleBy + ") s)) WHERE b = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n12\n");
+            assertQuery("SELECT count() FROM (SELECT 'c' b FROM (SELECT ts, a FROM x UNION ALL SELECT ts, s FROM (" + sampleBy + "))) WHERE b = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n9\n");
             // a read of a view that labels the buckets
             assertQuery("SELECT label FROM v WHERE label = 'src'")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("label\nsrc\nsrc\nsrc\nsrc\nsrc\nsrc\n");
+        });
+    }
+
+    @Test
+    public void testFilterOnOutputThatReadsNoColumnScansJoinColumnByItsTable() throws Exception {
+        // The column a sub-query over a join keeps for its rows has the type the table of the join that holds it gives
+        // it, and only the first table of the join holds the designated timestamp. A filter on a constant output named
+        // like a column of the sub-query once made the scan read that column, an INT here, so a VARCHAR column of the
+        // joined table would make the query slower than it was.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE jx (ts TIMESTAMP, k SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO jx VALUES ('2024-01-01T00:00:00.000000Z', 'k1'), ('2024-01-02T00:00:00.000000Z', 'k2')");
+            execute("CREATE TABLE jy (k SYMBOL, v VARCHAR, ts VARCHAR, j INT)");
+            execute("INSERT INTO jy VALUES ('k1', 'v1', 't1', 1), ('k1', 'v2', 't2', 2), ('k2', 'v3', 't3', 3)");
+            // the INT of the joined table rather than the VARCHAR before it
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' j FROM (SELECT jy.v, jy.j FROM jx JOIN jy ON (k))) WHERE j = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' j] 'c' j from (select-choose [jy.j j] jy.v v, jy.j j from (select [k] from jx timestamp (ts) join select [j, k] from jy on jy.k = jx.k)) where j = 'c')",
+                    3
+            );
+            // a VARCHAR of the joined table named like the designated timestamp of the first one is not that timestamp
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' j FROM (SELECT jy.ts, jy.j FROM jx JOIN jy ON (k))) WHERE j = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' j] 'c' j from (select-choose [jy.j j] jy.ts ts, jy.j j from (select [k] from jx timestamp (ts) join select [j, k] from jy on jy.k = jx.k)) where j = 'c')",
+                    3
+            );
+            // the designated timestamp of the first table, which the SELECT renames
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' j FROM (SELECT jy.ts, jy.j, jx.ts ts1 FROM jx JOIN jy ON (k))) WHERE j = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' j] 'c' j from (select-choose [jx.ts ts1] jy.ts ts, jy.j j, jx.ts ts1 from (select [ts, k] from jx timestamp (ts) join select [k] from jy on jy.k = jx.k)) where j = 'c')",
+                    3
+            );
         });
     }
 
@@ -687,6 +731,58 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertOneColumnScan(
                     "SELECT count() FROM (SELECT 'c' b FROM (SELECT x2, l FROM (SELECT i * 2 x2, l FROM w LIMIT 10))) WHERE b = 'c'",
                     "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [l] x2, l from (select-virtual [l] i * 2 x2, l from (select [l] from w timestamp (ts)) limit 10)) where b = 'c')",
+                    3
+            );
+        });
+    }
+
+    @Test
+    public void testFilterOnOutputThatReadsNoColumnScansNarrowestComputedColumn() throws Exception {
+        // A sub-query that takes no column as is keeps the column it computes from the fewest bytes of each row, rather
+        // than every column. A filter on a constant output named like a column of the sub-query once made it compute
+        // that column alone, a sum() of a LONG here, so computing every column, a max() of a VARCHAR included, would
+        // make the query slower than it was.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (v VARCHAR, l LONG, i INT, k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w VALUES
+                    ('v1', 1, 1, 'k1', '2024-01-01T00:00:00.000000Z'),
+                    ('v2', 2, 2, 'k2', '2024-01-02T00:00:00.000000Z'),
+                    (NULL, NULL, NULL, NULL, '2024-01-03T00:00:00.000000Z')
+                    """);
+            // the expression of the INT, rather than those of the VARCHAR and the LONG
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT concat(v, 'z') v2, l + 1 b, i * 2 i2 FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual [i * 2 i2] concat(v, 'z') v2, l + 1 b, i * 2 i2 from (select [i] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the aggregate of the LONG, rather than the max() of the VARCHAR
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' s FROM (SELECT max(v) m, sum(l) s FROM w)) WHERE s = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' s] 'c' s from (select-group-by [sum(l) s] max(v) m, sum(l) s from (select [l] from w timestamp (ts))) where s = 'c')",
+                    1
+            );
+            // over a sub-query, which count() would leave every column, the aggregate that names a column
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' m FROM (SELECT count() n, max(v) m FROM (SELECT * FROM w))) WHERE m = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' m] 'c' m from (select-group-by [max(v) m] count() n, max(v) m from (select-choose [v] v, l, i, k, ts from (select [v] from w timestamp (ts)))) where m = 'c')",
+                    1
+            );
+            // count() reads no column of the table, which gives its rows with no column
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' m FROM (SELECT max(v) m, count() n FROM w)) WHERE m = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' m] 'c' m from (select-group-by [count() n] max(v) m, count() n from (w timestamp (ts))) where m = 'c')",
+                    1
+            );
+            // the key, which every read computes, of a SAMPLE BY whose FILL fills no bucket, and no aggregate
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' s FROM (SELECT ts, sum(l) s, max(v) m FROM w SAMPLE BY 1d)) WHERE s = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' s] 'c' s from (select-group-by [timestamp_floor_utc('1d', ts, null, '00:00', null) ts] timestamp_floor_utc('1d', ts, null, '00:00', null) ts, sum(l) s, max(v) m from (select [ts] from w timestamp (ts) stride 1d)) where s = 'c')",
+                    3
+            );
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' s FROM (SELECT ts, sum(l) s, max(v) m FROM w SAMPLE BY 1d FILL(NONE))) WHERE s = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' s] 'c' s from (select-group-by [timestamp_floor_utc('1d', ts, null, '00:00', null) ts] timestamp_floor_utc('1d', ts, null, '00:00', null) ts, sum(l) s, max(v) m from (select [ts] from w timestamp (ts) fill(NONE) stride 1d)) where s = 'c')",
                     3
             );
         });
@@ -805,7 +901,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     2
             );
             // The table itself gives its rows with no column, and a SELECT that computes every column it selects keeps
-            // them all.
+            // the one it computes from the fewest bytes, see testFilterOnOutputThatReadsNoColumnScansNarrowestComputedColumn().
             assertOneColumnScan(
                     "SELECT count() FROM (SELECT 'c' b FROM x) WHERE b = 'c'",
                     "select-group-by count() count from (select-virtual ['c' b] 'c' b from (x timestamp (ts)) where b = 'c')",
@@ -813,7 +909,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
             assertOneColumnScan(
                     "SELECT count() FROM (SELECT 'c' b FROM (SELECT a * 2 a2, b + 1 b1 FROM x)) WHERE b = 'c'",
-                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual a * 2 a2, b + 1 b1 from (select [a, b] from x timestamp (ts))) where b = 'c')",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual [a * 2 a2] a * 2 a2, b + 1 b1 from (select [a] from x timestamp (ts))) where b = 'c')",
                     3
             );
             // A filter that names no column stays with a model that only passes the rows of the sub-query on, and
