@@ -1405,10 +1405,10 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 header\tContent-Type: application/vnd.apache.parquet
                 header\tContent-Disposition: attachment; filename="questdb-query-<clock>.parquet"
                 header\tKeep-Alive: timeout=5, max=10000
-                bytes\t691 sha256=28466d6e23fb014e29d75561edf5b4606783584a1b0ba6519b680ee63e22e018
+                bytes\t731 sha256=eada718887f8efb290d73523dfdb286e2874b24ac9bc2926e4ec9fc58e2c525b
                 created_by\tQuestDB version 9.0
-                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":11,"column_top":0,"id":1}]}
-                columns\tk:VARCHAR v:STRING
+                questdb\t{"version":1,"schema":[{"column_type":26,"column_top":0,"id":0},{"column_type":12,"column_top":0,"id":1}]}
+                columns\tk:VARCHAR v:VARCHAR
                 k\tv
                 empty\t
                 min\t\s

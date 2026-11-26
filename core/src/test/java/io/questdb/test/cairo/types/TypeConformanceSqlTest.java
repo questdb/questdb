@@ -8578,7 +8578,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 status\tmessage
                 finished\t
                 k
-                null
+                max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[]
                 ## bind_value
@@ -11803,7 +11803,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 status\tmessage
                 finished\t
                 k
-                null
+                max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[][]
                 ## bind_value
