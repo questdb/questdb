@@ -1395,9 +1395,8 @@ public class ViewAuditTest extends AbstractCairoTest {
     public void testViewCompilerReadsAuditedViewsAsABackgroundJob() throws Exception {
         assertMemoryLeak(() -> {
             createPivotTablesAndAuditedView();
-            // The view reads a WAL table: a non-WAL ALTER TABLE ADD COLUMN queues no recompile of
-            // the views that read the table, but ApplyWal2TableJob queues one when it applies the
-            // column change.
+            // The view reads a WAL table: ApplyWal2TableJob queues the recompile of the views that
+            // read the table when it applies the column change.
             execute("CREATE TABLE pub_wal (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
                     INSERT INTO pub_wal VALUES

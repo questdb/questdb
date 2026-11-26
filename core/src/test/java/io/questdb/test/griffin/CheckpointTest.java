@@ -43,6 +43,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DeltaCheckpoint;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -1564,6 +1565,52 @@ public class CheckpointTest extends AbstractCairoTest {
             assertQuery("SELECT v FROM t WHERE s = 'b' AND v = 42")
                     .noLeakCheck()
                     .returns("v\n42\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuiltPmClearsSealStampAndRemote() throws Exception {
+        // A _pm rebuilt from data.parquet takes the footer's stamp, not the one a seal wrote or an
+        // upload keyed, so the restore clears both marks: the partition falls back to released
+        // behaviour and uploads or dedups again. A partition whose _pm survives keeps them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-02T00:00:00.000000Z'),
+                    (3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            try (TableWriter writer = getWriter("t")) {
+                for (int i = 0; i < 2; i++) {
+                    writer.getTxWriter().setPartitionSealStamped(i, true);
+                    writer.getTxWriter().setPartitionRemote(i, true);
+                }
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String dbRoot = engine.getConfiguration().getDbRoot();
+            final File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            Assert.assertTrue("failed to delete _pm", new File(partDir, "_pm").delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("a rebuilt _pm loses the seal stamp", tx.isPartitionSealStamped(0));
+                Assert.assertFalse("and the upload", tx.isPartitionRemote(0));
+                Assert.assertTrue("an untouched _pm keeps the seal stamp", tx.isPartitionSealStamped(1));
+                Assert.assertTrue(tx.isPartitionRemote(1));
+            }
+            assertQuery("SELECT count() FROM t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
         });
     }
 
@@ -3836,6 +3883,19 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRefusesDeltaFlaggedOnlyInCheckpoint() throws Exception {
+        // The partition was Delta at the capture and dropped before the copy: only the checkpoint
+        // _txn flags it, and restore must still find its Delta files.
+        assertRestoreRefusesDelta(true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRefusesDeltaFlaggedOnlyInLiveTxn() throws Exception {
+        // The partition switched to Delta after the capture: only the live _txn flags it.
+        assertRestoreRefusesDelta(false);
+    }
+
+    @Test
     public void testCheckpointRestoreRegeneratesPmFromCommittedParquetSize() throws Exception {
         // A snapshot may capture data.parquet mid-append: bytes past the
         // committed size exist on disk but are not part of the MVCC-visible
@@ -4373,6 +4433,38 @@ public class CheckpointTest extends AbstractCairoTest {
                                 4
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreSkipsDeltaProbeWithoutDeltaState() throws Exception {
+        // Neither the checkpoint nor the live _txn flags Delta state, so restore looks into no
+        // partition directory for Delta files.
+        final AtomicInteger deltaProbes = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Utf8s.endsWithAscii(path, Files.SEPARATOR + DeltaCheckpoint.DIRECTORY_NAME)) {
+                    deltaProbes.incrementAndGet();
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("create table test (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into test select timestamp_sequence('2023-09-20', 86400000000L), x from long_sequence(5)");
+            execute("checkpoint create");
+            execute("insert into test values ('2023-09-30', 6)");
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            deltaProbes.set(0);
+            engine.checkpointRecover();
+            Assert.assertEquals(0, deltaProbes.get());
+
+            assertQuery("select count() from test").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
+            engine.checkpointRelease();
         });
     }
 
@@ -5823,6 +5915,43 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreOntoAnotherColdRootKeepsTxnVerifying() throws Exception {
+        // A restore onto another cold storage root clears REMOTE in _txn's live record in place, with no commit.
+        // The next open must still verify that record.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE remote_cleared (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO remote_cleared VALUES (1, '2020-01-01T00:00'), (2, '2020-01-02T00:00')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("remote_cleared");
+            try (TableWriter writer = engine.getWriter(token, "upload")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.getTxWriter().bumpPartitionTableVersion();
+                writer.commit();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration);
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash()
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false, true);
+            }
+            TxReader.resetBodyChecksumFallbackCount();
+            try (
+                    Path txnPath = new Path().of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                    TxReader reader = new TxReader(configuration.getFilesFacade())
+            ) {
+                reader.ofRO(txnPath.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                Assert.assertTrue(reader.unsafeLoadAll());
+                Assert.assertFalse(reader.unsafeIsLiveAreaTorn());
+                Assert.assertFalse(reader.isPartitionRemote(0));
+            }
+            Assert.assertEquals(0, TxReader.getBodyChecksumFallbackCount());
+            assertQuery("SELECT x FROM remote_cleared").expectSize().returns("x\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
@@ -6301,6 +6430,41 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private void assertRestoreRefusesDelta(boolean flaggedAtCapture) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("create table test (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into test select timestamp_sequence('2023-09-20', 86400000000L), x from long_sequence(3)");
+            final TableToken tableToken = engine.verifyTableName("test");
+            final long partitionTimestamp = MicrosTimestampDriver.floor("2023-09-21");
+            if (flaggedAtCapture) {
+                setPartitionDeltaActive(partitionTimestamp);
+            }
+            final File partitionDir = findNativePartitionDir(
+                    new File(configuration.getDbRoot(), tableToken.getDirName()), "2023-09-21", "x.d");
+            execute("checkpoint create");
+            try {
+                if (flaggedAtCapture) {
+                    execute("alter table test drop partition list '2023-09-21'");
+                } else {
+                    setPartitionDeltaActive(partitionTimestamp);
+                }
+                Assert.assertTrue(new File(partitionDir, DeltaCheckpoint.DIRECTORY_NAME).mkdirs());
+
+                engine.clear();
+                setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Delta checkpoint recovery is not supported");
+                }
+            } finally {
+                engine.checkpointRelease();
+            }
+        });
+    }
+
     private static void createTableWithRowsAfterCheckpoint(String tableName) throws SqlException {
         execute("create table " + tableName + " as (select x from long_sequence(3))");
         execute("checkpoint create");
@@ -6449,6 +6613,16 @@ public class CheckpointTest extends AbstractCairoTest {
             out[i] = buf.getInt();
         }
         return out;
+    }
+
+    private static void setPartitionDeltaActive(long partitionTimestamp) {
+        try (TableWriter writer = getWriter("test")) {
+            // The Delta switch stamps a native base, and a checkpoint keeps only stamped native words.
+            writer.getTxWriter().setPartitionSeqTxn(writer.getPartitionIndexByTimestamp(partitionTimestamp), 1);
+            writer.getTxWriter().setPartitionDeltaActiveByTimestamp(partitionTimestamp);
+            writer.bumpPartitionTableVersion();
+            writer.commit();
+        }
     }
 
     private static TestServerMain startServerMain(String root, String... envKeyValues) {
@@ -6989,6 +7163,10 @@ public class CheckpointTest extends AbstractCairoTest {
             // The marker is created before the rebuild starts; every other failure waits for the rebuild
             // to remove the old .pk
             final boolean isMarkerFailure = failingFile.endsWith(".rebuild");
+            // The restore checks the other partition on a parallel worker, which opens its own .pk while
+            // this one rebuilds; only the files of the partition under rebuild arm and fail
+            final String keyFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + "s.pk";
+            final String failingFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + failingFile;
             final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
             final AtomicInteger failures = new AtomicInteger();
             final FilesFacade failingFacade = new TestFilesFacadeImpl() {
@@ -7004,7 +7182,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
                 @Override
                 public boolean removeQuiet(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.pk")) {
+                    if (Utf8s.endsWithAscii(name, keyFileSuffix)) {
                         isArmed.set(true);
                     }
                     return super.removeQuiet(name);
@@ -7016,7 +7194,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
 
                 private boolean fails(LPSZ name) {
-                    if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + failingFile)) {
+                    if (isArmed.get() && Utf8s.endsWithAscii(name, failingFileSuffix)) {
                         failures.incrementAndGet();
                         return true;
                     }

@@ -57,7 +57,7 @@ Each tick starts at a seeded random table, pre-charges each copy against `io.bud
 | entry point | partition | result |
 |---|---|---|
 | `dispatchMerge` | a whole logical partition past the squash threshold | one directory holding every folder's live rows, staged as `.merging<folderCount>`; the swap replaces the run of `_txn` entries with one |
-| `dispatchMakePlain` | composite, one piece at row 0 with dead space above (`isMakePlainShape`) | MAKE-PLAIN + TRIM-FILES in place on the writer |
+| `dispatchMakePlain` | composite, one piece at row 0 with dead space above and a generation left for the record that lowers `E` (`isMakePlainShape`) | MAKE-PLAIN + TRIM-FILES in place on the writer |
 | `dispatchComposite` | composite, otherwise | REWRITE: live rows in timestamp order, staged as `.compacting<generation>` |
 | `dispatchParquet` | Parquet with dead row groups or a stale schema | live row groups re-encoded into staging |
 
@@ -90,6 +90,8 @@ Each command carries the source fingerprint - `(nameTxn, generation / parquetFil
 and the writer drops a command whose partition has moved on; the next sweep decides again. A build that fails
 before its swap removes its own staging directory. MAKE-PLAIN's reader-safety wait still applies, so the
 sweep's reader is closed before the writer runs.
+
+`TableWriter.compactParquetPartition` does `dispatchParquet`'s rebuild on the writer, for a caller that cannot go on without the result: the Enterprise Delta switch, which freezes the partition. It decides on the same `isParquetPartitionCompact` and builds straight into the directory its commit names, so it never touches a staged build; the swap of such a build then finds the partition moved on and discards itself.
 
 ## Requests
 

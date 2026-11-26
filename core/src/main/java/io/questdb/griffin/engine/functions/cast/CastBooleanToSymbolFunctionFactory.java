@@ -39,13 +39,27 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
-    // Indexed the way TableUtils.toIndexKey lays a symbol table out: slot 0 is the null key, then
-    // key 0 and key 1. A BOOLEAN has no null, so getInt() answers 0 or 1 and nothing else. The null
-    // slot still has to hold null: a consumer that borrows this table mints VALUE_IS_NULL on its
-    // own - lag()/lead() do it for a missing neighbor - and resolves that key here. Func.valueOf()
-    // below answers the same way; the two have to agree, because a caller resolving keys off the
-    // view compares them against what the function itself returns.
-    private static final ObjList<CharSequence> SYMBOLS = new ObjList<>();
+    // A BOOLEAN has no null, so getInt() answers 0 for false or 1 for true and nothing else. Every
+    // other key still has to resolve to null: a consumer that borrows this table mints VALUE_IS_NULL
+    // on its own - lag()/lead() do it for a missing neighbor - and resolves that key here. Func
+    // resolves its keys through this table too, so the function and the table it hands out cannot
+    // disagree; a caller resolving keys off the table compares them against what the function itself
+    // returns. The table holds no state, so every function shares it and any thread may read it.
+    private static final SymbolTable SYMBOL_TABLE = new SymbolTable() {
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return switch (key) {
+                case 0 -> "false";
+                case 1 -> "true";
+                default -> null;
+            };
+        }
+    };
 
     @Override
     public String getSignature() {
@@ -97,7 +111,7 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         public @Nullable SymbolTable newSymbolTable() {
             // Not "this": whatever newSymbolTable() hands out may be freed by its caller, and
             // closing this function would close the argument the live projection still reads.
-            return new CastToSymbolTable(SYMBOLS);
+            return SYMBOL_TABLE;
         }
 
         @Override
@@ -116,22 +130,12 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            return SYMBOL_TABLE.valueBOf(key);
         }
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return switch (symbolKey) {
-                case 0 -> "false";
-                case 1 -> "true";
-                default -> null;
-            };
+            return SYMBOL_TABLE.valueOf(symbolKey);
         }
-    }
-
-    static {
-        SYMBOLS.add(null);
-        SYMBOLS.add("false");
-        SYMBOLS.add("true");
     }
 }

@@ -222,6 +222,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         base.halfClose();
     }
 
+    // The column the metadata marks as the timestamp must pass through the base's own timestamp: a timestamp(col)
+    // claim over another column of the base marks a column that may hold NULL in rows of any order.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return timestampIndex > -1
+                && columnCrossIndex.getQuick(timestampIndex) == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
@@ -261,6 +271,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         // RecordCursorFactory.rewrapOverTopK contract, the caller must not close the orphan;
         // its state has transferred here. Same precedent as the AsOf and LatestBy peels.
         return new SelectedRecordCursorFactory(orderedMetadata, columnCrossIndex, rewrappedBase);
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override
@@ -494,6 +509,21 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getDesignatedTimestampPageAddress() {
+            return baseFrame.getDesignatedTimestampPageAddress();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageSize() {
+            return baseFrame.getDesignatedTimestampPageSize();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageTop() {
+            return baseFrame.getDesignatedTimestampPageTop();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }
@@ -524,6 +554,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getPageTop(int columnIndex) {
+            return baseFrame.getPageTop(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
         public ParquetDecoder getParquetDecoder() {
             return baseFrame.getParquetDecoder();
         }
@@ -541,6 +576,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public int getParquetRowGroupLo() {
             return baseFrame.getParquetRowGroupLo();
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return baseFrame.getPartitionFrameState();
         }
 
         @Override
@@ -618,6 +658,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }
@@ -665,6 +710,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             // PageFrameAddressCache assume mapping[i] corresponds to metadata column i.
             final ColumnMapping baseMapping = baseCursor.getColumnMapping();
             columnMapping.clear();
+            // Delta merging needs the designated timestamp even when the projection omits it.
+            columnMapping.setTimestamp(
+                    baseMapping.getTimestampColumnIndex(),
+                    baseMapping.getTimestampWriterIndex(),
+                    baseMapping.getTimestampType()
+            );
             for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
                 final int basePos = columnCrossIndex.getQuick(i);
                 columnMapping.addColumn(
@@ -837,6 +888,15 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((SelectedRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+            return baseCursor.recordAtSourceRow(
+                    ((SelectedRecord) record).getBaseRecord(),
+                    sourceRowRef,
+                    timestamp
+            );
         }
 
         @Override
