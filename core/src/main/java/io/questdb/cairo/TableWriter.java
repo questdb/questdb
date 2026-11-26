@@ -286,6 +286,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongConsumer appendTimestampSetter;
     private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
     private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
+    // the newest column name txn the attach found in the file names of each column, -1 for none
+    private final LongList attachPinnedColumnNameTxns = new LongList();
     private final BitSet attachSymbolNullColumns = new BitSet();
     // Pairs of (partition timestamp, commit txn) of ATTACHes whose .attachable stays in place until both save point
     // generations stand at or past the attach: a fallback to the older generation replays the ATTACH from it.
@@ -544,6 +546,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
+    private boolean isO3ColumnTopsUpdated;
     // False until the constructor's try block completes. The constructor's failure path calls doClose() with the
     // columns, symbol maps and indexers only partly populated, so every optional close-time action that walks
     // them checks this first.
@@ -1421,7 +1424,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         Throwable commandFailure = null;
         try {
-            return command.apply(this, contextAllowsAnyStructureChanges);
+            final long rowsAffected = command.apply(this, contextAllowsAnyStructureChanges);
+            if (command.shouldCompileDependentViews()) {
+                // ApplyWal2TableJob queues the recompile for a change the WAL applies. Without it, the views
+                // that read this table keep their old columns, and stay valid after a change that breaks them.
+                engine.enqueueCompileView(tableToken);
+            }
+            return rowsAffected;
         } catch (Throwable th) {
             commandFailure = th;
             // A command run outside the WAL reports to a statement or, from the command queue, only a message to
@@ -1569,9 +1578,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 attachSymbolNullColumns.clear();
                 boolean isSymbolNullKnown = !forceRenamePartitionDir;
-                if (forceRenamePartitionDir && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
-                    attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
-                    isSymbolNullKnown = true;
+                // whether the _cv the partition was detached with named the versions of its columns
+                boolean isColumnVersionKnown = false;
+                if (forceRenamePartitionDir) {
+                    isColumnVersionKnown = attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen, hasParquetData);
+                    if (!isColumnVersionKnown) {
+                        attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
+                        isSymbolNullKnown = true;
+                    }
                 }
 
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
@@ -1612,11 +1626,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         LOG.info().$("linked partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     }
 
-                    // pin column versions
-                    // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
-                    // of the attached partition
-                    this.attachPartitionTimestamp = timestamp;
-                    ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                    // Without the detached _cv, the column files name the column versions. With it, they do not: the
+                    // files of a version that an UPDATE or ALTER COLUMN TYPE superseded stay until the column purge
+                    // job removes them, and DETACH links them too.
+                    if (!isColumnVersionKnown) {
+                        // the traversal pins the versions for the timestamp of the attached partition
+                        this.attachPartitionTimestamp = timestamp;
+                        attachPinnedColumnNameTxns.setAll(columnCount, -1L);
+                        ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                    }
 
                     // The parquet partition might be lacking the _pm file, we need to create it
                     if (!ff.exists(path.concat(PARQUET_METADATA_FILE_NAME).$())) {
@@ -7088,6 +7106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        assert !isLastPartitionReadOnly() : "LAG applied to a read-only partition";
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -7456,14 +7475,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (nameTxn > 0) {
                                 // check that this is xxx.d.234
                                 if (tmpDirectUtf8StringZ.byteAt(lastDot - 1) == 'd') {
-                                    columnVersionWriter.upsert(
-                                            attachPartitionTimestamp,
-                                            columnIndex,
-                                            nameTxn,
-                                            // column tops will have been already read from the "cv" file, we just need
-                                            // to upsert the nameTxn and keep the columnTop unchanged
-                                            getColumnTop(attachPartitionTimestamp, columnIndex, 0)
-                                    );
+                                    // the newest version of the column wins, whatever the order the directory lists
+                                    // them in
+                                    if (nameTxn > attachPinnedColumnNameTxns.getQuick(columnIndex)) {
+                                        attachPinnedColumnNameTxns.setQuick(columnIndex, nameTxn);
+                                        columnVersionWriter.upsert(
+                                                attachPartitionTimestamp,
+                                                columnIndex,
+                                                nameTxn,
+                                                // column tops will have been already read from the "cv" file, we just need
+                                                // to upsert the nameTxn and keep the columnTop unchanged
+                                                getColumnTop(attachPartitionTimestamp, columnIndex, 0)
+                                        );
+                                    }
                                 }
                             }
                         } catch (NumericException ignore) {
@@ -7585,7 +7609,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean attachPrepare(long partitionTimestamp, long partitionSize, Path detachedPath, int detachedPartitionRoot) {
+    private boolean attachPrepare(long partitionTimestamp, long partitionSize, Path detachedPath, int detachedPartitionRoot, boolean isParquet) {
         try {
             // load/check _meta
             detachedPath.trimTo(detachedPartitionRoot).concat(META_FILE_NAME);
@@ -7627,6 +7651,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 attachColumnVersionReader.readUnsafe();
             }
 
+            if (!isParquet) {
+                // A Parquet partition finds its columns by their ids
+                attachValidateRenamedColumns(partitionTimestamp, partitionSize);
+            }
+
             // override column tops for the partition we are attaching
             columnVersionWriter.overrideColumnVersions(partitionTimestamp, attachColumnVersionReader);
 
@@ -7635,7 +7664,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // check name
                 int detColIdx = attachMetadata.getColumnIndexQuiet(columnName);
-                if (detColIdx == -1) {
+                int tableColType = metadata.getColumnType(colIdx);
+                // A deleted column keeps its name, which ALTER COLUMN TYPE, or DROP COLUMN and ADD COLUMN of that name,
+                // gives to a live column at another index. Nothing reads the deleted column, and the live one is checked
+                // at its own index.
+                if (detColIdx == -1 || (detColIdx != colIdx && tableColType < 0)) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, partitionSize);
                     continue;
                 }
@@ -7645,7 +7678,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // check type
-                int tableColType = metadata.getColumnType(colIdx);
                 int attachColType = attachMetadata.getColumnType(detColIdx);
                 if (tableColType != attachColType && tableColType != -attachColType) {
                     throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
@@ -7659,6 +7691,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", columnType=").$(ColumnType.nameOf(tableColType))
                             .I$();
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, partitionSize);
+                } else {
+                    // the detached metadata names live columns only, so the column is live in both
+                    assert tableColType > 0;
+                    // overrideColumnVersions() copied only the partition's own records. A column without one
+                    // takes its presence from the partition the column was added at, and its file version from
+                    // the column's default record. The table's own "added at" partition can differ from the one
+                    // the partition was detached with: TRUNCATE and a DROP of the newest partition move it back.
+                    // RENAME COLUMN moves the default file version on while the partition is detached, and
+                    // relinks the files of the attached partitions only. The detached _cv tells whether the
+                    // partition holds the column, and which version of its files.
+                    // A top of -1 means the column was added after the partition was written, and nothing wrote
+                    // it there: the partition holds none of its rows, as with a top of partitionSize.
+                    long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, detColIdx);
+                    if (detachedColumnTop < 0) {
+                        detachedColumnTop = partitionSize;
+                    }
+                    long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                    if (columnTop < 0) {
+                        columnTop = partitionSize;
+                    }
+                    // A record of the partition names the version of the column's files there, -1 included: the files
+                    // of a column from CREATE TABLE carry no column name txn.
+                    final long detachedColumnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, detColIdx);
+                    if (detachedColumnNameTxn != columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)) {
+                        // upsert() keeps the version of an existing record when given -1. overrideColumnVersions()
+                        // copied the partition's records, so the versions differ only where the column has none.
+                        assert detachedColumnNameTxn > -1 || columnVersionWriter.getRecordIndex(partitionTimestamp, colIdx) < 0;
+                        columnVersionWriter.upsert(partitionTimestamp, colIdx, detachedColumnNameTxn, detachedColumnTop);
+                    } else if (columnTop != detachedColumnTop) {
+                        columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, detachedColumnTop);
+                    }
                 }
 
                 // check column is / was indexed
@@ -7771,6 +7834,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             path.trimTo(partitionPathLen);
+        }
+    }
+
+    /**
+     * The loop of {@link #attachPrepare} reads a live column's files in the partition by the column's current name, and
+     * takes a column whose name the detached metadata lacks for one added after the DETACH, which reads NULL there. A
+     * column renamed while the partition was detached holds its rows there under the name it had at the DETACH. File
+     * names keep the letter case of that name, which name lookups ignore, and a rename through another name can change
+     * the case alone. So the attach refuses a partition that holds rows of a column whose name at the DETACH differs
+     * from its current one, in letter case too. The check runs before the loop changes the detached files, so a refused
+     * attach leaves them as they were.
+     */
+    private void attachValidateRenamedColumns(long partitionTimestamp, long partitionSize) {
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (metadata.getColumnType(colIdx) > 0) {
+                // ALTER COLUMN TYPE moves a column to a new writer index, and its replacing chain leads back to the
+                // index the column had at the DETACH
+                for (int i = colIdx; i > -1; i = metadata.getReplacingColumnIndex(i)) {
+                    if (i < attachMetadata.getColumnCount() && attachMetadata.getColumnType(i) > 0) {
+                        if (!Chars.equals(attachMetadata.getColumnName(i), metadata.getColumnName(colIdx))) {
+                            // renamed while detached; a partition without the column's rows loses nothing
+                            final long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, i);
+                            if (detachedColumnTop > -1 && detachedColumnTop < partitionSize) {
+                                throw CairoException.detachedColumnMetadataMismatch(colIdx, metadata.getColumnName(colIdx), "name");
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -8093,10 +8186,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             || (recordIndex < 0 && columnVersions.getColumnTopPartitionTimestamp(columnIndex) > partitionTimestamp)) {
                         continue;
                     }
-                    long columnNameTxn = columnVersions.getColumnNameTxnByIndex(recordIndex);
-                    if (columnNameTxn == -1) {
-                        columnNameTxn = columnVersions.getDefaultColumnNameTxn(columnIndex);
-                    }
+                    final long columnNameTxn = recordIndex > -1
+                            ? columnVersions.getColumnNameTxnByIndex(recordIndex)
+                            : columnVersions.getDefaultColumnNameTxn(columnIndex);
                     final CharSequence columnName = metadata.getColumnName(columnIndex);
                     if (!ff.exists(dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn))
                             || (ColumnType.isVarSize(columnType) && !ff.exists(iFile(path.trimTo(partitionPathLen), columnName, columnNameTxn)))) {
@@ -8727,7 +8819,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         final long e = geometry.getE(partitionIndex);
-        LOG.info().$("compacting composite partition, REWRITE [table=").$(tableToken)
+        LOG.info().$("compacting partition, REWRITE [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
                 .$(", pieces=").$(pieceCount)
                 .$(", liveRows=").$(liveRows)
@@ -11140,7 +11232,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3FinishInFlight = true;
         try {
             if (!o3InError) {
-                updateO3ColumnTops();
+                if (!isO3ColumnTopsUpdated) {
+                    updateO3ColumnTops();
+                }
                 try {
                     sealPostingIndexesForO3Partitions();
                 } catch (Throwable e) {
@@ -11333,6 +11427,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int newPieceCount = pieceCount - bestLen + 1;
         // No longer composite only when folding collapsed every piece into one tiling [0, E) with no hole.
         final boolean stillComposite = newPieceCount > 1 || survivorRowOffset != 0 || rowCount != e;
+        if (stillComposite && !geometry.hasGenerationForNextPublish(partitionIndex, newPieceCount)) {
+            return false;
+        }
 
         LOG.info().$("compacting composite partition, JOIN: folding adjacent pieces [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, nameTxn))
@@ -12862,6 +12959,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean isSquashTargetOutOfGenerations(int partitionIndex) {
+        final PartitionGeometry geometry = getGeometry();
+        return geometry.isComposite(partitionIndex)
+                && !geometry.hasGenerationForNextPublish(partitionIndex, geometry.getPieceCount(partitionIndex) + 1);
+    }
+
     /**
      * Whether the durable-epoch pin recorded by the table's tracker falls in {@code [fromTxn, toTxn)}.
      * The synchronous purge gates consult the tracker as well as the pooled scoreboard so a scoreboard
@@ -12908,6 +13011,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    private boolean isLastPartitionReadOnly() {
+        final int partitionCount = txWriter.getPartitionCount();
+        return partitionCount > 0 && txWriter.isPartitionReadOnly(partitionCount - 1);
     }
 
     /**
@@ -14530,7 +14638,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        isO3ColumnTopsUpdated = partitionsRemoved;
         if (partitionsRemoved) {
+            // Split removal copies rows this commit wrote, so it has to read them with this commit's column tops
+            updateO3ColumnTops();
             o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
 
             // Replace commit removed some of the partitions
@@ -14691,6 +14802,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in this case we can remove the current partition fully
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                     removeAttachedPartitionsTracked(partitionTimestamp);
+                } else if ((txWriter.isPartitionComposite(i - 1) || isMergeAppendTable())
+                        && !getGeometry().hasGenerationForNextPublish(i - 1, getGeometry().getPieceCount(i - 1))) {
+                    rewriteSplitParent(i - 1);
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                    removeAttachedPartitionsTracked(partitionTimestamp);
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
@@ -14709,7 +14825,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // This logging should be quite rare, we can afford info level.
                         LOG.info().$("splitting last line of the partition [table=").$(tableToken)
-                                .$(", partition=").$ts(prevPartitionTimestamp)
+                                .$(", partition=").$ts(timestampDriver, prevPartitionTimestamp)
                                 .$(", oldSize=").$(prevPartitionSize)
                                 .$(", newSize=").$(newPrevPartitionSize)
                                 .$(", splitPartition=").$ts(timestampDriver, newSplitPartitionTimestamp)
@@ -14721,6 +14837,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // the branches below remove or resize it. A composite parent addresses the tail through
                         // its pieces and its files reach E, so the source frame has to span E, not the live rows.
                         final boolean prevPartitionComposite = txWriter.isPartitionComposite(i - 1);
+                        final boolean isPrevPartitionReadOnly = txWriter.isPartitionReadOnly(i - 1);
                         final long sourceFrameRows;
                         splitTailFileRanges.clear();
                         if (prevPartitionComposite) {
@@ -14744,17 +14861,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 insertPartitionIndex = removeAttachedPartitionsTracked(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
-                                if (prevPartitionComposite) {
-                                    // A composite directory counts its live rows in the geometry, not in _txn.
-                                    // Without this the pieces go on claiming the rows that just moved out and a
-                                    // reader returns them twice, once here and once in the new split.
-                                    trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
-                                } else if (isMergeAppendTable()) {
-                                    publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
-                                }
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
+                            txWriter.setPartitionReadOnly(insertPartitionIndex, isPrevPartitionReadOnly);
+                            if (newPrevPartitionSize == 0) {
+                                txWriter.setPartitionSeqTxn(insertPartitionIndex, getCompositePartitionSeqTxn());
+                            }
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
                             // Self-tracking (no external ColumnTopSink): safe here the same way
@@ -14813,6 +14926,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.critical().$("split partition removal succeeded but posting-index reseal failed `").$(th).$('`').$();
                             distressed = true;
                             throw th;
+                        }
+
+                        // Published last, so that a failure above leaves no geometry record behind.
+                        if (newPrevPartitionSize > 0) {
+                            if (prevPartitionComposite) {
+                                // A composite directory counts its live rows in the geometry, not in _txn.
+                                // Without this the pieces go on claiming the rows that just moved out and a
+                                // reader returns them twice, once here and once in the new split.
+                                trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
+                            } else if (isMergeAppendTable()) {
+                                publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
+                            }
                         }
                     } finally {
                         path.trimTo(pathSize);
@@ -15705,6 +15830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
         final long maxTimestamp = txWriter.getMaxTimestamp();
+        final long initialMinTimestamp = txWriter.getMinTimestamp();
         final long transientRowCount = txWriter.transientRowCount;
 
         o3DoneLatch.reset();
@@ -15715,6 +15841,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int pCount = 0;
         int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
         long replaceMaxTimestamp = Long.MIN_VALUE;
+        boolean isBatchHeadDropped = false;
+        boolean isBatchTailDropped = false;
         long partitionTimestamp = o3TimestampMin;
         final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
         long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
@@ -15895,6 +16023,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
+                        isBatchHeadDropped |= srcOooLo == rowLo;
+                        isBatchTailDropped = srcOooHi == srcOooMax - 1;
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
                         continue;
                     }
                     final O3Basket o3Basket = o3BasketPool.next();
@@ -16106,7 +16238,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // at this point we should know the last partition row count
             if (!isCommitReplaceMode()) {
                 partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+                // The rows written before a dropped tail precede its partition, so they cannot raise the max
+                long committedMaxTimestamp = isBatchTailDropped
+                        ? txWriter.getMaxTimestamp()
+                        : Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
                 // Committed data left on disk outside the O3 batch may have a higher timestamp than the
                 // O3 batch commit boundary; keep the writer's maxTimestamp consistent with what is on disk.
                 committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
@@ -16144,6 +16279,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                 }
                 o3ConsumePartitionUpdateSink();
+                if (isBatchHeadDropped && !isCommitReplaceMode()) {
+                    // The partition tasks report the batch min, here a dropped row's. The rows they wrote follow
+                    // that row's partition, so they cannot lower the min.
+                    txWriter.setMinTimestamp(initialMinTimestamp);
+                }
             }
             o3DoneLatch.await(latchCount);
 
@@ -16359,6 +16499,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean noLag = lastPartitionBlocksAppend
                         || isParquetTableEmptyPlaceholder
                         || isMergeAppendTable()
+                        // LAG is written into the last partition's files, O3 drops or rejects such rows
+                        || isLastPartitionReadOnly()
                         || timestampRangeOverlapsDeltaActivePartition(o3TimestampMin, o3TimestampMax);
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
@@ -16615,10 +16757,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // maxTimestamp = Long.MIN_VALUE, and the "outside the range" clauses degenerate once the
             // range spans the whole timeline - which is what [Long.MIN_VALUE, +inf) is, the range a
             // live view declared START FROM BEGINNING emits for a pure-delete full rebuild.
-            // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
-            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
-            // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
-            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+            // Min timestamp is either outside of replace range, or equals to the min timestamp of the transaction,
+            // or lies in a read-only partition, which the replace leaves as it was
+            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs
+                    || txWriter.isPartitionReadOnly(0);
+            // Max timestamp is either outside of replace range, or equals to the max timestamp of the transaction,
+            // or lies in a read-only partition
+            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs
+                    || txWriter.isPartitionReadOnly(txWriter.getPartitionCount() - 1);
 
             return true;
         } else {
@@ -20188,6 +20334,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || lastPartitionTimestamp == Long.MIN_VALUE
                 // Composite as well as parquet: this parks the block in the file region a relocated piece owns.
                 || isLastPartitionAppendBlocked()
+                || isLastPartitionReadOnly()
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
                 || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp
@@ -20585,6 +20732,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
+    }
+
+    private void rewriteSplitParent(int partitionIndex) {
+        LOG.info().$("no free geometry generation to carve the partition, rewriting it [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                .I$();
+        assert partitionIndex < txWriter.getPartitionCount() - 1 : "split parent rewritten as the last partition";
+        final boolean isRewritten = compactPartition0(partitionIndex);
+        assert isRewritten : "split parent has no rows to rewrite";
+        // REWRITE keeps the entry's seqTxn, but the removed split changed the logical partition
+        txWriter.setPartitionSeqTxn(partitionIndex, getCompositePartitionSeqTxn());
     }
 
     /**
@@ -21712,7 +21870,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Forced squash always requires a plain target. Ordinary squash cleans a cold, small target once,
         // then appends sources' live ranges directly; a hot or large accumulator keeps the append-only path.
-        if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)) {
+        if (force
+                || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)
+                || isSquashTargetOutOfGenerations(targetPartitionIndex)) {
             final long targetSeqTxn = nativePartitionSeqTxn(targetPartitionIndex);
             compactPartitionToPlain(targetPartitionIndex, "squash");
             // Maintenance must not make an old accumulator look like it took the last data commit.

@@ -53,6 +53,20 @@ public interface FuzzTransactionOperation extends QuietCloseable {
         return sink.toString();
     }
 
+    /**
+     * Formats a SQL WHERE condition, without the WHERE keyword, that selects the
+     * partitions from <code>fromTimestamp</code> on, the timestamp being in the
+     * table's native unit.
+     */
+    static String partitionsFromFilter(RecordMetadata metadata, long fromTimestamp) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(metadata.getTimestampType());
+        final StringSink sink = new StringSink();
+        sink.put(metadata.getColumnName(metadata.getTimestampIndex())).put(" >= '");
+        driver.append(sink, fromTimestamp);
+        sink.put('\'');
+        return sink.toString();
+    }
+
     boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals);
 
     default void close() {

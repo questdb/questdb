@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
@@ -227,6 +228,56 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
                 if (reusedEntry != null) {
                     copyContext.releaseEntry(reusedEntry);
                 }
+                close(runtime);
+                job.close();
+            }
+        });
+    }
+
+    @Test
+    public void testFiberExportRecompilesStalePlan() throws Exception {
+        // A Fiber runs an export whose plan went stale in the queue. It compiles the select again, writes the rows of the
+        // new plan, and frees that plan before the job returns the export's memory tracker to its pool.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CopyExportRequestJob job = new CopyExportRequestJob(engine, runtime);
+            final AtomicInteger compileCount = new AtomicInteger();
+            try {
+                publishCopy("COPY (SELECT * FROM t) TO 'fiber_stale' WITH FORMAT parquet");
+                execute("ALTER TABLE t ADD COLUMN extra INT");
+                final PerQueryMemoryTrackerProvider trackerProvider =
+                        (PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider();
+                final int pooledTrackerCount = trackerProvider.getPooledCount();
+
+                engine.getSqlCompilerPool().setPoolListener((_, _, _, event, _, _) -> {
+                    if (event == PoolListener.EV_RETURN) {
+                        compileCount.incrementAndGet();
+                    }
+                });
+                try {
+                    Assert.assertTrue(job.run());
+                    Assert.assertEquals(1, runtime.drain(1));
+                } finally {
+                    engine.getSqlCompilerPool().setPoolListener(null);
+                }
+
+                Assert.assertEquals("the export compiles the select again once", 1, compileCount.get());
+                Assert.assertEquals(pooledTrackerCount, trackerProvider.getPooledCount());
+                try (Path path = new Path()) {
+                    path.of(exportRoot).concat("fiber_stale.parquet").$();
+                    assertQuery("SELECT * FROM read_parquet('" + path + "')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    x\tts\textra
+                                    1\t2024-01-01T00:00:00.000000Z\tnull
+                                    2\t2024-01-02T00:00:00.000000Z\tnull
+                                    """);
+                }
+            } finally {
                 close(runtime);
                 job.close();
             }

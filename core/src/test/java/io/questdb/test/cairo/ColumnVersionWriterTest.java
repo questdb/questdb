@@ -1032,6 +1032,47 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceInitialPartitionRecordsReachesDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
+                    ColumnVersionReader r = createColumnVersionReader(path)
+            ) {
+                final long day1 = 0;
+                final long day2 = Micros.DAY_MICROS;
+                final long day3 = Micros.DAY_MICROS * 2;
+                final int columnIndex = 2;
+                // the column is added at day3, and an O3 write gave day1 an explicit record
+                w.upsertDefaultTxnName(columnIndex, 7, day3);
+                w.upsert(day1, columnIndex, 7, 0);
+                w.commit();
+                final long version = w.getVersion();
+
+                // the last partition is still at or after the "added at" partition: nothing moves
+                w.replaceInitialPartitionRecords(day3, 10);
+                Assert.assertFalse(w.hasChanges());
+                w.commit();
+                Assert.assertEquals(version, w.getVersion());
+
+                // day3 is dropped and day1 becomes the last partition; it already has a record, so moving the
+                // "added at" partition is the only change
+                w.replaceInitialPartitionRecords(day1, 10);
+                Assert.assertTrue(w.hasChanges());
+                w.commit();
+                Assert.assertEquals(version + 1, w.getVersion());
+
+                r.readSafe(configuration.getMillisecondClock(), 1);
+                Assert.assertEquals(day1, r.getColumnTopPartitionTimestamp(columnIndex));
+                // a partition created later between day1 and day3 holds the column
+                Assert.assertEquals(0, r.getColumnTop(day2, columnIndex));
+                Assert.assertEquals(0, r.getColumnTop(day1, columnIndex));
+                TestUtils.assertEquals(w.getCachedColumnVersionList(), r.getCachedColumnVersionList());
+            }
+        });
+    }
+
+    @Test
     public void testToString() throws Exception {
         assertMemoryLeak(() -> {
             try (

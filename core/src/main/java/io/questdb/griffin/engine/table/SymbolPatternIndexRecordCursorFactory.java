@@ -108,6 +108,13 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         return SCAN_DIRECTION_OTHER;
     }
 
+    // The per-key index cursors walk forward, so the heap cursor merges the rows of an ascending frame in row id
+    // order, the one case getScanDirection() reports a forward scan for.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return isTimestampTableDesignated();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;

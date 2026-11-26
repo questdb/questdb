@@ -42,14 +42,18 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    // drops every partition from cutoffTimestamp on, rather than the partition before it
+    private final boolean isDroppingNewest;
     private final long partitionDuration;
 
     /**
-     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp).
+     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp), or, when
+     * isDroppingNewest is set, to every partition from cutoffTimestamp on.
      */
-    public FuzzDropPartitionOperation(long cutoffTimestamp, long partitionDuration) {
+    public FuzzDropPartitionOperation(long cutoffTimestamp, long partitionDuration, boolean isDroppingNewest) {
         this.cutoffTimestamp = cutoffTimestamp;
         this.partitionDuration = partitionDuration;
+        this.isDroppingNewest = isDroppingNewest;
     }
 
     @Override
@@ -60,7 +64,9 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
             String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
-                    + " DROP PARTITION WHERE " + FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration);
+                    + " DROP PARTITION WHERE " + (isDroppingNewest
+                    ? FuzzTransactionOperation.partitionsFromFilter(metadata, cutoffTimestamp)
+                    : FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration));
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);
@@ -84,5 +90,13 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public long getCutoffTimestamp() {
+        return cutoffTimestamp;
+    }
+
+    public boolean isDroppingNewest() {
+        return isDroppingNewest;
     }
 }
