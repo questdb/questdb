@@ -27,7 +27,9 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -1650,6 +1652,66 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // A copy can lose any file. Removes from the checkpoint copy the posting index key file of a random POSTING column of
+    // a random native, writable partition of the table that the checkpoint holds. The restore must rebuild the index
+    // from the column data, or remove the index files of a column with no rows in the partition.
+    private void removeRandomPostingKeyFileFromCheckpointCopy(String tableName, Rnd rnd) {
+        final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            return;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        final String copyRoot = configuration.getDbRoot() + TableUtils.CHECKPOINT_META_FILE_NAME;
+        final ObjList<String> keyFiles = new ObjList<>();
+        try (
+                Path path = new Path();
+                TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+                TxReader txReader = new TxReader(ff);
+                ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+        ) {
+            // The test configuration keeps the checkpoint inside the db root, so the copy holds its _meta, _txn and _cv
+            path.of(copyRoot).concat(TableUtils.CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory()).concat(tableToken);
+            if (!ff.exists(path.$())) {
+                path.of(copyRoot).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory()).concat(tableToken);
+                if (!ff.exists(path.$())) {
+                    return;
+                }
+            }
+            final int checkpointTableLen = path.size();
+            metadata.loadMetadata(path.concat(TableUtils.META_FILE_NAME).$());
+            txReader.ofRO(path.trimTo(checkpointTableLen).concat(TableUtils.TXN_FILE_NAME).$(), metadata.getTimestampType(), metadata.getPartitionBy());
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            columnVersionReader.ofRO(ff, path.trimTo(checkpointTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            columnVersionReader.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            path.of(copyRoot).concat(tableToken);
+            final int copyTableLen = path.size();
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (txReader.isPartitionParquet(i) || txReader.isPartitionReadOnly(i)) {
+                    continue;
+                }
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(i);
+                TableUtils.setPathForNativePartition(path.trimTo(copyTableLen), metadata.getTimestampType(), metadata.getPartitionBy(),
+                        partitionTimestamp, txReader.getPartitionNameTxn(i));
+                final int partitionLen = path.size();
+                for (int columnIndex = 0, m = metadata.getColumnCount(); columnIndex < m; columnIndex++) {
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                            && metadata.isColumnIndexed(columnIndex)
+                            && IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+                        final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+                        if (ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionLen), metadata.getColumnName(columnIndex), columnNameTxn))) {
+                            keyFiles.add(path.toString());
+                        }
+                    }
+                }
+            }
+        }
+        if (keyFiles.size() > 0) {
+            final String keyFile = keyFiles.getQuick(rnd.nextInt(keyFiles.size()));
+            LOG.info().$("removing posting index key file from the checkpoint copy [file=").$(keyFile).I$();
+            Assert.assertTrue(keyFile, new File(keyFile).delete());
+        }
+    }
+
     private void runEjectedWalApplyBody(Rnd rnd) throws Exception {
         fuzzer.setFuzzProbabilities(
                 0,
@@ -1761,6 +1823,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     throw new RuntimeException(ex.get());
                 }
 
+                removeRandomPostingKeyFileFromCheckpointCopy(tableNameWal, rnd);
                 // Restore snapshot here
                 checkpointRecover();
                 // Hold the indexes as the restore left them against scans that read no index: the WAL apply below
@@ -1779,6 +1842,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 }
 
                 Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
+                fuzzer.assertIndexesMatchScans(tableNameWal);
 
                 // Write same data to non-wal table
                 fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
