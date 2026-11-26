@@ -3009,6 +3009,58 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreDoesNotReadGeometryOfCompositePartitionForColumnTopBelowLiveRows() throws Exception {
+        // A column that starts below the live rows of a partition has rows there whatever the geometry says. The
+        // restore reads the geometry of a COMPOSITE partition only for a column at or past its live rows: a read per
+        // partition and POSTING column would make restore time grow with both.
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", ", INDEX(s TYPE POSTING)", false);
+            final TableToken token = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader txFile = reader.getTxFile();
+                final TableReaderMetadata metadata = reader.getMetadata();
+                final long columnTopOfS = reader.getColumnVersionReader().getColumnTop(
+                        txFile.getPartitionTimestampByIndex(0),
+                        metadata.getWriterIndex(metadata.getColumnIndex("s"))
+                );
+                Assert.assertTrue(txFile.isPartitionComposite(0));
+                Assert.assertEquals("setup: s must start at the first row of the day", 0, columnTopOfS);
+            }
+            engine.clear();
+            final AtomicInteger geometryReadOpens = new AtomicInteger();
+            final AtomicInteger keyFileReadOpens = new AtomicInteger();
+            final FilesFacade countingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.containsAscii(name, Files.SEPARATOR + "_geometry")) {
+                        geometryReadOpens.incrementAndGet();
+                    } else if (Utf8s.containsAscii(name, Files.SEPARATOR + "s.pk")) {
+                        keyFileReadOpens.incrementAndGet();
+                    }
+                    return super.openRO(name);
+                }
+            };
+            final CairoConfiguration countingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return countingFacade;
+                }
+            };
+            restoreTableFiles(countingConfig, token);
+            // The restore read the head of the index of s in the day, and nothing of the day's geometry
+            Assert.assertEquals(1, keyFileReadOpens.get());
+            Assert.assertEquals(0, geometryReadOpens.get());
+            // v 800001..800010 and 810001..810010
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'kz'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("count\tsum\n20\t16100110\n");
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreFailsOnCorruptPostingKeyFile() throws Exception {
         // The head check reads what it can and leaves every unreadable .pk to the writer, which names the problem
         testCheckpointRestoreCorruptPostingKeyFile(100, "Index file too short");
