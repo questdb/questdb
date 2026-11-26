@@ -841,19 +841,17 @@ final class SampleByFactoryGenerator {
             for (int i = 0, n = keys.size(); i < n; i++) {
                 final ColumnExpression column = (ColumnExpression) keys.getQuick(i);
                 final int index = input.getColumnIndexById(column.getColumnId());
-                final int type = baseMetadata.getColumnType(index);
-                if (column.getColumnId() == plan.getTimestampColumnId()) {
+                final boolean isBucket = column.getColumnId() == plan.getTimestampColumnId();
+                if (isBucket) {
                     metadata.setTimestampIndex(i);
                 }
                 final String name = Chars.toString(output.getColumnName(i));
-                final TableColumnMetadata keyMetadata = new TableColumnMetadata(name, type, baseMetadata.getColumnIndexType(index),
-                        baseMetadata.getIndexValueBlockCapacity(index), baseMetadata.isSymbolTableStatic(index), baseMetadata.getMetadata(index));
-                // A column key passes its column through, so it keeps the column's PARQUET(...) setting; the bucket
-                // timestamp is computed and keeps the default.
-                if (column.getColumnId() != plan.getTimestampColumnId()) {
-                    keyMetadata.setParquetEncodingConfig(baseMetadata.getColumnMetadata(index).getParquetEncodingConfig());
-                }
-                metadata.add(keyMetadata);
+                final TableColumnMetadata source = baseMetadata.getColumnMetadata(index);
+                // The bucket timestamp is computed, so it keeps the default PARQUET(...) setting of its type.
+                metadata.add(isBucket
+                        ? new TableColumnMetadata(name, source.getColumnType(), source.getIndexType(), source.getIndexValueBlockCapacity(),
+                        source.isSymbolTableStatic(), source.getMetadata())
+                        : TableColumnMetadata.passThroughOf(source, name));
                 firstLastIndexes.add(index);
                 firstLastKinds.add(SampleByFirstLastRecordCursorFactory.KEY);
                 firstLastPositions.add(column.getPosition());

@@ -134,6 +134,34 @@ public class TemporalSharedKeyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSlaveTimestampKeyKeepsItsValueColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_ts_shared_m(id INT,t2 TIMESTAMP,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_ts_shared_s(id INT,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_ts_shared_m VALUES(11,3,4),(22,2,4),(44,5,4),(55,5,5),(33,5,6)");
+            execute("INSERT INTO lp_ts_shared_s VALUES(10,1),(20,3),(30,5)");
+            assertRowsAfterCompilerClose("SELECT m.id mid,s.id sid,s.ts sts FROM lp_ts_shared_m m "
+                    + "ASOF JOIN lp_ts_shared_s s ON m.t2=s.ts", """
+                    mid\tsid\tsts
+                    11\t20\t1970-01-01T00:00:00.000003Z
+                    22\tnull\t
+                    44\tnull\t
+                    55\t30\t1970-01-01T00:00:00.000005Z
+                    33\t30\t1970-01-01T00:00:00.000005Z
+                    """);
+            assertRowsAfterCompilerClose("SELECT m.id mid,s.id sid,s.ts sts FROM lp_ts_shared_m m "
+                    + "LT JOIN lp_ts_shared_s s ON m.t2=s.ts", """
+                    mid\tsid\tsts
+                    11\t20\t1970-01-01T00:00:00.000003Z
+                    22\tnull\t
+                    44\tnull\t
+                    55\tnull\t
+                    33\t30\t1970-01-01T00:00:00.000005Z
+                    """);
+        });
+    }
+
+    @Test
     public void testSymbolKeysUseMatchingMasterDictionaryAfterRelocation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_ts_shared_m(id INT,a SYMBOL,b SYMBOL,ts TIMESTAMP) TIMESTAMP(ts)");

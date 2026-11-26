@@ -281,12 +281,7 @@ final class JoinFactoryGenerator {
             final int index = output.getColumnIndexById(((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId());
             columnIndex.add(index);
             isIdentity &= index == i;
-            final TableColumnMetadata column = innerMetadata.getColumnMetadata(index);
-            final TableColumnMetadata projected = new TableColumnMetadata(Chars.toString(projection.getOutput().getColumnName(i)), column.getColumnType(),
-                    column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata());
-            // The projection passes the column through, so it keeps the column's PARQUET(...) setting.
-            projected.setParquetEncodingConfig(column.getParquetEncodingConfig());
-            outerMetadata.add(projected);
+            outerMetadata.add(TableColumnMetadata.passThroughOf(innerMetadata.getColumnMetadata(index), Chars.toString(projection.getOutput().getColumnName(i))));
         }
         outerMetadata.setTimestampIndex(PlanToFactoryRules.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex()));
         return isIdentity ? null : columnIndex;
@@ -321,12 +316,7 @@ final class JoinFactoryGenerator {
         } else if (stepIndex > 0) {
             innerMetadata = new GenericRecordMetadata();
             for (int i = 0; i < splitIndex; i++) {
-                final TableColumnMetadata column = masterMetadata.getColumnMetadata(i);
-                final TableColumnMetadata renamed = new TableColumnMetadata(Chars.toString(output.getColumnName(i)), column.getColumnType(),
-                        column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata());
-                // The join passes the master column through, so it keeps the column's PARQUET(...) setting.
-                renamed.setParquetEncodingConfig(column.getParquetEncodingConfig());
-                innerMetadata.add(renamed);
+                innerMetadata.add(TableColumnMetadata.passThroughOf(masterMetadata.getColumnMetadata(i), Chars.toString(output.getColumnName(i))));
             }
             innerMetadata.setTimestampIndex(masterMetadata.getTimestampIndex());
         } else {
@@ -450,10 +440,7 @@ final class JoinFactoryGenerator {
                     do {
                         internalName = "__questdb_temporal_key_" + internalKeySuffix++;
                     } while (slaveMetadata.getColumnIndexQuiet(internalName) >= 0);
-                    final TableColumnMetadata repeated = new TableColumnMetadata(internalName, m.getColumnType(),
-                            m.getIndexType(), m.getIndexValueBlockCapacity(), m.isSymbolTableStatic(), m.getMetadata());
-                    repeated.setParquetEncodingConfig(m.getParquetEncodingConfig());
-                    m = repeated;
+                    m = TableColumnMetadata.passThroughOf(m, internalName);
                 }
                 // Widened keys are read from the map; SYMBOL keys with a SYMBOL partner
                 // use the master's symbol table. The null record must use the same types.
@@ -468,11 +455,7 @@ final class JoinFactoryGenerator {
                 } else {
                     if (ColumnType.isSymbol(m.getColumnType())
                             && m.isSymbolTableStatic() != masterMetadata.isSymbolTableStatic(masterKeyColIdx)) {
-                        final TableColumnMetadata keyMetadata = new TableColumnMetadata(
-                                m.getColumnName(), m.getColumnType(), m.getIndexType(), m.getIndexValueBlockCapacity(),
-                                masterMetadata.isSymbolTableStatic(masterKeyColIdx), m.getMetadata());
-                        keyMetadata.setParquetEncodingConfig(m.getParquetEncodingConfig());
-                        m = keyMetadata;
+                        m = TableColumnMetadata.passThroughOf(m, m.getColumnName(), m.getColumnType(), masterMetadata.isSymbolTableStatic(masterKeyColIdx));
                     }
                     metadata.add(slaveAlias, m);
                     slaveTypes.add(m.getColumnType());

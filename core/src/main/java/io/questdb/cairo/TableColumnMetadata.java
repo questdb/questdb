@@ -188,6 +188,33 @@ public class TableColumnMetadata implements Plannable {
         return copy;
     }
 
+    /**
+     * The column {@code source} as a factory that passes it through describes it, named {@code name}. It keeps what a
+     * reader of the column sees: the type, the index, the symbol table, the nested metadata and the PARQUET(...)
+     * setting. It leaves out the storage identity of a table column, such as the writer index and the dedup flag, which
+     * the output of a factory does not have: a Parquet export takes the writer index of a column for its field id.
+     */
+    public static TableColumnMetadata passThroughOf(TableColumnMetadata source, String name) {
+        return passThroughOf(source, name, source.getColumnType(), source.isSymbolTableStatic());
+    }
+
+    /**
+     * {@link #passThroughOf(TableColumnMetadata, String)}, with the type and the static symbol table flag the factory
+     * reads the column with.
+     */
+    public static TableColumnMetadata passThroughOf(TableColumnMetadata source, String name, int columnType, boolean isSymbolTableStatic) {
+        final TableColumnMetadata copy = new TableColumnMetadata(
+                name,
+                columnType,
+                source.getIndexType(),
+                source.getIndexValueBlockCapacity(),
+                isSymbolTableStatic,
+                source.getMetadata()
+        );
+        copy.setParquetEncodingConfig(source.getParquetEncodingConfig());
+        return copy;
+    }
+
     public String getColumnName() {
         return columnName;
     }

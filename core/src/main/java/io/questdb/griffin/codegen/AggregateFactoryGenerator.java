@@ -193,11 +193,7 @@ public final class AggregateFactoryGenerator {
                 if (Chars.equals(name, input.getColumnName(index))) {
                     metadata.add(input.getColumnMetadata(index));
                 } else {
-                    // A column key passes its column through, so it keeps the column's PARQUET(...) setting.
-                    final TableColumnMetadata renamed = new TableColumnMetadata(name, output.getColumnType(i), input.getColumnIndexType(index),
-                            input.getIndexValueBlockCapacity(index), input.isSymbolTableStatic(index), input.getMetadata(index));
-                    renamed.setParquetEncodingConfig(input.getColumnMetadata(index).getParquetEncodingConfig());
-                    metadata.add(renamed);
+                    metadata.add(TableColumnMetadata.passThroughOf(input.getColumnMetadata(index), name, output.getColumnType(i), input.isSymbolTableStatic(index)));
                 }
             } else {
                 final Function function = functions.getQuick(i);

@@ -26,10 +26,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
@@ -91,11 +88,11 @@ import org.jetbrains.annotations.Nullable;
  *     <li><b>a PARTITION BY term {@link WindowKeyExpressionIdentity} cannot name</b> - a bind
  *     variable, a subquery, a random call, an unresolvable column. An expression term that it
  *     can name joins on that identity rather than on being a column;</li>
- *     <li><b>an ORDER BY term that is not a direct base column.</b> The identity above would
- *     name one, and what has not been worked out is the rest: an ordered group is a cached
- *     factory's sort bucket, and whether two expression orders that render alike are sorted
- *     alike is that factory's question rather than this one.</li>
  * </ul>
+ * The ORDER BY terms arrive as columns of the record: the logical plan orders a window by
+ * columns of its input, and the legacy planner declines an expression term before it asks.
+ * An ordered group is a cached factory's sort bucket, and whether two expression orders that
+ * render alike are sorted alike is that factory's question rather than this one.
  *
  * <h2>An expression key is a borrowed projection</h2>
  * A spec whose terms are all direct columns says everything the group's key projection needs -
@@ -161,76 +158,27 @@ public final class WindowMapSpec {
     }
 
     /**
-     * Snapshots the window {@code function} was just compiled under, or returns null when
-     * the shape is one this build does not group - see the class javadoc for the three
-     * declines and what each costs.
+     * Snapshots the window {@code function} was just compiled under, or returns null when the shape is one this build
+     * does not group - see the class javadoc for the declines and what each costs.
      * <p>
-     * It must be called while the context is still live. {@code WindowContextImpl} is a
-     * mutable per-function scratch the compiler clears after every window column, and the
-     * key types it exposes are the compiler's own reused list, so everything read here is
-     * copied rather than referenced.
+     * It must be called while the context is still live. {@code WindowContextImpl} is a mutable per-function scratch
+     * the compiler clears after every window column, and the key types it exposes are the compiler's own reused list,
+     * so everything read here is copied rather than referenced.
      *
-     * @param context           the window context {@code function} was compiled under,
-     *                          still configured
-     * @param partitionBy       the window's PARTITION BY terms, as parsed, in the order the
-     *                          context's compiled functions were built from them. They are read
-     *                          here and not retained: the identity rendered off them is
-     *                          {@link WindowKeyExpressionIdentity}'s string, so a pooled node
-     *                          the compiler recycles after this statement is never referenced
-     *                          again
-     * @param orderBy           the window's ORDER BY terms, as written
-     * @param orderByDirections one direction per term
-     * @param isOrderDismissed  whether the compiler proved the base cursor already
-     *                          produces this order, so no sort stands between the two
-     * @param function          the compiled window function, read for its pass structure
-     * @param baseMetadata      the metadata the window's expressions were compiled against,
-     *                          which is what a term's name resolves through - an ORDER BY one,
-     *                          and a column inside an expression PARTITION BY term
-     * @param recordTypes       the types of the record those expressions read, by index. It
-     *                          is {@code baseMetadata} itself for a streaming compile; a
-     *                          cached compile passes the record chain's own type list,
-     *                          because the chain metadata leaves a hole where every window
-     *                          output sits and so cannot be asked how many indexes it spans
-     */
-    public static @Nullable WindowMapSpec of(
-            @NotNull WindowContext context,
-            @NotNull ObjList<ExpressionNode> partitionBy,
-            @NotNull ObjList<ExpressionNode> orderBy,
-            @NotNull IntList orderByDirections,
-            boolean isOrderDismissed,
-            @NotNull WindowFunction function,
-            @NotNull RecordMetadata baseMetadata,
-            @NotNull ColumnTypes recordTypes
-    ) {
-        final int orderCount = orderBy.size();
-        final IntList orderColumnIndexes = new IntList(orderCount);
-        for (int i = 0; i < orderCount; i++) {
-            final ExpressionNode node = orderBy.getQuick(i);
-            if (node == null || node.token == null) {
-                return null;
-            }
-            final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
-            if (columnIndex < 0) {
-                return null;
-            }
-            orderColumnIndexes.add(columnIndex);
-        }
-        return of(
-                context,
-                partitionBy.size(),
-                (index, term, sink) -> WindowKeyExpressionIdentity.render(partitionBy.getQuick(index), term, baseMetadata, sink),
-                orderColumnIndexes,
-                orderByDirections,
-                isOrderDismissed,
-                function,
-                recordTypes
-        );
-    }
-
-    /**
-     * The spec of the function's map, as the overload that reads the parsed PARTITION BY and ORDER BY derives it, from
-     * the count of the PARTITION BY terms, the identity of each term that reads no column of the record directly, and
-     * the record columns of the ORDER BY terms.
+     * @param context               the window context {@code function} was compiled under, still configured
+     * @param partitionTermCount    the count of the window's PARTITION BY terms, which the context compiled into its
+     *                              partition functions in order
+     * @param partitionTermIdentity renders the identity of a PARTITION BY term that reads no column of the record
+     *                              directly. The spec keeps the string, never the term
+     * @param orderColumnIndexes    the record columns of the window's ORDER BY terms
+     * @param orderByDirections     one direction per ORDER BY term
+     * @param isOrderDismissed      whether the compiler proved the base cursor already produces this order, so no
+     *                              sort stands between the two
+     * @param function              the compiled window function, read for its pass structure
+     * @param recordTypes           the types of the record the window's expressions read, by index. It is the base
+     *                              metadata itself for a streaming compile; a cached compile passes the record
+     *                              chain's own type list, because the chain metadata leaves a hole where every window
+     *                              output sits and so cannot be asked how many indexes it spans
      */
     public static @Nullable WindowMapSpec of(
             @NotNull WindowContext context,
@@ -322,56 +270,34 @@ public final class WindowMapSpec {
     }
 
     /**
-     * Snapshots a logical window using resolved order indexes and immutable bound keys.
+     * {@link #of(WindowContext, int, PartitionTermIdentity, IntList, IntList, boolean, WindowFunction, ColumnTypes)}
+     * over the bound PARTITION BY terms of a logical window, whose identities render against {@code input}, and the
+     * ORDER BY terms {@code orderIndices} encodes: the record column index plus one, negated for a descending term.
      */
     public static @Nullable WindowMapSpec of(
-            WindowContext context,
-            ObjList<BoundExpression> partitionBy,
-            IntList orderIndices,
-            IntList orderByDirections,
+            @NotNull WindowContext context,
+            @NotNull ObjList<BoundExpression> partitionBy,
+            @NotNull IntList orderIndices,
+            @NotNull IntList orderByDirections,
             boolean isOrderDismissed,
-            WindowFunction function,
-            OutputSchema input,
-            ColumnTypes recordTypes
+            @NotNull WindowFunction function,
+            @NotNull OutputSchema input,
+            @NotNull ColumnTypes recordTypes
     ) {
-        final VirtualRecord record = context.getPartitionByRecord();
-        final ColumnTypes types = context.getPartitionByKeyTypes();
-        if (context.isEmpty() || record == null || types == null || partitionBy.size() == 0) {
-            return null;
-        }
-        final ObjList<? extends Function> functions = record.getFunctions();
-        final IntList columns = new IntList(partitionBy.size());
-        final IntList keyTypes = new IntList(partitionBy.size());
-        final StringSink identity = new StringSink();
-        boolean hasExpressionKey = false;
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            final Function term = functions.getQuick(i);
-            if (term == null) {
-                return null;
-            }
-            final int column = WindowAccumulatorDescriptor.directColumnIndex(term, recordTypes);
-            if (i > 0) {
-                identity.putAscii(WindowKeyExpressionIdentity.TERM_SEPARATOR);
-            }
-            if (column >= 0) {
-                WindowKeyExpressionIdentity.renderColumn(column, term.getType(), identity);
-            } else {
-                if (!WindowKeyExpressionIdentity.render(partitionBy.getQuick(i), term, input, identity)) {
-                    return null;
-                }
-                hasExpressionKey = true;
-            }
-            columns.add(column);
-            keyTypes.add(types.getColumnType(i));
-        }
-        final IntList orderColumns = new IntList(orderIndices.size());
+        final IntList orderColumnIndexes = new IntList(orderIndices.size());
         for (int i = 0, n = orderIndices.size(); i < n; i++) {
-            orderColumns.add(Math.abs(orderIndices.getQuick(i)) - 1);
+            orderColumnIndexes.add(Math.abs(orderIndices.getQuick(i)) - 1);
         }
-        return new WindowMapSpec(columns, identity.toString(), hasExpressionKey ? functions : null, keyTypes,
-                orderColumns, new IntList(orderByDirections), isOrderDismissed, context.getOrderByScanDirection(),
-                context.getFramingMode(), context.getRowsLo(), context.getRowsHi(), context.getExclusionKind(),
-                function.getPassCount(), function.getPass1ScanDirection(), context.getTimestampIndex(), context.getTimestampType());
+        return of(
+                context,
+                partitionBy.size(),
+                (index, term, sink) -> WindowKeyExpressionIdentity.render(partitionBy.getQuick(index), term, input, sink),
+                orderColumnIndexes,
+                orderByDirections,
+                isOrderDismissed,
+                function,
+                recordTypes
+        );
     }
 
     public int getExclusionKind() {
@@ -559,8 +485,8 @@ public final class WindowMapSpec {
 
     /**
      * Renders into the sink the identity of the PARTITION BY term at {@code index}, which compiled to {@code term} and
-     * reads no column of the record directly, and reports whether this build can name it, see
-     * {@link WindowKeyExpressionIdentity#render(ExpressionNode, Function, RecordMetadata, CharSink)}.
+     * reads no column of the record directly, and reports whether this build can name it, as
+     * {@link WindowKeyExpressionIdentity#render(BoundExpression, Function, OutputSchema, CharSink)} does for a bound term.
      */
     @FunctionalInterface
     public interface PartitionTermIdentity {
