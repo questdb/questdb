@@ -630,6 +630,28 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testOnHeadersReadyReadOnlyOwnedByRefusalAnswers421() throws Exception {
+        // A demote in place that lands after the role check leaves the connection's security context replica-side,
+        // which refuses the owner as read-only. The client must get the 421 the role check now gives, which sends it
+        // on to the next endpoint, not a 403 that it takes for a refused credential.
+        assertMemoryLeak(() -> {
+            final AllowAllSecurityContext demotedSecurityContext = new AllowAllSecurityContext() {
+                @Override
+                public void setAutoCreateOwner(@NotNull CharSequence ownerName) {
+                    throw CairoException.readOnlyAccess();
+                }
+            };
+            Assert.assertEquals(
+                    "HTTP/1.1 421 Misdirected Request\r\nConnection: close\r\nContent-Length: 0\r\nX-QuestDB-Role: REPLICA\r\n\r\n",
+                    ownedByHandshake(demotedSecurityContext, "team", null, false)
+            );
+            // a client that names no owner gets the 101, and the role-change close at its first write
+            final String response = ownedByHandshake(demotedSecurityContext, null, null, true);
+            Assert.assertTrue(response, response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyRefusedOwnedByAnswers403() throws Exception {
         // An owner the principal may not name is an authorization decision: 403, with the reason in the body.
         assertMemoryLeak(() -> {

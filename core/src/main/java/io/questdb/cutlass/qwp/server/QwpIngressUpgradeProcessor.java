@@ -453,26 +453,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         byte role = engine.getQwpServerInfoProvider().role();
         byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
         if (role == QwpEgressMsgKind.ROLE_REPLICA || role == QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP) {
-            int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, sessionCookieValueBytes);
-            if (rejectSize > bufferSize) {
-                throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
-            }
-            int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
-                    bufferAddr,
-                    bufferSize,
-                    roleBytes,
-                    sessionCookieValueBytes
-            );
-            if (rejectBytes <= 0) {
-                throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
-            }
-            // Same deferral rationale as the 400 / 426 paths above: a small
-            // send-fragmentation cap would otherwise drop the second-fragment
-            // send of the 421 body and disconnect the client before it could
-            // see the X-QuestDB-Role header that tells it where to retry.
-            stageReject(context, rejectBytes);
-            LOG.info().$("ingress upgrade rejected by role [fd=").$(context.getFd())
-                    .$(", role=").$(QwpEgressMsgKind.roleName(role)).I$();
+            stageRoleReject(context, bufferAddr, bufferSize, role, sessionCookieValueBytes);
             return;
         }
 
@@ -481,7 +462,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Before sizing the 101 response, which echoes the owner. A client that
         // asked for an owner and got no echo landed on a server that ignored the
         // request, so it must not count on its tables getting that owner.
-        if (!negotiateOwnedBy(context, requestHeader, bufferAddr, bufferSize)) {
+        if (!negotiateOwnedBy(context, requestHeader, bufferAddr, bufferSize, sessionCookieValueBytes)) {
             return;
         }
         final Utf8Sequence ownedByEcho = ownedByEchoSink.size() > 0 ? ownedByEchoSink : null;
@@ -1216,6 +1197,38 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             REJECT_FLUSH.set(context, tracker);
         }
         tracker.pendingBytes = bytesWritten;
+    }
+
+    // Stages a 421 Misdirected Request upgrade rejection that names the node's role in X-QuestDB-Role, which a
+    // client takes for a node that does not accept writes for now: it walks on to the next endpoint and retries.
+    private static void stageRoleReject(
+            HttpConnectionContext context,
+            long bufferAddr,
+            int bufferSize,
+            byte role,
+            byte[] sessionCookieValueBytes
+    ) {
+        final byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
+        final int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, sessionCookieValueBytes);
+        if (rejectSize > bufferSize) {
+            throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
+        }
+        final int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                bufferAddr,
+                bufferSize,
+                roleBytes,
+                sessionCookieValueBytes
+        );
+        if (rejectBytes <= 0) {
+            throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
+        }
+        // Same deferral rationale as the 400 / 426 paths: a small
+        // send-fragmentation cap would otherwise drop the second-fragment
+        // send of the 421 body and disconnect the client before it could
+        // see the X-QuestDB-Role header that tells it where to retry.
+        stageReject(context, rejectBytes);
+        LOG.info().$("ingress upgrade rejected by role [fd=").$(context.getFd())
+                .$(", role=").$(QwpEgressMsgKind.roleName(role)).I$();
     }
 
     private static int textResponseSize(byte[] prefix, int reasonByteCount) {
@@ -2530,11 +2543,22 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * a refused one 403 Forbidden, also when this server cannot set an owner at all. A refusal holds on every
      * node a client may walk to, and a client walking several endpoints takes a 403, unlike a 400, for an
      * answer that holds across the cluster, not for a node still failing over.
+     * <p>
+     * A read-only refusal is the exception: it comes from a node that a demote in place turned read-only after
+     * the role check of {@link #onHeadersReady}, and it holds only until a primary is back. It answers the 421
+     * that the role check now gives, which sends the client on to the next endpoint, as it does a client that
+     * names no owner, whose first write gets the role-change close.
      *
      * @return false when the upgrade was rejected, with the reject response staged; otherwise
      * {@link #ownedByEchoSink} holds the {@code X-QWP-Owned-By} echo, empty when the request named no owner
      */
-    private boolean negotiateOwnedBy(HttpConnectionContext context, HttpRequestHeader requestHeader, long bufferAddr, int bufferSize) {
+    private boolean negotiateOwnedBy(
+            HttpConnectionContext context,
+            HttpRequestHeader requestHeader,
+            long bufferAddr,
+            int bufferSize,
+            byte[] sessionCookieValueBytes
+    ) {
         ownedByEchoSink.clear();
         if (!QwpIngressHttpProcessor.decodeOwnedBy(requestHeader, ownedByUtf8Sink, ownedBySink)) {
             LOG.error().$("WebSocket upgrade names a malformed owner [fd=").$(context.getFd()).I$();
@@ -2552,6 +2576,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         try {
             context.getSecurityContext().setAutoCreateOwner(ownedBySink);
         } catch (CairoException e) {
+            if (e.isReadOnlyAccessRefusal()) {
+                // The security context turned replica-side after the role check: the node is read-only now.
+                stageRoleReject(context, bufferAddr, bufferSize, QwpEgressMsgKind.ROLE_REPLICA, sessionCookieValueBytes);
+                return false;
+            }
             LOG.error().$("WebSocket upgrade owner refused [fd=").$(context.getFd())
                     .$(", owner=").$safe(ownedBySink)
                     .$(", error=").$safe(e.getFlyweightMessage())
