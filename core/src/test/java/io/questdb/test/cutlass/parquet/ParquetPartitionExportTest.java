@@ -73,6 +73,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cutlass.parquet.ParquetExportMode.DIRECT_PAGE_FRAME;
 import static io.questdb.cutlass.parquet.ParquetExportMode.PAGE_FRAME_BACKED;
@@ -772,6 +773,20 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testDirectPageFrameExportFailsWhenSourceCloseFails() throws Exception {
+        // A query that passes the file's columns through exports its page frames as they are. The export
+        // closes their page frame cursor in the same cleanup as in the other modes, allocates no decode
+        // buffers, and the cursor's close failure fails it.
+        assertExportFailsWhenSourceCloseFails(
+                "close_direct",
+                "SELECT i, db, vc FROM " + readParquet("close_direct_source"),
+                DIRECT_PAGE_FRAME,
+                false,
+                0
+        );
     }
 
     @Test
@@ -1835,16 +1850,17 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         assertQuery("SELECT count() FROM tv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
     }
 
-    // Exports the query to fileName and fails to close the export's source cursor, then exports it again to
-    // fileName_after. The query reads the file fileName_source through read_parquet(), which the helper writes
-    // from a table of 3000 rows in row groups of 1000 rows. The export writes row groups of 5000 rows, so it
-    // writes its file once it has read all three row groups. That first write to its temp file makes the next
-    // munmap of a read_parquet() file throw, as MmapCache reports a failed munmap, and leave the file mapped:
-    // the munmap of the export's source cursor, which the export closes once it has written its file. The
-    // read_parquet() factory closes the cursor again when it closes, and unmaps the file. With isWriteFailing,
-    // that first write fails too. A table with Parquet partitions fails to close only when its reader fails to
-    // return to the pool, which leaves the reader busy (https://github.com/questdb/questdb/issues/8627):
-    // read_parquet() takes the export through the same cleanup.
+    // Exports the query to fileName and fails to close the export's source cursor, so the export fails and
+    // removes its temp directory, then exports it again to fileName_after. The query reads the file
+    // fileName_source through read_parquet(), which the helper writes from a table of 3000 rows in row groups
+    // of 1000 rows. The export writes row groups of 5000 rows, so it writes its file once it has read all
+    // three row groups. That first write to its temp file makes the next munmap of a read_parquet() file
+    // throw, as MmapCache reports a failed munmap, and leave the file mapped: the munmap of the export's
+    // source cursor, which the export closes once it has written its file. The read_parquet() factory closes
+    // the cursor again when it closes, and unmaps the file. With isWriteFailing, that first write fails too. A
+    // table with Parquet partitions fails to close only when its reader fails to return to the pool, which
+    // leaves the reader busy (https://github.com/questdb/questdb/issues/8627): read_parquet() takes the export
+    // through the same cleanup.
     private void assertExportFailsWhenSourceCloseFails(
             String fileName,
             String query,
@@ -1856,6 +1872,7 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         final AtomicBoolean isWriteArmed = new AtomicBoolean();
         final AtomicBoolean isMunmapFailing = new AtomicBoolean();
         final AtomicBoolean hasMunmapFailed = new AtomicBoolean();
+        final AtomicReference<File> failedExportTempDir = new AtomicReference<>();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public void munmap(long address, long size, int memoryTag) {
@@ -1871,6 +1888,9 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 final long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, "export.parquet")) {
                     exportFd.set(fd);
+                    if (isWriteArmed.get()) {
+                        failedExportTempDir.set(new File(Utf8s.stringFromUtf8Bytes(name)).getParentFile());
+                    }
                 }
                 return fd;
             }
@@ -1917,6 +1937,10 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                         .expectSize()
                         .returns("status\tmessage\nfailed\tmunmap failed [injected]\n");
                 Assert.assertFalse(exportFileExists(fileName));
+                // The failed export removes the temp directory that held its file.
+                final File exportTempDir = failedExportTempDir.get();
+                Assert.assertNotNull("the export must open its temp file", exportTempDir);
+                Assert.assertFalse("the failed export must remove " + exportTempDir, exportTempDir.exists());
 
                 // The same job exports the query again.
                 final long allocationCountAfter = HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting();
