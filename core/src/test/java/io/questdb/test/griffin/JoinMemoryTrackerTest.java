@@ -1074,7 +1074,6 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
-    // The sort charges the rows it copies to NATIVE_RECORD_CHAIN and their keys to NATIVE_DEFAULT.
     private static void assertSortAllocation(CharSequence message) {
         Assert.assertTrue(
                 message.toString(),

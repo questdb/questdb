@@ -154,7 +154,6 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                     }
                                     Assert.fail("expected a per-query memory breach in the sort at iteration " + i);
                                 } catch (CairoException e) {
-                                    // the sort charges its rows to NATIVE_RECORD_CHAIN and their keys to NATIVE_DEFAULT
                                     final String recordChainTag = "memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']';
                                     assertBreachOn(e, Chars.contains(e.getFlyweightMessage(), recordChainTag)
                                             ? recordChainTag
