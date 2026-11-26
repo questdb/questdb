@@ -153,6 +153,25 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderingReleasesPinnedKeyParentOnce() throws Exception {
+        // Every FULL join of t0 FULL JOIN t1 ON t1.k = t0.k FULL JOIN t2 ON t2.k = t1.k ... has its key parent both in
+        // its join context and, as a pin, in OuterJoinOrderingEdges. doReorderTables counts that parent once when it
+        // sets the number of parents each join waits for, so it releases it once when the parent runs: each FULL join
+        // ends the ordering with no parent left to wait for.
+        assertMemoryLeak(() -> {
+            createChainTables(100);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                final ExecutionModel executionModel = compiler.generateExecutionModel(fullChain(100), sqlExecutionContext);
+                final ObjList<IQueryModel> joinModels = joinLevel((IQueryModel) executionModel).getJoinModels();
+                Assert.assertEquals(101, joinModels.size());
+                for (int i = 1; i <= 100; i++) {
+                    Assert.assertEquals("t" + i, 0, joinModels.getQuick(i).getJoinContext().inCount);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRepeatedCompileReusesOrderingEdgeBuffers() throws Exception {
         // A second compile of the same chains fits in the buffers that the first one grew: the optimiser keeps
         // them and starts every level and statement from empty, without growing them again.

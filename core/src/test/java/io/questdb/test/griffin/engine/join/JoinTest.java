@@ -1939,6 +1939,27 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearDropsPinsOfLastStatement() throws Exception {
+        // t1 reads t4, which both FULL joins precede, so t2 pins t0, and t3 pins t0 and t2: three pins that leave t1
+        // unpinned, in one block that holds a word for each model before t3. clear() drops them with the rest of the
+        // statement's state, so that a pooled compiler does not keep them until its next statement.
+        assertMemoryLeak(() -> {
+            createTablesForLeftJoinReadingLaterInnerJoin();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                Misc.free(compiler.compile(
+                        "SELECT * FROM t0 JOIN t1 ON t1.k = t4.k FULL JOIN t2 ON t2.k = t0.k FULL JOIN t3 ON t3.k = t0.k JOIN t4 ON t4.k = t0.k",
+                        sqlExecutionContext
+                ).getRecordCursorFactory());
+                Assert.assertEquals(3, compiler.getOuterJoinPinCountForTesting());
+                Assert.assertEquals(3, compiler.getOuterJoinPinWordCountForTesting());
+                compiler.clear();
+                Assert.assertEquals(0, compiler.getOuterJoinPinCountForTesting());
+                Assert.assertEquals(0, compiler.getOuterJoinPinWordCountForTesting());
+            }
+        });
+    }
+
+    @Test
     public void testClearDropsScratchReferences() throws Exception {
         // reorderTables saves the join contexts of the order it keeps, and the traversals of a level keep the models
         // and sets they visit. clear() drops these references, so that a pooled compiler does not keep the objects of
@@ -4470,6 +4491,74 @@ public class JoinTest extends AbstractCairoTest {
                                 0\t20
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testForwardReadingFullJoinAfterLeftJoinRestoresNoExpressionParentEdge() throws Exception {
+        // t2's implied key t1.a = t0.a goes into its outer join expression, which reads t1 and t0. The non-equi FULL
+        // join t3 after t2 reads t5, written after it, so it has no ordering edge, and doReorderTables appends it
+        // after t4, which its dependent t5 orders. An outer join before a RIGHT/FULL join that runs after a later
+        // model keeps its order, so t1 and t0 get no edge to t2 back, and t2 joins on its key t2.a = t0.a.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 6; i++) {
+                execute("CREATE TABLE t" + i + " (k INT, a INT)");
+            }
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO t1 VALUES (1, 10), (2, 25)");
+            execute("INSERT INTO t2 VALUES (7, 10), (8, 20)");
+            execute("INSERT INTO t3 VALUES (5, 0), (0, 0)");
+            execute("INSERT INTO t4 VALUES (3, 0), (4, 0)");
+            execute("INSERT INTO t5 VALUES (3, 0), (9, 0)");
+            final String query = "SELECT t0.k k0, t1.k k1, t2.k k2, t3.k k3, t4.k k4, t5.k k5 FROM t0"
+                    + " JOIN t1 ON t1.k = t0.k LEFT JOIN t2 ON t2.a = t1.a AND t2.a = t0.a FULL JOIN t3 ON t3.k > t5.k"
+                    + " CROSS JOIN t4 JOIN t5 ON t5.k = t4.k";
+            Assert.assertEquals(0, countOrderingEdges(query));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Full Join
+                                  filter: t5.k<t3.k
+                                    Hash Join Light
+                                      condition: t5.k=t4.k
+                                        Cross Join
+                                            Hash Left Outer Join Light
+                                              condition: t2.a=t0.a
+                                              filter: t1.a=t0.a
+                                                Hash Join Light
+                                                  condition: t1.k=t0.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t0
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t4
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t5
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t3
+                            """)
+                    // t2 (7, 10) matches t0 1, while t1 2 has a = 25; t4 3 matches t5 3, which t3 5 exceeds; t3 0 is
+                    // unmatched
+                    .returns("""
+                            k0\tk1\tk2\tk3\tk4\tk5
+                            1\t1\t7\t5\t3\t3
+                            2\t2\tnull\t5\t3\t3
+                            null\tnull\tnull\t0\tnull\tnull
+                            """);
         });
     }
 
@@ -15257,6 +15346,32 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiFullJoinReadingPinnedModelPrecedesLeftJoin() throws Exception {
+        // t4's implied key t1.a = t2.a goes into its outer join expression, which reads the CROSS joins t1 and t2.
+        // Neither has an ordering parent, so the non-equi FULL join t3 written right before t4 is no ancestor of t4.
+        // t3 reads t0, whose one ordering edge, t3's pin, OuterJoinOrderingEdges holds rather than t0's dependencies.
+        // That makes t0 part of the ordering graph, so t3 becomes an ordering root ahead of t4: it gets the dependency
+        // 3 -> 4.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 5; i++) {
+                execute("CREATE TABLE t" + i + " (k INT, a INT)");
+            }
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                final IQueryModel level = joinLevel((IQueryModel) compiler.generateExecutionModel(
+                        "SELECT t0.k FROM t0 CROSS JOIN t1 CROSS JOIN t2 FULL JOIN t3 ON t3.k > t0.k"
+                                + " LEFT JOIN t4 ON t4.a = t1.a AND t4.a = t2.a",
+                        sqlExecutionContext
+                ));
+                Assert.assertEquals("[2,0,1,3,4]", level.getOrderedJoinModels().toString());
+                Assert.assertEquals("[]", level.getJoinModels().getQuick(0).getDependencies().toString());
+                Assert.assertEquals("[4]", level.getJoinModels().getQuick(3).getDependencies().toString());
+                // t4 joins on t4.a = t2.a, and the dependency 3 -> 4 adds no parent to it
+                Assert.assertEquals("[2]", level.getJoinModels().getQuick(4).getJoinContext().parents.toString());
+            }
+        });
+    }
+
+    @Test
     public void testNonEquiFullJoinThenNonEquiRightJoinResolvesPrefixColumns() throws Exception {
         // The non-equi RIGHT JOIN sa homogenizes to a CROSS variant, so it is no consumer that pins the
         // prefix of the non-equi FULL JOIN sb. doReorderTables used to run the FULL join before sc, and
@@ -18633,6 +18748,127 @@ public class JoinTest extends AbstractCairoTest {
                             2\t3\t5\tnull\t9
                             2\t3\t6\tnull\t9
                             null\tnull\tnull\tnull\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testPinnedNonEquiFullJoinKeepsExpressionParentEdgesOfLeftJoin() throws Exception {
+        // t2's implied key t1.a = t0.a goes into its outer join expression, which reads t1 and t0. The non-equi FULL
+        // join t3 after t2 has no ordering edge in its join context or dependencies: OuterJoinOrderingEdges holds its
+        // pins and its consumer edge to t4. The pins keep doReorderTables from appending t3 after t4, so t1 and t0 get
+        // their edges to t2 back.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 5; i++) {
+                execute("CREATE TABLE t" + i + " (k INT, a INT)");
+            }
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20), (3, 30)");
+            execute("INSERT INTO t1 VALUES (1, 10), (2, 25), (3, 30)");
+            execute("INSERT INTO t2 VALUES (7, 10), (8, 30)");
+            execute("INSERT INTO t3 VALUES (2, 0), (5, 0), (0, 0)");
+            execute("INSERT INTO t4 VALUES (1, 100), (2, 200)");
+            final String query = "SELECT t0.k k0, t1.k k1, t2.k k2, t3.k k3, t4.k k4 FROM t0 JOIN t1 ON t1.k = t0.k"
+                    + " LEFT JOIN t2 ON t2.a = t1.a AND t2.a = t0.a FULL JOIN t3 ON t3.k > t0.k JOIN t4 ON t4.k = t0.k";
+            // the pins of t3, 3, its consumer edge 3 -> 4, and the edges 1 -> 2 and 0 -> 2 of t2's expression parents
+            Assert.assertEquals(6, countOrderingEdges(query));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t4.k=t0.k
+                                    Nested Loop Full Join
+                                      filter: t0.k<t3.k
+                                        Hash Left Outer Join Light
+                                          condition: t2.a=t0.a
+                                          filter: t1.a=t0.a
+                                            Hash Join Light
+                                              condition: t1.k=t0.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t0
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t3
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t4
+                            """)
+                    // t2 (7, 10) matches t0 1 and (8, 30) matches t0 3, while t1 2 has a = 25; t3 2 and 5 match t0 1,
+                    // and 5 matches t0 2 and 3; t4 drops t0 3 and the unmatched t3 row 0, whose t0.k is NULL
+                    .returns("""
+                            k0\tk1\tk2\tk3\tk4
+                            1\t1\t7\t2\t1
+                            1\t1\t7\t5\t1
+                            2\t2\tnull\t5\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testPinsKeepNonEquiFullJoinsAmongOuterJoinAncestors() throws Exception {
+        // t3's implied key t2.a = t0.a goes into its outer join expression, which reads t2 and t0. The non-equi FULL
+        // joins t1 and t2 have no ordering parent in their join contexts: OuterJoinOrderingEdges holds their pins.
+        // Through t2's pins, both are ancestors of t3, so t2 and t0 get their edges to t3 back.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 4; i++) {
+                execute("CREATE TABLE t" + i + " (k INT, a INT)");
+            }
+            execute("INSERT INTO t0 VALUES (1, 10), (3, 20), (null, 30)");
+            execute("INSERT INTO t1 VALUES (2, 1), (0, 2)");
+            execute("INSERT INTO t2 VALUES (2, 10), (5, 20), (0, 30)");
+            execute("INSERT INTO t3 VALUES (7, 10), (8, 20), (9, 30)");
+            final String query = "SELECT t0.a a0, t1.k k1, t2.k k2, t3.k k3 FROM t0 FULL JOIN t1 ON t1.k > t0.k"
+                    + " FULL JOIN t2 ON t2.k > t0.k LEFT JOIN t3 ON t3.a = t2.a AND t3.a = t0.a";
+            // the pins of t1 and t2, 1 + 2, and the edges 2 -> 3 and 0 -> 3 of t3's expression parents
+            Assert.assertEquals(5, countOrderingEdges(query));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: t3.a=t0.a
+                                  filter: t2.a=t0.a
+                                    Nested Loop Full Join
+                                      filter: t0.k<t2.k
+                                        Nested Loop Full Join
+                                          filter: t0.k<t1.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t0
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t3
+                            """)
+                    // t0 FULL JOIN t1 matches t0 1 with t1 2 and leaves t0 3, the t0 row with a NULL k and t1 0
+                    // unmatched; t2 2 and 5 match t0 1, 5 matches t0 3, and t2 0 is unmatched; t3 matches where
+                    // t2.a = t0.a
+                    .returns("""
+                            a0\tk1\tk2\tk3
+                            10\t2\t2\t7
+                            10\t2\t5\tnull
+                            20\tnull\t5\t8
+                            30\tnull\tnull\tnull
+                            null\t0\tnull\tnull
+                            null\tnull\t0\tnull
                             """);
         });
     }
