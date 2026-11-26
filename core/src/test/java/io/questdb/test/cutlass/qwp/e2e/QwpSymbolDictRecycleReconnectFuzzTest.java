@@ -77,7 +77,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * during the bouncing, so the recycle-density floor is a condition the
  * schedule satisfies on any host rather than a bet on how fast this one
  * reconnects (hosted Windows completes about one recycle per three
- * bounces; a mac several per bounce).
+ * bounces; a mac several per bounce). Each targeted bounce also waits for
+ * a recycle completed since the previous targeted bounce. A recycle swaps
+ * only on a drained ring, so a server that acks slowly (an ADAPTIVE commit
+ * flushes every file it wrote) leaves the producer few drained barriers;
+ * the wait lets the producer's periodic drain reach one, so recycles keep
+ * pace with the bounces however slowly the server acks.
  * That overlap is the risk surface -- a recycle's engine teardown/epoch roll must
  * never observe (or be observed by) an in-flight ordinary reconnect, and vice
  * versa.
@@ -85,9 +90,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * Duplicates are expected and tolerated exactly like
  * {@link QwpIngressServerRestartFuzzTest}: a restart mid-flight can make the
  * sender replay frames the server already committed but had not yet acked.
- * The target table carries the same {@code DEDUP UPSERT KEYS(ts, id)} safety
- * net, so replays collapse and the final row count is exact, not just a
- * lower bound.
+ * The target table carries the same dedup safety net on {@code KEYS(ts, id)},
+ * in a randomly picked UPSERT or SKIP mode, so replays collapse and the final
+ * row count is exact, not just a lower bound.
  * <p>
  * There is no dedicated "ack delay" injection seam anywhere in this harness
  * (checked both {@link RestartableQwpServer} and the QWP client builder) --
@@ -109,6 +114,9 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     // QwpIngressServerRestartFuzzTest -- RestartableQwpServer does not
     // override these, so the actual buffers are this size.
     private static final int RECV_BUFFER_SIZE = 131_072;
+    // How long a targeted bounce waits for a recycle completed since the previous targeted bounce. It
+    // covers a periodic drain() of TARGET_DRAIN_EVERY_N_BATCHES batches, bounded like that drain.
+    private static final long RECYCLE_WAIT_MILLIS = 30_000;
     // The client's anti-thrash re-arm floor (2x the dictionary size at the
     // last swap) lets this bounded live set recycle organically only a
     // handful of times; the producer requests the rest on this cadence so
@@ -136,6 +144,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     // scenario this suite has no other seam for (see class javadoc).
     private static final int TARGET_DRAIN_EVERY_N_BATCHES = 20;
 
+    private String dedupMode;
     private int recvChunk;
     private Rnd rnd;
     private int sendChunk;
@@ -150,8 +159,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
         // both the WS parser and the recycle/catch-up frame builders.
         recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
         sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        // replays carry the same column values as the original rows, both modes collapse them alike
+        dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
         LOG.info().$("QwpSymbolDictRecycleReconnectFuzzTest fragmentation recvChunk=").$(recvChunk)
-                .$(", sendChunk=").$(sendChunk).$();
+                .$(", sendChunk=").$(sendChunk)
+                .$(", dedupMode=").$(dedupMode).$();
     }
 
     @Test
@@ -309,6 +321,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         // the initial connect.
                         Assert.assertTrue("producer's first batch never drained",
                                 firstBatchAcked.await(60, TimeUnit.SECONDS));
+                        long recycledEpoch = senderRef.get() != null ? senderRef.get().getSymbolDictEpoch() : 0;
                         for (int i = 0; i < restartCeiling; i++) {
                             if (i >= restartTarget) {
                                 // Schedule condition: past the target, bounce only while the
@@ -322,6 +335,9 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             Os.sleep(40 + rnd.nextInt(160)); // 40..199ms uptime
                             final boolean targeted = (i & 1) == 0;
                             if (targeted) {
+                                // A recycle completed since the previous targeted bounce, so the recycle
+                                // floor below is met by the schedule on any server, not by its speed.
+                                recycledEpoch = awaitRecycleAfter(senderRef.get(), recycledEpoch, producerDone, i);
                                 // Targeted bounce: pause the producer's reset requests, then
                                 // wait for one upgraded connection to stay live for 20 ms (a
                                 // recycle armed before the pause fires at its next barrier
@@ -494,6 +510,21 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
         });
     }
 
+    // Waits for the sender's symbol-dictionary epoch to pass the given one and returns the new epoch. Fails
+    // when no recycle completes within RECYCLE_WAIT_MILLIS or the producer has stopped.
+    private static long awaitRecycleAfter(QwpWebSocketSender sender, long epoch, CountDownLatch producerDone, int bounce) {
+        Assert.assertNotNull("producer has no sender before bounce " + bounce, sender);
+        final long deadline = System.currentTimeMillis() + RECYCLE_WAIT_MILLIS;
+        while (sender.getSymbolDictEpoch() <= epoch) {
+            Assert.assertTrue("producer stopped before bounce " + bounce, producerDone.getCount() > 0);
+            Assert.assertTrue("no symbol-dictionary recycle completed within " + RECYCLE_WAIT_MILLIS
+                            + " ms before bounce " + bounce + " [epoch=" + epoch + ']',
+                    System.currentTimeMillis() < deadline);
+            Os.sleep(1);
+        }
+        return sender.getSymbolDictEpoch();
+    }
+
     /**
      * Per-row oracle from {@link QwpSymbolDictRecycleE2ETest}: every row's
      * symbol must be exactly what its id implies. A dictionary shifted (or
@@ -527,7 +558,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             + "sym SYMBOL, "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
-                            + "DEDUP UPSERT KEYS(ts, id)"
+                            + "DEDUP " + dedupMode + " KEYS(ts, id)"
             );
         } catch (Exception e) {
             throw new AssertionError("failed to create target table", e);

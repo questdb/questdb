@@ -28,9 +28,11 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -92,6 +94,10 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             SqlExecutionContext executionContext,
             ObjList<TableToken> tempSink
     ) {
+        // One run for the whole pass, so that a DDL that waits for the run, which holds its table,
+        // locks no table between two views of the pass.
+        final ViewStateStore stateStore = engine.getViewStateStore();
+        stateStore.startCompileRun();
         try {
             final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
             engine.getTableTokens(tableTokens, false);
@@ -109,6 +115,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
         } finally {
+            stateStore.finishCompileRun();
             Path.clearThreadLocals();
         }
     }
@@ -151,15 +158,54 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewDefinition.getViewSql(), executionContext);
+            final ViewMetadata viewMetadata = compileViewMetadata(engine, executionContext, viewToken, viewDefinition.getViewSql(), compiler);
             // view went from invalid to valid state
             // we should also update view metadata, if there was a change
-            final ViewMetadata viewMetadata = getUpdatedViewMetadata(executionContext, viewToken, compiler, executionModel);
             reset(engine, viewToken, viewMetadata, updateTimestamp);
         } catch (SqlException | CairoException e) {
-            invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
+            if (isTableLocked(e)) {
+                // The lock of a table the view reads tells nothing about the view: keep the state
+                // of the view and of the views over it, and compile the view again later.
+                final long retryTimestamp = engine.getViewStateStore().scheduleCompileBusyRetry(viewToken, updateTimestamp);
+                LOG.info().$("view compile met a table lock [view=").$safe(viewToken.getTableName())
+                        .$(", reason=").$safe(e.getFlyweightMessage())
+                        .$(", updateTimestamp=").$(updateTimestamp)
+                        .$(", retryTimestamp=").$(retryTimestamp)
+                        .I$();
+            } else {
+                invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
+            }
         } catch (Throwable e) {
             invalidate(engine, viewToken, e.getMessage(), updateTimestamp, invalidateViewsSink);
+        }
+    }
+
+    // Compiles the view SQL and returns the view metadata if it changed, otherwise null.
+    // A table the view reads can change while the view compiles. The compiler retries an
+    // out-of-date table that code generation finds, but not one that execution model generation
+    // finds, where the optimiser opens table readers and runs PIVOT IN sub-queries. This method
+    // recompiles the view's own SQL on such an exception, up to the compiler's recompile limit,
+    // so that the race does not mark the view and its dependent views invalid.
+    private static @Nullable ViewMetadata compileViewMetadata(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            CharSequence viewSql,
+            SqlCompiler compiler
+    ) throws SqlException {
+        final int maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        for (int retries = 0; ; retries++) {
+            try {
+                final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                return getUpdatedViewMetadata(executionContext, viewToken, compiler, executionModel);
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries == maxRecompileAttempts) {
+                    throw e;
+                }
+                LOG.info().$("retrying view compilation [view=").$(viewToken)
+                        .$(", reason=").$safe(e.getFlyweightMessage())
+                        .I$();
+            }
         }
     }
 
@@ -231,6 +277,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
     }
 
+    // Another thread holds, or is taking, the lock of a table the view reads: the reader pool
+    // reports it, or the optimiser wraps the pool's report.
+    private static boolean isTableLocked(Throwable e) {
+        return e instanceof EntryLockedException || (e instanceof SqlException sqlException && sqlException.isTableLocked());
+    }
+
     private static void reset(CairoEngine engine, TableToken tableToken, @Nullable ViewMetadata viewMetadata, long updateTimestamp) {
         if (tableToken == null || !tableToken.isView()) {
             LOG.error().$("cannot reset view state, not a view token [token=").$(tableToken).I$();
@@ -288,7 +340,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
     }
 
-    private void compile(TableToken tableToken, long updateTimestamp) {
+    private void compile(TableToken tableToken, long updateTimestamp, boolean isBusyRetry) {
+        if (isBusyRetry) {
+            // the views over the view got compiles of their own from the request that met the lock
+            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, invalidateViewsSink);
+            return;
+        }
         compileDependentViews(tableToken, updateTimestamp);
         if (tableToken.isView()) {
             compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, invalidateViewsSink);
@@ -305,8 +362,22 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     private boolean processNotifications() {
-        while (stateStore.tryDequeueCompilerTask(compilerTask)) {
-            compile(compilerTask.tableToken, compilerTask.updateTimestamp);
+        // Only before the first task: a drain never runs a busy retry that it scheduled, so it ends
+        // while the lock it met lasts, also on the thread that holds the lock.
+        stateStore.enqueueDueCompileBusyRetries();
+        if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
+            return false;
+        }
+        // One run for the whole drain, so that the run stays running between the two borrows of
+        // a table that one view compile makes, and between views. A DDL that waits for a run,
+        // which holds its table, then never locks the table in the middle of the drain.
+        stateStore.startCompileRun();
+        try {
+            do {
+                compile(compilerTask.tableToken, compilerTask.updateTimestamp, compilerTask.isBusyRetry);
+            } while (stateStore.tryDequeueCompilerTask(compilerTask));
+        } finally {
+            stateStore.finishCompileRun();
         }
         return false;
     }

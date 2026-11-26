@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -36,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
@@ -69,6 +71,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -109,6 +112,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
+    private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
@@ -144,6 +148,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long recordCountNanos;
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
+    // the select cache scope of the principal the query runs for, see getSelectCacheKey()
+    private CharSequence selectCacheScope;
     private long skip;
     private long stop;
     private boolean timings = false;
@@ -187,14 +193,27 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             queryTimestampIndex = -1;
             cursor = Misc.free(cursor);
             record = null;
+            // End the owner before the factory goes back to the select cache. Ending it releases the
+            // execution's resources, which include state of the factory's functions, and another
+            // connection can take the factory from the shared cache as soon as it is there.
+            Throwable ownerEndFailure = null;
+            try {
+                sqlExecutionOwner.end();
+            } catch (Throwable th) {
+                ownerEndFailure = th;
+            }
             if (recordCursorFactory != null) {
-                if (queryCacheable) {
-                    httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
+                if (queryCacheable && ownerEndFailure == null) {
+                    httpConnectionContext.getSelectCache().put(
+                            SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink),
+                            recordCursorFactory
+                    );
                 } else {
                     recordCursorFactory.close();
                 }
                 recordCursorFactory = null;
             }
+            selectCacheScope = null;
             query.clear();
             columnNameSink.clear();
             queryState = QUERY_SETUP_FIRST_RECORD;
@@ -218,6 +237,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             updateRecords = 0;
             clientWaitAccumNanos = 0;
             clientWaitStartNanos = -1;
+            CairoException.rethrowCleanupFailure(ownerEndFailure);
         } finally {
             sqlExecutionOwner.end();
         }
@@ -323,6 +343,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public Rnd getRnd() {
         return rnd;
+    }
+
+    /**
+     * Returns the select cache key of the query for the principal it runs for, and remembers the
+     * principal's scope, so that clear() returns the factory to the same scope it came from or was
+     * compiled in.
+     */
+    public CharSequence getSelectCacheKey(SecurityContext securityContext) {
+        selectCacheScope = securityContext.getSelectCacheScope();
+        return SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink);
     }
 
     public long getStatementTimeout() {
@@ -441,6 +471,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void setCursor(RecordCursor cursor) {
         this.cursor = cursor;
+    }
+
+    @TestOnly
+    public void setFactoryForTest(RecordCursorFactory factory, boolean queryCacheable) {
+        this.recordCursorFactory = factory;
+        this.queryCacheable = queryCacheable;
     }
 
     public void setOperation(Operation operation) {

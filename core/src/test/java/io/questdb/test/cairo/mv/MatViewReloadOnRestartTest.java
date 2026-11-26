@@ -33,6 +33,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.line.LineUdpSender;
@@ -42,6 +43,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -68,6 +70,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.test.cairo.mv.MatViewPeriodRefreshTest.replaceRange;
 import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
@@ -570,14 +573,28 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
-                // apply WAL and remove WAL files
+                // apply WAL and remove WAL files. Under ADAPTIVE two things keep the WAL: the purge floor is
+                // held back to the last durable epoch, and the mat-view's WAL writer keeps its active segment
+                // locked. Do what production does when a table goes idle: close the writers (the graceful-close
+                // epoch advances durableEpochSeqTxn to the committed frontier) and release the WAL and view-WAL
+                // writers, which unlocks the segment. Do not call engine.clear() here: it resets the in-memory
+                // tracker's durableEpochSeqTxn to 0, which would hold the purge floor at 0.
                 drainWalQueue(main1.getEngine());
-                main1.getEngine().clear();
+                main1.getEngine().releaseAllWriters();
+                main1.getEngine().releaseAllWalWriters();
+                main1.getEngine().releaseAllViewWalWriters();
+                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
+                if (main1.getEngine().getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The purge floor is the older of the two save points, which recovery falls back to; one more
+                    // save point at the applied cut moves the older one past the WAL.
+                    try (TableWriter writer = main1.getEngine().getWriter(token, "test")) {
+                        writer.advanceDurableEpoch(main1.getEngine().getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                    }
+                }
                 try (WalPurgeJob purgeJob = new WalPurgeJob(main1.getEngine())) {
                     purgeJob.drain(0);
                 }
                 // assert that WAL files are removed
-                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
                 try (Path path = new Path()) {
                     CairoConfiguration configuration = main1.getEngine().getConfiguration();
                     path.of(configuration.getDbRoot()).concat(token).concat(WAL_NAME_BASE).put(1);
@@ -863,6 +880,231 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 price_1h\tinvalid
                                 """,
                         "select view_name, view_status from materialized_views();"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewsReloadOnServerStartWithChangedAliasRules() throws Exception {
+        // QuestDB 8.x, and any release run with cairo.sql.column.alias.expression.enabled=false, names an
+        // unaliased avg(price) "avg". After a restart under the expression rules, the startup refresh compiles
+        // the stored query, which now names that column "avg(price)". The view keeps its columns and keeps
+        // refreshing, incrementally and in full.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false"
+            )) {
+                executeWithRewriteTimestamp(main1);
+                execute(main1, "insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+                execute(main1, "create materialized view price_1d as (select ts, sym, avg(price) from base_price sample by 1d) partition by DAY");
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+                assertSql(main1, replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n"), "price_1d");
+            }
+
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "true"
+            )) {
+                try (var refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            "view_status\tinvalidation_reason\nvalid\t\n",
+                            "select view_status, invalidation_reason from materialized_views where view_name = 'price_1d'"
+                    );
+
+                    execute(main2, "insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01')");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"),
+                            "price_1d"
+                    );
+
+                    execute(main2, "refresh materialized view price_1d full");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            "view_status\tinvalidation_reason\nvalid\t\n",
+                            "select view_status, invalidation_reason from materialized_views where view_name = 'price_1d'"
+                    );
+                    assertSql(
+                            main2,
+                            replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"),
+                            "price_1d"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPeriodMatViewRefreshesFromRecordedPeriodHiAfterRestart() throws Exception {
+        // The view records the end of the last complete period even though no base row lies before it. After a
+        // restart, the period refresh starts there and recomputes the bucket [04:00, 08:00) whose rows a range
+        // replace deleted before their period completed.
+        TestUtils.assertMemoryLeak(() -> {
+            // The 7h periods end at 05:00, 12:00 and 19:00 on 2022-01-02, and the 4h bucket [04:00, 08:00) crosses 05:00.
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2022-01-02T10:00:00.000000Z"));
+            final String viewSql = "select min(v) as min_v, max(v) as max_v, ts from base sample by 4h";
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(main1, "create table base (v int, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY WAL");
+                execute(main1, "create materialized view mv refresh immediate period (length 7h) as " + viewSql);
+                final CairoEngine engine1 = main1.getEngine();
+                final TimestampDriver driver = timestampType.getDriver();
+                try (var refreshJob = createMatViewRefreshJob(engine1)) {
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                    replaceRange(engine1, driver, "2022-01-02T00:13", "2022-01-02T17:00", 1, "2022-01-02T07:34", "2022-01-02T09:38");
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                    replaceRange(engine1, driver, "2022-01-02T05:24", "2022-01-02T22:12", 2, "2022-01-02T12:45");
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                }
+                assertSql(
+                        main1,
+                        replaceExpectedTimestamp("""
+                                min_v\tmax_v\tts
+                                1\t1\t2022-01-02T04:00:00.000000Z
+                                """),
+                        "mv"
+                );
+                assertSql(
+                        main1,
+                        """
+                                refresh_period_hi
+                                2022-01-02T05:00:00.000000Z
+                                """,
+                        "select refresh_period_hi from materialized_views()"
+                );
+            }
+
+            testClock.micros.set(parseFloorPartialTimestamp("2022-01-02T19:00:00.000000Z"));
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final CairoEngine engine2 = main2.getEngine();
+                try (var refreshJob = createMatViewRefreshJob(engine2)) {
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(engine2);
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, engine2);
+                }
+                final String expected = replaceExpectedTimestamp("""
+                        min_v\tmax_v\tts
+                        2\t2\t2022-01-02T12:00:00.000000Z
+                        """);
+                assertSql(main2, expected, "mv");
+                assertSql(main2, expected, viewSql);
+                assertSql(
+                        main2,
+                        """
+                                refresh_period_hi
+                                2022-01-02T19:00:00.000000Z
+                                """,
+                        "select refresh_period_hi from materialized_views()"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testPeriodMatViewRefreshesRowOnLastTickOfPeriodAfterUpgrade() throws Exception {
+        // Older releases record no period end while no base row lies in a complete period. After an upgrade, the first
+        // refresh starts at the base table's first row, which here lies on the last tick of a complete period.
+        TestUtils.assertMemoryLeak(() -> {
+            // The 7h periods end at 05:00, 12:00 and 19:00 on 2022-01-02.
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2022-01-02T10:00:00.000000Z"));
+            final String viewSql = "select min(v) as min_v, max(v) as max_v, ts from base sample by 1h";
+            final String lastTickBeforeNoon = ColumnType.isTimestampMicro(timestampType.getTimestampType())
+                    ? "2022-01-02T11:59:59.999999"
+                    : "2022-01-02T11:59:59.999999999";
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(main1, "create table base (v int, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY WAL");
+                execute(main1, "create materialized view mv refresh immediate period (length 7h) as " + viewSql);
+                final CairoEngine engine1 = main1.getEngine();
+                try (var refreshJob = createMatViewRefreshJob(engine1)) {
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                    // The row lies in the incomplete period, so the refresh of its transaction trims it.
+                    execute(main1, "insert into base values (1, '" + lastTickBeforeNoon + "')");
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                }
+                assertSql(main1, "min_v\tmax_v\tts\n", "mv");
+
+                // Write the state that an older release leaves behind: the base transaction refreshed, no period end.
+                final TableToken viewToken = engine1.verifyTableName("mv");
+                final MatViewState viewState = engine1.getMatViewStateStore().getViewState(viewToken);
+                try (WalWriter walWriter = engine1.getWalWriter(viewToken)) {
+                    walWriter.resetMatViewState(
+                            viewState.getLastRefreshBaseTxn(),
+                            viewState.getLastRefreshFinishTimestampUs(),
+                            false,
+                            null,
+                            Numbers.LONG_NULL,
+                            null,
+                            -1
+                    );
+                }
+                drainWalQueue(engine1);
+            }
+
+            // The period that ends at 12:00 is complete, and the one that ends at 19:00 is not.
+            testClock.micros.set(parseFloorPartialTimestamp("2022-01-02T12:30:00.000000Z"));
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final CairoEngine engine2 = main2.getEngine();
+                // base_table_txn reads the base table's txn tracker, which stays at -1 until CheckWalTransactionsJob
+                // first scans the table. The server runs that job on a worker thread that may not have run yet, so
+                // drainWalQueue() runs the scan on this thread. No WAL transaction is left to apply.
+                drainWalQueue(engine2);
+                assertSql(
+                        main2,
+                        """
+                                refresh_period_hi\trefresh_base_table_txn\tbase_table_txn
+                                \t1\t1
+                                """,
+                        "select refresh_period_hi, refresh_base_table_txn, base_table_txn from materialized_views()"
+                );
+                final String expected = replaceExpectedTimestamp("""
+                        min_v\tmax_v\tts
+                        1\t1\t2022-01-02T11:00:00.000000Z
+                        """);
+                try (var refreshJob = createMatViewRefreshJob(engine2)) {
+                    // The server start enqueued an incremental refresh of the view, and the period timer fires for 12:00.
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(engine2);
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, engine2);
+                    assertSql(main2, expected, "mv");
+                    assertSql(
+                            main2,
+                            """
+                                    refresh_period_hi
+                                    2022-01-02T12:00:00.000000Z
+                                    """,
+                            "select refresh_period_hi from materialized_views()"
+                    );
+
+                    testClock.micros.set(parseFloorPartialTimestamp("2022-01-02T19:00:00.000000Z"));
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, engine2);
+                }
+                assertSql(main2, expected, "mv");
+                assertSql(main2, expected, viewSql);
+                assertSql(
+                        main2,
+                        """
+                                refresh_period_hi
+                                2022-01-02T19:00:00.000000Z
+                                """,
+                        "select refresh_period_hi from materialized_views()"
                 );
             }
         });

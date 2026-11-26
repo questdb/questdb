@@ -23,17 +23,18 @@
  ******************************************************************************/
 package io.questdb.jit;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
@@ -41,10 +42,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBoundBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterTickBounds;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
@@ -61,8 +66,10 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
@@ -120,6 +127,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    private static final int BIND_VAR_SLOT_SIZE = 2 * Long.BYTES;
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
@@ -314,13 +322,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private ExpressionNode unwidenableIntCmpFloatNode;
     private MemoryCARW memory;
     private RecordMetadata metadata;
-    private PageFrameCursor pageFrameCursor;
+    private SymbolTableSource symbolTableSource;
 
     @Override
     public void clear() {
         memory = null;
         metadata = null;
-        pageFrameCursor = null;
+        symbolTableSource = null;
         forceScalarMode = false;
         hasEmittedWideLaneConversion = false;
         hasI64WidenArithConstant = false;
@@ -380,6 +388,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             unwidenableIntCmpFloatNode = null;
             throw SqlException.position(declined.position)
                     .put("unsupported int-width expression vs float operand: ").put(declined.token);
+        }
+
+        // A SYMBOL predicate compares symbol keys, so no arithmetic may run on them: a subtree of
+        // literals folds into one symbol constant, and any other subtree declines the JIT.
+        if (predicateContext.isActive() && predicateContext.hasSymbolColumn && node.type == ExpressionNode.OPERATION
+                && (isArithmeticOperation(node) || isUnaryMinus(node))) {
+            if (!isLiteralArithmetic(node)) {
+                throw SqlException.position(node.position)
+                        .put("operator: ").put(node.token).put(" is not supported for SYMBOL type");
+            }
+            serializeConstantStub(node);
+            return false;
         }
 
         // A pure-constant NARROW integer arithmetic subtree that a 64-bit peer reads. The Java
@@ -484,16 +504,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Look ahead for negative const
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
-            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
-            if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                // Store negation node for later backfilling. The stub skips visit(), so the
-                // predicate records the operator here: a CHAR or IPv4 predicate declines it at
-                // exit, ahead of the backfill (see visit()).
-                predicateContext.markUnaryMinus(node);
-                serializeConstantStub(node);
-                return false;
-            }
+        if (node.type == ExpressionNode.OPERATION && isNegatedConstant(node)) {
+            // Store negation node for later backfilling. The stub skips visit(), so the
+            // predicate records the operator here: a CHAR or IPv4 predicate declines it at
+            // exit, ahead of the backfill (see visit()).
+            predicateContext.markUnaryMinus(node);
+            serializeConstantStub(node);
+            return false;
         }
 
         // Record where this ordering node's own IR begins. serializeCharOrdering() /
@@ -513,13 +530,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             MemoryCARW memory,
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
-            PageFrameCursor pageFrameCursor,
+            SymbolTableSource symbolTableSource,
             ObjList<Function> bindVarFunctions
     ) {
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
-        this.pageFrameCursor = pageFrameCursor;
+        this.symbolTableSource = symbolTableSource;
         this.bindVarFunctions = bindVarFunctions;
         return this;
     }
@@ -907,6 +924,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        final int options = serializeFilter(node, forceScalar, debug, nullChecks);
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        final long capacity = (long) configuration.getSqlJitBindVarsMemoryPageSize() * configuration.getSqlJitBindVarsMemoryMaxPages();
+        final long required = (long) bindVarFunctions.size() * BIND_VAR_SLOT_SIZE;
+        if (required > capacity) {
+            throw SqlException.position(node.position)
+                    .put("bind variables exceed JIT bind variable memory [required=").put(required)
+                    .put(", capacity=").put(capacity).put(']');
+        }
+        return options;
+    }
+
+    private int serializeFilter(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
         // Reset the per-element IN-key width override: the serializer instance is reused across
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         hasEmittedWideLaneConversion = false;
@@ -1463,6 +1493,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    // A quoted string or NULL: the right-hand constants that InTimestampTimestampFunctionFactory reads
+    // as an interval expression. It reads an unquoted integer such as 2024 as a point, which the tick
+    // expression parser would read as a year.
+    private static boolean isIntervalExpressionConstant(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT
+                && (Chars.isQuoted(node.token) || SqlKeywords.isNullKeyword(node.token));
+    }
+
+    private static boolean isLiteralArithmetic(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return true;
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        if (isUnaryMinus(node)) {
+            return isLiteralArithmetic(node.lhs != null ? node.lhs : node.rhs);
+        }
+        return isArithmeticOperation(node) && isLiteralArithmetic(node.lhs) && isLiteralArithmetic(node.rhs);
+    }
+
+    private static boolean isNegatedConstant(ExpressionNode node) {
+        if (!isUnaryMinus(node)) {
+            return false;
+        }
+        final ExpressionNode operand = node.lhs != null ? node.lhs : node.rhs;
+        return operand != null && operand.paramCount == 0 && operand.type == ExpressionNode.CONSTANT;
+    }
+
     private static boolean isNullConstant(ExpressionNode node) {
         return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
@@ -1498,6 +1560,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || SqlKeywords.isFalseKeyword(token);
     }
 
+    // TIMESTAMP, TIMESTAMP_NS or DATE: the key types of InTimestampTimestampFunctionFactory.
+    private static boolean isTemporal(int columnType) {
+        return ColumnType.isTimestamp(columnType) || ColumnType.tagOf(columnType) == ColumnType.DATE;
+    }
+
     private static boolean isTopLevelOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (SqlKeywords.isNotKeyword(token)) {
@@ -1525,6 +1592,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return true;
         }
         return Chars.equals(token, ">=");
+    }
+
+    private static boolean isUnaryMinus(ExpressionNode node) {
+        return node.paramCount == 1 && Chars.equals(node.token, '-');
     }
 
     private static boolean isVarSizeType(int type) {
@@ -2067,8 +2138,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         try {
             switch (value.type) {
                 case ExpressionNode.CONSTANT:
-                case ExpressionNode.OPERATION: // constant negation case
                     backfillConstant(key, value);
+                    break;
+                case ExpressionNode.OPERATION:
+                    if (isNegatedConstant(value)) {
+                        backfillConstant(key, value);
+                    } else {
+                        backfillSymbolArithmetic(key, value);
+                    }
                     break;
                 case ExpressionNode.BIND_VARIABLE:
                     backfillSymbolBindVariable(key, value);
@@ -2081,6 +2158,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } catch (SqlException e) {
             throw new SqlWrapperException(e);
         }
+    }
+
+    private void backfillSymbolArithmetic(long offset, final ExpressionNode node) throws SqlException {
+        assert predicateContext.columnType == ColumnType.SYMBOL;
+        final long value;
+        try {
+            value = foldConstantArithWidthAware(node);
+        } catch (NumericException e) {
+            throw SqlException.position(node.position).put("unsupported symbol constant: ").put(node.token);
+        }
+        serializeSymbolNumber(offset, node.position, node.token, value);
     }
 
     private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
@@ -2332,8 +2420,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Width-correct long fold, used ONLY to compute the immediate a LONG-width (I8) fold root
-     * emits. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
+     * Width-correct long fold. It computes the immediate a LONG-width (I8) fold root emits, and
+     * the value of a literal subtree a SYMBOL predicate compares with. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
      * node computes with per-op int wrapping and sign-extends, exactly as
      * {@code AddInt}/{@code MulInt}#getLong() do ({@code Numbers.intToLong(getInt())}); only a
      * genuine LONG-width node folds at 64-bit width.
@@ -2367,9 +2455,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
         // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
-        // Unreachable while descend() is the only caller - tryFoldConstantArith has already
-        // accepted the subtree by then - but the sentinel propagation below must never be the
-        // first thing a new caller reaches.
+        // Unreachable for both callers - descend() reaches it after tryFoldConstantArith, and
+        // backfillSymbolArithmetic() after isLiteralArithmetic, accepted the subtree - but the
+        // sentinel propagation below must never be the first thing a new caller reaches.
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }
@@ -3039,8 +3127,39 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
         predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
 
-        // check predicate type is timestamp
-        return ColumnType.isTimestamp(predicateContext.columnType);
+        // check predicate type is timestamp or date
+        return isTemporal(predicateContext.columnType);
+    }
+
+    // InTimestampTimestampFunctionFactory treats an IN whose only element is a string as an interval
+    // search when the key is a TIMESTAMP or a DATE: `ts IN ('2024-01-02')` matches the whole day, as
+    // `ts IN '2024-01-02'` does. serializeIn() would compare the key with the interval's start only.
+    // Returns true when serializeInTimestampRange() has to serialize the IN, and declines a temporal
+    // key that is an expression rather than a column or a bind variable.
+    private boolean isIntervalInPredicate() throws SqlException {
+        final ExpressionNode inNode = predicateContext.inOperationNode;
+        if (inNode.args.size() > 0) {
+            // Two or more elements: a list of points.
+            return false;
+        }
+        final ExpressionNode element = inNode.rhs;
+        if (element == null || element.type != ExpressionNode.CONSTANT || !Chars.isQuoted(element.token)) {
+            return false;
+        }
+        final ExpressionNode key = inNode.lhs;
+        if (key.type == ExpressionNode.LITERAL || key.type == ExpressionNode.BIND_VARIABLE) {
+            // isInTimestampPredicate() records the key's type in predicateContext, which
+            // serializeInTimestampRange() reads. Call it only for a temporal key, so that every
+            // other key reaches serializeIn() with no extra node visits.
+            return isTemporalLeaf(key) && isInTimestampPredicate();
+        }
+        if (hasTemporalLeaf(key)) {
+            // The Java filter types the expression, and may run an interval search over it; this
+            // serializer has no type for it before it visits the key's leaves.
+            throw SqlException.position(key.position)
+                    .put("interval search over a timestamp expression is not supported by JIT");
+        }
+        return false;
     }
 
     // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
@@ -3164,6 +3283,45 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         // Leaf predicate or non-AND operation
         return true;
+    }
+
+    private boolean hasTemporalLeaf(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return isTemporalLeaf(node);
+        }
+        if (hasTemporalLeaf(node.lhs) || hasTemporalLeaf(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasTemporalLeaf(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A TIMESTAMP, TIMESTAMP_NS or DATE column or bind variable.
+    private boolean isTemporalLeaf(ExpressionNode node) {
+        final int type;
+        if (node.type == ExpressionNode.LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(node.token);
+            if (index == -1) {
+                return false;
+            }
+            type = metadata.getColumnType(index);
+        } else if (node.type == ExpressionNode.BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(node.token);
+            if (fn == null) {
+                return false;
+            }
+            type = fn.getType();
+        } else {
+            return false;
+        }
+        return isTemporal(type);
     }
 
     private boolean isTopLevelBooleanColumn(ExpressionNode node) {
@@ -4288,7 +4446,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Emits a pairing that is false on every row. The mask is an all-zero full register, so the
      * width only has to be one the backend can compare at, not the key's own. See
-     * {@link #neverMatchingInPairingWidth}.
+     * {@link #neverMatchingInPairingWidth}. {@link #serializeInTimestampRange} emits it for an
+     * interval expression that holds no instant.
      */
     private void putNeverMatchingInPairing(int typeCode) {
         putOperand(IMM, typeCode, 0);
@@ -4796,22 +4955,117 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeInTimestampRange(int position) throws SqlException {
+    /**
+     * Serializes an IN over an interval expression that holds a date variable, such as
+     * {@code tm IN '$today'}. The Java filter resolves $now, $today and the like each time the
+     * cursor opens, so a cached plan keeps up with the clock, and immediates would freeze the bounds
+     * of the moment the filter compiled. The range checks read their bounds from bind variable slots
+     * instead, and {@link CompiledFilterTickBounds} fills them on every cursor open.
+     * <p>
+     * The IR has a fixed shape, while the interval count moves with the clock: '$today#workday'
+     * holds no interval at weekends. So the IR holds as many range checks as
+     * {@link CompiledTickExpression#getMaxIntervalCount(int)} proves the expression can yield, and
+     * the holder pads the unused ones with an interval that matches no row. An expression without
+     * such a bound, or with more intervals than the IN list threshold, goes to the Java filter. The
+     * threshold caps both IN forms here: every check costs a comparison per row whether its interval
+     * is live or padding.
+     */
+    private void serializeInDateVariableRange(
+            int position,
+            CharSequence token,
+            CharSequence intervalEx,
+            TimestampDriver driver,
+            boolean isDate
+    ) throws SqlException {
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        // The same compilation InTimestampTimestampFunctionFactory gives the Java filter, which the
+        // JIT factories run on frames with column tops, so both see the same intervals.
+        final CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(
+                driver,
+                configuration,
+                intervalEx,
+                0,
+                intervalEx.length(),
+                position
+        );
+        final int threshold = configuration.getSqlJitMaxInListSizeThreshold();
+        final int maxIntervalCount = compiledExpr.getMaxIntervalCount(threshold);
+        if (maxIntervalCount < 1) {
+            throw SqlException.position(position)
+                    .put("date variable interval has no bound within the JIT IN list threshold [threshold=")
+                    .put(threshold).put("]: ").put(token);
+        }
+
+        final CompiledFilterTickBounds bounds = new CompiledFilterTickBounds(
+                compiledExpr,
+                driver.getTimestampType(),
+                maxIntervalCount,
+                isDate
+        );
+        final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
+        // The operand order of the constant intervals in serializeInTimestampRange(). No lo == hi
+        // shortcut: whether an interval is a point is only known at run time.
+        for (int i = 0; i < maxIntervalCount; i++) {
+            bindVarFunctions.add(new CompiledFilterTickBoundBindVariable(bounds, 2 * i));
+            putOperand(VAR, I8_TYPE, bindVarFunctions.size() - 1);
+            traverseAlgo.traverse(lhs, this);
+            putOperator(GE);
+            bindVarFunctions.add(new CompiledFilterTickBoundBindVariable(bounds, 2 * i + 1));
+            putOperand(VAR, I8_TYPE, bindVarFunctions.size() - 1);
+            traverseAlgo.traverse(lhs, this);
+            putOperator(LE);
+            putOperator(AND);
+        }
+        for (int i = 1; i < maxIntervalCount; i++) {
+            putOperator(OR);
+        }
+    }
+
+    private void serializeInTimestampRange(int position, int maxIntervalCount) throws SqlException {
         predicateContext.currentInSerialization = true;
 
         final CharSequence token = predicateContext.inOperationNode.rhs.token;
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
+        // InTimestampTimestampFunctionFactory compares a DATE key in microseconds.
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(predicateContext.columnType));
+        final boolean isDate = ColumnType.tagOf(predicateContext.columnType) == ColumnType.DATE;
+        if (intervalEx != null && DateExpressionEvaluator.containsDateVariable(intervalEx, 0, intervalEx.length())) {
+            serializeInDateVariableRange(position, token, intervalEx, driver, isDate);
+            return;
+        }
 
         final LongList intervals = predicateContext.inIntervals;
+        // parseTickExprAndIntersect() appends to the list. An `=` or `!=` holds several INs under
+        // one predicate root, so each IN starts from an empty list.
+        intervals.clear();
         IntervalUtils.parseTickExprAndIntersect(
-                ColumnType.getTimestampDriver(predicateContext.columnType),
+                driver,
                 executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
                 position,
-                sink,
-                true
+                sink
         );
+
+        final int intervalCount = intervals.size() / 2;
+        if (intervalCount > maxIntervalCount) {
+            throw SqlException.$(position, "exceeded JIT IN list threshold [threshold=")
+                    .put(maxIntervalCount)
+                    .put(", intervals=").put(intervalCount).put(']');
+        }
+
+        if (intervalCount == 0) {
+            // The expression holds no instant, e.g. '2024-01-06#workday', where the day filter drops
+            // the only day, a Saturday. InTimestampTimestampFunctionFactory returns the constant
+            // false then, and the function parser folds the tree around it, so a filter that folds
+            // to a constant never reaches the JIT. One that does not, such as
+            // `tm IN '2024-01-06#workday' OR k = 2`, still holds the IN here. The parent OR, AND,
+            // NOT or comparison (`=`, `!=`) pops one value per operand, and a lone predicate with no
+            // value stores every row, so push a comparison that is false on every row. It compares
+            // two immediates at I8, the width of every temporal key, and reads no column.
+            putNeverMatchingInPairing(I8_TYPE);
+            return;
+        }
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
@@ -4819,13 +5073,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
             long lo = IntervalUtils.decodeIntervalLo(intervals, i);
             long hi = IntervalUtils.decodeIntervalHi(intervals, i);
-            putOperand(IMM, I8_TYPE, lo);
-            traverseAlgo.traverse(lhs, this);
-            putOperator(GE);
-            putOperand(IMM, I8_TYPE, hi);
-            traverseAlgo.traverse(lhs, this);
-            putOperator(LE);
-            putOperator(AND);
+            if (isDate) {
+                // The Java filter matches a DATE d when d * 1000 lies in [lo, hi]. In milliseconds,
+                // that is d in [ceil(lo / 1000), floor(hi / 1000)], which is empty when the interval
+                // holds no whole millisecond. NULL stays NULL: DATE and TIMESTAMP share the sentinel.
+                lo = lo == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.ceilDiv(lo, Micros.MILLI_MICROS);
+                hi = hi == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.floorDiv(hi, Micros.MILLI_MICROS);
+            }
+            if (lo == hi) {
+                // A point, e.g. a literal at full precision: one comparison instead of two.
+                putOperand(IMM, I8_TYPE, lo);
+                traverseAlgo.traverse(lhs, this);
+                putOperator(EQ);
+            } else {
+                putOperand(IMM, I8_TYPE, lo);
+                traverseAlgo.traverse(lhs, this);
+                putOperator(GE);
+                putOperand(IMM, I8_TYPE, hi);
+                traverseAlgo.traverse(lhs, this);
+                putOperator(LE);
+                putOperator(AND);
+            }
             orCount++;
         }
 
@@ -5249,10 +5517,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence token = node.token;
         if (SqlKeywords.isInKeyword(token)) {
             if (type == ExpressionNode.FUNCTION) {
-                serializeIn();
+                if (isIntervalInPredicate()) {
+                    // The range checks grow with the interval count while the Java filter's binary
+                    // search barely does, so the IN list threshold caps the interval count, as it
+                    // caps the element count of a list: '2024-01-01T10:00;1h;1d;30' runs on the
+                    // Java filter. It caps the bound of a date-variable expression too.
+                    serializeInTimestampRange(position, executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold());
+                } else {
+                    serializeIn();
+                }
                 return;
-            } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
-                serializeInTimestampRange(position);
+            } else if (type == ExpressionNode.SET_OPERATION
+                    && isIntervalExpressionConstant(predicateContext.inOperationNode.rhs)
+                    && isInTimestampPredicate()) {
+                // Only a quoted string or NULL takes this path: the Java filter reads an unquoted
+                // integer as a point, so any other right-hand side falls through to the Java filter.
+                // For a TIMESTAMP or TIMESTAMP_NS key this form has always compiled any interval
+                // count, and a cap would move counts just above the threshold to the slower Java
+                // filter. A DATE key ran on the Java filter before, and its binary search outpaces
+                // the range checks past a few dozen intervals, so the IN list threshold caps a DATE
+                // key's interval count, as in the parenthesised form. The threshold caps the bound
+                // of a date-variable expression for every key type.
+                final int maxIntervalCount = ColumnType.tagOf(predicateContext.columnType) == ColumnType.DATE
+                        ? executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()
+                        : Integer.MAX_VALUE;
+                serializeInTimestampRange(position, maxIntervalCount);
                 return;
             }
         }
@@ -5447,6 +5736,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    private void serializeSymbol(long offset, int position, CharSequence token, @Nullable CharSequence symbol) throws SqlException {
+        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
+            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        }
+        final SymbolConstant function = SymbolConstant.newUnquotedInstance(symbol);
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
+        putOperand(offset, VAR, bindVariableTypeCode(ColumnType.STRING), bindVarFunctions.size() - 1);
+    }
+
     /**
      * Emits the symbol key for a constant compared against a SYMBOL column.
      * The parser splits unary minus from its numeric token, including when the
@@ -5457,73 +5755,42 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private void serializeSymbolConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        final CharSequence symbol;
         if (Chars.isQuoted(token)) {
             if (len < 3) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
             sink.clear();
             Chars.unescape(token, 1, len - 1, '\'', sink);
-            if (negated) {
-                final long value;
-                try {
-                    final long parsedValue = Numbers.parseLong(sink);
-                    value = parsedValue != Numbers.LONG_NULL ? -parsedValue : Numbers.LONG_NULL;
-                } catch (NumericException e) {
-                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
-                }
-                if (value == Numbers.LONG_NULL) {
-                    symbol = null;
-                } else {
-                    sink.clear();
-                    sink.put(value);
-                    symbol = sink;
-                }
-            } else {
-                symbol = sink;
+            if (!negated) {
+                serializeSymbol(offset, position, token, sink);
+                return;
             }
-        } else {
             final long value;
             try {
-                final long parsedValue = Numbers.parseLong(token);
-                value = negated ? -parsedValue : parsedValue;
+                value = Numbers.parseLong(sink);
             } catch (NumericException e) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
-            if (value == Numbers.LONG_NULL) {
-                symbol = null;
-            } else {
-                sink.clear();
-                sink.put(value);
-                symbol = sink;
-            }
+            serializeSymbolNumber(offset, position, token, value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL);
+            return;
         }
-
-        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
-            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        final long value;
+        try {
+            value = Numbers.parseLong(token);
+        } catch (NumericException e) {
+            throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
         }
+        serializeSymbolNumber(offset, position, token, negated ? -value : value);
+    }
 
-        // Live view incremental refresh runs the JIT-compiled filter against WAL segment
-        // data, whose row int keys are segment-local and do not match the base table's
-        // global keys resolved here. Force the deferred bind-variable path so the key
-        // gets resolved per segment via the WAL cursor's symbol table (see
-        // WalSegmentPageFrameCursor.WalSymbolTable.keyOf).
-        if (!executionContext.isLiveViewCompile()) {
-            final int key = predicateContext.symbolTable.keyOf(symbol);
-            if (key != SymbolTable.VALUE_NOT_FOUND) {
-                // Known symbol constant case
-                putOperand(offset, IMM, I4_TYPE, key);
-                return;
-            }
+    private void serializeSymbolNumber(long offset, int position, CharSequence token, long value) throws SqlException {
+        if (value == Numbers.LONG_NULL) {
+            serializeSymbol(offset, position, token, null);
+            return;
         }
-
-        // Unknown symbol constant case. Create a fake bind variable function to handle it.
-        final SymbolConstant function = SymbolConstant.newInstance(symbol);
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
-        int index = bindVarFunctions.size() - 1;
-
-        int typeCode = bindVariableTypeCode(ColumnType.STRING);
-        putOperand(offset, VAR, typeCode, index);
+        sink.clear();
+        sink.put(value);
+        serializeSymbol(offset, position, token, sink);
     }
 
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean isWidenedToI64, boolean isNarrowKept) throws SqlException {
@@ -6024,10 +6291,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
+        private boolean hasSymbolColumn;
 
         @Override
         public void clear() {
             typesObserver.clear();
+            hasSymbolColumn = false;
         }
 
         @Override
@@ -6041,7 +6310,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case ExpressionNode.LITERAL: {
                     int columnIndex = metadata.getColumnIndexQuiet(node.token);
                     if (columnIndex != -1) {
-                        typesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
+                        final int columnTypeTag = ColumnType.tagOf(metadata.getColumnType(columnIndex));
+                        hasSymbolColumn |= columnTypeTag == ColumnType.SYMBOL;
+                        typesObserver.observe(columnTypeCode(columnTypeTag));
                     }
                     break;
                 }
@@ -6073,6 +6344,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         boolean hasFloat() {
             return typesObserver.hasFloat();
+        }
+
+        boolean hasSymbolColumn() {
+            return hasSymbolColumn;
         }
     }
 
@@ -6120,10 +6395,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // when the int-arithmetic subtree is consumed by IntFunction's
         // getDouble / getFloat, which call getInt() and wrap mod 2^32.
         boolean hasFloatInPredicate;
+        boolean hasSymbolColumn;
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
-        StaticSymbolTable symbolTable; // used for known symbol constant lookups
+        SymbolTable symbolTable;
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
@@ -6182,8 +6458,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             && !hasOtherComparison(node, columnFreeComparisonNode)) {
                         columnFreeComparisonNode = null;
                     }
-                    // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
-                    // the predicate. See NarrowI64WidenDetector.
+                    // Pre-pass: remember whether any FLOAT / DOUBLE source or SYMBOL column is present
+                    // anywhere in the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
                     i64FoldedArithRoots.clear();
                     i64WidenArithRoots.clear();
@@ -6202,6 +6478,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);
                         hasFloatInPredicate = narrowI64WidenDetector.hasFloat();
+                        hasSymbolColumn = narrowI64WidenDetector.hasSymbolColumn();
                     } catch (SqlException ignore) {
                         // Detector does not throw; defensive only.
                         hasFloatInPredicate = false;
@@ -6277,7 +6554,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put("operators on different symbol columns are not supported by JIT: ")
                             .put(node.token);
                 }
-                symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+                symbolTable = symbolTableSource.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 
@@ -6315,6 +6592,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             hasArithmeticOperations = false;
             unaryMinusNode = null;
             hasFloatInPredicate = false;
+            hasSymbolColumn = false;
             localTypesObserver.clear();
             currentInSerialization = false;
             handledShortCircuitExit = false;

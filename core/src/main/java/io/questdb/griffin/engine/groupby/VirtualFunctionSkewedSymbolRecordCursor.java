@@ -34,7 +34,11 @@ public abstract class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVi
     protected RecordCursor managedCursor;
 
     public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions) {
-        super(functions, true);
+        this(functions, true);
+    }
+
+    protected VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
+        super(functions, supportsRandomAccess);
     }
 
     @Override

@@ -147,8 +147,8 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             this.slots[0] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize, memoryTracker);
             this.slots[1] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize, memoryTracker);
             this.refCountsAddr = Unsafe.malloc(REFCOUNTS_BYTES, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-            Unsafe.getUnsafe().putLong(refCountsAddr, 0L);
-            Unsafe.getUnsafe().putLong(refCountsAddr + Long.BYTES, 0L);
+            Unsafe.putLong(refCountsAddr, 0L);
+            Unsafe.putLong(refCountsAddr + Long.BYTES, 0L);
         } catch (Throwable t) {
             // Defensive: any partial alloc must not leak.
             freeNativeMemory();

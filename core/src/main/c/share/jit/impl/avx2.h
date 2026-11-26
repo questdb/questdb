@@ -288,39 +288,33 @@ namespace questdb::avx2 {
     }
 
     inline Vec cmp_eq_float(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
-        Vec lhs_copy = c.new_ymm();
-        Vec rhs_copy = c.new_ymm();
-        c.vmovaps(lhs_copy, lhs);
-        c.vmovaps(rhs_copy, rhs);
+        Vec diff = c.new_ymm();
         Vec dst = c.new_ymm();
-        Vec nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
+        Vec nans = mask_and(c, is_nan(c, type, lhs), is_nan(c, type, rhs));
         Mem sign_mask = vec_sign_mask(c, type);
-        c.vsubps(lhs_copy, lhs_copy, rhs_copy); // (lhs - rhs)
-        c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
+        c.vsubps(diff, lhs, rhs); // (lhs - rhs)
+        c.vpand(diff, diff, sign_mask); // abs(lhs - rhs)
         float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
         Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
         // kLE is the ordered "abs(lhs - rhs) <= FLOAT_EPSILON", inclusive to match Numbers.equals().
         // Ordered, so a NaN difference stays false here and the nans mask below decides it.
-        c.vcmpps(dst, lhs_copy, epsilon, CmpImm::kLE);
+        c.vcmpps(dst, diff, epsilon, CmpImm::kLE);
         c.vpor(dst, dst, nans);
         return dst;
     }
 
     inline Vec cmp_eq_double(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
-        Vec lhs_copy = c.new_ymm();
-        Vec rhs_copy = c.new_ymm();
-        c.vmovapd(lhs_copy, lhs);
-        c.vmovapd(rhs_copy, rhs);
+        Vec diff = c.new_ymm();
         Vec dst = c.new_ymm();
-        Vec nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
+        Vec nans = mask_and(c, is_nan(c, type, lhs), is_nan(c, type, rhs));
         Mem sign_mask = vec_sign_mask(c, type);
-        c.vsubpd(lhs_copy, lhs_copy, rhs_copy); // (lhs - rhs)
-        c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
+        c.vsubpd(diff, lhs, rhs); // (lhs - rhs)
+        c.vpand(diff, diff, sign_mask); // abs(lhs - rhs)
         double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
         Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
         // kLE is the ordered "abs(lhs - rhs) <= DOUBLE_EPSILON", inclusive to match Numbers.equals().
         // Ordered, so a NaN difference stays false here and the nans mask below decides it.
-        c.vcmppd(dst, lhs_copy, epsilon, CmpImm::kLE);
+        c.vcmppd(dst, diff, epsilon, CmpImm::kLE);
         c.vpor(dst, dst, nans);
         return dst;
     }

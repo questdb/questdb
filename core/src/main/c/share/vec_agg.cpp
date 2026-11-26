@@ -47,6 +47,7 @@
 #define SUM_INT_ACC F_AVX512(sumIntAcc)
 #define MIN_INT F_AVX512(minInt)
 #define MAX_INT F_AVX512(maxInt)
+#define MIN_MAX_COUNT_INT F_AVX512(minMaxCountInt)
 
 #define COUNT_LONG F_AVX512(countLong)
 #define SUM_LONG F_AVX512(sumLong)
@@ -73,6 +74,7 @@
 #define SUM_INT_ACC F_AVX2(sumIntAcc)
 #define MIN_INT F_AVX2(minInt)
 #define MAX_INT F_AVX2(maxInt)
+#define MIN_MAX_COUNT_INT F_AVX2(minMaxCountInt)
 
 #define COUNT_LONG F_AVX2(countLong)
 #define SUM_LONG F_AVX2(sumLong)
@@ -99,6 +101,7 @@
 #define SUM_INT_ACC F_SSE41(sumIntAcc)
 #define MIN_INT F_SSE41(minInt)
 #define MAX_INT F_SSE41(maxInt)
+#define MIN_MAX_COUNT_INT F_SSE41(minMaxCountInt)
 
 #define COUNT_LONG F_SSE41(countLong)
 #define SUM_LONG F_SSE41(sumLong)
@@ -125,6 +128,7 @@
 #define SUM_INT_ACC F_SSE2(sumIntAcc)
 #define MIN_INT F_SSE2(minInt)
 #define MAX_INT F_SSE2(maxInt)
+#define MIN_MAX_COUNT_INT F_SSE2(minMaxCountInt)
 
 #define COUNT_LONG F_SSE2(countLong)
 #define SUM_LONG F_SSE2(sumLong)
@@ -472,6 +476,47 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
         }
     }
     return max;
+}
+
+int64_t MIN_MAX_COUNT_INT(int32_t *pi, int64_t count, int32_t *minMax) {
+    if (count == 0) {
+        minMax[0] = I_MIN;
+        minMax[1] = I_MIN;
+        return 0;
+    }
+
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = pi + count;
+    const auto *vec_lim = lim - remainder;
+
+    Vec16i vec;
+    Vec16ib bVec;
+    Vec16i vecMin = I_MAX;
+    Vec16i vecMax = I_MIN;
+    Vec16i vecCount = 0;
+    for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
+        vec.load(pi);
+        bVec = vec != I_MIN;
+        vecMin = min(vecMin, select(bVec, vec, I_MAX));
+        vecMax = max(vecMax, vec);
+        vecCount = if_add(bVec, vecCount, 1);
+    }
+
+    int32_t min = horizontal_min(vecMin);
+    int32_t max = horizontal_max(vecMax);
+    int64_t nonNulls = horizontal_add_x(vecCount);
+    for (; pi < lim; pi++) {
+        const int32_t i = *pi;
+        const bool isValue = i != I_MIN;
+        min = isValue && i < min ? i : min;
+        max = i > max ? i : max;
+        nonNulls += isValue;
+    }
+    minMax[0] = nonNulls > 0 ? min : I_MIN;
+    minMax[1] = max;
+    return nonNulls;
 }
 
 #endif
@@ -874,6 +919,7 @@ INT_LONG_DISPATCHER(sumInt)
 INT_LONG_ACC_DISPATCHER(sumIntAcc)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)
+INT_MIN_MAX_DISPATCHER(minMaxCountInt)
 
 LONG_LONG_DISPATCHER(countLong)
 LONG_LONG_DISPATCHER(sumLong)

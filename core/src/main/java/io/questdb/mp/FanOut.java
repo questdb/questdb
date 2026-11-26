@@ -158,6 +158,12 @@ public class FanOut implements Barrier {
         barrier.reset();
     }
 
+    public void resume(SCSequence subscriber) {
+        // gate the publisher before catching up, so the publisher cannot lap the catch-up position
+        subscriber.setCurrent(barrier.current());
+        subscriber.setCurrent(barrier.current());
+    }
+
     @Override
     public Barrier root() {
         return barrier != null ? barrier.root() : this;
@@ -177,6 +183,10 @@ public class FanOut implements Barrier {
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).setCurrent(value);
         }
+    }
+
+    public void suspend(SCSequence subscriber) {
+        subscriber.setCurrent(Long.MAX_VALUE);
     }
 
     @Override

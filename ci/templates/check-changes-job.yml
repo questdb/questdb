@@ -50,6 +50,9 @@ jobs:
             exit 0
           }
 
+          # The GitHub response carries each file's patch. Traced, a patch line holding an Azure logging
+          # command (the ##vso prefix) would be executed by the agent, so the loop runs untraced.
+          set +x
           PAGE=0
           while true; do
             PAGE=$((PAGE+1))

@@ -33,10 +33,12 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
     private final Function filter;
+    private final LatestByFrameScanner scanner;
 
     public LatestByValueFilteredRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -47,6 +49,13 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
     ) {
         super(configuration, metadata, columnIndex, symbolKey);
         this.filter = filter;
+        this.scanner = new LatestByFrameScanner(filter, frameMemoryPool, frameAddressCache);
+    }
+
+    @Override
+    public void close() {
+        filter.cursorClosed();
+        super.close();
     }
 
     @Override
@@ -105,23 +114,33 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         if (symbolKey == SymbolTable.VALUE_IS_NULL && !frameCursor.getSymbolTable(columnIndex).containsNullValue()) {
             return;
         }
+        final Function javaFilter = scanner.getJavaFilter();
         PageFrame frame;
         OUT:
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
-
+            final int frameIndex = frameCount;
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    int key = recordA.getInt(columnIndex);
-                    if (key == symbolKey) {
-                        isRecordFound = true;
-                        break OUT;
+            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            while (scanner.nextBatch(circuitBreaker)) {
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        if (javaFilter.getBool(recordA) && recordA.getInt(columnIndex) == symbolKey) {
+                            isRecordFound = true;
+                            break OUT;
+                        }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        recordA.setRowIndex(matches.get(i) + batchLo);
+                        if (recordA.getInt(columnIndex) == symbolKey) {
+                            isRecordFound = true;
+                            break OUT;
+                        }
                     }
                 }
             }

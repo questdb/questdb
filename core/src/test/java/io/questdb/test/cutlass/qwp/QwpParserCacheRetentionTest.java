@@ -31,6 +31,7 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
@@ -44,6 +45,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 
@@ -297,6 +299,40 @@ public class QwpParserCacheRetentionTest {
                 Assert.assertEquals(16, cursor.getDecodedIndexCacheCapacity());
             } finally {
                 Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * A wide schema's parse is kept by the schema cache, on the table's entry, never by
+     * the block cursor: parsing it leaves the cursor's retained memory unchanged, and
+     * so does the late failure of the message's next block.
+     */
+    @Test
+    public void testSchemaParseKeptByCacheNotByCursorAfterLateTableFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (QwpTableBuffer buffer = new QwpTableBuffer("wide_schema");
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                final int columns = 200;
+                for (int c = 0; c < columns; c++) {
+                    buffer.getOrCreateColumn("a_rather_long_column_name_" + c, TYPE_LONG, false).addLong(c);
+                }
+                buffer.nextRow();
+
+                int size = encoder.encode(buffer);
+                long address = encoder.getBuffer().getBufferPtr();
+                Unsafe.putShort(address + QwpConstants.HEADER_OFFSET_TABLE_COUNT, (short) 2);
+
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                final QwpSchemaCacheEntry entry = new QwpSchemaCacheEntry();
+                cursor.setSchemaCache(tableName -> entry);
+                cursor.of(address, size, null);
+                final long before = cursor.getRetainedCacheBytes();
+                cursor.nextTable();
+                Assert.assertEquals("the cursor keeps no schema", before, cursor.getRetainedCacheBytes());
+                Assert.assertTrue("the table's entry keeps it", entry.getRetainedBytes() > columns * 27L);
+                Assert.assertThrows(QwpParseException.class, cursor::nextTable);
+                Assert.assertEquals(before, cursor.getRetainedCacheBytes());
             }
         });
     }

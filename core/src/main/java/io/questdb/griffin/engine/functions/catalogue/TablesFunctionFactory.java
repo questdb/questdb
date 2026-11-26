@@ -27,11 +27,14 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.RecentWriteTracker;
@@ -41,15 +44,16 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -59,6 +63,9 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN = 5;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
     private static final int DIRECTORY_NAME_COLUMN = 9;
+    // Row-expiry policy (45-46) - appended, keep at the end
+    private static final int EXPIRE_CLEANUP_EVERY_COLUMN = 46;
+    private static final int EXPIRE_CLAUSE_COLUMN = 45;
     // Base columns (0-11) - pre-existing, keep names
     private static final int ID_COLUMN = 0;
     private static final int IS_MAT_VIEW_COLUMN = 8;
@@ -137,6 +144,12 @@ public class TablesFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
+    @Override
     public String getSignature() {
         return "tables()";
     }
@@ -165,23 +178,20 @@ public class TablesFunctionFactory implements FunctionFactory {
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         private final TablesRecordCursor cursor;
-        private final CharSequenceObjMap<CairoTable> tableCache;
-        private long tableCacheVersion = -1;
+        private final VisibleTablesSnapshot tables;
 
         public TablesCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
-            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
-            cursor = new TablesRecordCursor(tableCache);
+            tables = new VisibleTablesSnapshot(configuration);
+            cursor = new TablesRecordCursor(tables);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final CairoEngine engine = executionContext.getCairoEngine();
-            // Reconciles against the table registry before snapshotting, so the
-            // catalogue is complete even mid startup hydration.
-            tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
-            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI(), executionContext.getCircuitBreaker());
+            tables.refresh(executionContext);
+            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI(), executionContext);
             cursor.toTop();
             return cursor;
         }
@@ -203,20 +213,21 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final CharSequenceObjMap<CairoTable> tableCache;
+            private final VisibleTablesSnapshot tables;
             private SqlExecutionCircuitBreaker circuitBreaker;
             private int iteratorIdx = -1;
             private int iteratorLim;
             private RecentWriteTracker recentWriteTracker;
             private TableSequencerAPI tableSequencerAPI;
 
-            public TablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache) {
-                this.tableCache = tableCache;
-                this.iteratorLim = tableCache.size() - 1;
+            public TablesRecordCursor(VisibleTablesSnapshot tables) {
+                this.tables = tables;
+                this.iteratorLim = tables.size() - 1;
             }
 
             @Override
             public void close() {
+                record.executionContext = null;
             }
 
             @Override
@@ -228,18 +239,19 @@ public class TablesFunctionFactory implements FunctionFactory {
             public boolean hasNext() {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (iteratorIdx < iteratorLim) {
-                    record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
+                    record.of(tables.getQuick(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
                     return true;
                 }
                 return false;
             }
 
-            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI, SqlExecutionCircuitBreaker circuitBreaker) {
+            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI, SqlExecutionContext executionContext) {
                 this.recentWriteTracker = recentWriteTracker;
                 this.tableSequencerAPI = tableSequencerAPI;
-                this.circuitBreaker = circuitBreaker;
-                // can is refreshed every time cursor is refreshed
-                this.iteratorLim = tableCache.size() - 1;
+                this.circuitBreaker = executionContext.getCircuitBreaker();
+                record.executionContext = executionContext;
+                // the visible tables are refreshed every time the cursor is opened
+                this.iteratorLim = tables.size() - 1;
             }
 
             @Override
@@ -258,11 +270,22 @@ public class TablesFunctionFactory implements FunctionFactory {
             }
 
             private static class TableListRecord implements Record {
+                private final StringSink expiryCleanupEverySink = new StringSink();
+                private final StringSink expiryPredicateSink = new StringSink();
+                private SqlExecutionContext executionContext;
+                private boolean hasDelta;
+                private boolean hasExpiryCleanupEvery;
+                private boolean hasExpiryPredicate;
+                private boolean hasTableStats;
                 private StringSink lazyStringSink = null;
+                private long rowCount;
                 private CairoTable table;
+                private long tableMaxTimestamp;
+                private long tableMinTimestamp;
                 private TableSequencerAPI tableSequencerAPI;
                 private TimestampDriver timestampDriver;
                 private RecentWriteTracker.WriteStats writeStats;
+                private long writerTxn;
 
                 @Override
                 public boolean getBool(int col) {
@@ -343,6 +366,10 @@ public class TablesFunctionFactory implements FunctionFactory {
                                 || col == REPLICA_BATCH_SIZE_P90_COLUMN || col == REPLICA_BATCH_SIZE_P99_COLUMN
                                 || col == REPLICA_BATCH_SIZE_MAX_COLUMN ? 0 : Numbers.LONG_NULL;
                     }
+                    if (hasDelta && (col == TABLE_ROW_COUNT_COLUMN || col == TABLE_TXN_COLUMN)) {
+                        loadTableStats();
+                        return col == TABLE_ROW_COUNT_COLUMN ? rowCount : writerTxn;
+                    }
                     return switch (col) {
                         case TABLE_ROW_COUNT_COLUMN -> writeStats.getRowCount();
                         case TABLE_TXN_COLUMN -> writeStats.getWriterTxn();
@@ -375,6 +402,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case TABLE_NAME -> table.getTableName();
                         case PARTITION_BY_COLUMN -> table.getPartitionByName();
                         case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
+                        case EXPIRE_CLAUSE_COLUMN -> hasExpiryPredicate ? expiryPredicateSink : null;
+                        case EXPIRE_CLEANUP_EVERY_COLUMN -> hasExpiryCleanupEvery ? expiryCleanupEverySink : null;
                         case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {
@@ -406,6 +435,10 @@ public class TablesFunctionFactory implements FunctionFactory {
                     if (writeStats == null) {
                         return Numbers.LONG_NULL;
                     }
+                    if (hasDelta && (col == TABLE_MIN_TIMESTAMP_COLUMN || col == TABLE_MAX_TIMESTAMP_COLUMN)) {
+                        loadTableStats();
+                        return timestampDriver.toMicros(col == TABLE_MIN_TIMESTAMP_COLUMN ? tableMinTimestamp : tableMaxTimestamp);
+                    }
                     return switch (col) {
                         case TABLE_MIN_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMinTimestamp());
                         case TABLE_MAX_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMaxTimestamp());
@@ -416,11 +449,55 @@ public class TablesFunctionFactory implements FunctionFactory {
                     };
                 }
 
+                private void loadTableStats() {
+                    if (hasTableStats) {
+                        return;
+                    }
+                    // Resolve only requested statistics, once per record, at one reader snapshot.
+                    try (TableReader reader = executionContext.getReader(table.getTableToken())) {
+                        rowCount = reader.getLogicalRowCount();
+                        writerTxn = reader.getSeqTxn();
+                        tableMinTimestamp = reader.getMinTimestamp();
+                        if (tableMinTimestamp == Long.MAX_VALUE) {
+                            tableMinTimestamp = Numbers.LONG_NULL;
+                        }
+                        tableMaxTimestamp = reader.getMaxTimestamp();
+                    } catch (TableReferenceOutOfDateException ignored) {
+                        loadTrackedTableStats();
+                    } catch (CairoException e) {
+                        if (!e.isTableDoesNotExist() && !e.isTableDropped()) {
+                            throw e;
+                        }
+                        loadTrackedTableStats();
+                    }
+                    hasTableStats = true;
+                }
+
+                private void loadTrackedTableStats() {
+                    rowCount = writeStats.getRowCount();
+                    writerTxn = writeStats.getWriterTxn();
+                    tableMinTimestamp = writeStats.getTableMinTimestamp();
+                    tableMaxTimestamp = writeStats.getTableMaxTimestamp();
+                }
+
                 private void of(CairoTable table, RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
                     this.table = table;
                     this.tableSequencerAPI = tableSequencerAPI;
                     this.writeStats = recentWriteTracker.getWriteStats(table.getTableToken());
                     this.timestampDriver = ColumnType.getTimestampDriver(table.getTimestampType());
+                    this.hasDelta = writeStats != null && writeStats.hasDelta();
+                    this.hasTableStats = false;
+
+                    expiryPredicateSink.clear();
+                    hasExpiryPredicate = table.getExpiryPredicate() != null;
+                    if (hasExpiryPredicate) {
+                        RowExpiryUtil.appendDisplayPredicate(expiryPredicateSink, table.getExpiryPredicate());
+                    }
+                    expiryCleanupEverySink.clear();
+                    hasExpiryCleanupEvery = table.getExpiryCleanupIntervalMicros() > 0;
+                    if (hasExpiryCleanupEvery) {
+                        RowExpiryUtil.appendCleanupEvery(expiryCleanupEverySink, table.getExpiryCleanupIntervalMicros());
+                    }
                 }
             }
         }
@@ -483,6 +560,9 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("replica_batch_size_p99", ColumnType.LONG));         // 42
         metadata.add(new TableColumnMetadata("replica_batch_size_max", ColumnType.LONG));         // 43
         metadata.add(new TableColumnMetadata("replica_more_pending", ColumnType.BOOLEAN));        // 44
+        // Row-expiry policy (45-46)
+        metadata.add(new TableColumnMetadata("expire_clause", ColumnType.STRING));             // 45
+        metadata.add(new TableColumnMetadata("expire_cleanup_every", ColumnType.STRING));         // 46
         METADATA = metadata;
     }
 }

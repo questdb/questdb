@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
  * should be used.
  */
 public interface PageFrame {
-
     /**
      * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
      * <p>
@@ -66,13 +65,25 @@ public interface PageFrame {
     int getColumnCount();
 
     /**
-     * Returns page frame format.
-     * <p>
-     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     * Address of the full designated-timestamp vector used by a borrowed native base view.
      */
-    byte getFormat();
+    default long getDesignatedTimestampPageAddress() {
+        return 0;
+    }
 
-    IndexReader getIndexReader(int columnIndex, int direction);
+    /**
+     * Size of the full designated-timestamp vector used by a borrowed native base view.
+     */
+    default long getDesignatedTimestampPageSize() {
+        return 0;
+    }
+
+    /**
+     * Physical column top of the designated timestamp.
+     */
+    default long getDesignatedTimestampPageTop() {
+        return 0;
+    }
 
     /**
      * Per-column runtime source tag.
@@ -144,6 +155,26 @@ public interface PageFrame {
     }
 
     /**
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    byte getFormat();
+
+    IndexReader getIndexReader(int columnIndex, int direction);
+
+    /**
+     * Returns the high row, exclusive, to ask this frame's INDEX for. See {@link #getIndexRowLo()}.
+     */
+    default long getIndexRowHi() {
+        return getPartitionHi();
+    }
+
+    default long getIndexRowLo() {
+        return getPartitionLo();
+    }
+
+    /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already
      * had data) then return 0.
@@ -164,6 +195,13 @@ public interface PageFrame {
      * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
+
+    /**
+     * Physical column top for a borrowed native base view.
+     */
+    default long getPageTop(int columnIndex) {
+        return 0;
+    }
 
     default ParquetDecoder getParquetDecoder() {
         return null;
@@ -187,6 +225,13 @@ public interface PageFrame {
     int getParquetRowGroupLo();
 
     /**
+     * Opaque Rust logical-frame state; zero when this frame is base-only.
+     */
+    default long getPartitionFrameState() {
+        return 0;
+    }
+
+    /**
      * Return high row index within the frame's partition, exclusive.
      */
     long getPartitionHi();
@@ -200,4 +245,15 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * Tells whether this frame is one of the skip-only skeletons {@link PageFrameCursor#next(long)} hands back for a span the
+     * caller has already decided to discard. A skeleton carries a row span and nothing else: no page addresses,
+     * and a span cut wherever the skip landed rather than where a readable scan would cut a frame. It therefore
+     * neither reads nor occupies a page-frame slot - {@code PageFrameRecordCursorImpl.skipRows()} keeps it out of
+     * {@link PageFrameAddressCache}, which indexes frames by their position in the scan.
+     */
+    default boolean isSkipSkeleton() {
+        return false;
+    }
 }

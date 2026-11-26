@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -32,6 +33,7 @@ import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -53,6 +55,7 @@ public class FailureFileFacade implements FilesFacade {
     private volatile String contaminatingThreadName;
     private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
+    private volatile boolean isDetachCopied;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
@@ -67,6 +70,14 @@ public class FailureFileFacade implements FilesFacade {
             return false;
         }
         return ff.allocate(fd, size);
+    }
+
+    @Override
+    public boolean allocate(long fd, long allocatedSize, long size) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.allocate(fd, allocatedSize, size);
     }
 
     @Override
@@ -167,6 +178,15 @@ public class FailureFileFacade implements FilesFacade {
         return failureGenerated.get();
     }
 
+    /**
+     * The armed countdown: the value passed to {@link #setToFailAfter(int)} minus the file
+     * system calls counted since. It keeps falling past zero after the failure fires, so the
+     * difference is the number of calls made while armed.
+     */
+    public int getOsCallsCount() {
+        return osCallsCount.get();
+    }
+
     @Override
     public long findClose(long findPtr) {
         return ff.findClose(findPtr);
@@ -198,14 +218,54 @@ public class FailureFileFacade implements FilesFacade {
         return ff.findType(findPtr);
     }
 
+    /**
+     * Forwarded like every other syscall. Without this the default implementation runs against the wrapped
+     * facade's fd but bypasses this wrapper, so on Darwin, where barrierFsync is a distinct syscall rather
+     * than a routed fdatasync, the fault injection never sees a WAL commit barrier.
+     */
+    @Override
+    public void barrierFsync(long fd) {
+        try {
+            ff.barrierFsync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
+    }
+
+    @Override
+    public void fdatasync(long fd) {
+        try {
+            ff.fdatasync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        try {
+            ff.syncfs(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
+    }
+
     @Override
     public void fsync(long fd) {
-        ff.fsync(fd);
+        try {
+            ff.fsync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
     public void fsyncAndClose(long fd) {
-        ff.fsyncAndClose(fd);
+        try {
+            ff.fsyncAndClose(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
@@ -260,7 +320,17 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        if (isDetachCopied && Utf8s.endsWithAscii(dst, TableUtils.DETACHING_DIR_MARKER)) {
+            return ff.copyRecursive(src, dst, dirMode);
+        }
         return ff.hardLinkDirRecursive(src, dst, dirMode);
+    }
+
+    /**
+     * Whether a failure planted by {@link #setToFailAfter} has not fired yet.
+     */
+    public boolean isArmed() {
+        return osCallsCount.get() > 0;
     }
 
     @Override
@@ -375,7 +445,11 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void msync(long addr, long len, boolean async) {
-        ff.msync(addr, len, async);
+        try {
+            ff.msync(addr, len, async);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
@@ -421,6 +495,14 @@ public class FailureFileFacade implements FilesFacade {
             return -1;
         }
         return ff.openRW(name, opts);
+    }
+
+    @Override
+    public long openRWExisting(LPSZ name) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.openRWExisting(name);
     }
 
     @Override
@@ -514,6 +596,15 @@ public class FailureFileFacade implements FilesFacade {
             return false;
         }
         return ff.rmdir(name, haltOnError);
+    }
+
+    /**
+     * While on, hardLinkDirRecursive() copies into a directory whose name ends with
+     * {@link TableUtils#DETACHING_DIR_MARKER}, the temporary directory of DETACH PARTITION, and links every other
+     * directory. Off by default. The detach/attach fuzz copies on DETACH, see questdb-enterprise#1575.
+     */
+    public void setDetachCopied(boolean isDetachCopied) {
+        this.isDetachCopied = isDetachCopied;
     }
 
     public void setToFailAfter(int ioFailureCallCount) {
@@ -645,5 +736,16 @@ public class FailureFileFacade implements FilesFacade {
             failureGenerated.incrementAndGet();
         }
         return fail;
+    }
+
+    /**
+     * The wrapped facade records a failed flush against itself, so it would not reach the engine configured with
+     * this wrapper. Raise it again through the factory against this facade.
+     */
+    private CairoException raiseAsOwnFlushFailure(CairoException e) {
+        if (!e.isDataSyncFailure()) {
+            return e;
+        }
+        return CairoException.dataSyncFailure(this, e.getErrno(), e.getDataSyncOperation(), e.getFlyweightMessage());
     }
 }

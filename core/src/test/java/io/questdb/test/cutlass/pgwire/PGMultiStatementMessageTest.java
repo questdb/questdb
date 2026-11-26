@@ -25,12 +25,22 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.jdbc.PgConnection;
@@ -46,6 +56,7 @@ import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.EXTENDED_FOR_PREPARED;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.SIMPLE;
@@ -55,6 +66,33 @@ import static org.junit.Assert.*;
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
+    private static final String SCHEMA_CHANGE_TABLE = "schema_change_t";
+    // the schema change hook, inert until a test arms it, see setUpStatic()
+    private static final AtomicInteger schemaChangesLeft = new AtomicInteger();
+
+    /**
+     * While {@code schemaChangesLeft} is positive, each open of a reader on
+     * {@code schema_change_t} at a known metadata version adds a column to the table just before
+     * the open and decrements it, as a concurrent ALTER would between the optimiser recording the
+     * version and code generation opening the reader.
+     */
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = configuration -> new CairoEngine(configuration) {
+            @Override
+            public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                if (metadataVersion > -1
+                        && schemaChangesLeft.get() > 0
+                        && Chars.equals(tableToken.getTableName(), SCHEMA_CHANGE_TABLE)) {
+                    try (TableWriter writer = TestUtils.getWriter(this, SCHEMA_CHANGE_TABLE)) {
+                        writer.addColumn("extra" + schemaChangesLeft.decrementAndGet(), ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                    }
+                }
+                return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
@@ -1110,6 +1148,40 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
                     data(row(1L, "a"), row(2L, "b"))
             );
+        });
+    }
+
+    @Test
+    public void testSchemaChangeDuringCompileRetriesSameStatement() throws Exception {
+        // The third statement's first code generation finds its table out of date. The retry
+        // must re-parse the third statement, not the block's first one: the client gets one
+        // result per statement, and the INSERT runs once.
+        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        CREATE TABLE schema_change_t (x INT);
+                        INSERT INTO schema_change_t VALUES (42);
+                        CREATE TABLE schema_change_log (v INT);
+                        """);
+                schemaChangesLeft.set(1);
+                try {
+                    final boolean hasResult = statement.execute("""
+                            SELECT 'first' a FROM long_sequence(1);
+                            INSERT INTO schema_change_log VALUES (1);
+                            SELECT * FROM schema_change_t;
+                            """);
+                    assertResults(statement, hasResult, data(row("first")), one(), data(row(42, null)));
+                    Assert.assertEquals(0, schemaChangesLeft.get());
+                } finally {
+                    schemaChangesLeft.set(0);
+                }
+                // the same statement text again, which a plan cached under the wrong statement would answer
+                final boolean hasResult = statement.execute("""
+                        SELECT * FROM schema_change_log;
+                        SELECT * FROM schema_change_t;
+                        """);
+                assertResults(statement, hasResult, data(row(1)), data(row(42, null)));
+            }
         });
     }
 

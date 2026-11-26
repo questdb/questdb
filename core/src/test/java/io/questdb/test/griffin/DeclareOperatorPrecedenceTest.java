@@ -121,7 +121,7 @@ public class DeclareOperatorPrecedenceTest extends AbstractCairoTest {
                 assertQuery("DECLARE @a :=").withCompiler(compiler)
                         .fails(11, "too few arguments for ':='");
                 assertQuery("DECLARE @a := (1, 2) SELECT @a").withCompiler(compiler)
-                        .fails(21, "bracket lists are not supported");
+                        .fails(14, "declared list can only be used on the right-hand side of IN");
                 assertQuery("SELECT 7 AS value").withCompiler(compiler).expectSize().returns("value\n7\n");
             }
         });

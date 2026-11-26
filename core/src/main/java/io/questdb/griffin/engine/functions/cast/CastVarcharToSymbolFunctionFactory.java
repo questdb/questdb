@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -42,7 +41,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.Utf8SequenceIntHashMap;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
@@ -80,13 +80,22 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final Utf8SequenceIntHashMap lookupMap = new Utf8SequenceIntHashMap();
-        private final ObjList<CharSequence> symbols = new ObjList<>();
-        private int next = 1;
+        private final StringSink decodeSink = new StringSink();
+        private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+        private final DirectString symbolA = new DirectString();
+        private final DirectString symbolB = new DirectString();
 
         public Func(Function arg) {
             this.arg = arg;
-            symbols.add(null);
+        }
+
+        @Override
+        public void close() {
+            try {
+                releaseDictionary();
+            } finally {
+                arg.close();
+            }
         }
 
         @Override
@@ -96,48 +105,26 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            final int keyIndex;
-            if (value == null) {
-                return SymbolTable.VALUE_IS_NULL;
-            }
-            if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = utf8ToString(value);
-                if (str == null) {
-                    return SymbolTable.VALUE_IS_NULL;
-                }
-                lookupMap.putAt(keyIndex, value, next);
-                symbols.add(str);
-                return next++ - 1;
-            }
-            return lookupMap.valueAt(keyIndex) - 1;
+            return intern(arg.getVarcharA(rec));
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            if (value == null) {
-                return null;
-            }
-            return getSymbol(value);
+            // Interning finds a repeated value by its UTF-8 bytes and decodes only a new one, so
+            // returning the dictionary's text costs no per-row UTF-8 to UTF-16 conversion.
+            return dictionary.valueOf(intern(arg.getVarcharA(rec)), symbolA);
         }
 
         @Override
         public CharSequence getSymbolB(Record rec) {
-            final Utf8Sequence value = arg.getVarcharB(rec);
-            if (value == null) {
-                return null;
-            }
-            return getSymbol(value);
+            return dictionary.valueOf(intern(arg.getVarcharB(rec)), symbolB);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            releaseDictionary();
             arg.init(symbolTableSource, executionContext);
-            lookupMap.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+            dictionary.init(executionContext);
         }
 
         @Override
@@ -152,7 +139,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            return new CastToSymbolTable(symbols);
+            return new CastToSymbolTable(dictionary);
         }
 
         @Override
@@ -162,26 +149,25 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            return dictionary.valueOf(key, symbolB);
         }
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+            return dictionary.valueOf(symbolKey, symbolA);
         }
 
-        private CharSequence getSymbol(Utf8Sequence value) {
-            final int keyIndex;
-            if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = utf8ToString(value);
-                if (str == null) {
-                    return null;
-                }
-                lookupMap.putAt(keyIndex, value, next++);
-                symbols.add(str);
-                return str;
+        private int intern(@Nullable Utf8Sequence value) {
+            if (value == null) {
+                return SymbolTable.VALUE_IS_NULL;
             }
-            return symbols.getQuick(lookupMap.valueAt(keyIndex));
+            return dictionary.intern(value, decodeSink);
+        }
+
+        private void releaseDictionary() {
+            dictionary.clear();
+            symbolA.clear();
+            symbolB.clear();
         }
     }
 }

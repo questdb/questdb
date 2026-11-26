@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TxReader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
@@ -126,7 +127,7 @@ public class RecentWriteTracker {
     public WriteStats getOrCreateStats(@NotNull TableToken tableToken) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats == null) {
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, RowCountSource.TXN);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             stats = existing != null ? existing : newStats;
         }
@@ -287,20 +288,23 @@ public class RecentWriteTracker {
     /**
      * Records that WAL rows have been processed (applied to the table).
      * <p>
-     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
-     * Called after successful WAL transaction application.
+     * This decrements the pending WAL row count and raises the floor to seqTxn (if seqTxn > floor), and
+     * accumulates dedup row count. Called after successful WAL transaction application. A writer that drops
+     * its WAL lag applies the lag's transactions again; their rows left the pending count the first time, so
+     * the caller counts only the rows of transactions above the floor.
      *
      * @param tableToken       the table whose WAL was processed
-     * @param seqTxn           the sequencer transaction number being processed
-     * @param walRowCount      the number of WAL rows that were processed (before dedup)
+     * @param seqTxn           the highest sequencer transaction number processed
+     * @param walRowCount      the number of WAL rows processed above the floor (before dedup)
      * @param dedupRowsRemoved the number of duplicate rows removed during dedup
      */
     public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long dedupRowsRemoved) {
         try {
             WriteStats stats = getOrCreateStats(tableToken);
-            // Only subtract if seqTxn is above the floor (rows added after tracking started)
+            // Only subtract if seqTxn is above the floor (rows added after tracking started, not yet subtracted)
             if (seqTxn > stats.getFloorSeqTxn()) {
                 stats.walRowCount.add(-walRowCount);
+                stats.setFloorSeqTxn(seqTxn);
             }
             if (dedupRowsRemoved > 0) {
                 stats.dedupRowCount.add(dedupRowsRemoved);
@@ -382,8 +386,12 @@ public class RecentWriteTracker {
      * @param writerTxn      the writer transaction number (not WAL sequence txn)
      */
     public void recordWrite(@NotNull TableToken tableToken, long writeTimestamp, long rowCount, long writerTxn) {
+        recordWrite(tableToken, writeTimestamp, rowCount, writerTxn, RowCountSource.TXN);
+    }
+
+    public void recordWrite(@NotNull TableToken tableToken, long writeTimestamp, long rowCount, long writerTxn, RowCountSource rowCountSource) {
         try {
-            getOrCreateStats(tableToken).updateWriter(writeTimestamp, rowCount, writerTxn);
+            getOrCreateStats(tableToken).updateWriter(writeTimestamp, rowCount, writerTxn, rowCountSource);
 
             // Lazy eviction: only clean up when we exceed 2x capacity
             // This amortizes the cleanup cost and reduces contention
@@ -422,6 +430,21 @@ public class RecentWriteTracker {
             long tableMinTimestamp,
             long tableMaxTimestamp
     ) {
+        return recordWriteIfAbsent(tableToken, writeTimestamp, rowCount, writerTxn, sequencerTxn,
+                walTimestamp, tableMinTimestamp, tableMaxTimestamp, RowCountSource.TXN);
+    }
+
+    public boolean recordWriteIfAbsent(
+            @NotNull TableToken tableToken,
+            long writeTimestamp,
+            long rowCount,
+            long writerTxn,
+            long sequencerTxn,
+            long walTimestamp,
+            long tableMinTimestamp,
+            long tableMaxTimestamp,
+            RowCountSource rowCountSource
+    ) {
         try {
             // Check first to avoid allocation when entry exists
             if (writeStats.containsKey(tableToken)) {
@@ -431,7 +454,7 @@ public class RecentWriteTracker {
             // CAS insert - only succeeds if no entry exists
             WriteStats existing = writeStats.putIfAbsent(
                     tableToken,
-                    new WriteStats(writeTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp)
+                    new WriteStats(writeTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp, rowCountSource)
             );
             if (existing != null) {
                 // Another thread (likely a writer) inserted first - their data wins
@@ -462,7 +485,7 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Sets the floor seqTxn for a table. WAL rows with seqTxn &lt;= floor will not be subtracted
+     * Raises the floor seqTxn for a table. WAL rows with seqTxn &lt;= floor will not be subtracted
      * from pending count since they were never added (existed before tracking started).
      * Called on startup for tables with pending WALs. Creates WriteStats if it doesn't exist.
      *
@@ -571,6 +594,18 @@ public class RecentWriteTracker {
     }
 
     /**
+     * Selects metadata that can resolve the table's logical count.
+     */
+    public enum RowCountSource {
+        TXN,
+        DELTA;
+
+        public static RowCountSource of(TxReader reader) {
+            return reader.hasAnyDelta() ? DELTA : TXN;
+        }
+    }
+
+    /**
      * Holds statistics for a single table write.
      * <p>
      * Uses volatile fields for lock-free concurrent access. This allows zero-allocation
@@ -588,7 +623,8 @@ public class RecentWriteTracker {
         private final SimpleReadWriteLock batchSizeHistogramLock = new SimpleReadWriteLock();
         // Dedup row count - accumulated count of rows removed by deduplication
         private final LongAdder dedupRowCount = new LongAdder();
-        // Floor seqTxn - set on startup, WAL rows with seqTxn <= floor are not subtracted
+        // Floor seqTxn - WAL rows with seqTxn <= floor are not subtracted: set on startup (never added),
+        // raised by every processed transaction (already subtracted)
         private final AtomicLong floorSeqTxn = new AtomicLong(0);
         // Lock for merge stats (write amplification and merge throughput) access
         private final SimpleReadWriteLock mergeStatsLock = new SimpleReadWriteLock();
@@ -613,12 +649,14 @@ public class RecentWriteTracker {
         private long tableMinTimestamp;
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
+        private volatile RowCountSource rowCountSource;
         private volatile long timestamp;
         private volatile long writerTxn;
 
-        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp, long tableMinTimestamp, long tableMaxTimestamp) {
+        WriteStats(long timestamp, long rowCount, long writerTxn, long sequencerTxn, long walTimestamp, long tableMinTimestamp, long tableMaxTimestamp, RowCountSource rowCountSource) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
+            this.rowCountSource = rowCountSource;
             this.writerTxn = writerTxn;
             this.sequencerTxn = new AtomicLong(sequencerTxn);
             this.walTimestamp = new AtomicLong(walTimestamp);
@@ -716,7 +754,8 @@ public class RecentWriteTracker {
 
         /**
          * Returns the floor seqTxn. WAL rows with seqTxn &lt;= floor are not subtracted
-         * from pending count (they were never added because they existed before tracking started).
+         * from pending count (they were never added because they existed before tracking started,
+         * or they were subtracted already).
          *
          * @return floor seqTxn, or 0 if not set
          */
@@ -1070,6 +1109,10 @@ public class RecentWriteTracker {
             return writerTxn;
         }
 
+        public boolean hasDelta() {
+            return rowCountSource == RowCountSource.DELTA;
+        }
+
         /**
          * Updates replica download fields. Unlike updateWal, this records to the batch
          * histogram instead of the transaction histogram, since replicas download data
@@ -1161,10 +1204,11 @@ public class RecentWriteTracker {
         /**
          * Updates writer fields only, preserving sequencerTxn.
          */
-        private void updateWriter(long timestamp, long rowCount, long writerTxn) {
+        private void updateWriter(long timestamp, long rowCount, long writerTxn, RowCountSource rowCountSource) {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
+            this.rowCountSource = rowCountSource;
         }
 
         /**
@@ -1192,13 +1236,14 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Sets the floor seqTxn. Only succeeds if not already set (floor is 0).
-         * Called on startup to mark WAL transactions that existed before tracking started.
+         * Raises the floor seqTxn to the given value; a lower value leaves it as it is.
+         * Called on startup to mark WAL transactions that existed before tracking started,
+         * and for every processed transaction.
          *
          * @param floor the floor seqTxn to set
          */
         void setFloorSeqTxn(long floor) {
-            floorSeqTxn.compareAndSet(0, floor);
+            floorSeqTxn.accumulateAndGet(floor, Math::max);
         }
     }
 }

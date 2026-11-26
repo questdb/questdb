@@ -46,6 +46,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -184,6 +185,16 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    /**
+     * Throws when this entry's identity may not insert into the table, the check every
+     * commit of the entry's rows runs. QWP also runs it when a table joins a commit batch.
+     */
+    public void authorizeCommit() {
+        if (ownSecurityContext != null) {
+            ownSecurityContext.authorizeInsert(tableToken);
+        }
+    }
+
     @Override
     public void close() {
         synchronized (this) {
@@ -285,6 +296,32 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    /**
+     * {@link #commit(boolean)} without lag for a caller that already holds the role-switch
+     * read lock and checked {@link CairoEngine#isReadOnlyMode()} under it, as a QWP commit
+     * batch does once for all its tables: the role cannot change while the lock is held, so
+     * this skips the lock and the re-check. It also skips the renamed-table check that marks
+     * this entry's writer in error, which only the commit loops of the table caches act on.
+     * The writer holds rows to commit, as a commit batch's table always does. Authorizes the
+     * commit and reports a failure like {@code commit(false)}.
+     */
+    public void commitUnderRoleSwitchFence() throws CommitFailedException {
+        assert SuspensionScope.hasAnyRoleSwitchLock() : "the caller must hold the role-switch read lock";
+        assert writerAPI.getUncommittedRowCount() > 0 : "a fenced commit has no rows to commit";
+        try {
+            authorizeCommit();
+            writerAPI.commit();
+        } catch (CairoException ex) {
+            if (!ex.isTableDropped()) {
+                handleCommitException(ex);
+            }
+            throw CommitFailedException.instance(ex, ex.isTableDropped());
+        } catch (Throwable ex) {
+            handleCommitException(ex);
+            throw CommitFailedException.instance(ex, false);
+        }
+    }
+
     public long getEventsProcessedSinceReshuffle() {
         return eventsProcessedSinceReshuffle;
     }
@@ -307,6 +344,18 @@ public class TableUpdateDetails implements Closeable {
 
     public int getWalId() {
         return writerAPI != null ? writerAPI.getWalId() : -1;
+    }
+
+    /**
+     * The uncommitted row count at which {@link #commitIfMaxUncommittedRowsCountReached()}
+     * commits. Callers that must keep the commit from firing compare against this value,
+     * never a configuration value of their own.
+     */
+    public long getMetaMaxUncommittedRows() {
+        if (metadataService != null) {
+            return metadataService.getMetaMaxUncommittedRows();
+        }
+        return defaultMaxUncommittedRows;
     }
 
     public MillisecondClock getMillisecondClock() {
@@ -434,19 +483,6 @@ public class TableUpdateDetails implements Closeable {
      */
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
-    }
-
-    private void authorizeCommit() {
-        if (ownSecurityContext != null) {
-            ownSecurityContext.authorizeInsert(tableToken);
-        }
-    }
-
-    private long getMetaMaxUncommittedRows() {
-        if (metadataService != null) {
-            return metadataService.getMetaMaxUncommittedRows();
-        }
-        return defaultMaxUncommittedRows;
     }
 
     private void handleCommitException(Throwable ex) {

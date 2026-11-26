@@ -82,6 +82,10 @@ public class CoveringIndexBlockApplySealTest extends AbstractCairoTest {
      */
     private void configureForBlockApply() {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
+        // This class is about the WAL fast-lag block-apply, which a merge-append table refuses: every
+        // one of its commits is a merge-append, with its covering indexes published by that path instead
+        // (see CoveringIndexMergeAppendTest). Tests default to merge-append; ask for master's behaviour.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
     }
 
     @Test

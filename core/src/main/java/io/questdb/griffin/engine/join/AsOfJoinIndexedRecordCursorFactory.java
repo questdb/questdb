@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.SourceRowCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -180,29 +181,64 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
             long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
             int frameIndex = slaveTimeFrame.getFrameIndex();
+            // Last slave timestamp that scales to <= masterTimestamp, e.g. master 1500ns -> slave 1us.
+            // It caps source-row hits like rowMax caps physical hits; scaleTimestamp() saturates at MAX.
+            final long slaveTimestampHi = slaveTimestampScale == 1 || masterTimestamp == Long.MAX_VALUE
+                    ? masterTimestamp
+                    : Math.floorDiv(masterTimestamp, slaveTimestampScale);
             for (; ; ) {
-                IndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
+                final IndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
                         slaveSymbolColumnIndex,
                         IndexReader.DIR_BACKWARD
                 );
-                // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
-                // the first row within the BETWEEN ... AND ... range selected by the query.
-                // Use Record.getUpdateRowId() to get the absolute row ID.
-                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
-                final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
-                try (RowCursor rowCursor = indexReader.getCursor(symbolKey, rowLo, rowMax + rowLo)) {
-                    // Check the first entry only. They are sorted descending by timestamp,
-                    // so there aren't any entries more recent than the first one.
-                    if (rowCursor.hasNext()) {
-                        long rowId = rowCursor.next();
-                        slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
-                        long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                        if (slaveTimestamp <= masterTimestamp) {
-                            // Enforce tolerance limit if specified
-                            boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
-                                    slaveTimestamp >= masterTimestamp - toleranceInterval;
-                            record.hasSlave(hasSlave);
-                            return;
+                final long rowLo = slaveTimeFrameCursor.getIndexRowLoForCurrentFrame();
+                final SourceRowCursor sourceCursor = indexReader.getSourceRowCursor(
+                        symbolKey,
+                        null,
+                        slaveTimeFrame.getTimestampLo(),
+                        Math.min(slaveTimeFrame.getTimestampHi() - 1, slaveTimestampHi)
+                );
+                if (sourceCursor != null) {
+                    try (sourceCursor) {
+                        while (sourceCursor.hasNext()) {
+                            sourceCursor.nextOrdinal();
+                            if (!slaveTimeFrameCursor.recordAtSourceRow(
+                                    slaveRecB,
+                                    sourceCursor.getCursorRowRef(),
+                                    sourceCursor.getCursorTimestamp()
+                            )) {
+                                continue;
+                            }
+                            final long slaveTimestamp = scaleTimestamp(
+                                    slaveRecB.getTimestamp(slaveTimestampIndex),
+                                    slaveTimestampScale
+                            );
+                            if (slaveTimestamp <= masterTimestamp) {
+                                // Enforce tolerance limit if specified
+                                boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
+                                        slaveTimestamp >= masterTimestamp - toleranceInterval;
+                                record.hasSlave(hasSlave);
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    try (RowCursor rowCursor = indexReader.getCursor(symbolKey, rowLo, rowMax + rowLo)) {
+                        // Physical hits are bounded by rowMax and sorted newest first, so only check the first one.
+                        if (rowCursor.hasNext()) {
+                            final long rowId = rowCursor.next();
+                            slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
+                            final long slaveTimestamp = scaleTimestamp(
+                                    slaveRecB.getTimestamp(slaveTimestampIndex),
+                                    slaveTimestampScale
+                            );
+                            if (slaveTimestamp <= masterTimestamp) {
+                                // Enforce tolerance limit if specified
+                                boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
+                                        slaveTimestamp >= masterTimestamp - toleranceInterval;
+                                record.hasSlave(hasSlave);
+                                return;
+                            }
                         }
                     }
                 }

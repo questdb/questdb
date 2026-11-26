@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,7 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -66,13 +68,23 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
     private static final int bufferedTxnSizeColumn;
+    private static final int durableEpochSeqTxnColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
+    private static final int lastEpochTsColumn;
+    private static final int localDurableSeqTxnColumn;
     private static final int memoryPressureLevelColumn;
     private static final int nameColumn;
+    private static final int recoveryIncarnationColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
     private static final int writerTxnColumn;
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {
@@ -120,6 +132,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             engine = executionContext.getCairoEngine();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.securityContext = executionContext.getSecurityContext();
             cursor.init();
             return cursor;
         }
@@ -144,6 +157,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private final TxReader txReader = new TxReader(ff);
             private SqlExecutionCircuitBreaker circuitBreaker;
+            private SecurityContext securityContext;
             private int tableIndex = -1;
 
             @Override
@@ -164,7 +178,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 final int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     final TableToken tableToken = tableBucket.get(tableIndex);
-                    if (engine.isWalTable(tableToken) && !engine.isTableDropped(tableToken) && record.switchTo(tableToken)) {
+                    if (engine.isWalTable(tableToken)
+                            && !engine.isTableDropped(tableToken)
+                            && securityContext.isWalTableVisible(tableToken)
+                            && record.switchTo(tableToken)) {
                         break;
                     }
                 }
@@ -194,9 +211,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             public class TableListRecord implements Record {
                 private long bufferedTxnSize;
+                private long durableEpochSeqTxn;
                 private String errorMessage;
                 private String errorTag;
+                private long lastEpochTs;
+                private long localDurableSeqTxn;
                 private int memoryPressureLevel;
+                private long recoveryIncarnation;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
@@ -228,6 +249,18 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == sequencerTxnColumn) {
                         return sequencerTxn;
+                    }
+                    if (col == durableEpochSeqTxnColumn) {
+                        return durableEpochSeqTxn;
+                    }
+                    if (col == recoveryIncarnationColumn) {
+                        return recoveryIncarnation;
+                    }
+                    if (col == localDurableSeqTxnColumn) {
+                        return localDurableSeqTxn;
+                    }
+                    if (col == lastEpochTsColumn) {
+                        return lastEpochTs;
                     }
                     return Numbers.LONG_NULL;
                 }
@@ -263,7 +296,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
-
+                        durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
+                        recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
+                        localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
+                        // The tracker records publication time in millis; the TIMESTAMP column uses micros.
+                        // Zero means no time is known, independently of applied-writer initialization.
+                        long lastEpochMs = seqTxnTracker.getLastEpochTs();
+                        lastEpochTs = lastEpochMs > 0 ? lastEpochMs * 1000 : Numbers.LONG_NULL;
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
@@ -286,9 +325,17 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             // but we no longer need it since we ignore suspended flag on the restart
                             // and try to apply transactions once any way.
 
-                            // Not initialized means there will be an attempt to apply
-                            // meaning the table is not suspended
-                            suspendedFlag = false;
+                            // Not initialized means WAL apply has yet to run on the table, so it is not
+                            // suspended, unless an apply already failed to open the writer, which suspends
+                            // the table without initialising the tracker.
+                            suspendedFlag = seqTxnTracker.isSuspended();
+                            if (suspendedFlag) {
+                                errorTag = seqTxnTracker.getErrorTag().text();
+                                errorMessage = seqTxnTracker.getErrorMessage();
+                            } else {
+                                errorTag = "";
+                                errorMessage = "";
+                            }
 
                             rootLen = rootPath.size();
                             rootPath.concat(tableToken).concat(SEQ_DIR);
@@ -308,6 +355,20 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                                 writerTxn = txReader.getSeqTxn();
                                 bufferedTxnSize = txReader.getLagTxnCount();
+                                return true;
+                            } catch (CairoException e) {
+                                if (e.isFileCannotRead() || e.isTableDoesNotExist() || e.isTableDropped()) {
+                                    throw e;
+                                }
+                                // One table whose files cannot be read must not fail the listing of every other
+                                // table. Keep its actual suspension state and the error of an apply that
+                                // already failed on it: that one names the cause rather than the symptom.
+                                writerTxn = Numbers.LONG_NULL;
+                                bufferedTxnSize = Numbers.LONG_NULL;
+                                if (!suspendedFlag) {
+                                    errorTag = "";
+                                    errorMessage = e.getFlyweightMessage().toString();
+                                }
                                 return true;
                             }
                         } finally {
@@ -348,6 +409,15 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         errorMessageColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("memoryPressure", ColumnType.INT));
         memoryPressureLevelColumn = metadata.getColumnCount() - 1;
+        // Adaptive columns, appended so that positional consumers of the earlier columns are unaffected
+        metadata.add(new TableColumnMetadata("durableEpochSeqTxn", ColumnType.LONG));
+        durableEpochSeqTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));
+        recoveryIncarnationColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("localDurableSeqTxn", ColumnType.LONG));
+        localDurableSeqTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("lastEpochTs", ColumnType.TIMESTAMP));
+        lastEpochTsColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

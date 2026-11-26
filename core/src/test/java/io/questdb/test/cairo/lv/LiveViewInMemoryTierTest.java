@@ -1530,11 +1530,11 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 final long tsAddr = buf.dataAddress(0);
                 final long uuidAddr = buf.dataAddress(2);
                 for (int r = 0; r < rows; r++) {
-                    Assert.assertEquals(buf.getLong(r, 0), Unsafe.getUnsafe().getLong(tsAddr + ((long) r << 3)));
+                    Assert.assertEquals(buf.getLong(r, 0), Unsafe.getLong(tsAddr + ((long) r << 3)));
                     // UUID / LONG128 store lo first and hi at + 8 - the same 16-byte
                     // layout PageFrameMemoryRecord.getLong128Lo/Hi read.
-                    Assert.assertEquals(buf.getLong128Lo(r, 2), Unsafe.getUnsafe().getLong(uuidAddr + ((long) r << 4)));
-                    Assert.assertEquals(buf.getLong128Hi(r, 2), Unsafe.getUnsafe().getLong(uuidAddr + ((long) r << 4) + Long.BYTES));
+                    Assert.assertEquals(buf.getLong128Lo(r, 2), Unsafe.getLong(uuidAddr + ((long) r << 4)));
+                    Assert.assertEquals(buf.getLong128Hi(r, 2), Unsafe.getLong(uuidAddr + ((long) r << 4) + Long.BYTES));
                 }
             }
         });
@@ -1616,13 +1616,13 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                     final long dataSize = buf.dataSize(col);
 
                     // Entry 0 is the seeded terminator: row 0's payload starts at the base.
-                    Assert.assertEquals("leading terminator, col " + col, 0, Unsafe.getUnsafe().getLong(auxAddr));
+                    Assert.assertEquals("leading terminator, col " + col, 0, Unsafe.getLong(auxAddr));
                     // Every entry ascends and stays inside the data extent, and the last one
                     // bounds the final row's payload exactly - the entry the pre-N+1 layout
                     // did not have at all.
                     long prev = -1;
                     for (int r = 0; r <= rows; r++) {
-                        final long off = Unsafe.getUnsafe().getLong(auxAddr + ((long) r << 3));
+                        final long off = Unsafe.getLong(auxAddr + ((long) r << 3));
                         Assert.assertTrue("offset ascends, col " + col + " entry " + r, off > prev);
                         Assert.assertTrue("offset within data extent, col " + col + " entry " + r, off <= dataSize);
                         prev = off;
@@ -1777,7 +1777,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             if (tag == ColumnType.STRING || tag == ColumnType.BINARY) {
                 Assert.assertEquals("seeded aux size, col " + c, Long.BYTES, buf.auxSize(c));
                 Assert.assertNotEquals("seeded aux address, col " + c, 0, buf.auxAddress(c));
-                Assert.assertEquals("seeded terminator, col " + c, 0, Unsafe.getUnsafe().getLong(buf.auxAddress(c)));
+                Assert.assertEquals("seeded terminator, col " + c, 0, Unsafe.getLong(buf.auxAddress(c)));
             } else {
                 Assert.assertEquals("empty aux size, col " + c, 0, buf.auxSize(c));
                 Assert.assertEquals("empty aux address, col " + c, 0, buf.auxAddress(c));

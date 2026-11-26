@@ -62,6 +62,7 @@ import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -400,12 +401,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     @Test
     public void testFuzzDedup() throws Exception {
-        // Differential fuzz over a DEDUP UPSERT KEYS(ts, sym) base - the coupled,
+        // Differential fuzz over a DEDUP UPSERT|SKIP KEYS(ts, sym) base - the coupled,
         // applied-reader refresh path. Unlike every other arm, timestamps are NOT
         // unique: they are drawn from a small pool so many rows share one ts across
         // different keys (additive same-ts, the Phase 2a clean raw-WAL fast path),
         // and a forced fraction re-emit an existing (ts, sym) with a new value (real
-        // dedup replacement, routed through the applied-reader replay). The recompute
+        // dedup: UPSERT replaces the existing row, SKIP drops the re-emitted one, either
+        // way routed through the applied-reader replay). The recompute
         // oracle stays sound because (ts, sym) is the dedup key: after apply every
         // (ts, sym) is unique, so within each sym partition ts is a total order and a
         // partitioned window is a deterministic function of the final deduped base.
@@ -706,7 +708,30 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 runRemovalFreezeContinueFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
-                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), false);
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzRemovalFreezeAndContinueLagging() throws Exception {
+        // The freeze-and-continue contract while the refresh lags WAL apply. An
+        // out-of-order commit (the trigger), a late row below an emitted view row and
+        // a DROP / DETACH PARTITION of every day below the trigger's day apply before a
+        // single refresh, the late row before or after the removal. The repair of the
+        // trigger then runs against a base that already holds the later commits, and the
+        // view must keep every row it emitted below the trigger's day byte-for-byte,
+        // while the rows from that day up follow the base that remains. Half of the
+        // variants run per invocation, picked by a drawn parity.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        final int laggingParity = rnd.nextInt(2);
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                if ((i & 1) == laggingParity) {
+                    runRemovalFreezeContinueFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                            false, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), true);
+                }
             }
         });
     }
@@ -761,7 +786,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // F9: differential fuzz under randomized storage / WAL-apply-timing config.
         // None of these properties change the query result - the recompute oracle
         // is unchanged - but they reshape HOW base commits batch into apply cycles:
-        // the apply look-ahead bounds how many base seqTxns one apply cycle folds
+        // the apply block size and look-ahead bound how many base seqTxns one apply cycle folds
         // into a base-table commit, the apply time quota and commit-to-table lag
         // (size / txn count) cap how much buffers before a base-table commit, and
         // the O3 partition-split knobs reshape the physical partition layout the
@@ -775,6 +800,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1 + rnd.nextInt(250));
         setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1 + rnd.nextInt(20));
         setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, rnd.nextLong(10L * 1024 * 1024));
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, AbstractFuzzTest.getRndWalApplyBlockSize(rnd));
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, AbstractFuzzTest.getRndWalApplyBlockMaxRows(rnd));
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 200 + rnd.nextInt(19_800));
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1 + rnd.nextInt(2));
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (16 + rnd.nextInt(6)));
@@ -1792,6 +1819,31 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute(sink);
     }
 
+    // Inserts one (ts, sym, i, x) row into the base in its own commit, rendered as
+    // insertCommit renders its rows: a negative symIdx, a LONG_NULL i and xNull
+    // insert NULLs.
+    private void insertRow(StringSink sink, long ts, int symIdx, long i, double x, boolean xNull) throws Exception {
+        sink.clear();
+        sink.put("INSERT INTO base (ts, sym, i, x) VALUES (").put(ts).put("::timestamp,");
+        if (symIdx < 0) {
+            sink.put("null,");
+        } else {
+            sink.put('\'').put(SYMBOLS[symIdx]).put("',");
+        }
+        if (i == Numbers.LONG_NULL) {
+            sink.put("null,");
+        } else {
+            sink.put(i).put(',');
+        }
+        if (xNull) {
+            sink.put("null");
+        } else {
+            sink.put(x);
+        }
+        sink.put(')');
+        execute(sink);
+    }
+
     // Inserts the var-length rows [from, to) of order (the shuffled segment) into
     // the var-size base table in one commit. Mirrors insertCommit, but the base
     // schema is (ts, vs, vv, vb, va) and each row's pre-rendered value tuple lives
@@ -1861,7 +1913,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-cw-writer-" + writerId);
     }
@@ -1929,7 +1981,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-rvr-reader");
     }
@@ -2756,7 +2808,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-cw-refresh-driver") : null;
 
@@ -2803,12 +2855,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
-    // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
+    // Differential fuzz for a DEDUP UPSERT|SKIP KEYS(ts, sym) base. Mirrors runFuzz's
     // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh with
     // optional quiescent restarts and removal events), but with a data model built
     // for dedup: timestamps are drawn from a pool small enough to force same-ts /
     // same-(ts, sym) collisions, and a fifth of the emissions re-point onto an
-    // earlier (ts, sym) so a real below-frontier replacement is guaranteed. The
+    // earlier (ts, sym) so a real below-frontier dedup is guaranteed. The
     // oracle recomputes the window over the applied (post-dedup) base and orders
     // both sides by (ts, sym::string) - a total order because (ts, sym) is the dedup
     // key; genericStringMatch tolerates SYMBOL-vs-STRING on the sym passthrough.
@@ -2836,11 +2888,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final boolean withWhere = rnd.nextInt(3) == 0;
 
         final String projection = projection(variant, n);
+        // UPSERT keeps the last write of a (ts, sym), SKIP keeps the first one
+        final String dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) "
-                + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+                + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP " + dedupMode + " KEYS(ts, sym)");
 
         // Distinct, strictly-increasing timestamp pool - fewer distinct values than
         // rows, so many emissions collide on one ts (additive across keys) and the
@@ -2862,8 +2916,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         // Each emission draws a ts from the pool and a non-null sym (a dedup key);
         // (ts, sym) may repeat across emissions. i/x carry occasional NULLs. The
-        // recompute oracle reads the final deduped base, so the keep-last winner
-        // never has to be predicted here.
+        // recompute oracle reads the final deduped base, so the surviving row (the
+        // last write under UPSERT, the first under SKIP) never has to be predicted here.
         final long[] tsv = new long[rowCount];
         final int[] symIdx = new int[rowCount];
         final long[] iv = new long[rowCount];
@@ -2876,9 +2930,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
         }
-        // Force a replacement fraction: re-point some emissions onto an earlier
-        // (ts, sym) so a real below-frontier dedup is guaranteed, exercising the
-        // applied-reader replay path, not only the additive fast path.
+        // Force a dedup fraction: re-point some emissions onto an earlier (ts, sym)
+        // so a real below-frontier dedup is guaranteed, exercising the applied-reader
+        // replay path, not only the additive fast path. Of the two writes of a
+        // (ts, sym), UPSERT keeps the later one and SKIP keeps the earlier one.
         for (int r = 0, forced = rowCount / 5; r < forced; r++) {
             final int dst = 1 + rnd.nextInt(rowCount - 1);
             final int src = rnd.nextInt(dst);
@@ -2901,7 +2956,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + startFromClause(startMode, boundary, false)
                 + "AS " + viewSql;
 
-        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", dedupMode=").$(dedupMode).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
@@ -4000,7 +4055,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-rvr-refresh-driver");
             final AtomicLong nativeRowsValidated = new AtomicLong();
@@ -4125,6 +4180,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // (replayToApplied) re-feeds the base's RAW WAL, where removed rows'
     // commits still exist; the base stays non-dedup - the dedup arm restores
     // from the applied (physical) base instead.
+    //
+    // The lagging run (see testFuzzRemovalFreezeAndContinueLagging) replaces the
+    // removal event. After the intact-base check it applies, before a single
+    // refresh, an out-of-order trigger r_o3 = tsv[kj] + 1, a late row r_ins below
+    // the emitted row kj - 1, and a DROP / DETACH PARTITION of every phase-1 day
+    // below X, the day of row kj - r_ins either before the removal (and removed with
+    // it) or after it (and out of the view: filtered, or below START FROM). The
+    // removal sits inside the apply-ahead range, so the repair rebuilds the view
+    // from the base it pins, which holds no row below X the view keeps: the view's
+    // rows below X must stay byte-for-byte as emitted, and its rows from X up equal
+    // the recompute over the remaining base. Phase 2 continues on that state, so
+    // the run-end oracle recomputes over the physical base instead of the shadow.
+    // The run never truncates and drops only the days below X; it also keeps the
+    // removal out of an earlier refresh. In each of those shapes the repair's
+    // replacement range reaches rows the removal froze - from the trigger's own
+    // timestamp (LiveViewSmokeTest#testO3ApplyAheadTruncateFallsBackToBoundary pins
+    // that for TRUNCATE), across a dropped middle day, or from a localized output
+    // floor - so the frozen-row check does not hold there.
     private void runRemovalFreezeContinueFuzz(
             Rnd rnd,
             int variant,
@@ -4132,7 +4205,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean truncate,
             boolean restart,
             boolean seed,
-            boolean inMemory
+            boolean inMemory,
+            boolean lagging
     ) throws Exception {
         // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
         // CREATE-moment clock into the view's lower bound, and this harness wants that bound
@@ -4184,6 +4258,45 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // it. Both phases are non-empty so the removal always targets emitted
         // rows and the continuation is always exercised.
         final int splitPoint = rowCount / 3 + rnd.nextInt(rowCount / 3);
+        // A lagging run shapes the rows around kj, drawn from (splitPoint / 2 + 1,
+        // splitPoint - 2): rows kj - 1 .. kj + 1 lie in phase 1, at or above any START
+        // FROM cut, which stays at or below row splitPoint / 2.
+        final int kj;
+        final long dayX;
+        if (lagging) {
+            kj = splitPoint / 2 + 2 + rnd.nextInt(splitPoint - splitPoint / 2 - 4);
+            // A day jump at kj, so every row below kj lies in a day below X, the day of row kj.
+            for (int k = kj; k < rowCount; k++) {
+                tsv[k] += 86_400_000_000L;
+            }
+            // Steps of at least 2 micros below row kj - 1 and above row kj leave r_ins and
+            // r_o3 timestamps no row has.
+            if (tsv[kj - 1] - tsv[kj - 2] < 2) {
+                for (int k = kj - 1; k < rowCount; k++) {
+                    tsv[k]++;
+                }
+            }
+            if (tsv[kj + 1] - tsv[kj] < 2) {
+                for (int k = kj + 1; k < rowCount; k++) {
+                    tsv[k]++;
+                }
+            }
+            // Rows kj - 1 .. kj + 1 pass the view's filter. Row kj - 1 is the emitted row
+            // r_ins sits below, and row kj is the lowest row the repair re-derives. Row
+            // kj + 1 lifts the view's frontier, which only rows the view keeps advance,
+            // above r_o3, so r_o3 is out of order and triggers the repair. Were r_o3 in
+            // order, r_ins would trigger it, and a trigger's own timestamp floors the
+            // repair's replacement range below rows the removal froze.
+            for (int k = kj - 1; k <= kj + 1; k++) {
+                if (iv[k] == Numbers.LONG_NULL || iv[k] <= 0) {
+                    iv[k] = 1 + rnd.nextInt(1000);
+                }
+            }
+            dayX = tsv[kj] - tsv[kj] % 86_400_000_000L;
+        } else {
+            kj = -1;
+            dayX = Numbers.LONG_NULL;
+        }
         final int preCount = seed ? 1 + rnd.nextInt(splitPoint) : 0;
         // The cut stays inside phase 1's first half, so the removal always has emitted view rows
         // to freeze - a boundary above the whole phase would leave the freeze assertion
@@ -4203,11 +4316,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", truncate=").$(truncate).$(", restart=").$(restart)
                 .$(", preCount=").$(preCount).$(", startMode=").$(startMode).$(", boundary=").$(boundary)
-                .$(", inMem=").$(inMemory)
+                .$(", inMem=").$(inMemory).$(", lagging=").$(lagging).$(", kj=").$(kj)
                 .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         final StringSink preRemoval = new StringSink();
+        final StringSink frozenBelowX = new StringSink();
         LiveViewRefreshJob job = null;
         try {
             if (preCount > 0) {
@@ -4263,38 +4377,133 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             assertNoRefreshFaults("lv");
             printSql("(lv) ORDER BY 1", preRemoval);
 
-            // The removal event: every targeted row is emitted (phase 1 has
-            // quiesced), so this removes derived history, not pending input.
-            if (truncate) {
-                execute("TRUNCATE TABLE base");
-            } else {
-                // One or two whole days of phase-1 rows - the day list spans the
-                // emitted range, so the pick lands on its bottom, middle, or top.
-                final LongHashSet seenDays = new LongHashSet();
-                final ObjList<String> days = new ObjList<>();
-                for (int k = 0; k < splitPoint; k++) {
+            if (lagging) {
+                // Every phase-1 day below X, which the removal takes.
+                final LongHashSet doomedDays = new LongHashSet();
+                final ObjList<String> removedDays = new ObjList<>();
+                for (int k = 0; k < kj; k++) {
                     final long dayFloor = tsv[k] - tsv[k] % 86_400_000_000L;
-                    if (seenDays.add(dayFloor)) {
-                        days.add(Micros.toString(dayFloor).substring(0, 10));
+                    if (doomedDays.add(dayFloor)) {
+                        removedDays.add(Micros.toString(dayFloor).substring(0, 10));
                     }
                 }
-                final int dropIdx = rnd.nextInt(days.size());
-                sink.clear();
-                sink.put("ALTER TABLE base DROP PARTITION LIST '").put(days.getQuick(dropIdx)).put('\'');
-                if (rnd.nextBoolean() && dropIdx + 1 < days.size()) {
-                    sink.put(", '").put(days.getQuick(dropIdx + 1)).put('\'');
+                // r_ins after the removal must stay out of the view: a row the filter drops,
+                // or, without a filter, a row below a START FROM that lies inside a doomed day.
+                long belowStartTs = Numbers.LONG_NULL;
+                if (!withWhere && boundary != Numbers.LONG_NULL) {
+                    final long startDay = boundary - boundary % 86_400_000_000L;
+                    if (doomedDays.contains(startDay)) {
+                        long candidate = boundary - 1;
+                        while (candidate >= startDay && Arrays.binarySearch(tsv, candidate) >= 0) {
+                            candidate--;
+                        }
+                        if (candidate >= startDay) {
+                            belowStartTs = candidate;
+                        }
+                    }
                 }
-                execute(sink);
-            }
-            drainWalQueue();
-            refreshCycle(job); // walk past the removal seqTxn
+                final boolean isRemovalFirst = (withWhere || belowStartTs != Numbers.LONG_NULL) && rnd.nextBoolean();
+                final long rIns = isRemovalFirst && !withWhere ? belowStartTs : tsv[kj - 1] - 1;
+                final int rInsSym = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+                final long rInsI;
+                if (isRemovalFirst && withWhere) {
+                    rInsI = rnd.nextBoolean() ? Numbers.LONG_NULL : -rnd.nextInt(1001);
+                } else {
+                    rInsI = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+                }
+                final boolean rInsXNull = rnd.nextInt(20) == 0;
+                final double rInsX = rnd.nextDouble() * 1000.0;
+                if (!isRemovalFirst) {
+                    // r_ins lands in the last doomed day unless row kj - 1 sits exactly on a
+                    // day floor; the removal takes r_ins's day either way.
+                    final long rInsDay = rIns - rIns % 86_400_000_000L;
+                    if (doomedDays.add(rInsDay)) {
+                        removedDays.add(Micros.toString(rInsDay).substring(0, 10));
+                    }
+                }
+                final boolean isDetach = rnd.nextBoolean();
+                final StringSink removalSql = new StringSink();
+                removalSql.put("ALTER TABLE base ").put(isDetach ? "DETACH" : "DROP").put(" PARTITION LIST ");
+                for (int d = 0, m = removedDays.size(); d < m; d++) {
+                    if (d > 0) {
+                        removalSql.put(", ");
+                    }
+                    removalSql.put('\'').put(removedDays.getQuick(d)).put('\'');
+                }
+                final long rO3 = tsv[kj] + 1;
+                LOG.info().$("LV removal fuzz lagging: dayX=").$ts(dayX).$(", rO3=").$ts(rO3)
+                        .$(", rIns=").$ts(rIns).$(", removalFirst=").$(isRemovalFirst)
+                        .$(", removal=").$(removalSql).$();
 
-            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(instance);
-            Assert.assertFalse("LV must stay valid after base row removal", instance.isInvalid());
-            sink.clear();
-            printSql("(lv) ORDER BY 1", sink);
-            TestUtils.assertEquals("removal must not retract emitted LV rows", preRemoval, sink);
+                // Not vacuous: the view holds an emitted row between r_ins and X (row
+                // kj - 1), which a repair floor taken from r_ins would reach, and r_o3 sits
+                // below the view's frontier, so it triggers the repair.
+                try (
+                        RecordCursorFactory factory = select("SELECT count() FROM lv WHERE ts > " + rIns + " AND ts < " + dayX);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue("the view must hold an emitted row between r_ins and X", cursor.getRecord().getLong(0) > 0);
+                }
+                final LiveViewInstance lagged = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lagged);
+                Assert.assertTrue("r_o3 must sit below the view's frontier", rO3 < lagged.getLatestSeenTs());
+                printSql("(SELECT * FROM lv WHERE ts < " + dayX + ") ORDER BY 1", frozenBelowX);
+
+                // The trigger and the commits after it all apply before a single refresh.
+                insertRow(sink, rO3, rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount), 1 + rnd.nextInt(1000),
+                        rnd.nextDouble() * 1000.0, rnd.nextInt(20) == 0);
+                if (isRemovalFirst) {
+                    execute(removalSql);
+                    insertRow(sink, rIns, rInsSym, rInsI, rInsX, rInsXNull);
+                } else {
+                    insertRow(sink, rIns, rInsSym, rInsI, rInsX, rInsXNull);
+                    execute(removalSql);
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance repaired = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(repaired);
+                Assert.assertFalse("LV must stay valid after the lagging repair", repaired.isInvalid());
+                sink.clear();
+                printSql("(SELECT * FROM lv WHERE ts < " + dayX + ") ORDER BY 1", sink);
+                TestUtils.assertEquals("the lagging repair must keep the rows the removal froze", frozenBelowX, sink);
+                assertNoRefreshFaults("lv");
+            } else {
+                // The removal event: every targeted row is emitted (phase 1 has
+                // quiesced), so this removes derived history, not pending input.
+                if (truncate) {
+                    execute("TRUNCATE TABLE base");
+                } else {
+                    // One or two whole days of phase-1 rows - the day list spans the
+                    // emitted range, so the pick lands on its bottom, middle, or top.
+                    final LongHashSet seenDays = new LongHashSet();
+                    final ObjList<String> days = new ObjList<>();
+                    for (int k = 0; k < splitPoint; k++) {
+                        final long dayFloor = tsv[k] - tsv[k] % 86_400_000_000L;
+                        if (seenDays.add(dayFloor)) {
+                            days.add(Micros.toString(dayFloor).substring(0, 10));
+                        }
+                    }
+                    final int dropIdx = rnd.nextInt(days.size());
+                    sink.clear();
+                    sink.put("ALTER TABLE base DROP PARTITION LIST '").put(days.getQuick(dropIdx)).put('\'');
+                    if (rnd.nextBoolean() && dropIdx + 1 < days.size()) {
+                        sink.put(", '").put(days.getQuick(dropIdx + 1)).put('\'');
+                    }
+                    execute(sink);
+                }
+                drainWalQueue();
+                refreshCycle(job); // walk past the removal seqTxn
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("LV must stay valid after base row removal", instance.isInvalid());
+                sink.clear();
+                printSql("(lv) ORDER BY 1", sink);
+                TestUtils.assertEquals("removal must not retract emitted LV rows", preRemoval, sink);
+            }
 
             // Phase 2: strictly in-order continuation on top of the frozen state.
             final int[] phase2Order = segmentOrder(rnd, splitPoint, rowCount, false);
@@ -4319,6 +4528,27 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         } finally {
             Misc.free(job);
+        }
+
+        if (lagging) {
+            // The rows below X stay as emitted, and the repair left the window state of a
+            // recompute over the base it pinned, so the rows from X up equal the recompute
+            // over the base that remains: the removal left no row below X the view keeps.
+            sink.clear();
+            printSql("(SELECT * FROM lv WHERE ts < " + dayX + ") ORDER BY 1", sink);
+            TestUtils.assertEquals("the continuation must keep the rows the removal froze", frozenBelowX, sink);
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(" + oracleSql + ") ORDER BY 1",
+                    "(SELECT * FROM lv WHERE ts >= " + dayX + ") ORDER BY 1",
+                    LOG,
+                    true
+            );
+            assertNoRefreshFaults("lv");
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+            return;
         }
 
         // The oracle: the view must equal the window query recomputed over the LOGICAL dataset -

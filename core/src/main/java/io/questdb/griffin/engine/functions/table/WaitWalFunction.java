@@ -112,6 +112,11 @@ class WaitWalFunction extends BooleanFunction implements Function {
             seqTxnArg.init(symbolTableSource, executionContext);
         }
         TableToken tt = executionContext.getCairoEngine().verifyTableName(tableName);
+        // A table the principal may not see fails exactly like a missing one. Like the other WAL
+        // diagnostics, it may show a protected table to the operators allowed to recover it.
+        if (!executionContext.getSecurityContext().isWalTableVisible(tt)) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
         if (tt.isWal()) {
             seqTxnTracker = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
             // NULL argument behaves like the no-arg form: wait for the seqTxn observed at call time.

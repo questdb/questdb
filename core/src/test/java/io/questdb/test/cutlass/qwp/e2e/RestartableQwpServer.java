@@ -66,6 +66,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RestartableQwpServer implements AutoCloseable {
     static final int PORT_PICK_ATTEMPTS = 5;
     private static final Log LOG = LogFactory.getLog(RestartableQwpServer.class);
+    // sendBufferSize that keeps the configuration's http.send.buffer.size.
+    private static final int NO_SEND_BUFFER_SIZE = -1;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
@@ -76,6 +78,7 @@ public final class RestartableQwpServer implements AutoCloseable {
     private final Set<Long> liveFds = ConcurrentHashMap.newKeySet();
     private final int port;
     private final AtomicBoolean running = new AtomicBoolean();
+    private final int sendBufferSize;
     private HttpServer server;
     private TestWorkerPool workerPool;
 
@@ -98,11 +101,26 @@ public final class RestartableQwpServer implements AutoCloseable {
             int forceRecvFragmentationChunkSize,
             int forceSendFragmentationChunkSize
     ) {
+        this(engine, cairoConfiguration, port, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, NO_SEND_BUFFER_SIZE);
+    }
+
+    /**
+     * Overload that also sets {@code http.send.buffer.size}.
+     */
+    public RestartableQwpServer(
+            CairoEngine engine,
+            CairoConfiguration cairoConfiguration,
+            int port,
+            int forceRecvFragmentationChunkSize,
+            int forceSendFragmentationChunkSize,
+            int sendBufferSize
+    ) {
         this.engine = engine;
         this.cairoConfiguration = cairoConfiguration;
         this.port = port;
         this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
         this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
+        this.sendBufferSize = sendBufferSize;
     }
 
     /**
@@ -239,6 +257,11 @@ public final class RestartableQwpServer implements AutoCloseable {
             @Override
             public int getBindPort() {
                 return port;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return sendBufferSize == NO_SEND_BUFFER_SIZE ? super.getSendBufferSize() : sendBufferSize;
             }
         };
 

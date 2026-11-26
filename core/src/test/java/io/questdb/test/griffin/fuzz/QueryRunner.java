@@ -24,18 +24,23 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
@@ -45,18 +50,26 @@ import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -96,6 +109,33 @@ import java.util.regex.Pattern;
  *       and compares the two materializations at JIT-off. Catches
  *       silent storage divergences across native/parquet partitions and
  *       across indexed/non-indexed symbol columns.</li>
+ *   <li>{@code diffFused} runs a {@link QueryShape#HASH_JOIN_GROUP_BY} query
+ *       on the primary at JIT-off a second time with the fused hash join
+ *       GROUP BY disabled and compares it with the pivot, which may use the
+ *       fused plan. Catches a fused planner that accepts a query it cannot
+ *       answer, or a fused operator that answers it wrong: either returns the
+ *       same wrong rows on every other axis, because every other axis runs
+ *       the fused plan on both sides.</li>
+ *   <li>the map page axis, on when the runner gets the engine's
+ *       {@link Overrides}, runs every query on the primary at JIT-off once
+ *       more, and an equi-join GROUP BY query several more times, with
+ *       {@code cairo.sql.small.map.page.size} cut to a few hundred bytes at
+ *       most, and compares each run with the pivot. When the pivot
+ *       used the fused hash join GROUP BY, it also reruns the fused axis's
+ *       ordinary run with the small page and compares the two ordinary runs.
+ *       The fuzz tables hold at most 150 rows, so with the default page no
+ *       map ever grows; with a small one the maps grow while operators hold
+ *       cursors and flyweights into them. Catches an operator that keeps an
+ *       address into a map across a call that can grow it, such as the RIGHT
+ *       and FULL hash joins that iterated a stale map cursor over their
+ *       unmatched build rows after the probe grew the key map.</li>
+ *   <li>the reference axis runs a query's {@link GeneratedQuery#referenceSql()}, an
+ *       independent rewrite that must return the same rows, on the primary at JIT-off and
+ *       compares it with the pivot. {@code GroupingSetsClause} writes one for every grouping
+ *       sets query: the UNION ALL of one plain GROUP BY per grouping set. The axis compares only
+ *       when both queries run: the rewrite exists to check the rows grouping sets return, not
+ *       which queries they accept. Catches wrong subtotals, a lost or duplicated grouping set and
+ *       a wrong GROUPING_ID, which every other axis would reproduce on both of its sides.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on,
@@ -136,7 +176,7 @@ import java.util.regex.Pattern;
  *       TS-ASC) and a full scan (preserves it).</li>
  * </ul>
  */
-public final class QueryRunner {
+public class QueryRunner {
     // FP-column mask of an Outcome that never produced a projection (it threw).
     // reconcilePair only consults the masks when both sides succeeded, so this
     // is never read; it keeps the record's accessor total.
@@ -156,10 +196,31 @@ public final class QueryRunner {
     private static final int FAULT_MAX_FILE_OPS = 48;
     private static final int FAULT_MAX_FN_CALLS = 40;
     private static final long FAULT_MEM_LEAK_SLACK = 256 * 1024;
+    // The map page axis draws its page size from [MAP_PAGE_SIZE_MIN, MAP_PAGE_SIZE_MIN +
+    // MAP_PAGE_SIZE_RANGE). A map whose heap grows by doubling ends a build exactly full at one
+    // entry count per doubling, and the page size decides which counts those are, so a spread of
+    // page sizes, most of them not a power of two, varies the counts across queries. A page that
+    // is not a multiple of 8 also leaves OrderedMap's 8-byte aligned append position past the end
+    // of a small heap, so the next lookup grows the map whatever the entry count.
+    private static final int MAP_PAGE_SIZE_MIN = 8;
+    private static final int MAP_PAGE_SIZE_RANGE = 505;
+    // Page sizes the map page axis tries on an equi-join GROUP BY query, against one on any other
+    // query. A RIGHT or FULL hash join grows its key map on the probe only when the build left the
+    // heap all but full, which happens at one build key count per doubling of the heap, so a page
+    // size catches it on roughly one build of N keys in N. Each page size moves those counts.
+    private static final int MAP_PAGE_VARIANTS_HASH_JOIN = 12;
+    // A map page that cannot hold one entry fails the query with a configuration error. The axis
+    // doubles the page up to this many times, so it runs with a page just above the entry size.
+    private static final int MAP_PAGE_MAX_DOUBLINGS = 10;
+    private final boolean diffFused;
     private final boolean diffJit;
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    // The columns of the cursor that checkExportedSymbolKeys() reads the keys of
+    private final IntList exportedSymbolColumns = new IntList();
+    // Per entry of exportedSymbolColumns: the table symbol map through which the export resolves the column's keys
+    private final ObjList<SymbolMapReader> exportedSymbolMaps = new ObjList<>();
     // The engine's FilesFacade when it is a FailureFileFacade, which enables FILE
     // faults; null otherwise (then FILE is dropped from faultTypes).
     private final FailureFileFacade failureFf;
@@ -171,12 +232,28 @@ public final class QueryRunner {
     // the armed-vs-fired ratio measures how often each fault kind actually bites.
     private final int[] faultsArmedByType = new int[FaultType.values().length];
     // Count of injected faults that actually fired (vs armed but not reached).
+    // Successful runs, on any axis, whose plan picks the build of an INNER fused hash join GROUP BY
+    // per execution. It shows that the generator's interval conjuncts reach that plan.
+    private int buildChoiceRuns;
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
+    // Null disables the map page axis.
+    private final Overrides mapPageOverrides;
+    // Comparisons the map page axis ran: one per page size it tried on a differential query, and
+    // as many again on a query whose pivot used the fused hash join GROUP BY.
+    private int mapPageAxisRuns;
+    // Queries on which the fused axis compared two runs, those among them whose pivot compiled
+    // and ran, and those whose pivot used the fused hash join GROUP BY. Only the last compare two
+    // different plans, so they are what keeps the axis from going vacuous.
+    private int fusedAxisCompletedRuns;
+    private int fusedAxisRuns;
+    private int fusedAxisSelected;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
+    // Comparisons the reference axis ran, i.e. queries whose rewrite and pivot both ran.
+    private int referenceAxisRuns;
     // Worker-thread name prefix of the query pool, used to scope a parallel FILE
     // fault to the query execution (test thread + query workers). See runFault.
     private final String queryWorkerNamePrefix;
@@ -184,6 +261,9 @@ public final class QueryRunner {
     private final StringSink rowsB = new StringSink();
     private final StringSink rowsC = new StringSink();
     private final StringSink rowsD = new StringSink();
+    private final StringSink rowsE = new StringSink();
+    private final StringSink rowsF = new StringSink();
+    private final StringSink rowsG = new StringSink();
     // Scratch sink for the toTop() re-iteration pass; compared against the
     // first pass to confirm the cursor reproduces its result set on rewind.
     private final StringSink rowsToTop = new StringSink();
@@ -196,12 +276,16 @@ public final class QueryRunner {
             SqlExecutionContext executionContext,
             boolean diffJit,
             boolean diffShadow,
+            boolean diffFused,
+            Overrides mapPageOverrides,
             boolean verifyCursor,
             ObjList<FuzzTable> tables,
             String queryWorkerNamePrefix
     ) {
         this.engine = engine;
         this.executionContext = executionContext;
+        this.diffFused = diffFused;
+        this.mapPageOverrides = mapPageOverrides;
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         this.verifyCursor = verifyCursor;
@@ -257,6 +341,52 @@ public final class QueryRunner {
 
     public int getFaultsFired(FaultType type) {
         return faultsFiredByType[type.ordinal()];
+    }
+
+    public int getBuildChoiceRuns() {
+        return buildChoiceRuns;
+    }
+
+    /**
+     * Queries on which the fused axis ran and the pivot, the run with the fused hash join GROUP BY
+     * enabled, returned rows rather than an error. A generated query that fails to compile fails
+     * in both plans alike, so it says nothing about whether the planner still selects the fused
+     * plan; a fused plan that fails where the ordinary one does not is a divergence instead.
+     */
+    public int getFusedAxisCompletedRuns() {
+        return fusedAxisCompletedRuns;
+    }
+
+    /**
+     * Queries on which the fused axis ran: a {@link QueryShape#HASH_JOIN_GROUP_BY} query, with
+     * the axis enabled and the fused hash join GROUP BY available to the pivot.
+     */
+    public int getFusedAxisRuns() {
+        return fusedAxisRuns;
+    }
+
+    /**
+     * Queries on which the fused axis compared the fused plan against the ordinary plan: the
+     * pivot compiled to the fused hash join GROUP BY and the second run to the ordinary plan.
+     */
+    public int getFusedAxisSelected() {
+        return fusedAxisSelected;
+    }
+
+    /**
+     * Comparisons the map page axis ran, against the pivot and, for a query whose pivot used the
+     * fused hash join GROUP BY, against the fused axis's ordinary run.
+     */
+    public int getMapPageAxisRuns() {
+        return mapPageAxisRuns;
+    }
+
+    /**
+     * Comparisons the reference axis ran: queries with a reference rewrite whose pivot and
+     * rewrite both ran to completion.
+     */
+    public int getReferenceAxisRuns() {
+        return referenceAxisRuns;
     }
 
     /**
@@ -465,6 +595,14 @@ public final class QueryRunner {
                             + recovery.exceptionClass + ": " + recovery.exceptionMessage, recovery.failure));
         }
         return Result.ok();
+    }
+
+    /**
+     * Test hook: {@link #setUpExportedSymbolKeyCheck} calls it with the SYMBOL columns that a query's export keeps and
+     * the maps through which {@link #checkExportedSymbolKeys} resolves their keys. Does nothing; a test overrides it to
+     * replace a map, so that the check meets a wrong map, which only a broken export picks.
+     */
+    void onExportedSymbolMapsCollected(IntList columns, ObjList<SymbolMapReader> symbolMaps) {
     }
 
     /**
@@ -777,17 +915,124 @@ public final class QueryRunner {
     }
 
     /**
+     * Picks the SYMBOL columns that a CURSOR_BASED Parquet export of the cursor keeps as SYMBOL the way the export
+     * does: a {@link HybridColumnMaterializer} sets up on the fresh cursor, before its first row. Replaces the contents
+     * of {@code columns} with the kept columns and the contents of {@code symbolMaps} with the table symbol map through
+     * which the export resolves the keys of each. The maps belong to the readers of the cursor, so they stay valid while
+     * the cursor is open.
+     */
+    static void collectExportedSymbolMaps(RecordCursor cursor, RecordMetadata metadata, IntList columns, ObjList<SymbolMapReader> symbolMaps) {
+        columns.clear();
+        symbolMaps.clear();
+        try (HybridColumnMaterializer materializer = new HybridColumnMaterializer()) {
+            materializer.setUp(metadata, cursor);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final SymbolMapReader symbolMap = materializer.getCursorSymbolMap(i);
+                if (symbolMap != null) {
+                    columns.add(i);
+                    symbolMaps.add(symbolMap);
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns the first violation of the contract a CURSOR_BASED Parquet export relies on for every SYMBOL column it
+     * keeps as SYMBOL, as {@code [column=..., row=..., key=..., symbol=..., resolved=...]}, or null when every row keeps
+     * it: the export writes the column's keys, which the encoder resolves through the table symbol map the export
+     * picked for the column, so each row's key must resolve through that map to the row's symbol, and a key below zero
+     * must go with a NULL symbol. {@code symbolMaps} holds the map of each of {@code columns}, as
+     * {@link #collectExportedSymbolMaps} picks them. Reads the cursor from the top and leaves it exhausted.
+     */
+    static @Nullable String findExportedSymbolKeyViolation(RecordCursor cursor, RecordMetadata metadata, IntList columns, ObjList<SymbolMapReader> symbolMaps) {
+        cursor.toTop();
+        final Record record = cursor.getRecord();
+        for (int row = 0; cursor.hasNext(); row++) {
+            for (int k = 0, n = columns.size(); k < n; k++) {
+                final int column = columns.getQuick(k);
+                final int key = record.getInt(column);
+                final CharSequence symbol = record.getSymA(column);
+                final CharSequence resolved = key < 0 ? null : symbolMaps.getQuick(k).valueOf(key);
+                // A key the map does not hold resolves to null, and the encoder rejects it.
+                if (key < 0 ? symbol != null : resolved == null || !Chars.equalsNc(resolved, symbol)) {
+                    return "[column=" + metadata.getColumnName(column) + ", row=" + row + ", key=" + key
+                            + ", symbol=" + symbol + ", resolved=" + resolved + "]";
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the first row of the cursor whose timestamp breaks the contract that a CURSOR_BASED Parquet export of a
+     * lazily type-converted column relies on for a plan whose timestamp {@link #streamedTimestampDirection} streams:
+     * the export writes that timestamp as the file's designated timestamp, which holds no NULL and ascends for a
+     * forward plan and descends for a backward one. Returns -1 when every row keeps it. Reads the cursor from the top
+     * and leaves it exhausted.
+     */
+    static long findStreamedTimestampViolation(RecordCursor cursor, int timestampIndex, int direction) {
+        cursor.toTop();
+        final Record record = cursor.getRecord();
+        long previous = Numbers.LONG_NULL;
+        for (long row = 0; cursor.hasNext(); row++) {
+            final long timestamp = record.getTimestamp(timestampIndex);
+            if (timestamp == Numbers.LONG_NULL) {
+                return row;
+            }
+            if (row > 0 && (direction == RecordCursorFactory.SCAN_DIRECTION_FORWARD ? timestamp < previous : timestamp > previous)) {
+                return row;
+            }
+            previous = timestamp;
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the direction, forward or backward, in which a CURSOR_BASED Parquet export of a lazily type-converted
+     * column writes the plan's timestamp as the file's designated timestamp, or {@code SCAN_DIRECTION_OTHER} when the
+     * plan has no timestamp or the export does not stream it.
+     */
+    static int streamedTimestampDirection(RecordCursorFactory factory) {
+        return factory.getMetadata().getTimestampIndex() > -1 && ParquetExportMode.hasStreamableTimestamp(factory)
+                ? factory.getScanDirection()
+                : RecordCursorFactory.SCAN_DIRECTION_OTHER;
+    }
+
+    /**
+     * Appends one materialized cell with its own tabs, newlines, carriage returns and backslashes
+     * escaped. The comparisons split rows on newlines and cells on tabs, so a CHAR of code 9 or 10,
+     * or a string holding one, would otherwise shift every cell after it, and the floating-point
+     * tolerance would compare a DOUBLE cell against an integer column's exact rule. Both sides of a
+     * comparison escape alike, so exact comparisons do not change.
+     */
+    static void appendCell(StringSink rows, CharSequence cell) {
+        for (int i = 0, n = cell.length(); i < n; i++) {
+            final char c = cell.charAt(i);
+            switch (c) {
+                case '\t' -> rows.put("\\t");
+                case '\n' -> rows.put("\\n");
+                case '\r' -> rows.put("\\r");
+                case '\\' -> rows.put("\\\\");
+                default -> rows.put(c);
+            }
+        }
+    }
+
+    /**
      * Iterates {@code cursor} to exhaustion, appending one tab-separated line per
      * row to {@code rows} via {@link CursorPrinter#printColumn}, and returns the
      * row count. Shared by the first pass and the {@link #checkToTop} re-iteration
-     * so both materialize identically.
+     * so both materialize identically. Each cell goes through {@link #appendCell}.
      */
     private static int materialize(RecordCursor cursor, RecordMetadata metadata, int columnCount, StringSink rows) {
         Record record = cursor.getRecord();
+        final StringSink cell = new StringSink();
         int rowsRead = 0;
         while (cursor.hasNext()) {
             for (int i = 0; i < columnCount; i++) {
-                CursorPrinter.printColumn(record, metadata, i, rows, false);
+                cell.clear();
+                CursorPrinter.printColumn(record, metadata, i, cell, false);
+                appendCell(rows, cell);
                 rows.put('\t');
             }
             rows.put('\n');
@@ -801,7 +1046,7 @@ public final class QueryRunner {
      * Markers come from the {@code sink.type(...)} calls in QuestDB's
      * cursor factories: "Index forward scan" / "Index backward scan",
      * "Async index backward scan", "AsOf Join Indexed Scan",
-     * "SortedSymbolIndex", "LatestByAllIndexed" for the bitmap index, plus
+     * "LatestByAllIndexed" for the bitmap index, plus
      * "PostingIndex" (distinct-key enumeration) and "CoveringIndex"
      * (covering reads) for the posting index. These are the operators
      * that probe an index instead of scanning every page frame
@@ -813,10 +1058,38 @@ public final class QueryRunner {
         int n = plan.length();
         return Chars.indexOf(plan, 0, n, "Index ") >= 0
                 || Chars.indexOf(plan, 0, n, "Indexed") >= 0
-                || Chars.indexOf(plan, 0, n, "SortedSymbolIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "Async index") >= 0
                 || Chars.indexOf(plan, 0, n, "PostingIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "CoveringIndex") >= 0;
+    }
+
+    /**
+     * Detects whether a rendered plan uses the fused hash join GROUP BY. The substring matches
+     * both type names the operator prints: {@code Async Hash Join Group By}, and
+     * {@code Async JIT Hash Join Group By} for a compiled probe filter.
+     */
+    static boolean isFusedHashJoinPlan(CharSequence plan) {
+        return Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By") >= 0;
+    }
+
+    // The SplitMix64 finalizer over the SQL text's hash and the salt, so that neighbouring salts
+    // land on unrelated page sizes.
+    private static long mapPageSize(String sql, int salt) {
+        long h = sql.hashCode() * 0x9E3779B97F4A7C15L + salt;
+        h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
+        h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
+        h ^= h >>> 31;
+        return MAP_PAGE_SIZE_MIN + Math.floorMod(h, MAP_PAGE_SIZE_RANGE);
+    }
+
+    // OrderedMap rejects a page that cannot hold a single entry when the operator builds it.
+    private static boolean isMapPageTooSmall(Outcome outcome) {
+        return outcome.failure != null && outcome.exceptionMessage.contains("page size is too small to fit a single key");
+    }
+
+    // HashJoinGroupByClause spells the join out in upper case.
+    private static boolean isFullJoin(GeneratedQuery query) {
+        return query.shape() == QueryShape.HASH_JOIN_GROUP_BY && query.sql().contains(" FULL JOIN ");
     }
 
     /**
@@ -842,7 +1115,8 @@ public final class QueryRunner {
     /**
      * Detects whether the consumption spine of {@code factory} (the root and its
      * base-factory chain) contains a blocking aggregation -- a {@code count(*)},
-     * keyed or non-keyed {@code GROUP BY} (serial or async) -- that drains every
+     * keyed or non-keyed {@code GROUP BY} (serial or async, the fused hash join
+     * GROUP BY included) -- that drains every
      * base row before, or while, producing its output. A downstream {@code LIMIT}
      * over such an operator does not stop the scan: the aggregate must consume the
      * whole input before the {@code LIMIT} can apply, so a fault that fires on any
@@ -869,6 +1143,7 @@ public final class QueryRunner {
             } else if (factory instanceof CountRecordCursorFactory
                     || factory instanceof AsyncGroupByNotKeyedRecordCursorFactory
                     || factory instanceof AsyncGroupByRecordCursorFactory
+                    || factory instanceof AsyncHashJoinGroupByRecordCursorFactory
                     || factory instanceof GroupByRecordCursorFactory) {
                 return true;
             }
@@ -1069,6 +1344,66 @@ public final class QueryRunner {
     }
 
     /**
+     * Verifies the contract of {@link #findExportedSymbolKeyViolation} for every SYMBOL column that a CURSOR_BASED
+     * Parquet export keeps as SYMBOL: each row's key must resolve to the row's symbol through the table symbol map the
+     * export picked for the column, which {@link #setUpExportedSymbolKeyCheck} read before the first row, and a key
+     * below zero must go with a NULL symbol. A violation is a real bug, either in the cursor or in the pick, and
+     * throws {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkExportedSymbolKeys(String sql, RecordCursor cursor, RecordMetadata metadata) {
+        if (exportedSymbolColumns.size() == 0) {
+            return;
+        }
+        final String violation;
+        try {
+            violation = findExportedSymbolKeyViolation(cursor, metadata, exportedSymbolColumns, exportedSymbolMaps);
+        } catch (Exception e) {
+            // A per-row cast error past a parallel filter's LIMIT cutoff can surface on one pass and
+            // not another, as checkToTop() describes. Any other throw is a defect.
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("exported symbol key re-pass surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("exported symbol key re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (violation != null) {
+            throw new CursorCheckException("the key of an exported SYMBOL column does not resolve to its symbol " + violation + "\n  sql: " + sql, null);
+        }
+    }
+
+    /**
+     * Verifies, for a plan whose timestamp {@link #streamedTimestampDirection} streams, the contract of
+     * {@link #findStreamedTimestampViolation}. A violation is a real bug, in a
+     * {@link RecordCursorFactory#hasTableScanTimestamp()} answer or in the plan's rows, and throws
+     * {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkStreamedTimestamp(String sql, RecordCursorFactory factory, RecordCursor cursor, int direction) {
+        if (direction == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+            return;
+        }
+        final long row;
+        try {
+            row = findStreamedTimestampViolation(cursor, factory.getMetadata().getTimestampIndex(), direction);
+        } catch (Exception e) {
+            // A per-row cast error past a parallel filter's LIMIT cutoff can surface on one pass and
+            // not another, as checkToTop() describes. Any other throw is a defect.
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("streamed timestamp re-pass surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("streamed timestamp re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (row > -1) {
+            planSink.of(factory, executionContext);
+            throw new CursorCheckException(
+                    "the timestamp that a Parquet export streams as the designated timestamp is NULL or out of the plan's order"
+                            + " [direction=" + direction + ", row=" + row + "]\n  sql: " + sql + "\n  plan:\n" + planSink.getSink(),
+                    null
+            );
+        }
+    }
+
+    /**
      * Verifies two {@link RecordCursor#toTop()} invariants on a cursor the first
      * pass has fully materialized. First, {@code toTop()} must preserve precomputed
      * state, so {@link RecordCursor#preComputedStateSize()} must read the same value
@@ -1165,27 +1500,58 @@ public final class QueryRunner {
     }
 
     /**
+     * The cells of {@code line} that must match exactly: every cell outside
+     * {@code fpColumnMask}. Two rows that {@link #rowEqualsWithFpTolerance}
+     * accepts always share this key, so it narrows the candidates for a row
+     * without changing which rows match.
+     */
+    private static String exactCellsOf(String line, boolean[] fpColumnMask) {
+        final String[] tokens = line.split("\t", -1);
+        final StringBuilder key = new StringBuilder();
+        for (int i = 0; i < tokens.length; i++) {
+            if (i >= fpColumnMask.length || !fpColumnMask[i]) {
+                key.append(tokens[i]);
+            }
+            // Cells escape their tabs (see appendCell), so the separator is unambiguous.
+            key.append('\t');
+        }
+        return key.toString();
+    }
+
+    /**
      * Multiset comparison with floating-point tolerance: the two row sets
      * are equivalent iff each line in {@code a} can be paired with a
      * distinct line in {@code b} that matches under
      * {@link #rowEqualsWithFpTolerance(String, String, boolean[])}. Used after a
      * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
      * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
-     * on the access path the planner picks. Greedy matching is O(n^2);
-     * fuzz queries produce small row sets so this is fine.
+     * on the access path the planner picks.
+     * <p>
+     * Each line of {@code a} takes the first unmatched line of {@code b} that
+     * matches it. Only lines with the same exact cells can match, so the
+     * lines of {@code b} are grouped by those cells and a line of {@code a}
+     * searches its own group alone. Comparing every line with every other
+     * took over a minute on a 125k-row result and stalled the concurrent test.
      */
-    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b, boolean[] fpColumnMask) {
+    static boolean rowsetEqualsWithFpTolerance(CharSequence a, CharSequence b, boolean[] fpColumnMask) {
         String[] linesA = a.toString().split("\n", -1);
         String[] linesB = b.toString().split("\n", -1);
         if (linesA.length != linesB.length) {
             return false;
         }
-        boolean[] usedB = new boolean[linesB.length];
+        final HashMap<String, ArrayDeque<String>> unmatchedB = new HashMap<>();
+        for (String lineB : linesB) {
+            unmatchedB.computeIfAbsent(exactCellsOf(lineB, fpColumnMask), k -> new ArrayDeque<>()).add(lineB);
+        }
         for (String lineA : linesA) {
+            final ArrayDeque<String> candidates = unmatchedB.get(exactCellsOf(lineA, fpColumnMask));
+            if (candidates == null) {
+                return false;
+            }
             boolean matched = false;
-            for (int j = 0; j < linesB.length; j++) {
-                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j], fpColumnMask)) {
-                    usedB[j] = true;
+            for (Iterator<String> it = candidates.iterator(); it.hasNext(); ) {
+                if (rowEqualsWithFpTolerance(lineA, it.next(), fpColumnMask)) {
+                    it.remove();
                     matched = true;
                     break;
                 }
@@ -1333,6 +1699,118 @@ public final class QueryRunner {
     }
 
     /**
+     * The fused axis applies to the equi-join GROUP BY shape only, and only when the fused hash
+     * join GROUP BY is available to the pivot. The serial control arm disables parallel GROUP BY
+     * and with it the fused plan, so both runs would compile to the same ordinary plan there,
+     * and the axis skips it. {@link SqlExecutionContext#isParallelHashJoinGroupByEnabled()} also
+     * requires parallel GROUP BY and query workers, so its true value implies that the context's
+     * own flag is set, which is the value {@link #runFusedVariant} restores.
+     */
+    private boolean isFusedAxisApplicable(GeneratedQuery query) {
+        return diffFused
+                && query.shape() == QueryShape.HASH_JOIN_GROUP_BY
+                && executionContext.isParallelHashJoinGroupByEnabled();
+    }
+
+    /**
+     * Reconciles {@code bF}, the run with the fused hash join GROUP BY disabled (see
+     * {@link #runFusedOff}), against the pivot {@code bJ}, which ran with it enabled. The run with
+     * the fused plan disabled must not render the fused operator, or the axis compares a plan with
+     * itself and proves nothing; that is a harness failure, reported as such.
+     */
+    private Result runFusedVariant(GeneratedQuery query, Outcome bJ, Outcome bF) {
+        fusedAxisRuns++;
+        if (bF.hasFusedHashJoin) {
+            return Result.failed(query.sql(), new AssertionError(
+                    "the fused hash join GROUP BY is disabled but the plan still uses it: " + query.sql()));
+        }
+        if (isFullJoin(query)) {
+            // The fused planner accepts INNER, LEFT and RIGHT joins only, so both runs of a FULL
+            // join take the ordinary plan. Leaving it out of the counts keeps the selected share
+            // that QueryFuzzTest guards about the joins the planner can fuse.
+            if (bJ.hasFusedHashJoin) {
+                return Result.failed(query.sql(), new AssertionError(
+                        "the fused hash join GROUP BY ran a FULL join, which it does not support: " + query.sql()));
+            }
+        } else if (bJ.failure == null) {
+            fusedAxisCompletedRuns++;
+            if (bJ.hasFusedHashJoin) {
+                fusedAxisSelected++;
+            }
+        }
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                bF,
+                rowsB,
+                rowsE,
+                query.deterministic(),
+                "fused hash join GROUP BY divergence",
+                "fused on ",
+                "fused off"
+        );
+    }
+
+    /**
+     * Runs the query on the primary at JIT-off with the fused hash join GROUP BY disabled into
+     * {@code rowsE}: the second run of the fused axis.
+     */
+    private Outcome runFusedOff(GeneratedQuery query) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        executionContext.setParallelHashJoinGroupByEnabled(false);
+        try {
+            return runOnce(query.sql(), rowsE, primaryHasAnyParquet, query.deterministic());
+        } finally {
+            executionContext.setParallelHashJoinGroupByEnabled(true);
+        }
+    }
+
+    /**
+     * Runs the query on the primary at JIT-off with a small map page and reconciles it against
+     * {@code reference}, the same run with the default page. With {@code isFusedOff} the run also
+     * disables the fused hash join GROUP BY and the reference is the fused axis's ordinary run;
+     * that is the only way the ordinary hash join of a query that fuses gets a small page. The
+     * page size derives from the SQL text and {@code salt}, so a replayed seed reruns every query
+     * with the same pages, and each run of one query gets its own.
+     */
+    private Result runMapPageVariant(GeneratedQuery query, Outcome reference, StringSink referenceRows, boolean isFusedOff, int salt) {
+        final String sql = query.sql();
+        long pageSize = mapPageSize(sql, salt);
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        if (isFusedOff) {
+            executionContext.setParallelHashJoinGroupByEnabled(false);
+        }
+        Outcome small;
+        try {
+            for (int i = 0; ; i++) {
+                mapPageOverrides.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, pageSize);
+                small = runOnce(sql, rowsF, primaryHasAnyParquet, query.deterministic());
+                if (i == MAP_PAGE_MAX_DOUBLINGS || !isMapPageTooSmall(small)) {
+                    break;
+                }
+                pageSize *= 2;
+            }
+        } finally {
+            mapPageOverrides.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, (String) null);
+            if (isFusedOff) {
+                executionContext.setParallelHashJoinGroupByEnabled(true);
+            }
+        }
+        mapPageAxisRuns++;
+        return reconcilePair(
+                sql,
+                reference,
+                small,
+                referenceRows,
+                rowsF,
+                query.deterministic(),
+                isFusedOff ? "map page divergence (fused off)" : "map page divergence",
+                "default page",
+                "page of " + pageSize + "B"
+        );
+    }
+
+    /**
      * Runs the bind-variable form of the query and reconciles it against the
      * literal form's pivots. Bind variables are set via {@code setStr} keyed
      * by name (the {@code :bN} placeholders generated by
@@ -1385,7 +1863,7 @@ public final class QueryRunner {
             if (aJ != null) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
                 Outcome bindOn = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic());
-                return reconcilePair(
+                Result onResult = reconcilePair(
                         query.sql(),
                         aJ,
                         bindOn,
@@ -1396,6 +1874,7 @@ public final class QueryRunner {
                         "literal",
                         "bind   "
                 );
+                return onResult.isFailed() || onResult.isSkipped() ? onResult : offResult;
             }
             return offResult;
         } finally {
@@ -1405,12 +1884,25 @@ public final class QueryRunner {
 
     private Outcome runOnce(String sql, StringSink rows, boolean usesParquet, boolean deterministic) {
         rows.clear();
-        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = engine.select(compiler, sql, executionContext)
+        ) {
             int rowsRead;
             boolean[] fpColumnMask;
+            // A Parquet export asks a plan for its direction before it opens the cursor, and only once the plan answered
+            // that a table scan orders its timestamp, so a hash join keeps the sides its open picks here as well.
+            final int streamedTimestampDirection = verifyCursor
+                    ? streamedTimestampDirection(factory)
+                    : RecordCursorFactory.SCAN_DIRECTION_OTHER;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
+                // A CURSOR_BASED Parquet export picks the SYMBOL columns it keeps on the fresh cursor, so the
+                // check that their keys resolve picks them before the first pass as well.
+                if (verifyCursor) {
+                    setUpExportedSymbolKeyCheck(sql, cursor, metadata);
+                }
                 // The FP-column mask belongs to THIS projection, so it travels on this
                 // Outcome. reconcilePair intersects the two sides' masks: on the bind
                 // axis the literal and the bind form can legitimately resolve a
@@ -1428,13 +1920,19 @@ public final class QueryRunner {
                 if (verifyCursor) {
                     checkToTop(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic);
                     checkCalculateSize(sql, cursor, rows, rowsRead);
+                    checkExportedSymbolKeys(sql, cursor, metadata);
+                    checkStreamedTimestamp(sql, factory, cursor, streamedTimestampDirection);
                 }
             }
             planSink.of(factory, executionContext);
             // hasPushedLimit / hasEarlyExitGroupBy only feed the fault oracle's
             // swallow check (runFault), which runs runRaw / runRawMallocFault, not
             // this differential path.
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, false, usesParquet, fpColumnMask);
+            final CharSequence plan = planSink.getSink();
+            if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
+                buildChoiceRuns++;
+            }
+            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1456,21 +1954,23 @@ public final class QueryRunner {
 
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit && !diffShadow && !query.hasBind()) {
+        if (!diffJit && !diffShadow && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
+                && query.referenceSql() == null) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
         int prevJitMode = executionContext.getJitMode();
         try {
             // Pivot: primary at JIT-off. The pivot is the right-hand side of
-            // the JIT comparison and the left-hand side of the storage and
-            // bind-variable comparisons, so it runs whenever any of the three
-            // diffs is on.
+            // the JIT comparison and the left-hand side of the storage,
+            // fused, map page and bind-variable comparisons, so it runs whenever
+            // any of the five diffs is on.
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             Outcome bJ = runOnce(sql, rowsB, primaryHasAnyParquet, query.deterministic());
 
             Outcome aJ = null;
             Result jitResult = null;
+            Result skippedResult = null;
             if (diffJit) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
                 aJ = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
@@ -1478,6 +1978,9 @@ public final class QueryRunner {
                         "JIT divergence", "jit on ", "jit off");
                 if (jitResult.isFailed()) {
                     return jitResult;
+                }
+                if (jitResult.isSkipped()) {
+                    skippedResult = jitResult;
                 }
             }
 
@@ -1499,6 +2002,42 @@ public final class QueryRunner {
                 if (storageResult.isFailed()) {
                     return storageResult;
                 }
+                if (storageResult.isSkipped()) {
+                    skippedResult = storageResult;
+                }
+            }
+
+            Outcome bF = null;
+            if (isFusedAxisApplicable(query)) {
+                bF = runFusedOff(query);
+                Result fusedResult = runFusedVariant(query, bJ, bF);
+                if (fusedResult.isFailed()) {
+                    return fusedResult;
+                }
+            }
+
+            if (mapPageOverrides != null) {
+                final int variants = query.shape() == QueryShape.HASH_JOIN_GROUP_BY ? MAP_PAGE_VARIANTS_HASH_JOIN : 1;
+                for (int i = 0; i < variants; i++) {
+                    Result pageResult = runMapPageVariant(query, bJ, rowsB, false, i);
+                    if (pageResult.isFailed()) {
+                        return pageResult;
+                    }
+                    // A pivot that took the ordinary plan already ran it with the small page.
+                    if (bF != null && bJ.hasFusedHashJoin) {
+                        pageResult = runMapPageVariant(query, bF, rowsE, true, variants + i);
+                        if (pageResult.isFailed()) {
+                            return pageResult;
+                        }
+                    }
+                }
+            }
+
+            if (query.referenceSql() != null) {
+                Result referenceResult = runReferenceVariant(query, bJ);
+                if (referenceResult != null && referenceResult.isFailed()) {
+                    return referenceResult;
+                }
             }
 
             if (query.hasBind()) {
@@ -1506,9 +2045,12 @@ public final class QueryRunner {
                 if (bindResult != null && bindResult.isFailed()) {
                     return bindResult;
                 }
+                if (bindResult != null && bindResult.isSkipped()) {
+                    skippedResult = bindResult;
+                }
             }
 
-            return jitResult != null ? jitResult : Result.ok();
+            return skippedResult != null ? skippedResult : Result.ok();
         } finally {
             executionContext.setJitMode(prevJitMode);
         }
@@ -1593,6 +2135,49 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * Runs the query's reference rewrite on the primary at JIT-off into {@code rowsG} and
+     * reconciles it against the pivot {@code bJ}. Returns null when either side failed: the
+     * rewrite can reject a query that grouping sets accept, or the other way round, and neither
+     * says anything about the rows.
+     */
+    private Result runReferenceVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        Outcome reference = runOnce(query.referenceSql(), rowsG, primaryHasAnyParquet, query.deterministic());
+        if (bJ.failure != null || reference.failure != null) {
+            return null;
+        }
+        referenceAxisRuns++;
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                reference,
+                rowsB,
+                rowsG,
+                query.deterministic(),
+                "grouping sets reference divergence",
+                "grouping sets",
+                "union all    "
+        );
+    }
+
+    /**
+     * Picks the SYMBOL columns that a CURSOR_BASED Parquet export of the query keeps as SYMBOL the way the
+     * export does: {@link HybridColumnMaterializer} sets up on the fresh cursor, before its first row, and
+     * keeps a column only when its keys resolve through a table's symbol map. Remembers each kept column
+     * with the map the export resolves its keys through, for {@link #checkExportedSymbolKeys}.
+     * The export of a query that runs must not fail here, so a throw is a real bug and throws
+     * {@link CursorCheckException}.
+     */
+    private void setUpExportedSymbolKeyCheck(String sql, RecordCursor cursor, RecordMetadata metadata) {
+        try {
+            collectExportedSymbolMaps(cursor, metadata, exportedSymbolColumns, exportedSymbolMaps);
+        } catch (Exception e) {
+            throw new CursorCheckException("the export's materializer set-up threw on a fresh cursor:\n  sql: " + sql, e);
+        }
+        onExportedSymbolMapsCollected(exportedSymbolColumns, exportedSymbolMaps);
+    }
+
     private static final class CursorCheckException extends RuntimeException {
         // True when a cursor re-pass (toTop re-iteration / calculateSize recompute)
         // surfaced a per-row cast error (see isPerRowRuntimeError)
@@ -1628,6 +2213,7 @@ public final class QueryRunner {
             boolean hasEarlyExitGroupBy,
             boolean hasBlockingAggregation,
             boolean usesParquet,
+            boolean hasFusedHashJoin,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -1635,15 +2221,15 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return ok(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, EMPTY_FP_MASK);
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, fpColumnMask, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
         }
     }
 

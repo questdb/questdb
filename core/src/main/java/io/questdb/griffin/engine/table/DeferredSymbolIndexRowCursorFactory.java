@@ -68,7 +68,13 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
         return pageFrame
                 .getIndexReader(columnIndex, indexDirection)
-                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(
+                        TableUtils.toIndexKey(symbolKey),
+                        pageFrame.getIndexRowLo(),
+                        pageFrame.getIndexRowHi() - 1,
+                        null,
+                        pageFrameMemory.getSourceRowResolver()
+                );
     }
 
     @Override
@@ -86,6 +92,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         return false;
     }
 
+    @Override
+    public boolean isForwardScan() {
+        return indexDirection == IndexReader.DIR_FORWARD;
+    }
+
     // Stable within the execution iff the deferred symbol key function is stable (literal/bind yes,
     // rnd_* no); the key is resolved against the execution-fixed symbol table on every open.
     @Override
@@ -100,10 +111,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
-        int symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol.getSymbol(null));
-        this.symbolKey = symbolKey != SymbolTable.VALUE_NOT_FOUND
-                ? TableUtils.toIndexKey(symbolKey)
-                : SymbolTable.VALUE_NOT_FOUND;
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol.getSymbol(null), symbolKey);
     }
 
     @Override

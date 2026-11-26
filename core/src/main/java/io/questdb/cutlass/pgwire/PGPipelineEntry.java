@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -53,6 +54,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionOwner;
+import io.questdb.griffin.SqlExecutionResources;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -180,6 +182,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final CancellationBinding queryCancellation = new CancellationBinding();
+    private final StringSink selectCacheKeySink = new StringSink();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -211,7 +214,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private SqlExecutionResources queryExecutionResources;
     private MemoryTracker queryMemoryTracker;
+    // the select cache scope of the principal the statement was parsed for, see SelectCacheKey
+    private CharSequence selectCacheScope = null;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -280,14 +286,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         if (tas != null) {
-            // close cursor in case it is open
-            cursor = Misc.free(cursor);
-            queryCancellation.clear();
-            queryMemoryTracker = null;
+            // Close the cursor in case it is open, and end the execution owner before the factory goes
+            // back to the shared cache. Ending the owner releases the execution's resources, which
+            // include state of the factory's functions, and another connection can take the factory
+            // from the cache as soon as it is there. A connection that closes with an open cursor
+            // gets here with its owner still running.
+            try {
+                closeSuspendedCursor();
+            } catch (Throwable th) {
+                // close() frees the factory, which tas holds too
+                LOG.error().$("could not end SQL execution, not caching its plan [error=").$(th).I$();
+                return;
+            }
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(sqlText, tas);
+            tasCache.put(SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink), tas);
             tas = null;
         } else if (tai != null) {
             taiCache.put(sqlText, tai);
@@ -366,6 +380,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         preparedStatementNameToDeallocate = null;
         queryCancellation.clear();
         queryMemoryTracker = null;
+        queryExecutionResources = null;
+        selectCacheScope = null;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlReturnRowCount = 0;
@@ -399,6 +415,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendResumePoint = -1;
         queryCancellation.clear();
         queryMemoryTracker = null;
+        queryExecutionResources = null;
         stateSuspended = false;
         endSqlExecutionOwner();
     }
@@ -970,6 +987,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     cursor = Misc.free(cursor);
                     queryCancellation.clear();
                     queryMemoryTracker = null;
+                    queryExecutionResources = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
@@ -1128,6 +1146,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
+    }
+
+    // the scope must be immutable, see SecurityContext.getSelectCacheScope()
+    public void setSelectCacheScope(CharSequence selectCacheScope) {
+        this.selectCacheScope = selectCacheScope;
     }
 
     public void setStateBind(boolean stateBind) {
@@ -1295,6 +1318,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 assert outResendCursorRecord;
                 sqlExecutionContext.setCancelledFlag(queryCancellation);
                 sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+                sqlExecutionContext.setExecutionResources(queryExecutionResources);
                 try {
                     outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
                 } catch (PGMessageProcessingException e) {
@@ -1332,6 +1356,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
+        this.selectCacheScope = blueprint.selectCacheScope;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;
@@ -1712,14 +1737,34 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     for (int attempt = 1; ; attempt++) {
                         final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
+                        boolean isRetryable = true;
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                            // The method borrows the writer an earlier statement of the transaction
+                            // parked, if there is one, and with it the rows that statement appended.
+                            final TableWriterAPI borrowed = m.getWriter();
+                            final boolean isParked = pendingWriters.get(borrowed.getTableToken()) == borrowed;
+                            final long parkedRowCount = isParked ? borrowed.getUncommittedRowCount() : 0;
                             try {
                                 sqlAffectedRowCount = m.execute(sqlExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
                             } catch (Throwable th) {
                                 TableWriterAPI w = m.popWriter();
+                                if (isParked && th instanceof TableReferenceOutOfDateException) {
+                                    if (w.getUncommittedRowCount() == parkedRowCount) {
+                                        // A stale plan fails before it appends, as when a view it reads
+                                        // was redefined, so the parked rows are intact. The writer stays
+                                        // parked for the recompiled plan to append to. Releasing it would
+                                        // roll those rows back, and the transaction would commit without
+                                        // them, while every statement in it reported success.
+                                        throw th;
+                                    }
+                                    // The failed plan rolled the parked rows back, and a retry cannot
+                                    // bring them back, so the transaction has to fail rather than commit
+                                    // without them.
+                                    isRetryable = false;
+                                }
                                 if (w != null) {
                                     pendingWriters.remove(w.getTableToken());
                                 }
@@ -1729,7 +1774,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             tai = Misc.free(tai);
-                            if (attempt == maxRecompileAttempts) {
+                            if (!isRetryable || attempt == maxRecompileAttempts) {
                                 throw e;
                             }
                             compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
@@ -1927,12 +1972,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    // outCursor() re-installs queryCancellation and queryMemoryTracker on the context before every
-    // row batch, so every site that opens a cursor must capture them here.
+    // outCursor() re-installs queryCancellation, queryMemoryTracker and queryExecutionResources on the
+    // context before every row batch, so every site that opens a cursor must capture them here. Sibling
+    // portals share the context, and a cursor that initializes a function on its first read must register
+    // that function with its own execution, not with the portal opened after it.
     private void openCursor(SqlExecutionContext sqlExecutionContext) throws SqlException {
         cursor = factory.getCursor(sqlExecutionContext);
         sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
         queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
+        queryExecutionResources = sqlExecutionContext.getExecutionResources();
     }
 
     private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
@@ -2484,6 +2532,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
         sqlExecutionContext.setCancelledFlag(queryCancellation);
         sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+        sqlExecutionContext.setExecutionResources(queryExecutionResources);
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
@@ -3598,6 +3647,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //                      parameter values.
 
         // Considering all the above, we are performing a 3-way merge of the existing states.
+        sqlExecutionContext.awaitPageFrameSequences();
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         bindVariableService.clear();
         long lo = parameterValueArenaPtr;

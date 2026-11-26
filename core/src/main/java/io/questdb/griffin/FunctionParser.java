@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -165,6 +166,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
+    // Where the view metadata subquery check records requirements instead of rejecting them, or null, see
+    // deferViewMetadataChecks()
+    private SqlExecutionRequirements deferredViewMetadataRequirements;
     private int executionRequirementPosition = -1;
     private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
@@ -228,10 +232,51 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         };
     }
 
+    /**
+     * Does for a SHOW statement what {@code checkAndCreateFunction} does for a function that
+     * declares the same {@link SqlExecutionRequirements}, e.g. a statement that lists objects or
+     * reads their metadata declares {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}: checks the
+     * statement when the compile stores its result in a materialized or live view, and records it for
+     * the checks that run after the optimiser. The compiler creates the cursor of a SHOW statement
+     * directly, not through a function factory, so it reports the statement here, before it creates
+     * the cursor. Ordinary-view PIVOT IN subqueries also check their requirements here: they run
+     * while deriving metadata, including during detached recompilation.
+     *
+     * @param position         the position of the statement in the compiled SQL
+     * @param statement        the statement, e.g. SHOW TABLES
+     * @param requirements     the requirements of the statement, see {@link SqlExecutionRequirements}
+     * @param executionContext the context of the compile
+     * @throws SqlException when a stored view cannot use the statement in this position
+     */
+    public void addStatementRequirements(
+            int position,
+            CharSequence statement,
+            int requirements,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
+        final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
+        if (executionContext.isViewMetadataSubquery()) {
+            checkViewMetadataSubquery(requirements, requirementPosition, statement, true);
+        }
+        if (!executionContext.allowNonDeterministicFunctions()) {
+            SqlExecutionRequirements.checkStoredView(
+                    requirements,
+                    requirementPosition,
+                    statement,
+                    true,
+                    view,
+                    executionContext
+            );
+        }
+        executionRequirements.add(requirements, requirementPosition, statement, true, view);
+    }
+
     @Override
     public void clear() {
         this.executionRequirements.clear();
         this.executionRequirementPosition = -1;
+        this.deferredViewMetadataRequirements = null;
         this.positionStack.clear();
         this.functionStack.clear();
         this.lastFunctionFactorySignature = null;
@@ -253,12 +298,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (name != null) {
             if (!name.isEmpty()) {
                 if (expressionType != ExpressionNode.BIND_VARIABLE) {
-                    return new StrConstant(name);
+                    return StrConstant.newUnquotedInstance(name);
                 }
                 return switch (name.charAt(0)) {
                     case ':' -> createNamedParameter(position, name);
                     case '$' -> parseIndexedParameter(position, name);
-                    default -> new StrConstant(name);
+                    default -> StrConstant.newUnquotedInstance(name);
                 };
             } else return StrConstant.EMPTY;
         }
@@ -367,6 +412,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
         this.lastFunctionFactorySignature = null;
+        // A sub-query operand re-enters this method through createCursorFunction() while the outer
+        // traversal still holds its pending operands on the same stacks.
+        final int functionDepth = functionStack.size();
+        final int positionDepth = positionStack.size();
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -379,12 +428,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
-                // Release parsed functions best-effort: keep closing the rest even if one close()
-                // throws, and fold close failures into e as suppressed instead of masking it.
-                for (int i = functionStack.size(); i > 0; i--) {
+                // Release the functions this call parsed best-effort: keep closing the rest even if one
+                // close() throws, and fold close failures into e as suppressed instead of masking it.
+                // Entries below the depths belong to the outer traversal. It frees them if the failure
+                // reaches it, and keeps parsing with them if a nested caller falls back instead.
+                for (int i = functionStack.size(); i > functionDepth; i--) {
                     Misc.free(functionStack.poll(), e);
                 }
-                positionStack.clear();
+                for (int i = positionStack.size(); i > positionDepth; i--) {
+                    positionStack.pop();
+                }
                 throw e;
             }
 
@@ -496,12 +549,40 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         positionStack.push(node.position);
     }
 
+    /**
+     * Makes the functions and SHOW statements created from now on record their requirements in the given
+     * requirements when a PIVOT IN subquery that derives an ordinary view's metadata may not use them, see
+     * {@link SqlExecutionRequirements#checkViewMetadataSubquery(int, int, CharSequence, boolean)}, instead of
+     * rejecting them. Pass null to reject them again. The optimiser defers the check this way for the cursor
+     * factories of a sub-query nested in such a subquery, which runs only if the subquery's plan keeps it.
+     * Returns the requirements to pass back once the deferral ends.
+     */
+    @Nullable SqlExecutionRequirements deferViewMetadataChecks(@Nullable SqlExecutionRequirements requirements) {
+        final SqlExecutionRequirements previousRequirements = deferredViewMetadataRequirements;
+        deferredViewMetadataRequirements = requirements;
+        return previousRequirements;
+    }
+
+    /**
+     * Makes the functions created from now on report their execution requirements at the given
+     * position, the name of a view in the compiled SQL, while they are created from the definition
+     * of that view. The outermost view keeps its position for the views nested in it. Returns the
+     * position to pass to {@link #restoreExecutionRequirementPosition(int)}.
+     */
     int enterExecutionRequirementPosition(int position) {
         final int previousPosition = executionRequirementPosition;
         if (previousPosition < 0) {
             executionRequirementPosition = position;
         }
         return previousPosition;
+    }
+
+    /**
+     * Returns the position the functions created now report their execution requirements at, or -1 when
+     * each reports its own, see {@link #enterExecutionRequirementPosition(int)}.
+     */
+    int getExecutionRequirementPosition() {
+        return executionRequirementPosition;
     }
 
     void restoreExecutionRequirementPosition(int position) {
@@ -681,6 +762,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    // STRING ordering reads NULL <= NULL as true, CHAR ordering never holds for NULL. A NULL CHAR
+    // constant ordered against NULL or CHAR keeps the CHAR semantics that a CHAR column gets.
+    private static boolean isNullCharOrderedAgainstNullOrChar(ExpressionNode node, ObjList<Function> args, int argIdx) {
+        final CharSequence token = node.token;
+        if (!Chars.equals(token, "<") && !Chars.equals(token, "<=") && !Chars.equals(token, ">") && !Chars.equals(token, ">=")) {
+            return false;
+        }
+        if (args.getQuick(argIdx).getChar(null) != Numbers.CHAR_NULL) {
+            return false;
+        }
+        final int otherType = args.getQuick(1 - argIdx).getType();
+        return otherType == ColumnType.NULL || otherType == ColumnType.CHAR;
+    }
+
+    private static boolean isUntypedEmptyArrayLiteral(Function arg) {
+        // ArrayConstant.emptyUntyped() is the only producer of an ArrayConstant without an element type
+        return arg instanceof ArrayConstant && ColumnType.decodeArrayElementType(arg.getType()) == ColumnType.UNDEFINED;
+    }
+
     private static long parseDate(CharSequence str, int position) throws SqlException {
         try {
             return MillisTimestampDriver.floor(str);
@@ -703,16 +803,34 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         final int position = node.position;
         final int factoryExecutionRequirements = factory.getExecutionRequirements();
-        if (!sqlExecutionContext.allowNonDeterministicFunctions()
-                && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            final CharSequence objectKind = sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view";
-            final SqlException exception = SqlException.position(position)
-                    .put("administrative function cannot be used in ")
-                    .put(objectKind)
-                    .put(": ")
-                    .put(node.token);
-            Misc.freeObjList(args, exception);
-            throw exception;
+        // A function written in a view surfaces its requirements at the name of the view in the
+        // compiled SQL, see enterExecutionRequirementPosition(). Its own position points into the
+        // definition of the view.
+        final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
+        final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
+        if (factoryExecutionRequirements != SqlExecutionRequirements.NONE) {
+            // Check before creating the function, a rejected one must not run at all. A PIVOT IN subquery that
+            // derives an ordinary view's metadata rejects administrative functions, and a compile that stores
+            // what the function returns in a materialized or live view, at CREATE or at refresh, rejects
+            // administrative and catalogue functions alike.
+            try {
+                if (sqlExecutionContext.isViewMetadataSubquery()) {
+                    checkViewMetadataSubquery(factoryExecutionRequirements, requirementPosition, node.token, false);
+                }
+                if (!sqlExecutionContext.allowNonDeterministicFunctions()) {
+                    SqlExecutionRequirements.checkStoredView(
+                            factoryExecutionRequirements,
+                            requirementPosition,
+                            node.token,
+                            false,
+                            view,
+                            sqlExecutionContext
+                    );
+                }
+            } catch (Throwable th) {
+                Misc.freeObjList(args, th);
+                throw th;
+            }
         }
 
         Function function;
@@ -728,6 +846,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args, e);
             throw e;
         } catch (Throwable e) {
+            if (e instanceof CairoException ce && ce.isAuthorizationError()) {
+                // A factory that authorizes the caller, e.g. a table-name function in a view the caller
+                // may see but not read, failed the caller, not itself: keep the authorization error, which
+                // the protocols report as such, and do not log it as an internal error.
+                Misc.freeObjList(args, ce);
+                throw ce;
+            }
             LOG.error().$("exception in function factory: ").$(e).$();
             final SqlException ex = SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
             Misc.freeObjList(args, ex);
@@ -761,11 +886,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.free(function, exception);
             throw exception;
         }
-        executionRequirements.add(
-                factoryExecutionRequirements,
-                executionRequirementPosition > -1 ? executionRequirementPosition : position,
-                node.token
-        );
+        executionRequirements.add(factoryExecutionRequirements, requirementPosition, node.token, false, view);
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
@@ -774,6 +895,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         lastFunctionFactorySignature = factory.getSignature();
         return function;
+    }
+
+    private void checkViewMetadataSubquery(
+            int requirements,
+            int position,
+            CharSequence name,
+            boolean isStatement
+    ) throws SqlException {
+        if (deferredViewMetadataRequirements != null) {
+            deferredViewMetadataRequirements.add(requirements, position, name, isStatement, null);
+        } else {
+            SqlExecutionRequirements.checkViewMetadataSubquery(requirements, position, name, isStatement);
+        }
     }
 
     private Function createBindVariable0(int position, CharSequence name) throws SqlException {
@@ -913,7 +1047,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         boolean hasPushedWindowContext = false;
+        final SqlExecutionContext.TableFunctionView previousView = sqlExecutionContext.getTableFunctionView();
         try {
+            // The sub-query reads table-name functions through the view it is written in, if any, see
+            // ExpressionNode.tableFunctionView, whichever model the compile that reaches it belongs to.
+            sqlExecutionContext.setTableFunctionView(node.tableFunctionView);
             if (!sqlExecutionContext.getWindowContext().isEmpty()) {
                 // The inner SELECT must resolve its own aggregates and windows independently.
                 // In particular, an inner window must not clear the outer function's OVER spec.
@@ -941,6 +1079,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             return function;
         } finally {
+            sqlExecutionContext.setTableFunctionView(previousView);
             if (hasPushedWindowContext) {
                 sqlExecutionContext.popWindowContext();
             }
@@ -1207,7 +1346,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                     if (argIsArray) { // given the above checks, implies that sigIsArray is also true
                         short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
+
                         if (sigArgTypeTag == argElemTypeTag) {
+                            match = mergeWithExactMatch(match);
+                            continue;
+                        } else if (isUntypedEmptyArrayLiteral(arg) && sigArgTypeTag == ColumnType.DOUBLE) {
+                            // the ARRAY[] literal takes the DOUBLE[] type once this candidate wins
                             match = mergeWithExactMatch(match);
                             continue;
                         } else {
@@ -1221,7 +1365,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
                                     factory.supportImplicitCastCharToStr() &&
                                     arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
-                                    arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
+                                    arg != CharTypeConstant.INSTANCE &&    // Ignore type constant to keep cast(X as char) working
+                                    !isNullCharOrderedAgainstNullOrChar(node, args, argIdx)) ||
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType)) ||
                             (sigArgTypeTag == ColumnType.DECIMAL && ColumnType.isDecimal(argType))) {
                         match = mergeWithExactMatch(match);
@@ -1401,7 +1546,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
-            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
+            if (isUntypedEmptyArrayLiteral(arg) && FunctionFactoryDescriptor.isArray(sigArgType)) {
+                // type the ARRAY[] literal the same way ARRAY[]::DOUBLE[] does
+                arg.assignType(
+                        ColumnType.encodeArrayType(sigArgTypeTag, ColumnType.decodeArrayDimensionality(arg.getType())),
+                        sqlExecutionContext.getBindVariableService()
+                );
+            } else if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
                 if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);
@@ -1425,6 +1576,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIPv4ToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.VARCHAR) {
+                args.setQuick(k, new CastIPv4ToVarcharFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {

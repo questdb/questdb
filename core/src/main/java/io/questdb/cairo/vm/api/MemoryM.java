@@ -37,7 +37,7 @@ public interface MemoryM extends Closeable {
     long addressOf(long offset);
 
     default void allocate(long size) {
-        TableUtils.allocateDiskSpace(getFilesFacade(), getFd(), size);
+        TableUtils.allocateDiskSpaceAligned(getFilesFacade(), getFd(), size);
     }
 
     @Override

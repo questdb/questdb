@@ -79,6 +79,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_maxInt(JNIEnv *env, jclass cl, j
     return maxInt_Vanilla((int *) pInt, count);
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_minMaxCountInt(JNIEnv *env, jclass cl, jlong pInt, jlong count, jlong pMinMax) {
+    return minMaxCountInt_Vanilla((int32_t *) pInt, count, (int32_t *) pMinMax);
+}
+
 // LONG
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_countLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {

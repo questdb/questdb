@@ -202,12 +202,34 @@ fn print_one_footer(reader: &ParquetMetaReader, depth: usize) {
     if footer_flags.has_scratchpad() {
         print!(" [SCRATCHPAD]");
     }
+    if footer_flags.has_index_row_map() {
+        print!(" [INDEX_ROW_MAP]");
+    }
     println!();
     if let Some(seq) = reader.seq_txn() {
         println!("seqTxn: {}", seq.get());
     }
+    print_index_row_map(reader);
     print_scratchpad(reader);
     println!();
+}
+
+fn print_index_row_map(reader: &ParquetMetaReader) {
+    let footer = reader.footer();
+    let Some(index_row_count) = footer.index_row_count() else {
+        return;
+    };
+    print!("Index row map: count={index_row_count}, lo=[");
+    for i in 0..reader.row_group_count() as usize {
+        if i > 0 {
+            print!(", ");
+        }
+        match footer.row_group_index_row_lo(i) {
+            Ok(Some(lo)) => print!("{lo}"),
+            _ => print!("?"),
+        }
+    }
+    println!("]");
 }
 
 fn print_scratchpad(reader: &ParquetMetaReader) {
