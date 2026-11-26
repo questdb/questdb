@@ -618,6 +618,29 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testNulLedQueryTakesNoCachedPlan() throws Exception {
+        // The select cache keys a query sent with variables by a NUL, a 'V', the variables and the
+        // text. A query text that starts with a NUL and spells that key compiles on its own, as it
+        // does while the cache holds nothing.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            engine.execute("INSERT INTO t VALUES (1), (2)", sqlExecutionContext);
+            // the key of "SELECT v FROM t WHERE v = @a" with "@a := 1", sent URL-encoded as the text
+            final Utf8StringSink spelled = new Utf8StringSink();
+            spelled.put("%00V7%3A%40a%20%3A%3D%201-SELECT%20v%20FROM%20t%20WHERE%20v%20%3D%20%40a");
+            final String error = "{\"query\":\"\\u0000V7:@a := 1-SELECT v FROM t WHERE v = @a\",\"error\":\"too few arguments for ':=' [found=1,expected=2]\",\"position\":7}";
+            testHttpClient.assertGet("/query", error, spelled, null);
+            final String rows = "{\"query\":\"SELECT v FROM t WHERE v = @a\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}";
+            for (int i = 0; i < 2; i++) {
+                // the query with its variables leaves its compiled plan in the cache
+                assertGet(rows, "SELECT v FROM t WHERE v = @a", "@a := 1");
+                testHttpClient.assertGet("/query", error, spelled, null);
+                testHttpClient.assertGet("/exp", error, spelled, null);
+            }
+        }));
+    }
+
+    @Test
     public void testRedefineViewIgnoresVariables() throws Exception {
         // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
         // the statement compiles. The body is stored as text, without the variables, so it fails

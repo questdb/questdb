@@ -36,6 +36,8 @@ public class SelectCacheKeyTest {
         final String sql = "SELECT * FROM t";
         // the shared scope keeps the cache keyed by the SQL text alone, as it was before scopes
         Assert.assertSame(sql, SelectCacheKey.of(null, sql, new StringSink()));
+        // an empty text included
+        Assert.assertSame("", SelectCacheKey.of(null, "", new StringSink()));
     }
 
     @Test
@@ -44,8 +46,9 @@ public class SelectCacheKeyTest {
         final String keyA = SelectCacheKey.of("ab", "c", new StringSink()).toString();
         final String keyB = SelectCacheKey.of("a", "bc", new StringSink()).toString();
         Assert.assertNotEquals(keyA, keyB);
-        // and no SQL text starts with the NUL that starts a qualified key
+        // a qualified key starts with a NUL, and the scope's length follows it
         Assert.assertEquals('\u0000', keyA.charAt(0));
+        Assert.assertEquals('2', keyA.charAt(1));
     }
 
     @Test
@@ -58,6 +61,44 @@ public class SelectCacheKeyTest {
         Assert.assertNotEquals(keyA, keyB);
         Assert.assertNotEquals(sql, keyA);
         Assert.assertEquals(keyA, SelectCacheKey.of("alice", sql, sinkB).toString());
+    }
+
+    @Test
+    public void testSqlTextStartingWithNulCannotSpellAnotherKey() {
+        final StringSink sink = new StringSink();
+        // An HTTP client can send a SQL text that starts with a NUL, the character the other keys
+        // start with. Its key in the shared scope spells neither a scoped key nor the key of a
+        // text with variables.
+        Assert.assertNotEquals(
+                SelectCacheKey.of("s", "c", sink).toString(),
+                SelectCacheKey.of(null, "\u00001:sc", sink).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of(null, "c", "@a := 1", sink).toString(),
+                SelectCacheKey.of(null, "\u0000V7:@a := 1-c", sink).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of("s", "c", "@a := 1", sink).toString(),
+                SelectCacheKey.of(null, "\u0000V7:@a := 11:sc", sink).toString()
+        );
+        // nor the key of another such text
+        Assert.assertNotEquals(
+                SelectCacheKey.of(null, "\u0000a", sink).toString(),
+                SelectCacheKey.of(null, "\u0000\u0000a", sink).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of(null, "\u0000a", sink).toString(),
+                SelectCacheKey.of(null, "\u0000b", sink).toString()
+        );
+        // without variables, the text takes the same key from either method, and a scope qualifies it
+        Assert.assertEquals(
+                SelectCacheKey.of(null, "\u0000a", sink).toString(),
+                SelectCacheKey.of(null, "\u0000a", "", sink).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of("s", "\u0000a", sink).toString(),
+                SelectCacheKey.of(null, "\u0000a", sink).toString()
+        );
     }
 
     @Test
