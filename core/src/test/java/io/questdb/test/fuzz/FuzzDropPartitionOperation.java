@@ -42,9 +42,16 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    // drops every partition from cutoffTimestamp on, rather than the day before it
+    private final boolean isDroppingNewest;
 
     public FuzzDropPartitionOperation(long cutoffTimestamp) {
+        this(cutoffTimestamp, false);
+    }
+
+    public FuzzDropPartitionOperation(long cutoffTimestamp, boolean isDroppingNewest) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.isDroppingNewest = isDroppingNewest;
     }
 
     @Override
@@ -55,7 +62,9 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
             String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
-                    + " DROP PARTITION WHERE " + FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp);
+                    + " DROP PARTITION WHERE " + (isDroppingNewest
+                    ? FuzzTransactionOperation.partitionsFromFilter(metadata, cutoffTimestamp)
+                    : FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp));
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);
@@ -79,5 +88,13 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public long getCutoffTimestamp() {
+        return cutoffTimestamp;
+    }
+
+    public boolean isDroppingNewest() {
+        return isDroppingNewest;
     }
 }

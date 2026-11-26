@@ -46,7 +46,9 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -71,6 +73,11 @@ import org.junit.Test;
  * high-cardinality join breaches.
  */
 public class JoinMemoryTrackerTest extends AbstractCairoTest {
+    // A WINDOW JOIN of the trades with the prices of their symbol over the second up to each trade, sorted by the
+    // trades' timestamp, in which its rows already arrive.
+    private static final String SORTED_WINDOW_JOIN = "(SELECT t.sym, avg(p.price) ap, t.ts FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+            "RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.ts)";
+
 
     @Before
     public void setUp() {
@@ -939,6 +946,50 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSpliceJoinOverSortedWindowJoinBreachesLimitInSort() throws Exception {
+        // SPLICE JOIN reads a WINDOW JOIN sorted by its timestamp through the sort that ORDER BY keeps for it. The
+        // sort copies the rows into a record chain and their keys into an entry list, both bound to the per-query
+        // tracker, and 15_000 more trades take them past the 512 KiB limit. So does the sort over a UNION ALL that
+        // merges two timestamp-ordered branches. Reusing one factory checks that the failed execution released what
+        // it had charged.
+        assertMemoryLeak(() -> {
+            createSortedWindowJoinTables();
+            executeWithoutQueryMemoryLimit("INSERT INTO trades SELECT ((100 + x) * 1_000_000)::TIMESTAMP, ('s' || (x % 4))::SYMBOL, x::DOUBLE " +
+                    "FROM long_sequence(15_000)");
+            drainWalQueue();
+            final String sql = "SELECT * FROM " + SORTED_WINDOW_JOIN + " w SPLICE JOIN quotes q";
+            assertUsesFactory(sql, SpliceJoinLightRecordCursorFactory.class);
+            assertDrainBreachesInSort(sql);
+            assertDrainBreachesInSort("SELECT * FROM (SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL (SELECT sym, ap, ts FROM w_ref WHERE sym = 's1')) " +
+                    "ORDER BY ts) w SPLICE JOIN quotes q");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinOverSortedWindowJoinRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // With 4 KiB pages the sort fits the per-query limit. Repeated executions of one factory return the rows of
+        // the same join over the materialised WINDOW JOIN and must release every byte they charged.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024);
+        assertMemoryLeak(() -> {
+            createSortedWindowJoinTables();
+            final String sql = "SELECT * FROM " + SORTED_WINDOW_JOIN + " w SPLICE JOIN quotes q";
+            final StringSink expected = new StringSink();
+            printSql("SELECT * FROM w_ref w SPLICE JOIN quotes q", expected);
+            assertUsesFactory(sql, SpliceJoinLightRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        sink.clear();
+                        CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                        TestUtils.assertEquals(expected, sink);
+                    }
+                }
+            }
+        });
+    }
+
     private void assertFullFatOpenFailureReleasesAllocations(String sql, Class<?> factoryClass) throws Exception {
         // setFullFatJoins forces the full-fat outer-join factory (the same path the optimizer picks for a
         // non-random-access slave). The query is configured to breach during the cursor's of() (the
@@ -960,6 +1011,27 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                         TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                     }
+                }
+            }
+        }
+    }
+
+    // Expects the per-query limit to breach at the first page of the sort's record chain while the cursor reads
+    // rows, on each of five executions of one factory.
+    private void assertDrainBreachesInSort(String sql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            for (int i = 0; i < 5; i++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected a per-query memory breach in the sort at iteration " + i);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    assertSortAllocation(e.getFlyweightMessage());
                 }
             }
         }
@@ -1002,6 +1074,15 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
+    // The sort charges the rows it copies to NATIVE_RECORD_CHAIN and their keys to NATIVE_DEFAULT.
+    private static void assertSortAllocation(CharSequence message) {
+        Assert.assertTrue(
+                message.toString(),
+                Chars.contains(message, "memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']')
+                        || Chars.contains(message, "memoryTag=" + MemoryTag.NATIVE_DEFAULT + ']')
+        );
+    }
+
     private void assertUsesFactory(String sql, Class<?> factoryClass) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -1020,6 +1101,20 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             CursorPrinter.println(cursor, factory.getMetadata(), sink);
             TestUtils.assertContains(sink, "Markout Horizon Join");
         }
+    }
+
+    // Trades of four symbols a second apart, prices ten times denser, quotes every 3s, and the WINDOW JOIN of the
+    // trades and prices materialised as w_ref.
+    private void createSortedWindowJoinTables() throws Exception {
+        execute("CREATE TABLE trades AS (SELECT (x * 1_000_000)::TIMESTAMP ts, ('s' || (x % 4))::SYMBOL sym, x::DOUBLE price " +
+                "FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE prices AS (SELECT (x * 100_000)::TIMESTAMP ts, ('s' || (x % 4))::SYMBOL sym, x::DOUBLE price " +
+                "FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes AS (SELECT (x * 3_000_000 + 500_000)::TIMESTAMP ts, ('s' || (x % 4))::SYMBOL sym, x::DOUBLE bid " +
+                "FROM long_sequence(40)) TIMESTAMP(ts) PARTITION BY DAY");
+        drainWalQueue();
+        execute("CREATE TABLE w_ref AS " + SORTED_WINDOW_JOIN + " TIMESTAMP(ts) PARTITION BY DAY");
+        drainWalQueue();
     }
 
     private static void executeWithoutQueryMemoryLimit(String ddl) throws SqlException {

@@ -4943,6 +4943,104 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshPeriodEndsWithBatchCommit() throws Exception {
+        // Regression test for #8072. The period cuts off the txn interval of the row in the incomplete period, so
+        // the last step group of the refresh interval iterator holds no txn interval. With a one-row batch size,
+        // the step group with the row in the complete period ends in a batch commit, and the iterator yields no
+        // more intervals. The refresh used to leak the view's query factory and never advance the watermark,
+        // leaving the view 'refreshing' and rescanning the same intervals on every later refresh.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by HOUR WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            // The first refresh measured its scan and commit times. The gap threshold of the txn interval
+            // clustering derives from them, and a threshold above the three-hour gap between the next two
+            // rows would merge their txn intervals into one that the last step group intersects. Reset the
+            // measurements, so the threshold takes its cold-start value of two seconds.
+            execute("refresh materialized view price_1h stats");
+
+            // a row in a complete period and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T08:00:00.000000Z\t2.0
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
+
+            // another row in the incomplete period: the view's rows stay the same, but the refresh advances
+            // the watermark
+            execute("insert into base_price(price, ts) values (4.0, '2024-09-10T11:20')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:45:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:45:00.000000Z\t2024-09-10T11:45:00.000000Z\t4\t4
+                            """);
+
+            // the period completes, and its range refresh writes the 11:00 bucket
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:10:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tprice
+                            2024-09-10T08:00:00.000000Z\t2.0
+                            2024-09-10T10:00:00.000000Z\t1.0
+                            2024-09-10T11:00:00.000000Z\t4.0
+                            """));
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t4\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back

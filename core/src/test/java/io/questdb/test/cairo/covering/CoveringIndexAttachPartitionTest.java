@@ -114,6 +114,105 @@ public class CoveringIndexAttachPartitionTest extends AbstractAlterTableAttachPa
     }
 
     @Test
+    public void testAttachPartitionAfterCoveredColumnRenamedAwayAndBack() throws Exception {
+        // RENAME COLUMN gives val a new column name txn and links the files of the attached partitions only, so
+        // 2024-01-01, detached meanwhile, keeps val and the covering files of sym under the old one. Renamed away and
+        // back, val has its name again, and the attach must read the version the partition holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_ren (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // a row on another day first: val takes a column name txn above 0, and 2024-01-01 holds all of it
+            execute("INSERT INTO t_ren VALUES ('2023-12-31T00:00:00', 'C')");
+            execute("ALTER TABLE t_ren ADD COLUMN val DOUBLE");
+            execute("ALTER TABLE t_ren ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("""
+                    INSERT INTO t_ren VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0),
+                    ('2024-01-02T00:00:00', 'A', 40.0)
+                    """);
+            execute("ALTER TABLE t_ren DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE t_ren RENAME COLUMN val TO v2");
+            execute("ALTER TABLE t_ren RENAME COLUMN v2 TO val");
+            final TableToken token = engine.verifyTableName("t_ren");
+            path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(TableUtils.DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+            execute("ALTER TABLE t_ren ATTACH PARTITION LIST '2024-01-01'");
+            assertRenamedCoveredColumnRows(
+                    """
+                            ts\tsym\tval
+                            2023-12-31T00:00:00.000000Z\tC\tnull
+                            2024-01-01T00:00:00.000000Z\tA\t10.0
+                            2024-01-01T01:00:00.000000Z\tB\t20.0
+                            2024-01-01T02:00:00.000000Z\tA\t30.0
+                            2024-01-02T00:00:00.000000Z\tA\t40.0
+                            """,
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T02:00:00.000000Z\t30.0
+                            2024-01-02T00:00:00.000000Z\t40.0
+                            """
+            );
+
+            // an out-of-order row into the attached partition
+            execute("INSERT INTO t_ren VALUES ('2024-01-01T03:00:00', 'A', 50.0)");
+            final String written = """
+                    ts\tsym\tval
+                    2023-12-31T00:00:00.000000Z\tC\tnull
+                    2024-01-01T00:00:00.000000Z\tA\t10.0
+                    2024-01-01T01:00:00.000000Z\tB\t20.0
+                    2024-01-01T02:00:00.000000Z\tA\t30.0
+                    2024-01-01T03:00:00.000000Z\tA\t50.0
+                    2024-01-02T00:00:00.000000Z\tA\t40.0
+                    """;
+            final String writtenCovered = """
+                    ts\tval
+                    2024-01-01T00:00:00.000000Z\t10.0
+                    2024-01-01T02:00:00.000000Z\t30.0
+                    2024-01-01T03:00:00.000000Z\t50.0
+                    2024-01-02T00:00:00.000000Z\t40.0
+                    """;
+            assertRenamedCoveredColumnRows(written, writtenCovered);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertRenamedCoveredColumnRows(written, writtenCovered);
+        });
+    }
+
+    @Test
+    public void testAttachPartitionAfterCoveredAndIndexColumnsRenamedAwayAndBack() throws Exception {
+        // s and val come from CREATE TABLE, so their files carry no column name txn, nor do the covering files of s,
+        // which name the version of val they cover. Renamed away and back while 2024-01-01 is detached, both have their
+        // names again, with versions the partition does not hold: the attach must record the ones it holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_att (ts TIMESTAMP, val INT, s SYMBOL INDEX TYPE POSTING INCLUDE (val)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_att VALUES
+                    ('2024-01-01T00:00:00', 10, 'A'),
+                    ('2024-01-01T01:00:00', 20, 'B'),
+                    ('2024-01-01T02:00:00', 30, 'A'),
+                    ('2024-01-02T00:00:00', 40, 'A')
+                    """);
+            execute("ALTER TABLE t_att DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE t_att RENAME COLUMN val TO val_away");
+            execute("ALTER TABLE t_att RENAME COLUMN val_away TO val");
+            execute("ALTER TABLE t_att RENAME COLUMN s TO s_away");
+            execute("ALTER TABLE t_att RENAME COLUMN s_away TO s");
+            final TableToken token = engine.verifyTableName("t_att");
+            path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(TableUtils.DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+            execute("ALTER TABLE t_att ATTACH PARTITION LIST '2024-01-01'");
+            assertCoveredColumnRowsAfterRenames();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertCoveredColumnRowsAfterRenames();
+        });
+    }
+
+    @Test
     public void testAttachRemovesCoveringIndexFilesOfNameTxnZeroDroppedWhileDetached() throws Exception {
         // s is the first column added to the empty table, so its column name txn is 0, and its .pc
         // files carry the token 0 that txn NONE also writes. 2024-01-01 leaves with the covering index
@@ -293,6 +392,44 @@ public class CoveringIndexAttachPartitionTest extends AbstractAlterTableAttachPa
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "force_use_covering");
         }
+    }
+
+    // t_att from testAttachPartitionAfterCoveredAndIndexColumnsRenamedAwayAndBack() holds its rows, and the covering
+    // index of s finds the values of val for 'A'
+    private void assertCoveredColumnRowsAfterRenames() throws Exception {
+        assertQuery("SELECT * FROM t_att")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tval\ts
+                        2024-01-01T00:00:00.000000Z\t10\tA
+                        2024-01-01T01:00:00.000000Z\t20\tB
+                        2024-01-01T02:00:00.000000Z\t30\tA
+                        2024-01-02T00:00:00.000000Z\t40\tA
+                        """);
+        assertQuery("SELECT val FROM t_att WHERE s = 'A'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("CoveringIndex on: s")
+                .returns("val\n10\n30\n40\n");
+    }
+
+    // t_ren holds the rows of expected, and the covering index of sym finds the rows of expectedCovered for 'A'
+    private void assertRenamedCoveredColumnRows(String expected, String expectedCovered) throws Exception {
+        assertQuery("SELECT * FROM t_ren")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+        assertQuery("SELECT ts, val FROM t_ren WHERE sym = 'A'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: sym")
+                .returns(expectedCovered);
     }
 
     /**
