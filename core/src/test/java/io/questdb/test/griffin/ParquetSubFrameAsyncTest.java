@@ -181,6 +181,21 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStreamGroupByDecodesOnce() throws Exception {
+        assertMemoryLeak(() -> TestUtils.execute(
+                new WorkerPool(() -> 4),
+                (engine, compiler, sqlExecutionContext) -> {
+                    createLargeParquet(engine, sqlExecutionContext);
+                    final String sql = "SELECT ts, sum(v) FROM x WHERE ts in '2024-01-01' SAMPLE BY 1s";
+                    assertPlanContains(compiler, sqlExecutionContext, sql, "Async Stream Group By");
+                    assertDecodedOnce(compiler, sqlExecutionContext, sql);
+                },
+                decodeCountingConfiguration(),
+                LOG
+        ));
+    }
+
+    @Test
     public void testWindowJoinDecodesOnce() throws Exception {
         // The ordered WINDOW JOIN collector must read the master's reduce output, not decode it again.
         assertMemoryLeak(() -> TestUtils.execute(

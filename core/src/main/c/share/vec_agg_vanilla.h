@@ -33,7 +33,7 @@ double sumDoubleAcc_Vanilla(double *d, int64_t count, int64_t *accCount);
 
 double sumDoubleKahan_Vanilla(double *d, int64_t count);
 
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
+double sumDoubleNeumaier_Vanilla(double *d, int64_t count, double *pC);
 
 double minDouble_Vanilla(double *d, int64_t count);
 

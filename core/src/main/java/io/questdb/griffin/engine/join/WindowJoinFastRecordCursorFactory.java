@@ -312,6 +312,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return masterFactory.isRewindRecomputing() || slaveFactory.isRewindRecomputing();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

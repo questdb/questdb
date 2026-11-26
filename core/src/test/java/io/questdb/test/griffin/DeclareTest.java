@@ -1982,6 +1982,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             final String sameViewInsideItself = "DECLARE @lim := (SELECT max(l) - 1 FROM v_tail) SELECT * FROM v_tail";
             assertQuery(sameViewInsideItself)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             l
                             2
@@ -4661,10 +4662,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4685,10 +4685,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4709,10 +4708,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4733,10 +4731,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4757,10 +4754,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4781,10 +4777,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4805,10 +4800,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4830,10 +4824,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
@@ -4854,10 +4847,9 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             String plan = """
-                    Async Group By workers: 1
+                    Async Stream Group By workers: 1
                       keys: [timestamp]
                       values: [count(*)]
-                      filter: null
                         PageFrame
                             Row forward scan
                             Interval forward scan on: trades
