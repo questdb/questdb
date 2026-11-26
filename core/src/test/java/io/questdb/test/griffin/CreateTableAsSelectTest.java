@@ -57,8 +57,8 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             execute("INSERT INTO src VALUES('2024-01-01', 42);");
             execute("CREATE TABLE dest AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY;");
 
-            // CTAS derives columns from SELECT metadata, which does not carry
-            // per-column parquet encoding config from the source table.
+            // CREATE TABLE AS SELECT starts every column from the default Parquet
+            // settings, though the SELECT metadata carries those of the source columns.
             assertQuery("SHOW CREATE TABLE dest")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -68,6 +68,37 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                             \tts TIMESTAMP,
                             \tv LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectFromViewDoesNotPropagateParquetConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (ts TIMESTAMP, v LONG PARQUET(delta_binary_packed, zstd(3))) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO src VALUES('2024-01-01', 42);");
+            execute("CREATE VIEW src_v AS (SELECT * FROM src)");
+            drainWalAndViewQueues();
+            execute("CREATE TABLE dest AS (SELECT * FROM src_v) TIMESTAMP(ts) PARTITION BY DAY;");
+
+            // Only the temp table of a Parquet export keeps the settings of the SELECT columns.
+            assertQuery("SHOW CREATE TABLE dest")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'dest' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
+            assertQuery("dest")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t42
                             """);
         });
     }
