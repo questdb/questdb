@@ -4309,6 +4309,41 @@ impl ParquetDecoder {
         Ok(i64::from_le_bytes(data[..8].try_into().unwrap()))
     }
 
+    /// Whether the timestamp statistics prove that each non-empty row group starts no earlier
+    /// than the previous one ends. Missing statistics answer false rather than decode pages.
+    pub fn are_row_groups_in_timestamp_order(
+        &self,
+        timestamp_column_index: u32,
+    ) -> ParquetResult<bool> {
+        if timestamp_column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "timestamp column index {} out of range [0,{})",
+                timestamp_column_index,
+                self.col_count
+            ));
+        }
+        let ts = timestamp_column_index as usize;
+        self.validate_timestamp_column(ts)?;
+
+        let mut previous_row_group = None;
+        for (rg, &row_group_size) in self.row_group_sizes.iter().enumerate() {
+            if row_group_size == 0 {
+                continue;
+            }
+            if let Some(previous) = previous_row_group {
+                let previous_max = self.row_group_timestamp_stat::<true>(previous, ts, None)?;
+                let min = self.row_group_timestamp_stat::<false>(rg, ts, None)?;
+                match (previous_max, min) {
+                    (Some(previous_max), Some(min)) if min >= previous_max => {}
+                    _ => return Ok(false),
+                }
+            }
+            previous_row_group = Some(rg);
+        }
+        Ok(true)
+    }
+
     pub fn row_group_min_timestamp(
         &self,
         file_ptr: *const u8,
