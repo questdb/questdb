@@ -419,12 +419,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "permission denied [table=x2, columns=ts]"
             );
             // A sub-query that orders its rows takes its timestamp from its ORDER BY, so the temporal join needs
-            // no timestamp of x2 the sub-query does not select, as long as the plan keeps the ORDER BY. A read that
-            // counts the rows of the view drops it, and the temporal join reads ts, the designated timestamp, then,
-            // unless a LIMIT needs the order of the rows.
+            // no timestamp of x2 the sub-query does not select. Every read of the view keeps the ORDER BY a temporal
+            // join takes its timestamp from, a read that counts the rows of the view too, so no read scans ts, the
+            // designated timestamp, with a LIMIT or without one.
             assertDependencies(
                     "SELECT t.a, u.c FROM (SELECT k, a, ts2 FROM x2 ORDER BY ts2) t ASOF JOIN y u ON (k)",
-                    "{x2=[?ts, a, k, ts2], y=[c, k, ts]}"
+                    "{x2=[a, k, ts2], y=[c, k, ts]}"
             );
             assertDependencies(
                     "SELECT t.a, u.c FROM (SELECT k, a, ts2 FROM x2 ORDER BY ts2 LIMIT 10) t ASOF JOIN y u ON (k)",
@@ -807,7 +807,8 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "DECLARE @c := d SELECT * FROM v",
                     "permission denied [table=y, columns=d]"
             );
-            // the designated timestamp a read that counts the rows of the view takes in place of the ORDER BY
+            // the designated timestamp, which no read of the view scans, as every read keeps the ORDER BY the ASOF JOIN
+            // takes its timestamp from
             assertOverrideDenied(
                     "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v, ts2 FROM x2 ORDER BY ts2) t ASOF JOIN y u ON (k)",
                     "DECLARE @c := ts SELECT * FROM v",
@@ -2785,27 +2786,23 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     public void testViewCreatorNeedsColumnOnlyOtherReadsScan() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            execute("CREATE TABLE t (x TIMESTAMP, k SYMBOL, v LONG, ts2 TIMESTAMP)");
-            execute("INSERT INTO t VALUES (1_000_000, 'k1', 7, 500_000)");
-            drainWalQueue();
-            // The ASOF JOIN of the view takes the timestamp of the sub-query from its ORDER BY. A read that counts the
-            // rows drops it, and the ASOF JOIN takes x instead, the timestamp the sub-query names, which only such reads
-            // scan. Nothing opens the plan of such a read as the view is recorded, so the statement checks that the
-            // principal that records the view may read x, which the view lends to such reads.
-            final String viewSql = "SELECT s.v, u.c FROM (SELECT k, v, ts2 FROM t TIMESTAMP(x) ORDER BY ts2) s ASOF JOIN y u ON (k)";
-            final String accessDenied = "permission denied [table=t, column=x]";
-            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new ColumnDenyingSecurityContext("t", "x"), bindVariableService, null, -1, null)) {
+            // A read that names outputs of the view but none of the sub-query p keeps p whole, so its scan of y reads d,
+            // which only such reads scan. Nothing opens the plan of such a read as the view is recorded, so the
+            // statement checks that the principal that records the view may read d, which the view lends to such reads.
+            final String viewSql = "SELECT x.ts, x.a, p.mx FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p";
+            final String accessDenied = "permission denied [table=y, column=d]";
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new ColumnDenyingSecurityContext("y", "d"), bindVariableService, null, -1, null)) {
                 TestUtils.assertContains(denialOf("CREATE VIEW v AS (" + viewSql + ")", context), accessDenied);
                 Assert.assertNull(engine.getTableTokenIfExists("v"));
-                execute("CREATE VIEW v AS (SELECT v FROM t)", context);
+                execute("CREATE VIEW v AS (SELECT c FROM y)", context);
                 drainWalAndViewQueues();
                 TestUtils.assertContains(denialOf("ALTER VIEW v AS (" + viewSql + ")", context), accessDenied);
                 TestUtils.assertContains(denialOf("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context), accessDenied);
-                Assert.assertEquals("{t=[v]}", dependenciesOf("v"));
+                Assert.assertEquals("{y=[c]}", dependenciesOf("v"));
                 execute("DROP VIEW v");
                 drainWalAndViewQueues();
             }
-            assertReads(viewSql, "{t=[?x, k, ts2, v], y=[c, k, ts]}", "SELECT count() FROM v WHERE c = 7");
+            assertReads(viewSql, "{x=[a, ts], y=[?d, c]}", "SELECT ts, a FROM v");
         });
     }
 
@@ -2967,14 +2964,14 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     public void testViewCreatorReadsAreCheckedUnderColumnNamesOfTable() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            execute("CREATE TABLE t (X TIMESTAMP, K SYMBOL, V LONG, Ts2 TIMESTAMP)");
-            execute("INSERT INTO t VALUES (1_000_000, 'k1', 7, 500_000)");
+            execute("CREATE TABLE t (K SYMBOL, V LONG, W LONG)");
+            execute("INSERT INTO t VALUES ('k1', 7, 8)");
             drainWalQueue();
             // A read of t checks the principal on its columns as t names them, whatever letter case the SELECT names
             // them in, and a permission on a column names it so. The view statements open no plan of their SELECT and
             // check the reads of the principal themselves, those of the plan of the view and those of the reads that
-            // count its rows, which take X for the ASOF JOIN, see testViewCreatorNeedsColumnOnlyOtherReadsScan().
-            final String viewSql = "SELECT s.v, u.c FROM (SELECT k, v, ts2 FROM t TIMESTAMP(x) ORDER BY ts2) s ASOF JOIN y u ON (k)";
+            // keep the sub-query p whole and read W, see testViewCreatorNeedsColumnOnlyOtherReadsScan().
+            final String viewSql = "SELECT y.ts, y.c, p.mv FROM y CROSS JOIN (SELECT max(v) mv, min(w) mw FROM t) p";
             final ScanRecordingSecurityContext securityContext = new ScanRecordingSecurityContext();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
                 execute("CREATE VIEW v AS (" + viewSql + ")", context);
@@ -2984,7 +2981,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 execute("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context);
                 drainWalAndViewQueues();
             }
-            Assert.assertEquals("{t=[K, Ts2, V, X], y=[c, k, ts]}", securityContext.toString());
+            Assert.assertEquals("{t=[V, W], y=[c, ts]}", securityContext.toString());
         });
     }
 
@@ -2996,12 +2993,11 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             execute("CREATE VIEW v_cols AS (SELECT k, a, ts FROM x2)");
             drainWalAndViewQueues();
             Assert.assertEquals("{x2=[a, k, ts]}", dependenciesOf("v_cols"));
-            // A read that counts the rows of the view drops the ORDER BY of the sub-query, so the ASOF JOIN takes ts2,
-            // which it reads through v_cols. Only such a read reads ts2, and nothing checks that the principal that
-            // records the view may read it, so the view lends it to no read, as v_cols does.
+            // Every read of the view keeps the ORDER BY of the sub-query, a read that counts the rows of the view too,
+            // so the ASOF JOIN takes ts, which v_cols lends, and no read reads ts2 through v_cols. The view lends ts2
+            // to no read, as v_cols does.
             final String viewSql = "SELECT t.a, u.c FROM (SELECT k, a, ts FROM v_cols ORDER BY ts) t ASOF JOIN y u ON (k)";
-            assertReads(viewSql, "{v_cols=[], x2=[a, k, ts], y=[c, k, ts]}", "SELECT * FROM v");
-            assertReadDenied(viewSql, "SELECT count() FROM v WHERE c = 5", "permission denied [table=x2, columns=ts2]");
+            assertReads(viewSql, "{v_cols=[], x2=[a, k, ts], y=[c, k, ts]}", "SELECT * FROM v", "SELECT count() FROM v WHERE c = 5");
         });
     }
 
@@ -3027,12 +3023,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             }
             // A view whose own SELECT sets @s of v_marked reads v_marked as a read that sets @s, in an expression as in
             // its FROM clause, see testViewSettingVariableOfViewItReadsLendsNoColumnThatViewMarks(), so v_marked lends
-            // it no ts2, which the count() of v_marked takes.
-            execute("CREATE VIEW v_marked AS (DECLARE OVERRIDABLE @s := 'k1' SELECT t.a, u.c FROM (SELECT k, a, ts FROM x2 WHERE k = @s ORDER BY ts) t ASOF JOIN y u ON (k))");
+            // it no d, which the min() of v_marked reads, as it names no output of the sub-query p and keeps p whole.
+            execute("CREATE VIEW v_marked AS (DECLARE OVERRIDABLE @s := 'k1' SELECT x.ts, x.a, p.mx FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y WHERE k = @s) p)");
             drainWalAndViewQueues();
-            final String countSql = "SELECT x FROM long_sequence(1) WHERE x = (SELECT count() FROM v_marked WHERE c = 5)";
-            assertReads(false, countSql, "{v_marked=[], x2=[], y=[]}", "SELECT * FROM v");
-            assertReadDenied("DECLARE @s := 'k1' " + countSql, "SELECT * FROM v", "permission denied [table=x2, columns=ts2]");
+            final String minSql = "SELECT x FROM long_sequence(1) WHERE x = (SELECT min(a) FROM v_marked)";
+            assertReads(false, minSql, "{v_marked=[], x=[], y=[]}", "SELECT * FROM v");
+            assertReadDenied("DECLARE @s := 'k1' " + minSql, "SELECT * FROM v", "permission denied [table=y, columns=d]");
         });
     }
 
@@ -3061,17 +3057,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     5
                     """;
             try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                for (String viewName : new String[]{"v_distinct", "v_grouped", "v_altered", "v_outer"}) {
+                for (String viewName : new String[]{"v_distinct", "v_grouped", "v_altered", "v_outer", "v_union"}) {
                     assertQuery("SELECT * FROM " + viewName + " ORDER BY a")
                             .withContext(context)
                             .noLeakCheck()
-                            .expectSize()
                             .returns(expected);
                 }
-                assertQuery("SELECT * FROM v_union ORDER BY a")
-                        .withContext(context)
-                        .noLeakCheck()
-                        .returns(expected);
             }
         });
     }
@@ -3079,20 +3070,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     @Test
     public void testViewSettingVariableOfViewItReadsLendsNoColumnThatViewMarks() throws Exception {
         assertMemoryLeak(() -> {
-            createTablesWithTwoTimestamps();
-            // A read that counts the rows of the view drops the ORDER BY of the sub-query, so the ASOF JOIN takes ts2,
-            // the designated timestamp of x2, and the view lends ts2 only to the reads that set none of its variables.
-            final String markingViewSql = "DECLARE OVERRIDABLE @s := 'k1' SELECT t.a, u.c FROM (SELECT k, a, ts FROM x2 WHERE k = @s ORDER BY ts) t ASOF JOIN y u ON (k)";
-            assertReads(markingViewSql, "{x2=[?ts2, a, k, ts], y=[c, k, ts]}", "SELECT count() FROM v WHERE c = 5");
-            assertOverrideDenied(markingViewSql, "DECLARE @s := 'k1' SELECT count() FROM v WHERE c = 5", "permission denied [table=x2, columns=ts2]");
+            createTables();
+            // A read that names outputs of the view but none of the sub-query p keeps p whole, so its scan of y reads d,
+            // and the view lends d only to the reads that set none of its variables.
+            final String markingViewSql = "DECLARE OVERRIDABLE @s := 'k1' SELECT x.ts, x.a, p.mx FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y WHERE k = @s) p";
+            assertReads(markingViewSql, "{x=[a, ts], y=[?d, c, k]}", "SELECT ts, a FROM v");
+            assertOverrideDenied(markingViewSql, "DECLARE @s := 'k1' SELECT ts, a FROM v", "permission denied [table=y, columns=d]");
 
             // A view that sets @s in its own SELECT is a read that sets @s, whoever reads the view, so v_marked lends it
-            // no ts2. The principal that records it opens no plan that reads ts2, so the view lends ts2 to no read.
+            // no d. The principal that records it opens no plan that reads d, so the view lends d to no read.
             execute("CREATE VIEW v_marked AS (" + markingViewSql + ")");
             drainWalAndViewQueues();
-            final String viewSql = "DECLARE @s := 'k1' SELECT a, c FROM v_marked";
-            assertReads(viewSql, "{v_marked=[], x2=[a, k, ts], y=[c, k, ts]}", "SELECT * FROM v");
-            assertReadDenied(viewSql, "SELECT count() FROM v WHERE c = 5", "permission denied [table=x2, columns=ts2]");
+            final String viewSql = "DECLARE @s := 'k1' SELECT ts, a, mx FROM v_marked";
+            assertReads(viewSql, "{v_marked=[], x=[a, ts], y=[c, k]}", "SELECT * FROM v");
+            assertReadDenied(viewSql, "SELECT ts, a FROM v", "permission denied [table=y, columns=d]");
         });
     }
 

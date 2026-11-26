@@ -48,6 +48,10 @@ public class MapSymbolColumn extends SymbolFunction {
         this.symbolTableStatic = symbolTableStatic;
     }
 
+    public MapSymbolColumn(MapSymbolColumn source, int cursorColumnIndex) {
+        this(source.mapColumnIndex, cursorColumnIndex, source.symbolTableStatic);
+    }
+
     @Override
     public void close() {
         if (ownSymbolTable) {

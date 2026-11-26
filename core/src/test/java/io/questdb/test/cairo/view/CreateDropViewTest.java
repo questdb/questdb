@@ -186,7 +186,7 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery(VIEW1)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tk\tv_max
                             1970-01-01T00:00:50.000000Z\tk5\t5
@@ -197,7 +197,7 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery(VIEW2)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tk2\tv_max
                             1970-01-01T00:01:10.000000Z\tk2_7\t7
@@ -232,9 +232,13 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 4<v
@@ -253,12 +257,13 @@ public class CreateDropViewTest extends AbstractViewTest {
                             """,
                     VIEW2,
                     null,
-                    true,
+                    false,
                     false,
                     """
                             QUERY PLAN
                             Filter filter: 6<v_max
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,k]
                                   values: [max(v)]
                                   filter: 4<v
@@ -276,12 +281,13 @@ public class CreateDropViewTest extends AbstractViewTest {
                             """,
                     VIEW3,
                     null,
-                    true,
+                    false,
                     false,
                     """
                             QUERY PLAN
                             Filter filter: (6<v_max and 7<v_max)
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,k]
                                   values: [max(v)]
                                   filter: 4<v
@@ -303,7 +309,8 @@ public class CreateDropViewTest extends AbstractViewTest {
                             GroupBy vectorized: false
                               keys: [date_trunc]
                               values: [avg(v_max)]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,k]
                                   values: [max(v)]
                                   filter: 4<v
@@ -529,7 +536,7 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery(VIEW1)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tk\tv_max
                             1970-01-01T00:00:50.000000Z\tk5\t5
@@ -540,7 +547,7 @@ public class CreateDropViewTest extends AbstractViewTest {
 
             assertQuery("select ts, v_max from " + VIEW2)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7

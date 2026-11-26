@@ -175,4 +175,9 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

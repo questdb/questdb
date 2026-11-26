@@ -237,4 +237,9 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
             Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1);
         }
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

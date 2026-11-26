@@ -79,11 +79,11 @@ public class EncodedSortRecordCursorReuseTest extends AbstractCairoTest {
                         "io.questdb.griffin.engine.orderby.EncodedSortRecordCursor");
                 Constructor<?> ctor = cursorClass.getDeclaredConstructor(
                         CairoConfiguration.class, RecordMetadata.class,
-                        IntList.class, RecordSink.class);
+                        IntList.class, RecordSink.class, long.class);
                 ctor.setAccessible(true);
 
                 DelegatingRecordCursor sortCursor = (DelegatingRecordCursor) ctor.newInstance(
-                        configuration, reader.getMetadata(), sortFilter, sink);
+                        configuration, reader.getMetadata(), sortFilter, sink, configuration.getSqlSortValueMaxBytes());
                 try (TestTableReaderRecordCursor base = new TestTableReaderRecordCursor().of(reader)) {
                     for (int i = 0; i < 5; i++) {
                         base.toTop();
