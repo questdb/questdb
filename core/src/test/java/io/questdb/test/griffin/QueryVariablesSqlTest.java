@@ -228,7 +228,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByWithSampleByPointsIntoStatement() throws Exception {
+    public void testGroupByWithSampleByPointsAsDeclareBlockDoes() throws Exception {
         assertMemoryLeak(() -> {
             // A query cannot have both GROUP BY and SAMPLE BY. The error points at the first GROUP BY
             // key where the key follows GROUP BY in the text, and at GROUP BY otherwise. A key that a
@@ -256,6 +256,23 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 final String declared = "DECLARE " + variables + ' ' + sql;
                 assertQuery(declared).noLeakCheck().fails(declared.length() - sql.length() + position, message);
                 withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck().fails(position, message));
+            }
+            // The query with both clauses sits in a sub-query that a variable holds, so the error lies
+            // in the variables, at the token it points at in the same DECLARE block: the first key,
+            // which follows GROUP BY in the variables, or GROUP BY for a key an earlier variable
+            // supplies. Variables, and the text in them that the error points at.
+            final String[][] inVariables = {
+                    {"@q := (SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY s1)", "s1)"},
+                    {"@q := (SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY s1, s2)", "s1, s2"},
+                    {"@q := (SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY ROLLUP(s1))", "s1))"},
+                    {"@k := s1, @q := (SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY @k)", "GROUP BY"},
+            };
+            final String sql = "SELECT * FROM @q";
+            for (String[] c : inVariables) {
+                final String variables = c[0];
+                final int offset = variables.indexOf(c[1]);
+                assertQuery("DECLARE " + variables + ' ' + sql).noLeakCheck().fails("DECLARE ".length() + offset, message);
+                withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck().fails(SqlParser.QUERY_VARIABLES_POSITION + offset, message));
             }
         });
     }

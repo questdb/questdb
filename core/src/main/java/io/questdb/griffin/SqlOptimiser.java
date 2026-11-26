@@ -11573,15 +11573,19 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (sampleBy != null && nested.getGroupByPosition() > 0) {
-                // The error points at the first key when the key follows GROUP BY in the text, and at
-                // GROUP BY otherwise. The variables a client declares outside the text read as a
-                // DECLARE block ahead of it, though their positions lie past it, see
-                // SqlParser.QUERY_VARIABLES_POSITION, so a key that one of them supplies points at
-                // GROUP BY.
+                // The error points at the first key when the key follows GROUP BY in the same text,
+                // and at GROUP BY otherwise. The variables a client declares outside the text read
+                // as a DECLARE block ahead of it, though their positions lie past it, see
+                // SqlParser.QUERY_VARIABLES_POSITION. So a key that one of them supplies to the
+                // statement points at GROUP BY, and one that follows GROUP BY in a sub-query a
+                // variable holds points at the key.
+                final int groupByPosition = nested.getGroupByPosition();
                 final int keyPosition = nested.getGroupBy().size() > 0 ? nested.getGroupBy().getQuick(0).position : -1;
-                final int errorPosition = keyPosition > nested.getGroupByPosition() && keyPosition < SqlParser.QUERY_VARIABLES_POSITION
+                final boolean isKeyInVariables = keyPosition >= SqlParser.QUERY_VARIABLES_POSITION;
+                final boolean isGroupByInVariables = groupByPosition >= SqlParser.QUERY_VARIABLES_POSITION;
+                final int errorPosition = keyPosition > groupByPosition && isKeyInVariables == isGroupByInVariables
                         ? keyPosition
-                        : nested.getGroupByPosition();
+                        : groupByPosition;
                 throw SqlException.$(errorPosition, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
