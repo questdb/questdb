@@ -127,10 +127,17 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public double getDouble(Record rec) {
-        final long sum = rec.getLong(valueIndex);
         final long count = rec.getLong(valueIndex + 1);
-        if (sum != Numbers.LONG_NULL && count > 0) {
-            return (double) rec.getLong(valueIndex) / rec.getLong(valueIndex + 1);
+        if (count > 0) {
+            final long sum = rec.getLong(valueIndex);
+            if (count == 1 && sum != 0 && (sum < Short.MIN_VALUE || sum > Short.MAX_VALUE)) {
+                // When setDouble() is invoked by interpolation (e.g. SAMPLE BY FILL(LINEAR)),
+                // the raw IEEE-754 double bits are written to the sum slot with count=1.
+                return Double.longBitsToDouble(sum);
+            }
+            if (sum != Numbers.LONG_NULL) {
+                return (double) sum / count;
+            }
         }
         return Double.NaN;
     }
@@ -191,7 +198,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
+        mapValue.putLong(valueIndex, Double.doubleToRawLongBits(value));
         mapValue.putLong(valueIndex + 1, 1);
     }
 
