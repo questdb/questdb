@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionOwner;
@@ -110,7 +111,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final StringSink selectCacheKeySink = new StringSink();
+    private final SelectCacheKey selectCacheKey = new SelectCacheKey();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
@@ -131,8 +132,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
-    // whether the legacy planner compiled the query, which qualifies its select cache key, see getSelectCacheKey()
-    private boolean isSelectCacheLegacyPlanner;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -148,8 +147,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long recordCountNanos;
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
-    // the select cache scope of the principal the query runs for, see getSelectCacheKey()
-    private CharSequence selectCacheScope;
     private long skip;
     private long stop;
     private boolean timings = false;
@@ -207,7 +204,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (recordCursorFactory != null) {
                 if (queryCacheable && ownerEndFailure == null) {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, query, selectCacheKeySink),
+                            selectCacheKey.key(query),
                             recordCursorFactory
                     );
                 } else {
@@ -215,8 +212,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 }
                 recordCursorFactory = null;
             }
-            selectCacheScope = null;
-            isSelectCacheLegacyPlanner = false;
+            selectCacheKey.clear();
             query.clear();
             columnNameSink.clear();
             queryState = QUERY_SETUP_FIRST_RECORD;
@@ -349,13 +345,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Returns the select cache key of the query for the principal it runs for and the planner that compiles it, and
-     * remembers both, so that clear() returns the factory to the same key it came from or was compiled for.
+     * Returns the select cache key of the query for the principal it runs for and the planner the server names now,
+     * and remembers both, so that clear() returns a cached factory to the key it came from.
      */
     public CharSequence getSelectCacheKey(SqlExecutionContext executionContext) {
-        selectCacheScope = executionContext.getSecurityContext().getSelectCacheScope();
-        isSelectCacheLegacyPlanner = executionContext.isLegacyPlannerEnabled();
-        return SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, query, selectCacheKeySink);
+        return selectCacheKey.of(executionContext).key(query);
     }
 
     public long getStatementTimeout() {
@@ -500,6 +494,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
+    }
+
+    /**
+     * Remembers the planner that compiled the query, whose select cache key clear() returns the factory to.
+     */
+    public void setSelectCacheCompiledBy(SqlCompiler compiler) {
+        selectCacheKey.setCompiledBy(compiler);
     }
 
 

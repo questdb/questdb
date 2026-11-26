@@ -1636,11 +1636,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isLegacyPlannerEnabled() {
-            return sqlExecutionContext.isLegacyPlannerEnabled();
-        }
-
-        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }

@@ -261,6 +261,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence sqlText;
     private boolean closed = false;
+    private boolean isCompiledByLegacyPlanner;
     // True when the wildcard of the last materialized view query parsed by compileMatViewQuery() is one the
     // parser added to a query written without SELECT, such as `base WHERE v > 0`.
     private boolean isMatViewWildcardArtificial;
@@ -590,7 +591,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        if (executionContext.isLegacyPlannerEnabled()) {
+        isCompiledByLegacyPlanner = configuration.isSqlLegacyPlannerEnabled();
+        if (isCompiledByLegacyPlanner) {
             return legacyCompiler().compile(sqlText, executionContext);
         }
         clear();
@@ -637,7 +639,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
     ) throws Exception {
-        if (executionContext.isLegacyPlannerEnabled()) {
+        isCompiledByLegacyPlanner = configuration.isSqlLegacyPlannerEnabled();
+        if (isCompiledByLegacyPlanner) {
             legacyCompiler().compileBatch(batchText, executionContext, batchCallback, this);
             return;
         }
@@ -817,7 +820,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException {
-        if (executionContext.isLegacyPlannerEnabled()) {
+        if (configuration.isSqlLegacyPlannerEnabled()) {
             return legacyCompiler().generateViewFactory(viewSql, executionContext);
         }
         return SqlUtil.generateFactory(this, generateExecutionModel(viewSql, executionContext), executionContext);
@@ -875,6 +878,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public int getGenerationFrameCount() {
         return codeGenerator.getGenerationFrameCount();
+    }
+
+    @Override
+    public boolean isCompiledByLegacyPlanner() {
+        return isCompiledByLegacyPlanner;
     }
 
     @Override

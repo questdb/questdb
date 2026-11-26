@@ -505,11 +505,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isLegacyPlannerEnabled() {
-        return cairoConfiguration.isSqlLegacyPlannerEnabled();
-    }
-
-    @Override
     public boolean isLiveViewCompile() {
         return liveViewCompile;
     }

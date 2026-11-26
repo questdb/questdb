@@ -94,6 +94,7 @@ public class LegacyPlannerTest extends AbstractCairoTest {
                     public void postCompile(SqlCompiler callbackCompiler, CompiledQuery cq, CharSequence queryText) throws Exception {
                         // the callback gets the compiler it called, never the legacy compiler that compiled for it
                         Assert.assertEquals(SqlCompilerImpl.class, callbackCompiler.getClass());
+                        Assert.assertTrue(callbackCompiler.isCompiledByLegacyPlanner());
                         log.put('[').put(queryText).put("]\n");
                         switch (cq.getType()) {
                             case CompiledQuery.SELECT -> {
@@ -444,10 +445,10 @@ public class LegacyPlannerTest extends AbstractCairoTest {
     }
 
     private static void assertLegacy(boolean expected) throws SqlException {
-        Assert.assertEquals(expected, sqlExecutionContext.isLegacyPlannerEnabled());
         final int compilesBefore = COMPILER_FACTORY.getLegacyCompiles();
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory ignored = compiler.compile("SELECT * FROM t WHERE x > 5", sqlExecutionContext).getRecordCursorFactory()) {
+            Assert.assertEquals(expected, compiler.isCompiledByLegacyPlanner());
             Assert.assertEquals(expected ? compilesBefore + 1 : compilesBefore, COMPILER_FACTORY.getLegacyCompiles());
         }
     }

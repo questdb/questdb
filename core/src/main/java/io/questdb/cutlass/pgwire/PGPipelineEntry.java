@@ -182,7 +182,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final CancellationBinding queryCancellation = new CancellationBinding();
-    private final StringSink selectCacheKeySink = new StringSink();
+    private final SelectCacheKey selectCacheKey = new SelectCacheKey();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -193,8 +193,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
-    // whether the legacy planner compiled the statement, which qualifies its cache keys, see SelectCacheKey
-    private boolean isLegacyPlanner;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -218,8 +216,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8Sequence preparedStatementNameToDeallocate;
     private SqlExecutionResources queryExecutionResources;
     private MemoryTracker queryMemoryTracker;
-    // the select cache scope of the principal the statement was parsed for, see SelectCacheKey
-    private CharSequence selectCacheScope = null;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -303,10 +299,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(SelectCacheKey.of(selectCacheScope, isLegacyPlanner, sqlText, selectCacheKeySink), tas);
+            tasCache.put(selectCacheKey.key(sqlText), tas);
             tas = null;
         } else if (tai != null) {
-            taiCache.put(SelectCacheKey.of(null, isLegacyPlanner, sqlText, selectCacheKeySink), tai);
+            taiCache.put(selectCacheKey.insertKey(sqlText), tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
         }
@@ -383,8 +379,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryCancellation.clear();
         queryMemoryTracker = null;
         queryExecutionResources = null;
-        selectCacheScope = null;
-        isLegacyPlanner = false;
+        selectCacheKey.clear();
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlReturnRowCount = 0;
@@ -530,6 +525,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
                 }
                 CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+                selectCacheKey.setCompiledBy(compiler);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
@@ -586,6 +582,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
         return parentPreparedStatementPipelineEntry;
+    }
+
+    /**
+     * The key the statement returns to the select or insert cache under, see {@link SelectCacheKey}.
+     */
+    public SelectCacheKey getSelectCacheKey() {
+        return selectCacheKey;
     }
 
     public short getShort(long address, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
@@ -1123,10 +1126,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.errorMessagePosition = errorMessagePosition;
     }
 
-    public void setLegacyPlanner(boolean isLegacyPlanner) {
-        this.isLegacyPlanner = isLegacyPlanner;
-    }
-
     public void setNamedPortal(boolean portal, Utf8String namedPortal) {
         this.portal = portal;
         // because this is now a prepared statement, it means the entry is
@@ -1148,11 +1147,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
-    }
-
-    // the scope must be immutable, see SecurityContext.getSelectCacheScope()
-    public void setSelectCacheScope(CharSequence selectCacheScope) {
-        this.selectCacheScope = selectCacheScope;
     }
 
     public void setStateBind(boolean stateBind) {
@@ -1358,8 +1352,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
-        this.selectCacheScope = blueprint.selectCacheScope;
-        this.isLegacyPlanner = blueprint.isLegacyPlanner;
+        this.selectCacheKey.copyOf(blueprint.selectCacheKey);
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;

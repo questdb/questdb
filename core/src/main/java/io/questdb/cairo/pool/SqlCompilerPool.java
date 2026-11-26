@@ -185,6 +185,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public boolean isCompiledByLegacyPlanner() {
+            return delegate.isCompiledByLegacyPlanner();
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }

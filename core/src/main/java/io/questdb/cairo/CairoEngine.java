@@ -2440,7 +2440,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * The planner {@link io.questdb.griffin.SqlCompilerImpl} falls back to while
-     * {@link SqlExecutionContext#isLegacyPlannerEnabled()} holds, created on first use.
+     * {@link CairoConfiguration#isSqlLegacyPlannerEnabled()} holds, created on first use.
      */
     public LegacyPlanner getLegacyPlanner() {
         LegacyPlanner planner = legacyPlanner;

@@ -500,6 +500,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                state.setSelectCacheCompiledBy(compiler);
                 state.setQueryType(cc.getType());
                 if (!state.isSqlExecutionOwnerStarted()) {
                     try {

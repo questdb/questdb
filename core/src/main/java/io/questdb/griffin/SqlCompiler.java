@@ -95,12 +95,20 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             CharSequence predicate
     );
 
+    /**
+     * Whether the {@link LegacyPlanner} compiled the statements of the last {@link #compile} or {@link #compileBatch}
+     * call. The call reads the server's reloadable {@link io.questdb.cairo.CairoConfiguration#isSqlLegacyPlannerEnabled()}
+     * once, so a select cache returns the statements to the key of the planner that compiled them, even when a reload
+     * flips the switch between the cache lookup and the compile.
+     */
+    boolean isCompiledByLegacyPlanner();
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     /**
      * Compiles the SELECT of a view into its factory, for the job that checks the view's state and metadata: like
      * {@link #generateExecutionModel}, it raises no compile-view events, so checking a view queues no check of the
-     * views it reads. The planner the context selects compiles it.
+     * views it reads. The planner the server's configuration names compiles it.
      */
     RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException;
 

@@ -40,6 +40,7 @@ import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlExecutionOwner;
@@ -67,7 +68,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
-    private final StringSink selectCacheKeySink = new StringSink();
+    private final SelectCacheKey selectCacheKey = new SelectCacheKey();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -98,12 +99,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long timeout;
     private CreateTableOperation createParquetOp;
     private int errorPosition;
-    // whether the legacy planner compiled the query, which qualifies its select cache key, see getSelectCacheKey()
-    private boolean isSelectCacheLegacyPlanner;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
-    // the select cache scope of the principal the query runs for, see getSelectCacheKey()
-    private CharSequence selectCacheScope;
     private HTTPSerialParquetExporter serialParquetExporter;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
@@ -193,7 +190,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             if (queryCacheable && !isClosing && isOwnerEnded) {
                 try {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, sqlText, selectCacheKeySink),
+                            selectCacheKey.key(sqlText),
                             recordCursorFactory
                     );
                 } catch (Throwable th) {
@@ -204,8 +201,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             }
         }
         queryCacheable = false;
-        selectCacheScope = null;
-        isSelectCacheLegacyPlanner = false;
+        selectCacheKey.clear();
         sqlText.clear();
         queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
@@ -258,13 +254,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Returns the select cache key of the query for the principal it runs for and the planner that compiles it, and
-     * remembers both, so that clearing the state returns the factory to the same key it came from or was compiled for.
+     * Returns the select cache key of the query for the principal it runs for and the planner the server names now,
+     * and remembers both, so that clearing the state returns a cached factory to the key it came from.
      */
     public CharSequence getSelectCacheKey(SqlExecutionContext executionContext) {
-        selectCacheScope = executionContext.getSecurityContext().getSelectCacheScope();
-        isSelectCacheLegacyPlanner = executionContext.isLegacyPlannerEnabled();
-        return SelectCacheKey.of(selectCacheScope, isSelectCacheLegacyPlanner, sqlText, selectCacheKeySink);
+        return selectCacheKey.of(executionContext).key(sqlText);
     }
 
     public boolean isQueryCacheable() {
@@ -312,6 +306,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public void setParquetTempTableCreate(CreateTableOperation createOp) {
         this.createParquetOp = createOp;
+    }
+
+    /**
+     * Remembers the planner that compiled the query, whose select cache key clearing the state returns the factory to.
+     */
+    public void setSelectCacheCompiledBy(SqlCompiler compiler) {
+        selectCacheKey.setCompiledBy(compiler);
     }
 
     @TestOnly

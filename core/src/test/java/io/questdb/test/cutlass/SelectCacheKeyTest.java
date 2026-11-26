@@ -25,41 +25,60 @@
 package io.questdb.test.cutlass;
 
 import io.questdb.cutlass.SelectCacheKey;
-import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SelectCacheKeyTest {
+    private static final String SQL = "SELECT * FROM t";
+
+    @Test
+    public void testClearKeysTheSharedScopeOfTheNewPlanner() {
+        final SelectCacheKey key = new SelectCacheKey().of("alice", true);
+        key.clear();
+        Assert.assertSame(SQL, key.key(SQL));
+        Assert.assertSame(SQL, key.insertKey(SQL));
+    }
+
+    @Test
+    public void testCopyOfTakesScopeAndPlanner() {
+        final SelectCacheKey key = new SelectCacheKey().of("bob", false);
+        key.copyOf(new SelectCacheKey().of("alice", true));
+        Assert.assertEquals("\u00015:alice" + SQL, key.key(SQL).toString());
+    }
+
+    @Test
+    public void testInsertKeyCarriesThePlannerButNoScope() {
+        Assert.assertEquals("\u0001-" + SQL, new SelectCacheKey().of("alice", true).insertKey(SQL).toString());
+        Assert.assertSame(SQL, new SelectCacheKey().of("alice", false).insertKey(SQL));
+    }
 
     @Test
     public void testLegacyPlannerQualifiesTheKey() {
-        final String sql = "SELECT * FROM t";
         // a factory one planner compiled never reaches a query the other plans, in any scope
-        Assert.assertEquals("\u0001-" + sql, SelectCacheKey.of(null, true, sql, new StringSink()).toString());
-        Assert.assertEquals("\u00015:alice" + sql, SelectCacheKey.of("alice", true, sql, new StringSink()).toString());
-        Assert.assertEquals("\u00005:alice" + sql, SelectCacheKey.of("alice", false, sql, new StringSink()).toString());
+        Assert.assertEquals("\u0001-" + SQL, new SelectCacheKey().of(null, true).key(SQL).toString());
+        Assert.assertEquals("\u00015:alice" + SQL, new SelectCacheKey().of("alice", true).key(SQL).toString());
+        Assert.assertEquals("\u00005:alice" + SQL, new SelectCacheKey().of("alice", false).key(SQL).toString());
     }
 
     @Test
     public void testLegacyPlannerSharedScopeCannotSpellAScopedKey() {
         // the shared scope is a '-', which no scope length starts with
-        final String shared = SelectCacheKey.of(null, true, "1:aSELECT 1", new StringSink()).toString();
-        final String scoped = SelectCacheKey.of("a", true, "SELECT 1", new StringSink()).toString();
+        final String shared = new SelectCacheKey().of(null, true).key("1:aSELECT 1").toString();
+        final String scoped = new SelectCacheKey().of("a", true).key("SELECT 1").toString();
         Assert.assertNotEquals(shared, scoped);
     }
 
     @Test
     public void testNullScopeKeyIsTheSqlText() {
-        final String sql = "SELECT * FROM t";
         // the shared scope keeps the cache keyed by the SQL text alone, as it was before scopes
-        Assert.assertSame(sql, SelectCacheKey.of(null, false, sql, new StringSink()));
+        Assert.assertSame(SQL, new SelectCacheKey().of(null, false).key(SQL));
     }
 
     @Test
     public void testScopeAndSqlTextCannotSpellAnotherKey() {
         // the scope is length-prefixed, so moving characters between scope and SQL text changes the key
-        final String keyA = SelectCacheKey.of("ab", false, "c", new StringSink()).toString();
-        final String keyB = SelectCacheKey.of("a", false, "bc", new StringSink()).toString();
+        final String keyA = new SelectCacheKey().of("ab", false).key("c").toString();
+        final String keyB = new SelectCacheKey().of("a", false).key("bc").toString();
         Assert.assertNotEquals(keyA, keyB);
         // and no SQL text starts with the NUL that starts a qualified key
         Assert.assertEquals('\u0000', keyA.charAt(0));
@@ -67,13 +86,11 @@ public class SelectCacheKeyTest {
 
     @Test
     public void testScopeQualifiesTheKey() {
-        final StringSink sinkA = new StringSink();
-        final StringSink sinkB = new StringSink();
-        final String sql = "SELECT * FROM t";
-        final String keyA = SelectCacheKey.of("alice", false, sql, sinkA).toString();
-        final String keyB = SelectCacheKey.of("bob", false, sql, sinkB).toString();
+        final SelectCacheKey key = new SelectCacheKey();
+        final String keyA = key.of("alice", false).key(SQL).toString();
+        final String keyB = key.of("bob", false).key(SQL).toString();
         Assert.assertNotEquals(keyA, keyB);
-        Assert.assertNotEquals(sql, keyA);
-        Assert.assertEquals(keyA, SelectCacheKey.of("alice", false, sql, sinkB).toString());
+        Assert.assertNotEquals(SQL, keyA);
+        Assert.assertEquals(keyA, key.of("alice", false).key(SQL).toString());
     }
 }

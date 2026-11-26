@@ -363,12 +363,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return isExpiryReadFilterEnabled();
     }
 
-    /**
-     * Whether the statements of this context compile with the {@link LegacyPlanner}, as the server's reloadable
-     * {@link io.questdb.cairo.CairoConfiguration#isSqlLegacyPlannerEnabled()} says.
-     */
-    boolean isLegacyPlannerEnabled();
-
     // Returns true when the current compile is the CREATE-time or refresh-time
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the

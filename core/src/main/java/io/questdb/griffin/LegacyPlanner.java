@@ -31,7 +31,7 @@ import io.questdb.std.QuietCloseable;
  * The query planner master shipped before the logical-plan planner, kept as a fallback until the new one has run
  * stably for several releases.
  * {@link SqlCompilerImpl} hands it every statement it compiles while
- * {@link SqlExecutionContext#isLegacyPlannerEnabled()} holds. The engine creates it on first use, through
+ * {@link io.questdb.cairo.CairoConfiguration#isSqlLegacyPlannerEnabled()} holds. The engine creates it on first use, through
  * {@link SqlCompilerFactory#newLegacyPlanner(io.questdb.cairo.CairoEngine)}, and closes it.
  */
 public interface LegacyPlanner extends QuietCloseable {

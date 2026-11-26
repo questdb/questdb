@@ -2156,11 +2156,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
                 assertReloadConfigEventually();
                 Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlLegacyPlannerEnabled());
-                // the engine, and so every context that follows the server, sees the reloaded value
+                // the engine, whose configuration its compilers read, sees the reloaded value
                 Assert.assertTrue(serverMain.getEngine().getConfiguration().isSqlLegacyPlannerEnabled());
-                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(serverMain.getEngine(), 1)) {
-                    Assert.assertTrue(context.isLegacyPlannerEnabled());
-                }
 
                 try (FileWriter w = new FileWriter(serverConf)) {
                     w.write("cairo.sql.legacy.planner.enabled=false\n");

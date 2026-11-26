@@ -84,7 +84,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -224,8 +223,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final QwpEgressMetrics metrics;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
-    // builds the principal-qualified select cache key, see SelectCacheKey
-    private final StringSink scopedSelectCacheKeySink = new StringSink();
+    private final SelectCacheKey selectCacheKey = new SelectCacheKey();
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
      * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
@@ -1347,24 +1345,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // occupy different cache slots. A SQL-only key can otherwise
             // return a factory whose bind signature does not match the
             // current request. Mirrors pgwire's TypesAndSelect design. The principal's
-            // select cache scope qualifies the key, see SecurityContext.getSelectCacheScope().
-            final CharSequence cacheKey = SelectCacheKey.of(
-                    sqlCtx.getSecurityContext().getSelectCacheScope(),
-                    sqlCtx.isLegacyPlannerEnabled(),
-                    decoder.buildSelectCacheKey(state.getBindVariableService()),
-                    scopedSelectCacheKeySink
-            );
+            // select cache scope and the planner qualify the key, see SelectCacheKey.
+            final CharSequence typedSql = decoder.buildSelectCacheKey(state.getBindVariableService());
+            final CharSequence lookupKey = selectCacheKey.of(sqlCtx).key(typedSql);
             short compiledQueryType = CompiledQuery.SELECT;
             boolean queryCacheable = true;
             for (int retries = 0; ; retries++) {
                 try {
                     // Cache lookup only on first attempt. Retry always recompiles.
                     if (retries == 0) {
-                        factory = selectCache.poll(cacheKey);
+                        factory = selectCache.poll(lookupKey);
                     }
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
+                            selectCacheKey.setCompiledBy(compiler);
                             short type = cq.getType();
                             compiledQueryType = type;
                             queryCacheable = type == CompiledQuery.SELECT && cq.isCacheable();
@@ -1444,10 +1439,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
             }
             // Hand the composite cache key to beginStreaming so cache-back
-            // on successful completion writes under the same [types]sql key
-            // used to poll. State stringifies the CharSequence into its own
-            // heap copy, so the decoder's scratch is free to be overwritten
-            // by the next request on this connection.
+            // on successful completion writes under the [types]sql key of the
+            // planner that compiled the factory, or the one it was polled
+            // from. State stringifies the CharSequence into its own heap copy,
+            // so the decoder's scratch is free to be overwritten by the next
+            // request on this connection.
+            final CharSequence cacheKey = selectCacheKey.key(typedSql);
             if (pageFrameCursor != null) {
                 // SEQUENTIAL_CACHED hints the kernel to read ahead and to drop
                 // page cache after streaming, so a 10M-row scan doesn't evict
