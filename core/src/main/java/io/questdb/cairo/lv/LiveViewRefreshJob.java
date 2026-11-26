@@ -13901,7 +13901,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @param durableBaseSeqTxn        base seqTxn applied to the view table
      * @param durableFrontierTimestamp newest timestamp held by the view table
      * @return true when the roots were reconstructed and republished
-     * @throws CairoException                    a cancellation, or a fault a retry may get past
+     * @throws CairoException                   a cancellation, or a fault a retry may get past
      * @throws TableReferenceOutOfDateException the base metadata moved past the compiled plan
      */
     private boolean reconstructCorruptCheckpointRoots(
