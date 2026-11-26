@@ -230,7 +230,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // so that cached queries always use the current time.
         // compileTickExpr() validates the expression at compile time and returns
         // a CompiledTickExpression that re-evaluates on each query execution.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             intersectCompiledTickExpr(compiled);
@@ -238,17 +238,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
-            if (noDynamicIntervals) {
+            parseStaticTickExpr(seq, lo, lim, position);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
+            } else if (parsedIntervals.size() == 0) {
+                intersectEmpty();
             } else {
-                appendParsedDynamicIntervals();
+                appendStaticIntervalsIntersection();
             }
             intervalApplied = true;
         } finally {
@@ -604,7 +605,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             subtractCompiledTickExpr(compiled);
@@ -612,18 +613,23 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
-            if (noDynamicIntervals) {
+            parseStaticTickExpr(seq, lo, lim, position);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
             } else {
-                appendParsedDynamicIntervals();
+                // NOT IN S keeps the complement of S, so the inverted list encodes as an intersection.
+                IntervalUtils.invert(parsedIntervals, 0);
+                if (parsedIntervals.size() == 0) {
+                    intersectEmpty();
+                } else {
+                    appendStaticIntervalsIntersection();
+                }
             }
             intervalApplied = true;
         } finally {
@@ -674,7 +680,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             unionCompiledTickExpr(compiled);
@@ -683,17 +689,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
-            if (noDynamicIntervals) {
+            parseStaticTickExpr(seq, lo, lim, position);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.unionInPlace(staticIntervals, size);
                 }
             } else {
-                appendParsedDynamicIntervals();
+                appendStaticIntervalsUnion();
             }
             intervalApplied = true;
         } finally {
@@ -785,15 +790,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
-    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static long subtractSaturating(long value, long offset) {
         final long result = value - offset;
         if (((value ^ offset) & (value ^ result)) < 0) {
@@ -811,15 +807,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
-    private void appendParsedDynamicIntervals() {
-        final int intervalCount = parsedIntervals.size() / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-        reserveEncodedIntervals(intervalCount, 0);
-        staticIntervals.add(parsedIntervals);
-        for (int i = 0; i < intervalCount; i++) {
-            addDynamicFunction(null, 0, false);
-        }
-    }
-
     private void appendStaticIntervalsIntersection() {
         final int intervalCount = parsedIntervals.size() / 2;
         reserveEncodedIntervals(intervalCount, 0);
@@ -831,6 +818,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     PeriodType.NONE,
                     1,
                     i == 0 ? IntervalOperation.INTERSECT_INTERVALS : IntervalOperation.NONE,
+                    staticIntervals
+            );
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
+    private void appendStaticIntervalsUnion() {
+        final int intervalCount = parsedIntervals.size() / 2;
+        reserveEncodedIntervals(intervalCount, 0);
+        for (int i = 0; i < intervalCount; i++) {
+            IntervalUtils.encodeInterval(
+                    parsedIntervals.getQuick(i * 2),
+                    parsedIntervals.getQuick(i * 2 + 1),
+                    IntervalOperation.UNION,
                     staticIntervals
             );
             addDynamicFunction(null, 0, false);
@@ -973,6 +974,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
         lo = timestampDriver.from(lo, modelTimestampDriver.getTimestampType());
         return subtractSaturating(lo, loOffset);
+    }
+
+    /**
+     * Resolves a tick string without date variables into plain [lo, hi] pairs in parsedIntervals,
+     * also when a run-time interval precedes it. The callers then combine the whole list with the
+     * preceding expression in one step, so the result does not depend on the order of the AND or
+     * OR operands.
+     */
+    private void parseStaticTickExpr(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, sink);
     }
 
     /**

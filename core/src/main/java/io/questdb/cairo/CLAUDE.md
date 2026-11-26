@@ -234,8 +234,8 @@ A `MERGE` runs in two stages, and `processParquetPartition()` sits between them:
 mergeRowGroupPrepare (stage 1)
   build decode list  -> chooseDecodeType per column, track timestamp chunk index
                         (SKIP mode: the designated timestamp and the dedup keys only)
-  decode row group   -> Rust into RowGroupBuffers (worker-owned, reused; SKIP mode:
-                        the context's separate keyRowGroupBuffers)
+  decode row group   -> Rust into RowGroupBuffers (worker-owned, freed when the partition task
+                        ends; SKIP mode: the context's separate keyRowGroupBuffers)
   Phase 1a           -> prepareSourceColumn per decoded column -> srcPtrs (+ nullBufs owns the
                         converted/null buffers).  RUNS BEFORE the dedup compare.
   merge index        -> replace: createReplaceMergeIndex (see Replace commits)
@@ -379,14 +379,25 @@ size-0 removal. Neither writes a file.
 
 | Buffer | Holds | Lifetime | Freed |
 |---|---|---|---|
-| `RowGroupBuffers` | Rust decode output | per-worker, reused | context close |
-| `keyRowGroupBuffers` | SKIP stage-1 decode output (timestamp + dedup keys) | per-worker, reused | context close |
+| `RowGroupBuffers` | Rust decode output | per partition task, reused across its decodes | `releaseDecodeBuffers()` when the task ends; `getRowGroupBuffers()` reopens them |
+| `keyRowGroupBuffers` | SKIP stage-1 decode output (timestamp + dedup keys) | per partition task, reused across its decodes | `releaseDecodeBuffers()` when the task ends; `getKeyRowGroupBuffers()` reopens them |
+| `rebaseAuxMem` (rebase arena, `O3ParquetMergeContext.getRebaseAuxMem()`) | aux vectors of var-size columns read from an offset-mapped WAL segment, rebased to their data window (`COPY_O3`, new parquet partition write) | per partition task; `populateO3DescriptorColumns()` sizes it once per call | `releaseDecodeBuffers()` when the task ends; the next `resize()` allocates it again |
 | `nullBufs` | **owned** conversion / null buffers (Phase 1a) | **per row group** | `O3ParquetMergeContext.freeRowGroupMerge()` in the caller's `finally` |
 | `tmpBufs` | owned conversion / null buffers (rewrite path) | per row group | rewrite `finally` |
 | merge index (`O3ParquetMergeContext.reallocMergeIndex`) | merge index | per row group, owned by the context | `freeRowGroupMerge()` (guarded `!= 0`) |
 | `mergeDstBufs` | merge-copy destinations | **reused across MERGE actions** | caller, after the action loop |
 | `dedupColSinkAddr` | dedup-compare address sink | per partition | `TableWriter` (`dedupColumnCommitAddresses`) |
 | `srcPtrs`, `convertedPtrs` | **pointer copies** (not owned) | per-worker container; pointers valid per row group | nulled at `close` — never `freeNativePairs` |
+
+A partition task is an O3 parquet merge (`processParquetPartition0()`), the write of a new parquet
+partition (`writeFreshParquetFromO3()`) or a parquet partition compaction (`compactParquetPartition()`).
+Each ends in a `finally` that calls `releaseDecodeBuffers()`, directly or through `releaseResources()`.
+The decode buffers and the rebase arena grow to the largest decode or O3 slice of the task and never
+shrink: a DEDUP merge of a run of row groups that share a timestamp decodes the whole run at once, and
+the write of a new parquet partition can rebase the aux vectors of its var-size columns for every row,
+so a worker that kept them would hold that peak for good. Their Java objects stay in the worker's
+context, and `close()` frees whatever is left when the worker ends. Get the decode buffers through their
+getters in each task, and keep no chunk address or arena slot past the task.
 
 `ParquetConversionContext` owns common decode/conversion scratch, while
 `O3ParquetMergeContext` adds O3-only lists (`getNullBufs`, `getMergeDstBufs`, `getSrcPtrs`).

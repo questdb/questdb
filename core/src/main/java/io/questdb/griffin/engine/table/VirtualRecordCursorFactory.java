@@ -152,6 +152,20 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.getScanDirection();
     }
 
+    // The timestamp must be a column reference to the base's own timestamp, as translateOrderByColumnToBase() resolves
+    // it; a function of the timestamp computes another value.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final ColumnFunction columnFunction = ColumnFunction.unwrap(functions.getQuick(timestampIndex));
+        return columnFunction != null
+                && priorityMetadata.getBaseColumnIndex(columnFunction.getColumnIndex()) == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
