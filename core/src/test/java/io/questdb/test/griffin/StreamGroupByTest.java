@@ -57,6 +57,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Numbers;
@@ -2329,7 +2330,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             if (parallel) {
                 try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
                     final String expected = read(factory, context);
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024);
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16 * 1024);
                     try (RecordCursor cursor = factory.getCursor(context)) {
                         try {
                             while (cursor.hasNext()) {
@@ -2337,6 +2338,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             Assert.fail("expected frame result memory limit breach");
                         } catch (CairoException e) {
                             Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']');
                         }
                     } finally {
                         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
