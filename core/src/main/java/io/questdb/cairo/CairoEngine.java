@@ -5227,6 +5227,8 @@ public class CairoEngine implements Closeable, WriterSource {
         if (state == null) {
             return;
         }
+        // a cursor that missed its record, asserted past the catch below, which would swallow the assertion
+        boolean isCursorMisstepped = false;
         try {
             final long appliedSeqTxn = readMatViewAppliedSeqTxn(viewToken, path, pathLen);
             if (appliedSeqTxn < 0) {
@@ -5266,13 +5268,13 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (!hasRecord || cursor.getTxn() != seqTxn) {
                         // Within the cursor's count, hasNext() lands on record seqTxn or throws. A cursor anywhere else
                         // would pin this seqTxn on another record's event, so nothing is recorded.
-                        assert false : cursor.getTxn();
+                        isCursorMisstepped = true;
                         LOG.error().$("materialized view WAL cursor is not on the expected transaction, recording no pending definition [view=")
                                 .$(viewToken)
                                 .$(", seqTxn=").$(seqTxn)
                                 .$(", cursorTxn=").$(cursor.getTxn())
                                 .I$();
-                        return;
+                        break;
                     }
                     final int walId = cursor.getWalId();
                     if (walId <= 0) {
@@ -5321,6 +5323,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             path.trimTo(pathLen);
         }
+        assert !isCursorMisstepped : viewToken;
     }
 
     /**
