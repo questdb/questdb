@@ -2562,6 +2562,68 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardInnerOnReferenceAcrossNonEquiOuterJoinIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"g0", "gm", "g1", "g2", "g3", "g4", "gz"}) {
+                execute("CREATE TABLE " + table + " (k INT, j INT)");
+                execute("INSERT INTO " + table + " VALUES (1, 1), (2, 2), (null, 3)");
+            }
+            final String sql1 = """
+                    SELECT g0.k, gm.k, g1.k, g2.k, g3.k, g4.k, gz.k
+                    FROM g0
+                    JOIN gm ON gm.k = gz.k
+                    RIGHT JOIN g1 ON g1.k >= g0.k
+                    CROSS JOIN g2
+                    LEFT JOIN g3 ON g3.j = g2.j AND g3.j = g0.j
+                    FULL JOIN g4 ON g4.k > g0.k
+                    LEFT JOIN gz ON gz.k = g0.k""";
+            assertExceptionNoLeakCheck(sql1, sql1.indexOf("= gz.k") + 2, "join condition references a table joined later [column=gz.k]");
+
+            for (String table : new String[]{"h0", "h1", "h2", "h3", "h4"}) {
+                execute("CREATE TABLE " + table + " (k INT, x INT, a INT)");
+                execute("INSERT INTO " + table + " VALUES (1, 1, 1), (2, 2, 2)");
+            }
+            final String sql2 = "SELECT h0.k FROM h0 FULL JOIN h1 ON h1.x > h2.x JOIN h2 ON h2.k = h1.k AND h2.k = h0.k CROSS JOIN h3 "
+                    + "LEFT JOIN h4 ON h4.a = h3.a AND h4.a = h0.a";
+            assertExceptionNoLeakCheck(sql2, sql2.indexOf("h2.x"), "join condition references a table joined later [column=h2.x]");
+
+            execute("CREATE TABLE p0 (k INT, a INT)");
+            execute("CREATE TABLE pp (k INT, a INT)");
+            execute("CREATE TABLE pb (k INT, a INT)");
+            execute("CREATE TABLE pc (k INT, a INT)");
+            execute("INSERT INTO p0 VALUES (1, 1)");
+            execute("INSERT INTO pp VALUES (2, 0)");
+            execute("INSERT INTO pb VALUES (2, 0), (null, 0)");
+            execute("INSERT INTO pc VALUES (7, 1), (8, null)");
+            final String sql3 = "SELECT p0.k k0, pp.k kp, pb.k kb, pc.k kc FROM p0 JOIN pp ON pp.k = pb.k FULL JOIN pb ON pb.k > p0.k "
+                    + "LEFT JOIN pc ON pc.a = p0.a";
+            assertExceptionNoLeakCheck(sql3, sql3.indexOf("= pb.k") + 2, "join condition references a table joined later [column=pb.k]");
+            assertQuery("SELECT * FROM ((p0 CROSS JOIN pp) FULL JOIN pb ON pb.k > p0.k AND pp.k = pb.k) LEFT JOIN pc ON pc.a = p0.a")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\ta\tk1\ta1\tk2\ta2\tk3\ta3
+                            1\t1\t2\t0\t2\t0\t7\t1
+                            null\tnull\tnull\tnull\tnull\t0\t8\tnull
+                            """);
+
+            execute("CREATE TABLE i0 (k INT, j INT)");
+            execute("CREATE TABLE i1 (k INT, j INT)");
+            execute("CREATE TABLE i2 (k INT, j INT)");
+            execute("INSERT INTO i0 VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO i1 VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO i2 VALUES (1, 1), (3, 3)");
+            assertQuery("SELECT i0.k, i1.k, i2.k FROM i0 JOIN i1 ON i1.k = i2.k JOIN i2 ON i2.k = i0.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tk1\tk2
+                            1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testForwardInnerOnReferenceBeforeRightOrFullJoinIsRejected() throws Exception {
         // #7701
         assertMemoryLeak(() -> {

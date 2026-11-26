@@ -118,6 +118,61 @@ public class JitFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnBooleanColumnsNamedLikeComparisonOperators() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (\"=\" BOOLEAN, \"!=\" BOOLEAN, \"<>\" BOOLEAN, \"<\" BOOLEAN, \">=\" BOOLEAN, x INT)");
+            execute("""
+                    INSERT INTO k VALUES (true, false, true, false, true, 1), (true, false, false, true, false, 2),
+                    (false, true, false, false, true, 3), (false, true, false, true, false, 4), (false, false, true, false, false, 5)""");
+            execute("CREATE TABLE g (\"<>\" BOOLEAN, \">\" BOOLEAN, x INT)");
+            execute("INSERT INTO g VALUES (true, true, 1), (false, false, 2)");
+            final int oldMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode = SqlJitMode.JIT_MODE_DISABLED; mode >= SqlJitMode.JIT_MODE_ENABLED; mode--) {
+                    sqlExecutionContext.setJitMode(mode);
+                    assertRows("SELECT x FROM k WHERE \"<>\"", 1, 5);
+                    assertRows("SELECT x FROM k WHERE \"=\"", 1, 2);
+                    assertRows("SELECT x FROM k WHERE \"!=\"", 3, 4);
+                    assertRows("SELECT x FROM k WHERE x > 0 AND \"<>\"", 1, 5);
+                    assertRows("SELECT x FROM k WHERE NOT (\"=\" OR x > 10)", 3, 4, 5);
+                    assertRows("SELECT x FROM k WHERE NOT (\"<\" OR x > 10)", 1, 3, 5);
+                    assertRows("SELECT x FROM k WHERE NOT (\">=\" OR x > 10)", 2, 4, 5);
+                    assertRows("SELECT x FROM k WHERE NOT (\"!=\" OR x > 10)", 1, 2, 5);
+                    assertRows("SELECT x FROM g WHERE NOT (\"<>\" AND x > 0)", 2);
+                    assertRows("SELECT x FROM g WHERE NOT (\">\" AND x > 0)", 2);
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(oldMode);
+            }
+        });
+    }
+
+    @Test
+    public void testFilterOnBooleanColumnsNamedLikeLogicalOperators() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (\"and\" BOOLEAN, \"or\" BOOLEAN, \"not\" BOOLEAN, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO w VALUES (true, false, true, 1, '2024-01-01'), (false, true, false, 2, '2024-01-02')");
+            final int oldMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode = SqlJitMode.JIT_MODE_DISABLED; mode >= SqlJitMode.JIT_MODE_ENABLED; mode--) {
+                    sqlExecutionContext.setJitMode(mode);
+                    assertRows("SELECT x FROM w WHERE \"and\"", 1);
+                    assertRows("SELECT x FROM w WHERE \"or\"", 2);
+                    assertRows("SELECT x FROM w WHERE \"not\"", 1);
+                    assertRows("SELECT x FROM w WHERE ts > '2023' AND \"and\"", 1);
+                    assertRows("SELECT x FROM w WHERE \"or\" AND x > 1", 2);
+                    assertRows("SELECT x FROM w WHERE \"and\" = true", 1);
+                    assertRows("SELECT x FROM w WHERE NOT \"and\"", 2);
+                    assertRows("SELECT x FROM w WHERE NOT \"or\"", 1);
+                    assertRows("SELECT x FROM w WHERE NOT \"not\"", 2);
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(oldMode);
+            }
+        });
+    }
+
+    @Test
     public void testIntervalInJitParityForDateAndTimestamps() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -143,13 +198,12 @@ public class JitFilterTest extends AbstractCairoTest {
             }
             final String[] keys = {"dt", "tm", "tn"};
             for (String key : keys) {
-                final boolean isOneValueJit = !"dt".equals(key);
-                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02')", isOneValueJit);
-                assertModes("SELECT k FROM x WHERE " + key + " IN '2024-01-02'", isOneValueJit);
-                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01')", isOneValueJit);
-                assertModes("SELECT k FROM x WHERE " + key + " NOT IN ('2024-01-02')", isOneValueJit);
-                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02') AND k > 0", isOneValueJit);
-                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02') OR k < 0", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02')", true);
+                assertModes("SELECT k FROM x WHERE " + key + " IN '2024-01-02'", true);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01')", true);
+                assertModes("SELECT k FROM x WHERE " + key + " NOT IN ('2024-01-02')", true);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02') AND k > 0", true);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02') OR k < 0", true);
                 assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02', '2024-01-03')", true);
                 assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02', '2024-01-03', '2024-01-05')", true);
                 assertModes("SELECT k FROM x WHERE " + key + " NOT IN ('2024-01-02', '2024-01-03')", true);
@@ -227,6 +281,14 @@ public class JitFilterTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(oldMode);
             sqlExecutionContext.setParallelFilterEnabled(wasParallel);
         }
+    }
+
+    private void assertRows(String sql, int... xs) throws Exception {
+        final StringBuilder expected = new StringBuilder("x\n");
+        for (int x : xs) {
+            expected.append(x).append('\n');
+        }
+        assertQuery(sql).noLeakCheck().returns(expected);
     }
 
     private void createRows() throws Exception {

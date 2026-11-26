@@ -2063,4 +2063,121 @@ public class OuterJoinTest extends AbstractCairoTest {
         execute("INSERT INTO lp_outer_r VALUES (10,1,11,'a','2020-01-01'),(11,1,12,'a','2020-01-02'),"
                 + "(12,3,31,'c','2020-01-03'),(13,null,null,null,'2020-01-04'),(14,6,60,'f','2020-01-05')");
     }
+
+    @Test
+    public void testWhereReadsInfiniteOperandOfNullExtendedRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x DOUBLE, s SHORT)");
+            execute("CREATE TABLE b (k INT)");
+            execute("CREATE TABLE b2 (k INT)");
+            execute("CREATE TABLE o (g INT)");
+            execute("INSERT INTO a VALUES (1, 5.0, 5::SHORT)");
+            execute("INSERT INTO b VALUES (1)");
+            execute("INSERT INTO b2 VALUES (1), (2)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                assertQuery("SELECT a.k, a.x, b.k FROM a " + join + " JOIN b ON a.k = b.k WHERE ln(coalesce(a.x, 0)) < 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("k\tx\tk1\n");
+                assertQuery("SELECT a.k, a.s, b.k FROM a " + join + " JOIN b ON a.k = b.k WHERE ln(a.s) < 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("k\ts\tk1\n");
+                assertQuery("SELECT a.k, a.x, b2.k FROM a " + join + " JOIN b2 ON a.k = b2.k WHERE ln(coalesce(a.x, 0)) < 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                k\tx\tk1
+                                null\tnull\t2
+                                """);
+                assertQuery("SELECT a.k, a.s, b2.k FROM a " + join + " JOIN b2 ON a.k = b2.k WHERE ln(a.s) < 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                k\ts\tk1
+                                null\t0\t2
+                                """);
+            }
+            for (int i = 0; i < 2; i++) {
+                bindVariableService.clear();
+                bindVariableService.setDouble(0, 0.0);
+                assertQuery("SELECT a.k, a.x, b2.k FROM a RIGHT JOIN b2 ON a.k = b2.k WHERE ln(coalesce(a.x, 0)) < $1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                k\tx\tk1
+                                null\tnull\t2
+                                """);
+            }
+            bindVariableService.clear();
+            assertQuery("""
+                    SELECT o.g, l.ak, l.bk FROM o JOIN LATERAL (
+                        SELECT a.k ak, b2.k bk FROM a RIGHT JOIN b2 ON a.k = b2.k AND b2.k = o.g WHERE ln(coalesce(a.x, 0)) < 0
+                    ) l ORDER BY o.g, l.bk""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tak\tbk
+                            1\tnull\t2
+                            2\tnull\t1
+                            2\tnull\t2
+                            3\tnull\t1
+                            3\tnull\t2
+                            """);
+            assertQuery("""
+                    SELECT o.g, l.ak, l.bk FROM o JOIN LATERAL (
+                        SELECT a.k ak, b2.k bk FROM a RIGHT JOIN b2 ON a.k = b2.k WHERE ln(coalesce(a.x, 0)) < 0 AND b2.k = o.g
+                    ) l ORDER BY o.g, l.bk""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tak\tbk
+                            2\tnull\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOperatorNamedColumnsAroundJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (\"and\" BOOLEAN, x INT)");
+            execute("CREATE TABLE ua (x INT)");
+            execute("CREATE TABLE td (\"AND\" DOUBLE, x INT)");
+            execute("INSERT INTO ta VALUES (true, 1), (false, 2), (true, 3)");
+            execute("INSERT INTO ua VALUES (1), (2), (6)");
+            execute("INSERT INTO td VALUES (1.5, 1), (-1.0, 2)");
+            execute("CREATE TABLE w (\"and\" BOOLEAN, \"or\" BOOLEAN, x INT)");
+            execute("INSERT INTO w VALUES (true, false, 1), (false, true, 2)");
+            assertQuery("SELECT w1.x FROM w w1 JOIN w w2 ON w1.x = w2.x WHERE w1.\"and\"")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("x\n1\n");
+            assertQuery("SELECT w1.x FROM w w1 LEFT JOIN w w2 ON w1.x = w2.x AND w2.\"or\" ORDER BY w1.x")
+                    .noLeakCheck()
+                    .returns("x\n1\n2\n");
+            final String[][] cases = {
+                    {"ta.\"and\"", "true\t1\t1\n", "true\t1\t1\ntrue\t3\tnull\n"},
+                    {"ta.x > 0 AND ta.\"and\"", "true\t1\t1\n", "true\t1\t1\ntrue\t3\tnull\n"},
+                    {"ta.\"and\" = true", "true\t1\t1\n", "true\t1\t1\ntrue\t3\tnull\n"},
+                    {"NOT ta.\"and\" AND ta.x > 0", "false\t2\t2\n", "false\t2\t2\n"},
+                    {"ta.\"and\" OR ta.x = 2", "true\t1\t1\nfalse\t2\t2\n", "true\t1\t1\nfalse\t2\t2\ntrue\t3\tnull\n"}
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT * FROM ta RIGHT JOIN ua ON ta.x = ua.x WHERE " + c[0] + " ORDER BY ta.x")
+                        .noLeakCheck()
+                        .returns("and\tx\tx1\n" + c[1]);
+                assertQuery("SELECT * FROM ta FULL JOIN ua ON ta.x = ua.x WHERE " + c[0] + " ORDER BY ta.x")
+                        .noLeakCheck()
+                        .returns("and\tx\tx1\n" + c[2]);
+            }
+            assertQuery("SELECT * FROM td RIGHT JOIN ua ON td.x = ua.x WHERE td.\"AND\" > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            AND\tx\tx1
+                            1.5\t1\t1
+                            """);
+        });
+    }
 }

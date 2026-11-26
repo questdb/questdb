@@ -6690,6 +6690,51 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByTimestampDescNegativeLimitKeepsEarliestRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES (1, 5, '2024-01-01T00:00:01Z'), (2, 5, '2024-01-01T00:00:02Z'), (3, 5, '2024-01-01T00:00:03Z'),
+                    (4, 5, '2024-01-01T00:00:04Z'), (5, 5, '2024-01-01T00:00:05Z')""");
+            execute("INSERT INTO q VALUES (100, '2024-01-01T00:00:00Z'), (101, '2024-01-01T00:00:03Z')");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String where : new String[]{"WHERE t.x > 1 ", ""}) {
+                    for (String orderBy : new String[]{"ts", "t.ts"}) {
+                        assertQuery("SELECT t.id, t.ts, q.v FROM t " + join + " JOIN q " + where + "ORDER BY " + orderBy + " DESC LIMIT -2")
+                                .noLeakCheck()
+                                .timestampDesc("ts")
+                                .expectSize()
+                                .returns("""
+                                        id\tts\tv
+                                        2\t2024-01-01T00:00:02.000000Z\t100
+                                        1\t2024-01-01T00:00:01.000000Z\t100
+                                        """);
+                    }
+                }
+            }
+
+            execute("CREATE TABLE tu (id INT, x INT, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE qu (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tu VALUES (1, 5, ARRAY[1.0], '2024-01-01T00:00:01Z'), (2, 0, ARRAY[9.0], '2024-01-01T00:00:02Z'),
+                    (3, 5, ARRAY[2.0, 3.0], '2024-01-01T00:00:03Z')""");
+            execute("INSERT INTO qu VALUES (300, '2024-01-01T00:00:00Z'), (301, '2024-01-01T00:00:02.5Z')");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT t.id, t.ts, q.v qv FROM tu t " + join + " JOIN qu q CROSS JOIN UNNEST(t.arr) u(v) WHERE t.x > 1 ORDER BY ts DESC LIMIT -2")
+                        .noLeakCheck()
+                        .timestampDesc("ts")
+                        .expectSize()
+                        .returns("""
+                                id\tts\tqv
+                                3\t2024-01-01T00:00:03.000000Z\t301
+                                1\t2024-01-01T00:00:01.000000Z\t300
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testRightHandAfter() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
