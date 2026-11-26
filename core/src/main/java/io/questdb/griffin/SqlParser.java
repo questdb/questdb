@@ -2761,34 +2761,39 @@ public class SqlParser {
     }
 
     /**
-     * Whether the WITH clause whose CTEs the lexer is about to read heads a statement that ignores
-     * the client's variables, see parse0(): an UPDATE, or an INSERT of the rows VALUES lists,
-     * which reads no query. Reads past the CTEs, skipping their bodies by their brackets, to the
+     * Whether the WITH clause whose CTEs follow {@code from} heads a statement that ignores the
+     * client's variables, see parse0(): an UPDATE, or an INSERT of the rows VALUES lists, which
+     * reads no query. Reads past the CTEs, skipping their bodies by their brackets, to the
      * statement after them, past the options, the target and the column list of an INSERT to its
-     * rows, and leaves the lexer where it found it. A WITH clause of another shape reads them;
-     * parseWithClauses() or parseInsert() reports what is wrong with it, an unclosed quote the scan
-     * runs into included, so that the first error in the text is the one reported.
+     * rows. It reads with a lexer of its own, see {@link #borrowLookaheadLexer}: the statement's
+     * lexer can already hold the token glued to WITH, such as the opener of a comment, which a
+     * scan from that lexer's position would miss, to read the comment's text as the CTE's name. A
+     * WITH clause of another shape reads them; parseWithClauses() or parseInsert() reports what
+     * is wrong with it, an unclosed quote the scan runs into included, so that the first error in
+     * the text is the one reported.
+     *
+     * @param from the offset just past the WITH keyword
      */
-    private boolean isIgnoringVariablesAfterWith(GenericLexer lexer) {
-        lexer.stash();
+    private boolean isIgnoringVariablesAfterWith(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
         try {
             CharSequence tok;
             do {
                 // the CTE's name
-                if (optTok(lexer) == null) {
+                if (SqlUtil.fetchNext(lookahead) == null) {
                     return false;
                 }
-                tok = optTok(lexer);
+                tok = SqlUtil.fetchNext(lookahead);
                 if (tok == null || !isAsKeyword(tok)) {
                     return false;
                 }
-                tok = optTok(lexer);
+                tok = SqlUtil.fetchNext(lookahead);
                 if (tok == null || !Chars.equals(tok, '(')) {
                     return false;
                 }
                 int depth = 1;
                 while (depth > 0) {
-                    tok = optTok(lexer);
+                    tok = SqlUtil.fetchNext(lookahead);
                     if (tok == null) {
                         return false;
                     }
@@ -2798,7 +2803,7 @@ public class SqlParser {
                         depth--;
                     }
                 }
-                tok = optTok(lexer);
+                tok = SqlUtil.fetchNext(lookahead);
             } while (tok != null && Chars.equals(tok, ','));
             if (tok == null) {
                 return false;
@@ -2809,7 +2814,7 @@ public class SqlParser {
             if (isInsertKeyword(tok)) {
                 // Neither the options, nor the target, nor a column name can be SELECT or VALUES
                 // unless quoted, so the first of the two that follows names the INSERT's rows.
-                while ((tok = optTok(lexer)) != null) {
+                while ((tok = SqlUtil.fetchNext(lookahead)) != null) {
                     if (isValuesKeyword(tok)) {
                         return true;
                     }
@@ -2824,7 +2829,7 @@ public class SqlParser {
             // finds an earlier error.
             return false;
         } finally {
-            lexer.unstash();
+            viewLexers.release(lookahead);
         }
     }
 
@@ -9081,9 +9086,10 @@ public class SqlParser {
         // The WAL applies an UPDATE by parsing its text again, without the client's variables,
         // and an INSERT of the rows VALUES lists reads no query, so neither statement, nor its
         // CTEs, reads them, see parse0(). The scan for them runs only when there are variables
-        // to skip.
+        // to skip, from just past WITH, the token the lexer read last.
         final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls =
-                hasQueryVariables(lexer, executionContext) && !isIgnoringVariablesAfterWith(lexer)
+                hasQueryVariables(lexer, executionContext)
+                        && !isIgnoringVariablesAfterWith(lexer.getContent(), lexer.lastTokenPosition() + "with".length())
                         ? parseQueryVariables(lexer, executionContext, sqlParserCallback)
                         : null;
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);

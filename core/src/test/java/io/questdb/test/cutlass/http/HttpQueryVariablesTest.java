@@ -428,17 +428,23 @@ public class HttpQueryVariablesTest extends AbstractTest {
     @Test
     public void testInsertValuesIgnoresVariables() throws Exception {
         // VALUES lists the rows of an INSERT without a query to read the variables, with a WITH
-        // clause ahead of it too: each statement answers as it does without the parameter, and
-        // does not parse it, so a parameter that holds no assignment fails none
+        // clause ahead of it too, also one glued to a comment: each statement answers as it does
+        // without the parameter, and does not parse it, so a parameter that holds no assignment
+        // fails none
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
-            for (String sql : new String[]{"INSERT INTO t VALUES (1)", "WITH c AS (SELECT 1 x) INSERT INTO t VALUES (2)"}) {
+            final String[] statements = {
+                    "INSERT INTO t VALUES (1)",
+                    "WITH c AS (SELECT 1 x) INSERT INTO t VALUES (2)",
+                    "WITH-- comment\nc AS (SELECT 1 x) INSERT INTO t VALUES (3)",
+            };
+            for (String sql : statements) {
                 TestUtils.assertEquals("{\"dml\":\"OK\"}", assertSameResponse("/query", sql, "a := 1"));
                 TestUtils.assertContains(assertSameResponse("/api/v1/sql/validate", sql, "a := 1"), "\"queryType\":\"INSERT\"");
             }
             // /query ran each statement twice
             assertGet(
-                    "{\"query\":\"SELECT v FROM t\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1],[1],[2],[2]],\"count\":4}",
+                    "{\"query\":\"SELECT v FROM t\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1],[1],[2],[2],[3],[3]],\"count\":6}",
                     "SELECT v FROM t",
                     null
             );
@@ -686,8 +692,14 @@ public class HttpQueryVariablesTest extends AbstractTest {
             final String variables = "@a := 1";
             assertSameResponse("UPDATE t SET v = @a", variables);
             assertSameResponse("WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c", variables);
-            // nor does it parse them: a parameter that holds no assignment fails no UPDATE
-            for (String sql : new String[]{"UPDATE t SET v = 1", "WITH c AS (SELECT 1 x) UPDATE t SET v = c.x FROM c"}) {
+            // nor does it parse them: a parameter that holds no assignment fails no UPDATE, also
+            // after a WITH glued to a comment
+            final String[] statements = {
+                    "UPDATE t SET v = 1",
+                    "WITH c AS (SELECT 1 x) UPDATE t SET v = c.x FROM c",
+                    "WITH/* c */c AS (SELECT 1 x) UPDATE t SET v = c.x FROM c",
+            };
+            for (String sql : statements) {
                 final String response = assertSameResponse("/query", sql, "a := 1");
                 TestUtils.assertEquals("{\"dml\":\"OK\",\"updated\":0}", response);
             }

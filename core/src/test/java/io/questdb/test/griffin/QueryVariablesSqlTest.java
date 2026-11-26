@@ -67,6 +67,43 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
+    public void testCommentGluedToWith() throws Exception {
+        assertMemoryLeak(() -> {
+            // A comment glued to WITH leaves the statement as it is with a blank there: UPDATE and
+            // INSERT ... VALUES ignore the variables, a query reads them. The second comment holds
+            // the start of a statement that ignores them.
+            execute("CREATE TABLE w (k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-02')");
+            drainWalQueue();
+            for (String comment : new String[]{"/**/", "/* c AS (SELECT 1) UPDATE */", "/*+ hint */", "-- comment\n"}) {
+                final String with = "WITH" + comment + "c AS ";
+                execute("CREATE TABLE x (a INT)");
+                // "a := 1" is no assignment: a statement that ignores the variables does not parse them
+                executeWithVariables("a := 1", with + "(SELECT 1 y) INSERT INTO x VALUES (10)");
+                executeWithVariables("a := 1", with + "(SELECT 1 y) UPDATE x SET a = a + 1");
+                final String explain = "EXPLAIN " + with + "(SELECT 1 y) INSERT INTO x VALUES (20)";
+                final StringSink expected = new StringSink();
+                printSql(explain, expected);
+                final StringSink actual = new StringSink();
+                withVariables("a := 1", explain, () -> printSql(explain, actual));
+                TestUtils.assertEquals(expected, actual);
+                // the query of an INSERT reads them, as a query does
+                executeWithVariables("@a := 7", with + "(SELECT @a y) INSERT INTO x SELECT y FROM c");
+                assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns("a\n11\n7\n");
+                final String select = with + "(SELECT @a y) SELECT y FROM c";
+                withVariables("@a := 7", select, () -> assertQuery(select).noLeakCheck().expectSize().returns("y\n7\n"));
+                // The WAL applies an UPDATE by parsing its text again, without the variables. An
+                // UPDATE that reads one fails as it does without them, and never reaches the WAL.
+                assertFailsAsWithoutVariables(with + "(SELECT 1 y) UPDATE w SET v = 9 WHERE v = @a", "@a := 1");
+                execute("DROP TABLE x");
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("w")));
+            assertQuery("SELECT k, v FROM w").noLeakCheck().expectSize().returns("k\tv\na\t1\nb\t2\n");
+        });
+    }
+
+    @Test
     public void testContextWithoutVariablesDeclaresNone() {
         // A context that implements the interface without SqlExecutionContextImpl, as other
         // contexts may, carries no variables: the interface's defaults return none.
@@ -797,6 +834,8 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             // a WITH clause the parser rejects fails as it does without the variables
             final String[] malformed = {
                     "WITH",
+                    "WITH/**/",
+                    "WITH-- comment",
                     "WITH c",
                     "WITH c x (SELECT 1)",
                     "WITH c AS",
