@@ -130,6 +130,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
             this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
             this.ownerMatcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
             for (int s = 0; s < slaveCount; s++) {
+                assert slaveStates.getQuick(s).getFactory().supportsConcurrentTimeFrameCursor();
                 ownerSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
                 outputSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
             }

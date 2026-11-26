@@ -43,14 +43,16 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * BYTE and SHORT have no NULL of their own: a row of such a column reads NULL only in a column top, and native
- * ALTER COLUMN TYPE to INT, LONG or TIMESTAMP reads the top rows as NULL and every stored value, 0 included, as
- * itself. CONVERT TO PARQUET of a split or a composite partition writes the folders, or the pieces, of a row group
- * one after another, each with its own top, so a row group can hold stored values ahead of top rows: its NULLs are
- * not its leading rows, and its null count covers rows that hold values. The parquet table {@code pt} takes such a
- * conversion, its native twin {@code tw} the same SQL without it. The two must hold the same rows after the lazy
- * ALTER, after a compaction rebuild of the parquet file, after a late row that rewrites the row group, after
- * CONVERT TO NATIVE and after a reopen.
+ * BOOLEAN, BYTE and SHORT have no NULL of their own: a row of such a column reads NULL only in a column top, and
+ * native ALTER COLUMN TYPE to a type with a NULL reads the top rows as NULL and every stored value, 0 or false
+ * included, as itself. CONVERT TO PARQUET of a split or a composite partition writes the folders, or the pieces, of a
+ * row group one after another, each with its own top, so a row group can hold stored values ahead of top rows: its
+ * NULLs are not its leading rows, and its null count covers rows that hold values. The parquet table {@code pt} takes
+ * such a conversion, its native twin {@code tw} the same SQL without it. The two must hold the same rows after the
+ * lazy ALTER, after a compaction rebuild of the parquet file, after a late row that rewrites the row group, after
+ * CONVERT TO NATIVE and after a reopen. CONVERT TO NATIVE straight after the lazy ALTER converts the file of the
+ * source type itself: INT, LONG and TIMESTAMP decode straight to the target, the other targets at the width of the
+ * source, a STRING or VARCHAR target in Java.
  * <p>
  * The tables are WAL tables: only they hold composite partitions, and a non-WAL table squashes a split day when it
  * moves on to the next day and cannot convert its last day, so it never converts a split day. Partition 2024-01-01
@@ -58,8 +60,10 @@ import java.util.List;
  */
 @RunWith(Parameterized.class)
 public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
+    private static final String COMPOSITE_KEYS = "1, 2, 99, 200_000, 1_000_000";
     private static final String DAY = "2024-01-01";
     private static final String DAY_ROWS = "ts < '2024-01-02'";
+    private static final String SPLIT_KEYS = "1, 799, 800, 801, 1_000, 500_000, 1_000_000, 1_000_001";
     private final String sourceType;
     private final String targetType;
 
@@ -71,9 +75,14 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         final List<Object[]> params = new ArrayList<>();
-        for (String sourceType : new String[]{"BYTE", "SHORT"}) {
-            for (String targetType : new String[]{"INT", "LONG", "TIMESTAMP", "TIMESTAMP_NS"}) {
-                params.add(new Object[]{sourceType, targetType});
+        for (String sourceType : new String[]{"BOOLEAN", "BYTE", "SHORT"}) {
+            for (String targetType : new String[]{
+                    "INT", "LONG", "TIMESTAMP", "TIMESTAMP_NS", "DATE", "FLOAT", "DOUBLE", "DECIMAL(9,2)", "STRING", "VARCHAR"
+            }) {
+                // BOOLEAN does not convert to DECIMAL
+                if (!"BOOLEAN".equals(sourceType) || !targetType.startsWith("DECIMAL")) {
+                    params.add(new Object[]{sourceType, targetType});
+                }
             }
         }
         return params;
@@ -84,29 +93,35 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            // rows v 1..200_000, two every 100ms but v 1 alone at midnight
-            createTwins(" DEDUP UPSERT KEYS(ts, v)", "SELECT x, '2024-01-01'::TIMESTAMP + (x / 2) * 100_000L FROM long_sequence(200_000)");
-            twins("ALTER TABLE %s ADD COLUMN b " + sourceType);
-            twins("INSERT INTO %s (v, ts) VALUES (99, '2024-01-02')");
-            // merge-append writes the late row as a piece of its own, which the conversion puts between v 1 and v 2
-            twins("INSERT INTO %s (v, ts, b) VALUES (1_000_000, '2024-01-01T00:00:00.050000Z', 5)");
-            convertToParquet();
-            // row group 0: v 1, the late row and v 2..99, which the top of the base piece covers
-            assertRowGroup(0, 100, 99);
-
-            final String keys = "1, 2, 99, 200_000, 1_000_000";
-            final String keyRows = rows(1, null, 2, null, 99, null, 200_000, null, 1_000_000, 5);
+            createCompositePartition();
+            final String keyRows = compositeKeyRows();
             twins("ALTER TABLE %s ALTER COLUMN b TYPE " + targetType);
-            assertTwins(keys, keyRows, 200_000);
+            assertTwins(COMPOSITE_KEYS, keyRows, 200_000);
             rebuildParquet();
-            assertTwins(keys, keyRows, 200_000);
+            assertTwins(COMPOSITE_KEYS, keyRows, 200_000);
 
             // a late row into row group 0 rewrites it
-            twins("INSERT INTO %s (v, ts, b) VALUES (1_000_002, '2024-01-01T00:00:00.150000Z', 9)");
-            final String lateKeys = keys + ", 1_000_002";
+            twins("INSERT INTO %s (v, ts, b) VALUES (1_000_002, '2024-01-01T00:00:00.150000Z', " + targetLiteral(9) + ")");
+            final String lateKeys = COMPOSITE_KEYS + ", 1_000_002";
             final String lateRows = rows(1, null, 2, null, 99, null, 200_000, null, 1_000_000, 5, 1_000_002, 9);
             assertTwins(lateKeys, lateRows, 200_000);
             assertConvertToNativeAndReopen(lateKeys, lateRows, 200_000);
+        });
+    }
+
+    @Test
+    public void testCompositePartitionConvertToNativeAfterLazyAlter() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createCompositePartition();
+            final String keyRows = compositeKeyRows();
+            twins("ALTER TABLE %s ALTER COLUMN b TYPE " + targetType);
+            // the ALTER leaves the file in the source type: CONVERT TO NATIVE converts the top of the base piece,
+            // which follows the late row in row group 0, as the parquet day reads it
+            assertRowGroup(0, 100, 99);
+            assertTwins(COMPOSITE_KEYS, keyRows, 200_000);
+            assertConvertToNativeAndReopen(COMPOSITE_KEYS, keyRows, 200_000);
         });
     }
 
@@ -116,36 +131,36 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            // rows v 1..1000, one a minute from 00:01
-            createTwins("", "SELECT x, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(1_000)");
-            twins("INSERT INTO %s (v, ts) VALUES (99, '2024-01-02')");
-            // a late row after v 800 splits the day, as the prefix is more than twice the rest: the second folder
-            // holds the late row and v 801..1000
-            twins("INSERT INTO %s (v, ts) VALUES (500_000, '2024-01-01T13:20:30')");
-            twins("ALTER TABLE %s ADD COLUMN b " + sourceType);
-            // late rows into the first folder rewrite it: b holds 5, 7 and the stored 0 of its other rows there, and
-            // stays a top in the second folder
-            twins("INSERT INTO %s (v, ts, b) VALUES (1_000_000, '2024-01-01T00:00:30', 5), (1_000_001, '2024-01-01T13:19:30', 7)");
-            assertQuery("SELECT numRows FROM table_partitions('pt') WHERE name LIKE '" + DAY + "%'")
-                    .noRandomAccess()
-                    .returns("numRows\n802\n201\n");
-            convertToParquet();
-            // row group 8: the 7 and v 800 of the first folder, then 98 rows of the second folder's top
-            assertRowGroup(8, 100, 98);
-
-            final String keys = "1, 799, 800, 801, 1_000, 500_000, 1_000_000, 1_000_001";
-            final String keyRows = rows(1, 0, 799, 0, 800, 0, 801, null, 1_000, null, 500_000, null, 1_000_000, 5, 1_000_001, 7);
+            createSplitPartition();
+            final String keyRows = splitKeyRows();
             twins("ALTER TABLE %s ALTER COLUMN b TYPE " + targetType);
-            assertTwins(keys, keyRows, 201);
+            assertTwins(SPLIT_KEYS, keyRows, 201);
             rebuildParquet();
-            assertTwins(keys, keyRows, 201);
+            assertTwins(SPLIT_KEYS, keyRows, 201);
 
             // a late row between the folders rewrites row group 8
-            twins("INSERT INTO %s (v, ts, b) VALUES (1_000_002, '2024-01-01T13:20:10', 9)");
-            final String lateKeys = keys + ", 1_000_002";
+            twins("INSERT INTO %s (v, ts, b) VALUES (1_000_002, '2024-01-01T13:20:10', " + targetLiteral(9) + ")");
+            final String lateKeys = SPLIT_KEYS + ", 1_000_002";
             final String lateRows = rows(1, 0, 799, 0, 800, 0, 801, null, 1_000, null, 500_000, null, 1_000_000, 5, 1_000_001, 7, 1_000_002, 9);
             assertTwins(lateKeys, lateRows, 201);
             assertConvertToNativeAndReopen(lateKeys, lateRows, 201);
+        });
+    }
+
+    @Test
+    public void testSplitPartitionConvertToNativeAfterLazyAlter() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createSplitPartition();
+            final String keyRows = splitKeyRows();
+            twins("ALTER TABLE %s ALTER COLUMN b TYPE " + targetType);
+            // the ALTER leaves the file in the source type: CONVERT TO NATIVE converts the top of the second folder,
+            // which follows the stored rows of the first one in row group 8, as the parquet day reads it
+            assertRowGroup(8, 100, 98);
+            assertTwins(SPLIT_KEYS, keyRows, 201);
+            assertConvertToNativeAndReopen(SPLIT_KEYS, keyRows, 201);
         });
     }
 
@@ -215,6 +230,10 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
         }
     }
 
+    private String compositeKeyRows() {
+        return rows(1, null, 2, null, 99, null, 200_000, null, 1_000_000, 5);
+    }
+
     private void convertToParquet() throws Exception {
         execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
         drainWalQueue();
@@ -224,12 +243,49 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
                 .returns("isParquet\ntrue\n");
     }
 
+    // the composite day: v 1..200_000, two every 100ms but v 1 alone at midnight, b added after them, and a late row
+    // with b 5, which merge-append writes as a piece of its own and the conversion puts between v 1 and v 2
+    private void createCompositePartition() throws Exception {
+        createTwins(" DEDUP UPSERT KEYS(ts, v)", "SELECT x, '2024-01-01'::TIMESTAMP + (x / 2) * 100_000L FROM long_sequence(200_000)");
+        twins("ALTER TABLE %s ADD COLUMN b " + sourceType);
+        twins("INSERT INTO %s (v, ts) VALUES (99, '2024-01-02')");
+        twins("INSERT INTO %s (v, ts, b) VALUES (1_000_000, '2024-01-01T00:00:00.050000Z', " + literal(5) + ")");
+        convertToParquet();
+        // row group 0: v 1, the late row and v 2..99, which the top of the base piece covers
+        assertRowGroup(0, 100, 99);
+    }
+
+    // the split day: v 1..1000, one a minute from 00:01, split by a late row after v 800, then b added and late rows
+    // with b 5 and 7 that rewrite the first folder, where b holds the stored 0 or false of its other rows
+    private void createSplitPartition() throws Exception {
+        createTwins("", "SELECT x, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(1_000)");
+        twins("INSERT INTO %s (v, ts) VALUES (99, '2024-01-02')");
+        // a late row after v 800 splits the day, as the prefix is more than twice the rest: the second folder
+        // holds the late row and v 801..1000
+        twins("INSERT INTO %s (v, ts) VALUES (500_000, '2024-01-01T13:20:30')");
+        twins("ALTER TABLE %s ADD COLUMN b " + sourceType);
+        // late rows into the first folder rewrite it: b holds 5, 7 and the stored 0 of its other rows there, and
+        // stays a top in the second folder
+        twins("INSERT INTO %s (v, ts, b) VALUES (1_000_000, '2024-01-01T00:00:30', " + literal(5) + "), (1_000_001, '2024-01-01T13:19:30', " + literal(7) + ")");
+        assertQuery("SELECT numRows FROM table_partitions('pt') WHERE name LIKE '" + DAY + "%'")
+                .noRandomAccess()
+                .returns("numRows\n802\n201\n");
+        convertToParquet();
+        // row group 8: the 7 and v 800 of the first folder, then 98 rows of the second folder's top
+        assertRowGroup(8, 100, 98);
+    }
+
     private void createTwins(String dedup, String rows) throws Exception {
         for (String table : new String[]{"pt", "tw"}) {
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL" + dedup);
             execute("INSERT INTO " + table + " " + rows);
         }
         drainWalQueue();
+    }
+
+    // the SQL literal of b in the source type: BOOLEAN stores a non-zero value as true
+    private String literal(int value) {
+        return "BOOLEAN".equals(sourceType) ? Boolean.toString(value != 0) : Integer.toString(value);
     }
 
     // the compaction sweep rebuilds the parquet file of the day, whose schema the ALTER left stale
@@ -254,12 +310,27 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
         }
     }
 
-    // the text of b in the target type: NULL, or the stored value widened, which TIMESTAMP reads as micros or nanos
+    // the text of b in the target type: NULL, or the stored value converted, which BOOLEAN stores as 1 or 0 and
+    // TIMESTAMP and DATE read as micros, nanos or millis
     private String render(Integer value) {
+        if (value == null) {
+            return switch (targetType) {
+                case "INT", "LONG", "FLOAT", "DOUBLE" -> "null";
+                default -> "";
+            };
+        }
+        final boolean isBoolean = "BOOLEAN".equals(sourceType);
+        if (isBoolean && ("STRING".equals(targetType) || "VARCHAR".equals(targetType))) {
+            return value != 0 ? "true" : "false";
+        }
+        final int stored = isBoolean ? (value != 0 ? 1 : 0) : value;
         return switch (targetType) {
-            case "TIMESTAMP" -> value == null ? "" : String.format("1970-01-01T00:00:00.%06dZ", value);
-            case "TIMESTAMP_NS" -> value == null ? "" : String.format("1970-01-01T00:00:00.%09dZ", value);
-            default -> value == null ? "null" : Integer.toString(value);
+            case "TIMESTAMP" -> String.format("1970-01-01T00:00:00.%06dZ", stored);
+            case "TIMESTAMP_NS" -> String.format("1970-01-01T00:00:00.%09dZ", stored);
+            case "DATE" -> String.format("1970-01-01T00:00:00.%03dZ", stored);
+            case "FLOAT", "DOUBLE" -> stored + ".0";
+            case "DECIMAL(9,2)" -> stored + ".00";
+            default -> Integer.toString(stored);
         };
     }
 
@@ -270,5 +341,18 @@ public class ParquetFolderColumnTopWidenTest extends AbstractCairoTest {
             sb.append(pairs[i]).append('\t').append(render((Integer) pairs[i + 1])).append('\n');
         }
         return sb.toString();
+    }
+
+    private String splitKeyRows() {
+        return rows(1, 0, 799, 0, 800, 0, 801, null, 1_000, null, 500_000, null, 1_000_000, 5, 1_000_001, 7);
+    }
+
+    // the SQL literal of b in the target type, for a row the ALTER did not convert: the text of the converted value
+    // for STRING and VARCHAR, which take no number, and the number otherwise
+    private String targetLiteral(int value) {
+        if ("STRING".equals(targetType) || "VARCHAR".equals(targetType)) {
+            return "'" + render(value) + "'";
+        }
+        return Integer.toString("BOOLEAN".equals(sourceType) ? (value != 0 ? 1 : 0) : value);
     }
 }

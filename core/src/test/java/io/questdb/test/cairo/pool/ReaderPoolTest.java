@@ -45,6 +45,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -1299,6 +1300,79 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 reader.close();
             }
         });
+    }
+
+    @Test
+    public void testGetOwnerThreads() throws Exception {
+        // getOwnerThreads() lists the thread that holds each slot of a table, in every segment of the
+        // pool, and takes no slot. It lists a reader that the calling thread holds, and leaves out a
+        // slot that a failed lock() of the calling thread kept, which lock() on the thread passes
+        // over.
+        final CairoConfiguration poolConfig = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getPoolSegmentSize() {
+                return 2;
+            }
+        };
+        assertWithPool(pool -> {
+            final LongList owners = new LongList();
+            final long thread = Thread.currentThread().threadId();
+            // the pool has no entry for the table
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+
+            // the first slot holds a reader that no thread holds
+            pool.get(uTableToken).close();
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+
+            // this thread holds the reader in the first slot, and another thread the second slot
+            final TableReader firstReader = pool.get(uTableToken);
+            final CountDownLatch isHolding = new CountDownLatch(1);
+            final CountDownLatch isReleased = new CountDownLatch(1);
+            final AtomicLong otherThread = new AtomicLong();
+            final AtomicReference<Throwable> holderError = new AtomicReference<>();
+            final Thread holder = new Thread(() -> {
+                try (TableReader ignore = pool.get(uTableToken)) {
+                    otherThread.set(Thread.currentThread().threadId());
+                    isHolding.countDown();
+                    isReleased.await();
+                } catch (Throwable th) {
+                    holderError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            holder.start();
+            try {
+                Assert.assertTrue(isHolding.await(30, TimeUnit.SECONDS));
+                pool.getOwnerThreads(uTableToken, owners);
+                Assert.assertEquals("[" + thread + "," + otherThread.get() + "]", owners.toString());
+                owners.clear();
+
+                // a lock attempt of this thread takes the first slot, and fails at the second
+                firstReader.close();
+                Assert.assertFalse(pool.lock(uTableToken));
+                pool.getOwnerThreads(uTableToken, owners);
+                Assert.assertEquals("[" + otherThread.get() + "]", owners.toString());
+                owners.clear();
+
+                // the slot that the lock attempt kept and the other thread's slot are busy, so this
+                // thread's next reader takes the first slot of the second segment
+                try (TableReader ignore = pool.get(uTableToken)) {
+                    pool.getOwnerThreads(uTableToken, owners);
+                    Assert.assertEquals("[" + otherThread.get() + "," + thread + "]", owners.toString());
+                    owners.clear();
+                }
+            } finally {
+                isReleased.countDown();
+                holder.join();
+            }
+            Assert.assertNull(holderError.get());
+            // only the slot that the lock attempt kept is taken now
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+        }, poolConfig);
     }
 
     @Test

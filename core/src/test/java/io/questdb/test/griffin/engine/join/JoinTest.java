@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -41,6 +42,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -9052,6 +9054,39 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowIdJoinOverInputThatFollowedOrderByAdvice() throws Exception {
+        // An index scan of a table without row ids follows the ORDER BY advice, so its rows arrive in timestamp
+        // order without random access or page frames, and so do those of a hash join over it. ORDER BY keeps the
+        // sort for SPLICE JOIN, which reads its sides by row id. The trades of symbol A are the ones of the
+        // non-indexed table.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String splice = "SELECT * FROM %s w SPLICE JOIN quotes q ON (w.sym = q.sym)";
+            final String indexScan = "(SELECT ts, sym, price FROM '*!*ti' WHERE sym = 'A' ORDER BY ts)";
+            final String tableScanRows = queryResult(splice.formatted("(SELECT ts, sym, price FROM trades WHERE sym = 'A' ORDER BY ts)"));
+            assertQuery(splice.formatted(indexScan))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "DeferredSingleSymbolFilterPageFrame")
+                    .returns(tableScanRows);
+            // the sort offers no page frames, so the filter above it runs serially
+            assertQuery(splice.formatted("(SELECT * FROM " + indexScan + " WHERE rnd_double() < 2)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: rnd_double()<2", "Encode sort\n", "keys: [ts]")
+                    .withPlanNotContaining("Async Filter")
+                    .returns(tableScanRows);
+            final String hashJoin = "SELECT t.ts, t.sym, t.price * x.w price FROM ti t JOIN weights x ON (sym) WHERE t.sym = 'A' ORDER BY t.ts";
+            execute("CREATE TABLE hash_join_ref AS (" + hashJoin + ") TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery(splice.formatted("(" + hashJoin + ")"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "Hash Join")
+                    .returns(queryResult(splice.formatted("hash_join_ref")));
+        });
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -9656,6 +9691,66 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinCoveringIndexSideKeepsParallelFilter() throws Exception {
+        // A covering-index scan offers page frames but no random access. The parallel filter above the ORDER BY
+        // reads those page frames and supplies the random access, so ORDER BY keeps skipping its sort.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String splice = "SELECT * FROM (SELECT * FROM %s WHERE rnd_double() < 2) w SPLICE JOIN quotes q ON (w.sym = q.sym)";
+            final String rows = queryResult(splice.formatted("(SELECT ts, sym, price FROM trades WHERE sym = 'A' ORDER BY ts)"));
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                assertQuery(splice.formatted("(SELECT ts, sym, price FROM ci WHERE sym = 'A' ORDER BY ts)"))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlan("""
+                                SelectedRecord
+                                    Splice Join
+                                      condition: q.sym=w.sym
+                                        Async Filter workers: 1
+                                          filter: rnd_double()<2
+                                            CoveringIndex on: sym with: ts, price
+                                              filter: sym='A'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: quotes
+                                """)
+                        .returns(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testSpliceJoinCoveringIndexSideSortedByTimestamp() throws Exception {
+        // Without a parallel filter above it, the covering-index scan reaches SPLICE JOIN without random access,
+        // so ORDER BY keeps its sort. A serial filter and a LIMIT above the sort keep its random access.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String splice = "SELECT * FROM %s w SPLICE JOIN quotes q ON (w.sym = q.sym)";
+            final String coveringIndex = "(SELECT ts, sym, price FROM ci WHERE sym = 'A' ORDER BY ts)";
+            final String table = "(SELECT ts, sym, price FROM trades WHERE sym = 'A' ORDER BY ts)";
+            assertQuery(splice.formatted(coveringIndex))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .returns(queryResult(splice.formatted(table)));
+            final String limited = "(SELECT * FROM %s LIMIT 2)";
+            assertQuery(splice.formatted(limited.formatted(coveringIndex)))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Limit", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .returns(queryResult(splice.formatted(limited.formatted(table))));
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            final String filtered = "(SELECT * FROM %s WHERE rnd_double() < 2)";
+            assertQuery(splice.formatted(filtered.formatted(coveringIndex)))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: rnd_double()<2", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .returns(queryResult(splice.formatted(filtered.formatted(table))));
+        });
+    }
+
+    @Test
     public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -10120,6 +10215,42 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym")
                     .noLeakCheck()
                     .fails(65, "right");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinSidesSortedByTimestampWithoutRandomAccess() throws Exception {
+        // An ASOF JOIN keeps the timestamp order of its left-hand side but offers no random access, so ORDER BY on
+        // that timestamp keeps its sort for SPLICE JOIN, on either side. Full-fat joins reject SPLICE JOIN for that
+        // reason alone.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String asOf = "SELECT t.ts, t.sym, x.price pp FROM trades t ASOF JOIN prices x ON (sym) ORDER BY t.ts";
+            execute("CREATE TABLE asof_ref AS (" + asOf + ") TIMESTAMP(ts) PARTITION BY DAY");
+            final String[][] queries = {
+                    {"SELECT * FROM %s w SPLICE JOIN quotes q", "(" + asOf + ")"},
+                    {"SELECT * FROM quotes q SPLICE JOIN %s w", "(" + asOf + ")"}
+            };
+            for (String[] query : queries) {
+                assertQuery(query[0].formatted(query[1]))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "AsOf Join")
+                        .returns(queryResult(query[0].formatted("asof_ref")));
+            }
+            // a keyed ASOF JOIN over the symbol index scan, one symbol on each side of the keyed SPLICE JOIN
+            final String indexScanAsOf = "(SELECT t.ts, t.sym, x.price pp FROM ti t ASOF JOIN prices x ON (sym) WHERE t.sym = 'A' ORDER BY t.ts)";
+            final String keyedSplice = "SELECT * FROM %s w SPLICE JOIN (SELECT * FROM quotes WHERE sym = 'A') q ON (w.sym = q.sym)";
+            assertQuery(keyedSplice.formatted(indexScanAsOf))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                    .returns(queryResult(keyedSplice.formatted("(SELECT * FROM asof_ref WHERE sym = 'A')")));
+            final String fullFat = "SELECT * FROM (" + asOf + ") w SPLICE JOIN quotes q";
+            assertQuery(fullFat)
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .fails(fullFat.indexOf("SPLICE"), "splice join doesn't support full fat mode");
         });
     }
 
@@ -10763,6 +10894,52 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    // Trades of symbols B and A at distinct timestamps, ti and ci as copies with a symbol index and a covering
+    // index, prices for an ASOF JOIN, quotes of each trade's symbol 0s and 1s after the trade, and a weight for
+    // each symbol.
+    private void createRowIdJoinTables() throws SqlException {
+        execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE ti (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE ci (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING EF INCLUDE (price), price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE weights (sym SYMBOL, w DOUBLE)");
+        final String trades = """
+                ('2024-01-01T08:00:00.000000Z', 'B', 2.0),
+                ('2024-01-01T08:00:05.000000Z', 'B', 4.0),
+                ('2024-01-01T09:00:00.000000Z', 'A', 1.0),
+                ('2024-01-01T09:00:10.000000Z', 'A', 3.0),
+                ('2024-01-02T09:00:00.000000Z', 'A', 5.0)""";
+        execute("INSERT INTO trades VALUES " + trades);
+        execute("INSERT INTO ti VALUES " + trades);
+        execute("INSERT INTO ci VALUES " + trades);
+        execute("""
+                INSERT INTO prices VALUES
+                    ('2024-01-01T07:59:50.000000Z', 'B', 6.0),
+                    ('2024-01-01T08:59:30.000000Z', 'A', 2.0),
+                    ('2024-01-01T09:00:05.000000Z', 'A', 4.0),
+                    ('2024-01-02T08:59:30.000000Z', 'A', 3.0)""");
+        execute("""
+                INSERT INTO quotes VALUES
+                    ('2024-01-01T08:00:00.000000Z', 'B', 200.0),
+                    ('2024-01-01T08:00:01.000000Z', 'B', 201.0),
+                    ('2024-01-01T08:00:05.000000Z', 'B', 202.0),
+                    ('2024-01-01T08:00:06.000000Z', 'B', 203.0),
+                    ('2024-01-01T09:00:00.000000Z', 'A', 100.0),
+                    ('2024-01-01T09:00:01.000000Z', 'A', 101.0),
+                    ('2024-01-01T09:00:10.000000Z', 'A', 102.0),
+                    ('2024-01-01T09:00:11.000000Z', 'A', 103.0),
+                    ('2024-01-02T09:00:00.000000Z', 'A', 104.0),
+                    ('2024-01-02T09:00:01.000000Z', 'A', 105.0)""");
+        execute("INSERT INTO weights VALUES ('A', 10.0), ('B', 20.0)");
+    }
+
+    private String queryResult(String query) throws SqlException {
+        final StringSink result = new StringSink();
+        printSql(query, result);
+        return result.toString();
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {
