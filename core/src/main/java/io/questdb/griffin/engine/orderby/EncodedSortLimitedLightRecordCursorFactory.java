@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -65,6 +66,7 @@ import org.jetbrains.annotations.TestOnly;
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Function hiFunction;
     private final boolean isCopying;
+    private final int limitPosition;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
@@ -77,6 +79,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             RecordCursorFactory base,
             Function loFunction,
             @Nullable Function hiFunction,
+            int limitPosition,
             ListColumnFilter sortColumnFilter,
             int timestampIndex,
             @Nullable RecordSink recordSink, // copies the kept rows of a base without random access
@@ -88,6 +91,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.base = base;
         this.loFunction = loFunction;
         this.hiFunction = hiFunction;
+        this.limitPosition = limitPosition;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
         this.isCopying = recordSink != null;
@@ -199,11 +203,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             }
         } else {
             final long hi = hiFunction.getLong(null);
-            // A NULL lo with a non-NULL hi means "from the start": LIMIT null,3 returns
-            // the first 3 rows. Without this, NULL falls into the lo < 0 branch and the
-            // query returns the full set instead of the head slice. A NULL lo with a
-            // NULL hi must stay raw so the lo == hi check below yields the empty result.
-            final long lo = rawLo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL ? 0 : rawLo;
+            final long lo = LimitRecordCursorFactory.resolveLo(rawLo, hi, limitPosition);
             if (lo < 0) {
                 // Negative range, e.g. -10,-5: five rows ending five rows from the
                 // tail. lo == hi is an invalid bottom range, e.g. -3,-3: empty result.

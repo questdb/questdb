@@ -34,7 +34,9 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1110,6 +1112,49 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLoPositiveHiFailsOnEveryLimitPath() throws Exception {
+        assertMemoryLeak(() -> assertEveryLimitPath((queryPrefix, planFragment, firstThreeRows) -> {
+            final String error = "LIMIT <negative>, <positive> is not allowed";
+            assertQuery(queryPrefix + "0, 3").noLeakCheck().assertsPlanContaining(planFragment);
+            assertQuery(queryPrefix + "-3, 2").noLeakCheck().fails(queryPrefix.length(), error);
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.fails("negative lo, positive hi", queryPrefix.length(), error, binds -> {
+                binds.setLong("lo", -3);
+                binds.setLong("hi", 2);
+            }));
+            cases.add(BindVarTuple.ok("first three rows", firstThreeRows, binds -> {
+                binds.setLong("lo", 0);
+                binds.setLong("hi", 3);
+            }));
+            cases.add(BindVarTuple.fails("negative lo, positive hi again", queryPrefix.length(), error, binds -> {
+                binds.setLong("lo", -1);
+                binds.setLong("hi", 1);
+            }));
+            assertQuery(queryPrefix + ":lo, :hi").noLeakCheck().expectSize().assertBinds(cases);
+        }));
+    }
+
+    @Test
+    public void testNullLoReadsFromStartOnEveryLimitPath() throws Exception {
+        assertMemoryLeak(() -> assertEveryLimitPath((queryPrefix, planFragment, firstThreeRows) -> {
+            assertQuery(queryPrefix + "null::long, 3").noLeakCheck().assertsPlanContaining(planFragment);
+            assertQuery(queryPrefix + "null::long, 3").noLeakCheck().expectSize().returns(firstThreeRows);
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok("NULL lo", firstThreeRows, binds -> {
+                binds.setLong("lo", Numbers.LONG_NULL);
+                binds.setLong("hi", 3);
+            }));
+            cases.add(BindVarTuple.ok("NULL lo and hi", "id\n", binds -> {
+                binds.setLong("lo", Numbers.LONG_NULL);
+                binds.setLong("hi", Numbers.LONG_NULL);
+            }));
+            assertQuery(queryPrefix + ":lo, :hi").noLeakCheck().expectSize().assertBinds(cases);
+        }));
+    }
+
+    @Test
     public void testOrderByTimestampDescWithWhereAndLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (id LONG, price DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
@@ -1974,6 +2019,20 @@ public class LimitTest extends AbstractCairoTest {
         });
     }
 
+    private void assertEveryLimitPath(LimitPathAssertion assertion) throws Exception {
+        execute("CREATE TABLE tango (id LONG)");
+        execute("INSERT INTO tango SELECT x FROM long_sequence(10)");
+        assertion.run("SELECT id FROM tango LIMIT ", "Limit left: ", "id\n1\n2\n3\n");
+        assertion.run("SELECT id FROM tango ORDER BY id DESC LIMIT ", "Encode sort light lo: ", "id\n10\n9\n8\n");
+        assertion.run(
+                "SELECT id FROM (SELECT id FROM tango UNION ALL SELECT id FROM tango) ORDER BY id DESC LIMIT ",
+                "Encode sort lo: ",
+                "id\n10\n10\n9\n"
+        );
+        setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
+        assertion.run("SELECT id FROM tango ORDER BY id DESC LIMIT ", "Sort light lo: ", "id\n10\n9\n8\n");
+    }
+
     private void assertRowCount(String query, long expected) throws SqlException {
         try (final RecordCursorFactory factory = select(query)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -2058,5 +2117,10 @@ public class LimitTest extends AbstractCairoTest {
                             1764\t1970-01-01T00:00:00.000004Z\tabc
                             """);
         });
+    }
+
+    @FunctionalInterface
+    private interface LimitPathAssertion {
+        void run(String queryPrefix, String planFragment, String firstThreeRows) throws Exception;
     }
 }

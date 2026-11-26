@@ -441,8 +441,10 @@ public class OrderByLimitTest extends AbstractCairoTest {
             assertLimit("-5, -2", "id\n6\n7\n8\n");
             assertLimit("3, 3", "id\n");
             assertLimit("0", "id\n");
-            // A negative lo with a positive hi used to fail here; the top-K selects what a random-access base does.
-            assertLimit("-3, 2", printReference("SELECT id FROM t ORDER BY id LIMIT -3, 2"));
+            final String negativeLoPositiveHi = "SELECT id FROM " + UNION + " ORDER BY id LIMIT -3, 2";
+            assertQuery(negativeLoPositiveHi)
+                    .noLeakCheck()
+                    .fails(negativeLoPositiveHi.indexOf("-3"), "LIMIT <negative>, <positive> is not allowed");
             // lo >= 0 with hi < 0 keeps the full sort and a separate limit.
             assertQuery("SELECT id FROM " + UNION + " ORDER BY id LIMIT 2, -3")
                     .noLeakCheck()
@@ -956,6 +958,7 @@ public class OrderByLimitTest extends AbstractCairoTest {
                         base,
                         new LongConstant(10),
                         null,
+                        0,
                         sortColumnFilter,
                         -1,
                         sink,

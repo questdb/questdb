@@ -1889,6 +1889,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return -1;
     }
 
+    private static int getLimitPosition(IQueryModel model) {
+        final ExpressionNode limitLo = model.getLimitLo();
+        return limitLo != null ? limitLo.position : model.getLimitHi().position;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -9270,9 +9275,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final Function adoptedHiFunc = hiFunc;
             loFunc = null;
             hiFunc = null;
-            return new LimitRecordCursorFactory(
-                    factory, adoptedLoFunc, adoptedHiFunc, limitLo != null ? limitLo.position : limitHi.position
-            );
+            return new LimitRecordCursorFactory(factory, adoptedLoFunc, adoptedHiFunc, getLimitPosition(model));
         } catch (Throwable e) {
             Misc.free(loFunc, e);
             Misc.free(hiFunc, e);
@@ -10246,6 +10249,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     recordCursorFactory,
                                     loFunc,
                                     hiFunc,
+                                    getLimitPosition(model),
                                     listColumnFilterA.copy(),
                                     baseCursorTimestampIndex,
                                     null,
@@ -10259,6 +10263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 loFunc,
                                 hiFunc,
+                                getLimitPosition(model),
                                 listColumnFilterA.copy(),
                                 baseCursorTimestampIndex
                         );
@@ -10343,6 +10348,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 recordCursorFactory,
                                 loFunc,
                                 hiFunc,
+                                getLimitPosition(model),
                                 listColumnFilterA.copy(),
                                 firstOrderByColumnIndex == timestampIndex
                                         && recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER
