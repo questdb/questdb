@@ -89,7 +89,7 @@ public class SampleByStreamBenchmark {
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "filtered_gaps", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "filtered_gaps", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique", "keyed_wide"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -182,6 +182,8 @@ public class SampleByStreamBenchmark {
                 case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
                 case "keyed_distinct_byte" -> "sym, count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
                 case "keyed_unique" -> "id, count(*), sum(v)";
+                // Every frame holds the same 100_000 keys, the most a span map of each lane can collect.
+                case "keyed_wide" -> "id % 100_000 k, count(*), sum(v)";
                 default -> throw new IllegalArgumentException("unknown workload: " + workload);
             };
             final boolean isHashControl = "hash_filtered".equals(workload);
