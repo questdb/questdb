@@ -42,6 +42,11 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.slaveFactory = slaveFactory;
     }
 
+    @Override
+    public boolean isRewindRecomputing() {
+        return masterFactory.isRewindRecomputing() || (!isSlaveHashed() && slaveFactory.isRewindRecomputing());
+    }
+
     // A join reads externally if either input does. getBaseFactory() cannot express this because it
     // returns a single child, so the two-child propagation is explicit here. Guards against a
     // null child during teardown.
@@ -67,5 +72,10 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
             failure = Misc.freeBestEffort(failure, slaveFactory);
         }
         return failure;
+    }
+
+    // A hash join builds its slave into a map once and keeps it across toTop().
+    protected boolean isSlaveHashed() {
+        return false;
     }
 }

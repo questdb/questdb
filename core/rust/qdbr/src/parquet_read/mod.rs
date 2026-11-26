@@ -351,6 +351,80 @@ mod tests {
     }
 
     #[test]
+    fn are_row_groups_in_timestamp_order_reads_statistics_of_timestamp_column() -> ParquetResult<()>
+    {
+        use crate::parquet_write::file::ParquetWriter;
+        use crate::parquet_write::schema::{Column, Partition};
+
+        let timestamps: Vec<i64> = vec![1, 2, 3, 4, 5, 6];
+        let values: Vec<i64> = vec![10, 20, 30, 40, 50, 60];
+        let ts = Column::from_raw_data(
+            0,
+            "ts",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            timestamps.len(),
+            timestamps.as_ptr() as *const u8,
+            std::mem::size_of_val(timestamps.as_slice()),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            true,
+            true,
+            0,
+        )?;
+        let v = Column::from_raw_data(
+            1,
+            "v",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            values.len(),
+            values.as_ptr() as *const u8,
+            std::mem::size_of_val(values.as_slice()),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )?;
+        let mut buf = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_row_group_size(Some(2))
+            .finish(Partition { table: "t".to_string(), columns: vec![ts, v] })?;
+        let file = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let decoder =
+            ParquetDecoder::read(tas.allocator(), &mut Cursor::new(&file), file.len() as u64)?;
+        assert_eq!(decoder.row_group_count, 3);
+        assert!(decoder.are_row_groups_in_timestamp_order(0)?);
+
+        let out_of_range = decoder
+            .are_row_groups_in_timestamp_order(2)
+            .expect_err("column 2 does not exist");
+        assert!(
+            out_of_range
+                .to_string()
+                .contains("timestamp column index 2 out of range [0,2)"),
+            "{out_of_range}"
+        );
+        let not_timestamp = decoder
+            .are_row_groups_in_timestamp_order(1)
+            .expect_err("column 1 is a LONG");
+        assert!(
+            not_timestamp
+                .to_string()
+                .contains("expected timestamp column"),
+            "{not_timestamp}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn dense_symbol_chunk_decoded_as_symbol_fails() -> ParquetResult<()> {
         // The dictionary indices of a dense symbol column chunk are not the table's symbol
         // keys, so its file does not mark the column LocalKeyIsGlobal: a decode into a

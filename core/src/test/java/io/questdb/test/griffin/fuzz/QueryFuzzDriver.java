@@ -126,7 +126,18 @@ public final class QueryFuzzDriver {
                 logSchema(tables.getQuick(i).getShadow());
             }
         }
-        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isDiffFusedEnabled(), config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null, config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
+        QueryRunner runner = new QueryRunner(
+                engine,
+                sqlExecutionContext,
+                config.isDiffJitEnabled(),
+                config.isDiffShadowEnabled(),
+                config.isDiffFusedEnabled(),
+                config.isDiffStreamEnabled(),
+                config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null,
+                config.isVerifyCursorEnabled(),
+                tables,
+                queryWorkerNamePrefix
+        );
         // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
@@ -305,6 +316,7 @@ public final class QueryFuzzDriver {
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
+        LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
         LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
                 .$();
@@ -391,6 +403,14 @@ public final class QueryFuzzDriver {
                         isFusedShareImplausible(fusedSelected, fusedCompleted)
                 );
             }
+        }
+        // SAMPLE BY plans the stream GROUP BY by default, so the axis should run on a large enough sample.
+        final int sampleByGenerated = generatedByShape[QueryShape.SAMPLE_BY.ordinal()];
+        if (config.isDiffStreamEnabled() && sampleByGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "no SAMPLE BY of " + sampleByGenerated + " used the stream GROUP BY; the stream on/off axis looks vacuous",
+                    runner.getStreamAxisRuns() > 0
+            );
         }
         // Guard the reference axis against going vacuous. It compares only when a grouping sets
         // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave
