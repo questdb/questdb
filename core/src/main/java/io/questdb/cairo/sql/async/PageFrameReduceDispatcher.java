@@ -383,7 +383,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                     try {
                         fiberTask = taskPool.acquireLeased();
                     } catch (Throwable th) {
-                        frameSequence.retireTicket(frameSequenceId);
                         completeFailedUnorderedAcquisition(frameSequence, th);
                         throw th;
                     }
@@ -781,7 +780,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 task.clear();
                 subSeq.done(cursor);
                 signalProgress(frameSequence, getUnorderedRing());
-                frameSequence.retireTicket(frameSequenceId);
                 // A ticket names no frame, so there is no latch to count down: the owner closes
                 // the claims on cancellation and waits only for the frames claimed so far.
                 if (frameSequenceId == frameSequence.getId()

@@ -205,7 +205,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                         }
                     }
                     // A full queue leaves no room to hand the ticket back: keep it and claim the next frame.
-                    frameIndex = frameSequence.handBackTicket(taskSequenceId) ? -1 : frameSequence.claimFrame(taskSequenceId);
+                    frameIndex = frameSequence.handBackTicket() ? -1 : frameSequence.claimFrame(taskSequenceId);
                 }
                 return false;
             } else if (cursor == -1) {

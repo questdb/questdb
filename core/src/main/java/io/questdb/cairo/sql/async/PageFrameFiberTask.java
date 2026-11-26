@@ -412,7 +412,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void reduceUnorderedFrames(int frameIndex, UnorderedPageFrameSequence<?> frameSequence, long ticketId) {
         reduceUnorderedFrame(frameIndex, frameSequence);
         // A full queue leaves no room to hand the ticket back: keep it and claim the next frame here.
-        while (!frameSequence.handBackTicket(ticketId) && (frameIndex = frameSequence.claimFrame(ticketId)) > -1) {
+        while (!frameSequence.handBackTicket() && (frameIndex = frameSequence.claimFrame(ticketId)) > -1) {
             batch.switchTo(frameSequence.getDispatchContext());
             reduceUnorderedFrame(frameIndex, frameSequence);
         }

@@ -61,6 +61,9 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Dispatches page frames to a shared queue without ordered collection.
  * Queue entries are tickets: a worker releases the slot, then claims the sequence's next frame.
+ * The owner publishes the tickets when a dispatch starts, one per frame it will not reduce itself,
+ * up to one per worker. Workers add none: a worker hands its ticket back to the queue tail after
+ * each frame, so queries take turns.
  * Completion is tracked via an {@link SOUnboundedCountDownLatch}.
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
@@ -82,13 +85,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
     private final UnorderedPageFrameReducer reducer;
     private final long tailSpinTimeoutNanos;
-    // At most one ticket per worker: more could never be held at once, and each extra one is a queue
-    // slot that crowds out other queries once this sequence runs out of unclaimed frames.
+    // The owner publishes at most one ticket per worker in a dispatch: more could never be held at
+    // once, and each extra one is a queue slot that crowds out other queries once this sequence runs
+    // out of unclaimed frames.
     private final int ticketLimit;
-    // Tickets out for the current dispatch, queued or held by a worker: the high 32 bits hold the
-    // dispatch generation (the low 32 bits of the sequence id), the low 32 bits the count. The
-    // generation keeps a ticket from an earlier dispatch from touching the count.
-    private final AtomicLong ticketState = new AtomicLong();
     private final WorkStealingStrategy workStealingStrategy;
     private T atom;
     private PageFrameAddressCache frameAddressCache;
@@ -235,16 +235,16 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
         claimState.set((long) taskCount << 32);
 
-        // Phase 1: reduce own frames until none is left unclaimed, keeping at least one ticket out.
-        // The owner publishes a single ticket; workers fan it out while they are free to help, see
-        // claimFrame(long), so a busy pool sees few tickets and an idle one quickly takes them all.
+        // Phase 1: publish all tickets up front, so idle workers start at once, then reduce own frames
+        // until none is left unclaimed. A full queue takes fewer tickets: the owner tops them up
+        // before each of its next frames, so the query does not run without helpers to its end.
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        ticketState.set((long) (int) id << 32);
-        do {
-            if ((int) ticketState.get() == 0 && hasUnclaimedFrames()) {
-                publishFirstTicket(dispatcher);
+        int ticketCount = publishTickets(dispatcher, 0);
+        while (isActive() && reduceOwnFrame()) {
+            if (ticketCount < getTicketTarget()) {
+                ticketCount = publishTickets(dispatcher, ticketCount);
             }
-        } while (isActive() && reduceOwnFrame());
+        }
 
         // Phase 2: stop handing out frames and wait for the ones workers claimed.
         awaitClaimedFrames(closeClaims(), dispatcher, false);
@@ -473,67 +473,22 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * A worker claims a frame with a ticket it took from the queue, or -1 when none is left. On a
-     * claim, it fans out: it publishes up to two more tickets while fewer than one ticket per worker
-     * is out, so the helpers double while workers are free to take tickets, and a busy pool, which
-     * takes few, sees few. A ticket that claims nothing is retired.
+     * A worker claims a frame with a ticket it took from the queue, or -1 when none is left. A
+     * ticket from an earlier query of this sequence claims nothing. Rounds and the frames of one
+     * query share its id, so a ticket left over from a round may claim a task of the next one.
      */
     int claimFrame(long ticketId) {
-        if (ticketId != id) {
-            // From an earlier dispatch: its count was reset with the generation.
-            return -1;
-        }
-        final int frameIndex = claimFrame();
-        if (frameIndex < 0) {
-            retireTicket(ticketId);
-        } else if (isActive()) {
-            for (int i = 0; i < 2 && addTicket(ticketId); i++) {
-                if (!tryPublishTicket()) {
-                    retireTicket(ticketId);
-                    break;
-                }
-            }
-        }
-        return frameIndex;
+        return ticketId == id ? claimFrame() : -1;
     }
 
     /**
      * A worker calls this after reducing a frame. While frames remain unclaimed, it hands the ticket
      * back to the queue tail, so the query keeps its helper but takes turns with other queries;
-     * otherwise it retires the ticket. Returns false when the queue is full: the worker then keeps
+     * otherwise it drops the ticket. Returns false when the queue is full: the worker then keeps
      * the ticket and claims the next frame itself, so a full queue never takes a helper away.
      */
-    boolean handBackTicket(long ticketId) {
-        if (!isActive() || !hasUnclaimedFrames()) {
-            retireTicket(ticketId);
-            return true;
-        }
-        return tryPublishTicket();
-    }
-
-    void retireTicket(long ticketId) {
-        while (true) {
-            final long state = ticketState.get();
-            if ((int) (state >>> 32) != (int) ticketId || (int) state == 0) {
-                return;
-            }
-            if (ticketState.compareAndSet(state, state - 1)) {
-                return;
-            }
-        }
-    }
-
-    // Counts a new ticket of the current dispatch, unless one ticket per worker is already out.
-    private boolean addTicket(long ticketId) {
-        while (true) {
-            final long state = ticketState.get();
-            if ((int) (state >>> 32) != (int) ticketId || (int) state >= ticketLimit) {
-                return false;
-            }
-            if (ticketState.compareAndSet(state, state + 1)) {
-                return true;
-            }
-        }
+    boolean handBackTicket() {
+        return !isActive() || !hasUnclaimedFrames() || tryPublishTicket();
     }
 
     private void awaitClaimedFrames(int claimedCount, PageFrameReduceDispatcher dispatcher, boolean isDraining) {
@@ -592,6 +547,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
     }
 
+    // Tickets the owner wants out: one per unclaimed frame but the one it reduces next, up to one
+    // per worker.
+    private int getTicketTarget() {
+        final long state = claimState.get();
+        return Math.min((int) (state >>> 32) - (int) state - 1, ticketLimit);
+    }
+
     private boolean hasCircuitBreakerInterruptionBeenSuperseded(
             SqlExecutionCircuitBreaker circuitBreaker,
             boolean isTimeThrottled
@@ -612,23 +574,27 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Publishes a ticket for the workers to fan out. Holds the publication permit only while
-     * publishing: quiesce waits for it. A full queue publishes nothing; the owner tries again
-     * before its next frame.
+     * Publishes tickets until the dispatch has {@link #getTicketTarget()} of them, and returns how
+     * many it has. {@code ticketCount} is how many the owner published in the dispatch so far. Holds
+     * the publication permit only while publishing: quiesce waits for it. The owner calls this at
+     * the start of every dispatch, even one that needs no ticket, so that a quiescing dispatcher
+     * cancels the query. A full queue takes fewer tickets; the owner tries again before its next frame.
      */
-    private void publishFirstTicket(@Nullable PageFrameReduceDispatcher dispatcher) {
+    private int publishTickets(@Nullable PageFrameReduceDispatcher dispatcher, int ticketCount) {
         if (dispatcher != null && !dispatcher.tryAcquirePublication()) {
             // The dispatcher is quiescing. An owner on a fiber of the quiescing runtime reduces its
             // frames itself, unless the quiesce drain cancels it first; any other owner cancels.
             if (!dispatcher.isCurrentFiberOwned()) {
                 cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
             }
-            return;
+            return ticketCount;
         }
         try {
-            if (addTicket(id) && !tryPublishTicket()) {
-                retireTicket(id);
+            final int targetCount = getTicketTarget();
+            while (ticketCount < targetCount && tryPublishTicket()) {
+                ticketCount++;
             }
+            return ticketCount;
         } finally {
             if (dispatcher != null) {
                 dispatcher.releasePublication();
