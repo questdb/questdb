@@ -106,7 +106,6 @@ public class RowIdJoinShapeCoverageTest extends AbstractCairoTest {
     }
 
 
-
     // The corpus over the tables of a fixed-seed fuzz run.
     private ObjList<String> generateCorpus() throws SqlException {
         final Rnd rnd = new Rnd(0x5eed, 0x7041);

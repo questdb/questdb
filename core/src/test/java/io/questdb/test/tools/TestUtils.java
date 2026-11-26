@@ -2128,6 +2128,7 @@ public final class TestUtils {
     public static boolean isWal(Rnd rnd) {
         return rnd.nextInt(100) < 80;
     }
+
     /**
      * Loads a second copy of {@link SqlException} with assertions disabled for it, so that
      * {@code position()} returns the carrier-local flyweight instead of the fresh instance its

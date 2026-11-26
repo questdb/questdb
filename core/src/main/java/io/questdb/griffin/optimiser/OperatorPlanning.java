@@ -507,7 +507,8 @@ final class OperatorPlanning implements Mutable {
         return switch (frameReader) {
             case FilterPlan filter -> filterAlgorithm(filter, true) == FilterPlan.Algorithm.PARALLEL;
             case HorizonJoinPlan horizon -> isParallelHorizon(horizon, true, false);
-            case AggregatePlan aggregate -> isParallelHorizon((HorizonJoinPlan) aggregate.getChild(), hasParallelFunctions(aggregate), false);
+            case AggregatePlan aggregate ->
+                    isParallelHorizon((HorizonJoinPlan) aggregate.getChild(), hasParallelFunctions(aggregate), false);
             case null, default -> false;
         };
     }

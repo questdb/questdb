@@ -586,6 +586,7 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     // Not pooled: conditions are passed to RecordCursorFactory and live for the duration of query execution.
+
     /**
      * The condition the partition frame cursor applies, with the expressions of its values, which
      * {@link #extractAndCompile} compiles into its value functions.

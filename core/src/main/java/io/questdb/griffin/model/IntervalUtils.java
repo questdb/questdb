@@ -1251,6 +1251,7 @@ public final class IntervalUtils {
             applyLastEncodedInterval(timestampDriver, out);
         }
     }
+
     /**
      * The value of text compared with values of another precision, at the precision the text spells; NULL for NULL
      * text.
@@ -1349,6 +1350,7 @@ public final class IntervalUtils {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInPlace(intervals, divider);
     }
+
     /**
      * The precision text compared with values of the driver's precision spells, at which
      * {@link #parseTimestampText} parses it: the driver's for NULL text and for a nanosecond driver, otherwise
@@ -4304,6 +4306,7 @@ public final class IntervalUtils {
         }
         return false;
     }
+
     /**
      * Whether a tick expression spells a fraction finer than the driver's precision. Static parsing
      * resolves such an expression at nanosecond precision and keeps only the values of the driver's

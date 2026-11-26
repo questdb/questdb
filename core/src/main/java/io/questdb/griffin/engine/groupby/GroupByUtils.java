@@ -89,6 +89,7 @@ import org.jetbrains.annotations.Nullable;
 public class GroupByUtils {
     // Grouping sets roll up columns only: a rolled-up key is replaced with NULL by its input column.
     public static final String EXPRESSION_GROUPING_KEY_MESSAGE = "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery";
+
     /**
      * Computes the value each function reports over an empty group, for functions whose
      * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result and

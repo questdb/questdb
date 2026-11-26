@@ -281,7 +281,8 @@ final class OrderRequirement implements Mutable {
                 || plan instanceof SetOperationPlan operation && !operation.getOperation().isUnion();
         frameReader = !isRandomAccessRequired ? null : switch (plan) {
             case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> filter;
-            case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION -> frameReader;
+            case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION ->
+                    frameReader;
             case SortPlan _ -> frameReader;
             default -> null;
         };
