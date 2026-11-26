@@ -3139,8 +3139,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         long writeAddr = frameAddr + WebSocketFrameWriter.headerSize(payloadLen, false);
         Unsafe.putLong(writeAddr + 1, sequence);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
-        // ponytail: a staged frame is exactly frameSize bytes, so it has no room for schemas
-        // and its feedback degrades to INVALIDATE_ALL; stage a larger frame if that matters.
+        // A staged frame is exactly frameSize bytes, so it has no room for schemas and its
+        // feedback degrades to INVALIDATE_ALL; stage a larger frame if that matters.
         frameSize = writeFeedbackFrame(
                 state,
                 state.getPendingAckSchemaFeedback(),
