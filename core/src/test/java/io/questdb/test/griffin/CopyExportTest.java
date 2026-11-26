@@ -1790,6 +1790,47 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyGivesEveryColumnADistinctFieldId() throws Exception {
+        // A column keeps the writer index of its table column as its Parquet field id, as a table export does. A column
+        // that repeats a table column an earlier one already exports, or reads no table column, takes its position, or
+        // the lowest id no other column holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fi (a INT, b SYMBOL, c DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fi VALUES
+                        (1, 'x', 1.5, '2024-01-01T00:00:00.000000Z'),
+                        (2, 'y', 2.5, '2024-01-01T01:00:00.000000Z'),
+                        (NULL, NULL, NULL, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE fd (a INT, b SYMBOL, c DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fd VALUES (1, 'x', 1.5, '2024-01-01T00:00:00.000000Z')");
+            execute("ALTER TABLE fd DROP COLUMN a");
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String[][] exports = {
+                    // query, file, export mode, field ids
+                    {"SELECT a, a a2, ts FROM fi", "repeated_int", "DIRECT_PAGE_FRAME", "0,1,3"},
+                    {"SELECT c, c c2 FROM fi", "repeated_double", "DIRECT_PAGE_FRAME", "2,1"},
+                    {"SELECT b, b b2, a FROM fi", "repeated_taken_position", "DIRECT_PAGE_FRAME", "1,2,0"},
+                    {"SELECT c, a, ts FROM fi", "reordered", "DIRECT_PAGE_FRAME", "2,0,3"},
+                    {"SELECT c, ts FROM fd", "after_drop", "DIRECT_PAGE_FRAME", "2,3"},
+                    {"SELECT b, a + 1 x FROM fi", "computed", "PAGE_FRAME_BACKED", "0,1"},
+                    {"SELECT b, count() n FROM fi ORDER BY b", "aggregated", "CURSOR_BASED", "0,1"}
+            };
+            for (String[] export : exports) {
+                final String query = export[0];
+                assertExportMode(query, ParquetExportMode.valueOf(export[2]));
+                copyToParquet("COPY (" + query + ") TO '" + export[1] + "' WITH FORMAT PARQUET");
+                assertParquetMatchesQuery(query, parquetPath(export[1]));
+                ParquetTestUtils.assertColumnIds(parquetPath(export[1]), ff, export[3]);
+            }
+            copyToParquet("COPY fi TO 'table' WITH FORMAT PARQUET");
+            ParquetTestUtils.assertColumnIds(parquetPath("table"), ff, "0,1,2,3");
+            copyToParquet("COPY fd TO 'table_after_drop' WITH FORMAT PARQUET");
+            ParquetTestUtils.assertColumnIds(parquetPath("table_after_drop"), ff, "1,2,3");
+        });
+    }
+
+    @Test
     public void testCopyGroupByKeysKeepParquetSettingsOfEveryType() throws Exception {
         // A GROUP BY key passes its column through, so it keeps the column's PARQUET(...) setting, whatever its type.
         // The DIRECT export of the same columns is the reference. BINARY and arrays cannot be GROUP BY keys.

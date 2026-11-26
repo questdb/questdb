@@ -1563,6 +1563,32 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportGivesRepeatedColumnDistinctFieldId() throws Exception {
+        // A column that repeats a table column an earlier one exports takes its position as its Parquet field id, or the
+        // lowest free id when another column holds that, so the export of its page frames succeeds and the other columns
+        // keep their table's ids.
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE rc (a INT, b SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO rc VALUES
+                                (1, 'x', '2024-01-01T00:00:00.000000Z'),
+                                (NULL, NULL, '2024-01-01T01:00:00.000000Z')
+                            """, sqlExecutionContext);
+                    final String query = "SELECT b, b b2, a, ts FROM rc";
+                    assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.DIRECT_PAGE_FRAME);
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "repeated_column.parquet");
+                    }
+                    ParquetTestUtils.assertColumnIds(root + "/export/repeated_column.parquet", engine.getConfiguration().getFilesFacade(), "1,3,0,2");
+                });
+    }
+
+    @Test
     public void testParquetExportInvalidCompressionCodec() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
