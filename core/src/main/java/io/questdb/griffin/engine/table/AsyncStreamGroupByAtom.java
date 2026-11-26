@@ -104,6 +104,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     private final ObjList<FlyweightPackedMapValue> perWorkerValues;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final SpanMapMerger spanMapMerger = new SpanMapMerger();
+    // The span maps by lane. A frame aggregates the segments that span its bucket into the maps of its lane, frame
+    // index modulo the lane count, whichever thread reduces it. The sequence reduces the frames of a lane one at a
+    // time and in order, so a lane adds up the same rows in the same order on every run, and so does the merge of
+    // the lanes: floating-point sums come out the same however the workers share the frames. There are as many lanes
+    // as threads that reduce frames, the workers and the owner.
     private final ObjList<SpanMaps> spanMaps;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
@@ -184,13 +189,14 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
                         streamKeyIndex, keyFunctions, groupByFunctions, updater, ownerMap);
                 perWorkerMaps = new ObjList<>(workerCount);
                 spanMaps = new ObjList<>(workerCount + 1);
-                spanMaps.add(new SpanMaps(ownerMap));
+                for (int i = 0; i <= workerCount; i++) {
+                    spanMaps.add(new SpanMaps(ownerMap));
+                }
                 for (int i = 0; i < workerCount; i++) {
                     final StreamGroupByMap map = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes,
                             valueTypes, streamKeyIndex, perWorkerKeys == null ? keyFunctions : perWorkerKeys.getQuick(i),
                             getFunctions(i), getUpdater(i), ownerMap);
                     perWorkerMaps.add(map);
-                    spanMaps.add(new SpanMaps(map));
                 }
             } else {
                 ownerBatchRows = null;
@@ -240,8 +246,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         CairoException.rethrowCleanupFailure(th);
     }
 
-    public StreamGroupByMap acquireSpanMap(int slot, long key) {
-        return spanMaps.getQuick(slot + 1).acquire(configuration, memoryTracker, key);
+    // The span map of the frame's lane for the bucket. The slot of the reducing thread fills in the empty value of a
+    // map it opens.
+    public StreamGroupByMap acquireSpanMap(int frameIndex, int slot, long key) {
+        return spanMaps.getQuick(frameIndex % spanMaps.size()).acquire(configuration, memoryTracker, key, getUpdater(slot));
     }
 
     public void closeShardMerge() {
@@ -276,6 +284,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
 
     public ObjList<Function> getKeyFunctions() {
         return keyFunctions;
+    }
+
+    // The lane count of the span maps, 0 when no frame aggregates into one.
+    public int getLaneCount() {
+        return spanMaps == null ? 0 : spanMaps.size();
     }
 
     public DirectLongList getBatchRows(int slot) {
@@ -545,16 +558,17 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         }
     }
 
-    public void releaseSpanMap(int slot, StreamGroupByMap map) {
-        spanMaps.getQuick(slot + 1).release(map);
+    public void releaseSpanMap(int lane, StreamGroupByMap map) {
+        spanMaps.getQuick(lane).release(map);
     }
 
-    public void takeSpanMaps(long key, ObjList<StreamGroupByMap> maps, IntList slots) {
+    // Takes the span maps of the bucket in lane order, which fixes the order of their merge.
+    public void takeSpanMaps(long key, ObjList<StreamGroupByMap> maps, IntList lanes) {
         for (int i = 0, n = spanMaps.size(); i < n; i++) {
             final StreamGroupByMap map = spanMaps.getQuick(i).take(key);
             if (map != null) {
                 maps.add(map);
-                slots.add(i - 1);
+                lanes.add(i);
             }
         }
     }
@@ -643,7 +657,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         }
     }
 
-    // The reducing thread and the owner share the lists; a slot only adds to segments the owner has not taken.
+    // The reducing thread and the owner share the lists; a lane only adds to segments the owner has not taken.
     private static class SpanMaps {
         private final ObjList<StreamGroupByMap> freeMaps = new ObjList<>();
         private final ObjList<StreamGroupByMap> maps = new ObjList<>();
@@ -655,7 +669,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             this.prototype = prototype;
         }
 
-        private StreamGroupByMap acquire(CairoConfiguration configuration, MemoryTracker memoryTracker, long key) {
+        private StreamGroupByMap acquire(CairoConfiguration configuration, MemoryTracker memoryTracker, long key, GroupByFunctionsUpdater updater) {
             final StreamGroupByMap map;
             synchronized (this) {
                 final int index = openKeys.indexOf(key);
@@ -673,7 +687,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
                 openMaps.add(map);
             }
             if (!map.isOpen()) {
-                map.reopen(memoryTracker);
+                map.reopen(memoryTracker, updater);
             }
             map.clear(key);
             return map;

@@ -105,7 +105,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVect;
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
-    private final SCSequence collectSubSeq = new SCSequence();
     private AsyncWindowJoinRecordCursor cursor;
     private PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
     private JoinRecordMetadata joinMetadata;
@@ -303,7 +302,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int masterOrder = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int slaveOrder = slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        final PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence = execute(executionContext, collectSubSeq, masterOrder);
+        final PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence = execute(executionContext, null, masterOrder);
         try {
             cursor.of(masterFrameSequence, slaveOrder, executionContext);
             return cursor;

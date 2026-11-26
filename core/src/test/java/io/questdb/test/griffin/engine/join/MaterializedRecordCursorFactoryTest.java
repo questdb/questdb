@@ -52,6 +52,7 @@ import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -287,6 +288,9 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         // the stream GROUP BY again. The join keeps its own copy of the limit's rows, so the stream runs as often
         // under one outer row as under five, and every outer row joins the same 100 rows. Small pages let the
         // copy of 100 rows fit the limit that the copy of 10,000 rows breaches.
+        // The copy gives up only when its own allocation reaches the limit. Workers allocate frame results against
+        // the same limit meanwhile, and the one that reaches it first fails the query, so only the owner reduces here.
+        Assume.assumeTrue(!isParallel || workerCount == 0);
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 65_536);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 4096);
         run((engine, compiler, context) -> {

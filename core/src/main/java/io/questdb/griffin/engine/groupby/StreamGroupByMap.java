@@ -71,6 +71,8 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final int batchSize;
     private final IntList columnCrossIndex;
     private final CairoConfiguration configuration;
+    // A span map belongs to a lane rather than to a slot, so it holds no functions or record sinks: the callers pass
+    // those of the thread's slot. Null in a span map.
     private final ObjList<GroupByFunction> functions;
     private final RecordSink inputSink;
     private final Class<RecordSink> inputSinkClass;
@@ -80,6 +82,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final ArrayColumnTypes mapKeyTypes;
     private final ArrayColumnTypes mapValueTypes;
     private final DirectLongList mergeMemory;
+    // Null in a span map.
     private final RecordSink mergeSink;
     private final Class<RecordSink> mergeSinkClass;
     // The most keys a map presizes for, 0 when presizing is off.
@@ -89,9 +92,11 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final int segmentType;
     private final ObjList<Map> shards = new ObjList<>();
     private final int shardingThreshold;
+    // Null in a span map.
     private final RecordSink stateSink;
     private final Class<RecordSink> stateSinkClass;
     private final ArrayColumnTypes stateTypes;
+    // Null in a span map.
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
     private final RecordValueSink valueSink;
@@ -190,12 +195,13 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
     }
 
+    // A span map takes the types of the prototype, not its functions or record sinks.
     private StreamGroupByMap(CairoConfiguration configuration, StreamGroupByMap prototype) {
         this.configuration = configuration;
         isShardable = true;
         shardingThreshold = configuration.getGroupByShardingThreshold();
-        functions = prototype.functions;
-        updater = prototype.updater;
+        functions = null;
+        updater = null;
         segmentIndex = prototype.segmentIndex;
         segmentType = prototype.segmentType;
         batchSize = prototype.batchSize;
@@ -204,12 +210,12 @@ public final class StreamGroupByMap implements QuietCloseable {
         mapKeyTypes = prototype.mapKeyTypes;
         mapValueTypes = prototype.mapValueTypes;
         stateTypes = prototype.stateTypes;
-        inputSink = prototype.inputSink;
+        inputSink = null;
         inputSinkClass = prototype.inputSinkClass;
         mergeSinkClass = prototype.mergeSinkClass;
         stateSinkClass = prototype.stateSinkClass;
-        mergeSink = prototype.mergeSink;
-        stateSink = prototype.stateSink;
+        mergeSink = null;
+        stateSink = null;
         valueSink = prototype.valueSink;
         try {
             value = new FlyweightPackedMapValue(mapValueTypes);
@@ -223,14 +229,19 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void aggregate(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, @Nullable DirectLongList batchRows, SqlExecutionCircuitBreaker circuitBreaker) {
+        aggregate(this, record, rows, lo, hi, baseRowId, batchRows, circuitBreaker);
+    }
+
+    // Aggregates the rows with the functions and the key sink of slotMap, the map of the reducing thread's slot.
+    public void aggregate(StreamGroupByMap slotMap, PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, @Nullable DirectLongList batchRows, SqlExecutionCircuitBreaker circuitBreaker) {
         long row = lo;
         if (!isSharded) {
             row = batchRows != null
-                    ? aggregateBatch(record, rows, lo, hi, baseRowId, batchRows, circuitBreaker)
-                    : aggregateRows(record, rows, lo, hi, baseRowId, circuitBreaker);
+                    ? aggregateBatch(slotMap, record, rows, lo, hi, baseRowId, batchRows, circuitBreaker)
+                    : aggregateRows(slotMap, record, rows, lo, hi, baseRowId, circuitBreaker);
         }
         if (row < hi) {
-            aggregateSharded(record, rows, row, hi, baseRowId, circuitBreaker);
+            aggregateSharded(slotMap, record, rows, row, hi, baseRowId, circuitBreaker);
         }
     }
 
@@ -404,6 +415,11 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void reopen(MemoryTracker tracker) {
+        reopen(tracker, updater);
+    }
+
+    // The updater fills in the value that a batch gives a new key.
+    public void reopen(MemoryTracker tracker, GroupByFunctionsUpdater updater) {
         memoryTracker = tracker;
         map.setMemoryTracker(tracker);
         map.reopen();
@@ -413,7 +429,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         peakKeys = 0;
     }
 
-    public void shard() {
+    public void shard(GroupByFunctionsUpdater updater) {
         if (isSharded) {
             return;
         }
@@ -441,18 +457,11 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void update(Record record, long rowId) {
-        final MapKey key = map.withKey();
-        inputSink.copy(record, key);
-        final MapValue value = key.createValue();
-        if (value.isNew()) {
-            updater.updateNew(value, record, rowId);
-        } else {
-            updater.updateExisting(value, record, rowId);
-        }
+        update(this, record, rowId);
     }
 
     // Returns the first row left once the map shards, so that at most a batch moves into the shards.
-    private long aggregateBatch(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, DirectLongList batchRows, SqlExecutionCircuitBreaker circuitBreaker) {
+    private long aggregateBatch(StreamGroupByMap slotMap, PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, DirectLongList batchRows, SqlExecutionCircuitBreaker circuitBreaker) {
         batchRows.ensureCapacity(batchSize);
         final long batchAddress = batchRows.getAddress();
         reservedKeys = Math.max(reservedKeys, Math.min(hi - lo, batchSize));
@@ -462,33 +471,35 @@ public final class StreamGroupByMap implements QuietCloseable {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             }
             final long end = Math.min(start + batchSize, hi);
-            GroupByUtils.aggregateKeyedBatch(record, map, inputSink, functions, value, batchAddress,
+            GroupByUtils.aggregateKeyedBatch(record, map, slotMap.inputSink, slotMap.functions, value, batchAddress,
                     rows == null ? 0 : rows.getAddress(), start, end, baseRowId);
             if (isShardable && map.size() > shardingThreshold) {
-                shard();
+                shard(slotMap.updater);
                 return end;
             }
         }
         return hi;
     }
 
-    private long aggregateRows(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+    private long aggregateRows(StreamGroupByMap slotMap, PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
         for (long row = lo; row < hi; row++) {
             if (((row - lo) & BREAKER_CHECK_MASK) == BREAKER_CHECK_MASK) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             }
             final long rowIndex = rows == null ? row : rows.get(row);
             record.setFilteredRowIndex(rowIndex, row);
-            update(record, baseRowId + rowIndex);
+            update(slotMap, record, baseRowId + rowIndex);
             if (isShardable && map.size() > shardingThreshold) {
-                shard();
+                shard(slotMap.updater);
                 return row + 1;
             }
         }
         return hi;
     }
 
-    private void aggregateSharded(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+    private void aggregateSharded(StreamGroupByMap slotMap, PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+        final RecordSink inputSink = slotMap.inputSink;
+        final GroupByFunctionsUpdater updater = slotMap.updater;
         // The first shard stages the key to hash it.
         final Map lookupShard = shards.getQuick(0);
         for (long row = lo; row < hi; row++) {
@@ -531,6 +542,17 @@ public final class StreamGroupByMap implements QuietCloseable {
             shards.getQuick(i).close();
         }
         isSharded = false;
+    }
+
+    private void update(StreamGroupByMap slotMap, Record record, long rowId) {
+        final MapKey key = map.withKey();
+        slotMap.inputSink.copy(record, key);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            slotMap.updater.updateNew(value, record, rowId);
+        } else {
+            slotMap.updater.updateExisting(value, record, rowId);
+        }
     }
 
     // Rows hold the values and the other keys; the stream key of every row of a segment comes from the segment.

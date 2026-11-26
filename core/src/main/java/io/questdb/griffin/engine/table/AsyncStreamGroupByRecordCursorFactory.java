@@ -108,6 +108,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         this.recordFunctions = recordFunctions;
         this.workerCount = workerCount;
         order = isDescending ? ORDER_DESC : ORDER_ASC;
+        // The first window holds a frame for each worker, which the parallel filter limit counts, and one for the
+        // owner. The limit may be Integer.MAX_VALUE.
+        final int dispatchLimit = Math.max(1, configuration.getSqlParallelFilterDispatchLimit());
+        final int initialDispatchLimit = dispatchLimit < Integer.MAX_VALUE ? dispatchLimit + 1 : dispatchLimit;
         try {
             frameSequence = new PageFrameSequence<>(
                     engine,
@@ -116,13 +120,14 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes, streamKeyIndex,
                             keyFunction, keyFunctions, perWorkerKeys, groupByFunctions, perWorkerFunctions,
                             compiledFilter, bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters, workerCount,
-                            isDescending, Math.max(1, configuration.getSqlParallelFilterDispatchLimit()) + 1,
+                            isDescending, initialDispatchLimit,
                             messageBus.getPageFrameReduceQueue(0).getCycle()),
                     AsyncStreamGroupByRecordCursorFactory::aggregate,
                     reduceTaskFactory,
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
+            frameSequence.setLaneCount(frameSequence.getAtom().getLaneCount());
             cursor = new AsyncStreamGroupByRecordCursor(engine, messageBus, frameSequence.getAtom().getStateTypes(), recordFunctions,
                     frameSequence.getAtom().getCollectorMap(),
                     configuration.getFactoryProvider().getWorkStealingStrategy(configuration, workerCount, frameSequence.getAtom()));
@@ -289,7 +294,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                         isLastSegmentKeyInSpan = isSpan;
                     }
                     if (isSpan) {
-                        atom.acquireSpanMap(slot, key).aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);
+                        atom.acquireSpanMap(task.getFrameIndex(), slot, key).aggregate(map, record, rows, start, end, baseRowId, batchRows, circuitBreaker);
                     } else {
                         map.clear(key);
                         map.aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);

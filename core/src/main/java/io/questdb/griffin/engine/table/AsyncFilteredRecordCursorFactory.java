@@ -66,7 +66,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private static volatile Runnable constructorFailureHookForTesting;
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
     private RecordCursorFactory base;
-    private final SCSequence collectSubSeq = new SCSequence();
     private AsyncFilteredRecordCursor cursor;
     private Function filter;
     private final ExpressionNode filterExpr;
@@ -231,11 +230,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
-            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
+            negativeLimitCursor.of(execute(executionContext, null, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
-        cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
+        cursor.of(execute(executionContext, null, order), rowsRemaining);
         return cursor;
     }
 

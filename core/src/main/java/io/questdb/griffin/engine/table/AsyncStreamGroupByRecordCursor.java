@@ -75,8 +75,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final VirtualRecord record;
     private final StreamGroupByMap segmentMap;
     private final FlyweightPackedMapValue source;
+    private final IntList spanLanes = new IntList();
     private final ObjList<StreamGroupByMap> spanMaps = new ObjList<>();
-    private final IntList spanSlots = new IntList();
     private final long stride;
     private final FlyweightPackedMapValue value;
     // The merge has a strategy of its own: the frame sequence keeps stealing reduce work while a bucket merges.
@@ -153,7 +153,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             emitShards = null;
             isShardMerged = false;
             spanMaps.clear();
-            spanSlots.clear();
+            spanLanes.clear();
             memory.close();
             Function.cursorClosed(nonGroupByFunctions);
         }
@@ -214,7 +214,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         emitShards = null;
         isShardMerged = false;
         spanMaps.clear();
-        spanSlots.clear();
+        spanLanes.clear();
         resetSegments();
         if (segmentMap == null) {
             memory.ensureCapacity(stride);
@@ -230,7 +230,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         if (hasOpenSpans) {
             final AsyncStreamGroupByAtom atom = frameSequence.getAtom();
             final GroupByFunctionsUpdater updater = atom.getUpdater(-1);
-            atom.takeSpanMaps(openKey, spanMaps, spanSlots);
+            atom.takeSpanMaps(openKey, spanMaps, spanLanes);
             final int n = spanMaps.size();
             assert n > 0;
             if (isSharded()) {
@@ -255,16 +255,16 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             final StreamGroupByMap dest = spanMaps.getQuick(largest);
             spanMaps.setQuick(largest, spanMaps.getQuick(0));
             spanMaps.setQuick(0, dest);
-            final int destSlot = spanSlots.getQuick(largest);
-            spanSlots.setQuick(largest, spanSlots.getQuick(0));
-            spanSlots.setQuick(0, destSlot);
+            final int destLane = spanLanes.getQuick(largest);
+            spanLanes.setQuick(largest, spanLanes.getQuick(0));
+            spanLanes.setQuick(0, destLane);
             for (int i = spanMaps.size() - 1; i > 0; i--) {
                 final StreamGroupByMap map = spanMaps.getQuick(i);
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 dest.merge(map, updater);
-                atom.releaseSpanMap(spanSlots.getQuick(i), map);
+                atom.releaseSpanMap(spanLanes.getQuick(i), map);
                 spanMaps.setPos(i);
-                spanSlots.setPos(i);
+                spanLanes.setPos(i);
             }
             if (isOpenCollected) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -292,14 +292,14 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         for (int n = spanMaps.size(); n > 1; n = spanMaps.size()) {
             for (int i = 1; i < n; i++) {
                 final StreamGroupByMap map = spanMaps.getQuick(i);
-                final int slot = spanSlots.getQuick(i);
+                final int lane = spanLanes.getQuick(i);
                 int j = i;
                 for (; j > 0 && spanMaps.getQuick(j - 1).size() < map.size(); j--) {
                     spanMaps.setQuick(j, spanMaps.getQuick(j - 1));
-                    spanSlots.setQuick(j, spanSlots.getQuick(j - 1));
+                    spanLanes.setQuick(j, spanLanes.getQuick(j - 1));
                 }
                 spanMaps.setQuick(j, map);
-                spanSlots.setQuick(j, slot);
+                spanLanes.setQuick(j, lane);
             }
             final int half = (n + 1) / 2;
             GroupByMergeShardJob.mergeShards(
@@ -318,9 +318,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 throwPostAggregationException();
             }
             for (int i = n - 1; i >= half; i--) {
-                atom.releaseSpanMap(spanSlots.getQuick(i), spanMaps.getQuick(i));
+                atom.releaseSpanMap(spanLanes.getQuick(i), spanMaps.getQuick(i));
                 spanMaps.setPos(i);
-                spanSlots.setPos(i);
+                spanLanes.setPos(i);
             }
         }
     }
@@ -330,7 +330,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         for (int i = 0, n = spanMaps.size(); i < n; i++) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final StreamGroupByMap map = spanMaps.getQuick(i);
-            map.shard();
+            map.shard(atom.getUpdater(-1));
             map.rememberShardSizes();
         }
         isShardMerged = true;
@@ -375,7 +375,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private void collect() {
         if (heldTaskIndex >= 0) {
             frameSequence.getAtom().releaseResults(frameIndex);
-            frameSequence.collectReduced(heldTaskIndex);
+            frameSequence.collect(heldTaskIndex, false);
             heldTaskIndex = -1;
         }
         results = null;
@@ -543,13 +543,15 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         while (frameIndex < frameLimit) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            final int taskIndex = frameSequence.nextReduced(frameSequence.getAtom().getDispatchLimit(frameIndex + 1));
+            final long taskIndex = frameSequence.next(frameSequence.getAtom().getDispatchLimit(frameIndex + 1), false);
             if (taskIndex >= 0) {
-                heldTaskIndex = taskIndex;
+                heldTaskIndex = (int) taskIndex;
                 // A stream GROUP BY task holds a single frame.
-                frameIndex = frameSequence.getTaskFirstFrame(taskIndex);
+                frameIndex = frameSequence.getTaskFirstFrame(heldTaskIndex);
                 return frameIndex;
             }
+            // The cursor reads up to its last frame and never stops the sequence, so a task is always left here.
+            assert taskIndex == -1;
             Os.pause();
         }
         if (!frameSequence.isActive()) {
@@ -568,10 +570,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             atom.closeShardMerge();
         }
         for (int i = 0, n = spanMaps.size(); i < n; i++) {
-            atom.releaseSpanMap(spanSlots.getQuick(i), spanMaps.getQuick(i));
+            atom.releaseSpanMap(spanLanes.getQuick(i), spanMaps.getQuick(i));
         }
         spanMaps.clear();
-        spanSlots.clear();
+        spanLanes.clear();
     }
 
     private void throwPostAggregationException() {

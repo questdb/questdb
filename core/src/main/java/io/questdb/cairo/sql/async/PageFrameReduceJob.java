@@ -340,8 +340,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             record.of(frameSequence.getSymbolTableSource());
             assert !frameSequence.done;
             frameSequence.getReduceStartedCounter().incrementAndGet();
-            // One task is a whole row-group run; runReduce drives the per-frame reducer over its sub-frames.
-            task.runReduce(workerId, record, circuitBreaker, stealingFrameSequence);
+            // One task is a whole row-group run; runReduce drives the per-frame reducer over its sub-frames. A
+            // completion-tracked sequence reduces into the task's result slot instead of the queued task.
+            frameSequence.getReduceTarget(task).runReduce(workerId, record, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);
         }

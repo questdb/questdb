@@ -1079,16 +1079,16 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPinnedShardLeavesFramesToOwner() throws Exception {
-        // A partly read parallel filter pins its shard, as it does on master. With no workers to take its frames, the
-        // stream GROUP BY reduces them on its own thread once nothing on the shard is left to steal.
+    public void testPartlyReadFilterLeavesShardFree() throws Exception {
+        // A parallel filter that its consumer stops reading keeps no queue slot of its shard either. With no workers
+        // the owners reduce every frame, so the count of frames a query reduces itself because its shard has no room
+        // for them is exact.
         Assume.assumeTrue(parallel && workers == 0);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
         run((engine, compiler, context) -> {
-            final int rowCount = 200 * frameRows;
-            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(" + rowCount
-                    + ")) TIMESTAMP(ts)", context);
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
+                    + 200 * frameRows + ")) TIMESTAMP(ts)", context);
             final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s";
             context.setStreamGroupByEnabled(false);
             final String expected = compileAndRead(compiler, context, sql);
@@ -1100,9 +1100,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             ) {
                 Assert.assertTrue(holder.hasNext());
                 Assert.assertEquals(expected, read(factory, context));
-                Assert.assertTrue(((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount() > 0);
-                // The failing row is the last one, so the owner reduces its frame.
-                assertFilterFailureMatchesHash(compiler, context, rowCount);
+                Assert.assertEquals(0, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount());
             }
         });
     }
@@ -1144,6 +1142,119 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue(isFrameHeld.get());
             } finally {
                 TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
+    public void testFrameDispatchWaitsForItsLane() throws Exception {
+        // The first worker to reduce a frame h > 0 holds it until the frames that may run meanwhile are reduced: those
+        // before h + L except h, where L is the lane count. Frame h + L shares the lane of frame h, so the owner
+        // dispatches no further while h is held.
+        Assume.assumeTrue(parallel && workers > 0);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
+                    + 64 * frameRows + ")) TIMESTAMP(ts)", context);
+            final String sql = "SELECT timestamp_floor('3s', ts) bucket, x % 3 k, count() c, sum(x) s FROM t WHERE test_latched_counter()";
+            TestLatchedCounterFunctionFactory.reset(null);
+            context.setStreamGroupByEnabled(false);
+            final String expected = sortedLines(compileAndRead(compiler, context, sql));
+            context.setStreamGroupByEnabled(true);
+            final Thread owner = Thread.currentThread();
+            final AtomicReference<AsyncStreamGroupByRecordCursorFactory> groupBy = new AtomicReference<>();
+            final AtomicLong heldFrame = new AtomicLong(-1);
+            final AtomicReference<String> heldState = new AtomicReference<>();
+            // The filter takes the callback when it compiles, before the factory it waits on exists.
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    final long x = rec.getLong(1);
+                    // The owner dispatches frame h + L - 1 once frame h - 1 is reduced, which it may not do while it
+                    // holds h, so only a worker holds a frame.
+                    if (x > frameRows && (x - 1) % frameRows == 0 && Thread.currentThread() != owner
+                            && heldFrame.compareAndSet(-1, (x - 1) / frameRows)) {
+                        final AsyncStreamGroupByRecordCursorFactory factory = groupBy.get();
+                        final long reducible = heldFrame.get() + factory.getAtom().getLaneCount();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                        while (factory.getReducedFrameCount() < reducible - 1 || factory.getDispatchedFrameCount() < reducible) {
+                            if (System.nanoTime() > deadline) {
+                                throw new AssertionError("the frames of the other lanes were not reduced");
+                            }
+                            Os.pause();
+                        }
+                        heldState.set("reduced: " + factory.getReducedFrameCount() + ", dispatched: " + factory.getDispatchedFrameCount());
+                    }
+                    return true;
+                }
+            });
+            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                groupBy.set(stream);
+                final int laneCount = stream.getAtom().getLaneCount();
+                Assert.assertEquals(workers + 1, laneCount);
+                // The owner may reduce every frame of a run.
+                for (int run = 0; run < 100 && heldState.get() == null; run++) {
+                    Assert.assertEquals(expected, sortedLines(read(factory, context)));
+                }
+                final long reducible = heldFrame.get() + laneCount;
+                Assert.assertEquals("reduced: " + (reducible - 1) + ", dispatched: " + reducible, heldState.get());
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
+    public void testRewindAndRerunKeepDoubleSums() throws Exception {
+        // Floating-point sums depend on the order of their additions. The frames wholly inside a bucket add up in the
+        // span maps of their lanes, so a rewind or another run adds up the same rows in the same order, however the
+        // workers share the frames, and returns the same sums.
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT rnd_double() d, rnd_int(1, 2, 0) k, timestamp_sequence('2024-01-01', 7_000_000) ts"
+                    + " FROM long_sequence(" + 200 * frameRows + ")) TIMESTAMP(ts) PARTITION BY DAY", context);
+            for (String sql : new String[]{
+                    "SELECT timestamp_floor('1h', ts) bucket, k, sum(d), avg(d) FROM t",
+                    "SELECT ts, k, sum(d), avg(d) FROM t SAMPLE BY 1h",
+                    "SELECT ts, k, sum(d), avg(d) FROM t WHERE d > 0.01 SAMPLE BY 1h",
+                    "SELECT ts, k, sum(d), avg(d) FROM t SAMPLE BY 1h ORDER BY ts DESC"
+            }) {
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    final String expected = sortedLines(read(factory, context));
+                    final StringSink sink = new StringSink();
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        for (int i = 0; i < 20; i++) {
+                            sink.clear();
+                            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
+                            Assert.assertEquals(sql, expected, sortedLines(sink));
+                            cursor.toTop();
+                        }
+                    }
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(sql, expected, sortedLines(read(factory, context)));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnboundedDispatchLimitDispatchesFirstWindow() throws Exception {
+        // The first window adds a frame for the owner to the parallel filter limit, which must not overflow: an
+        // overflowed window dispatched nothing, and the owner reduced the first frame itself.
+        Assume.assumeTrue(parallel);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Integer.MAX_VALUE);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
+                    + 8 * frameRows + ")) TIMESTAMP(ts)", context);
+            final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 3s";
+            context.setStreamGroupByEnabled(false);
+            final String expected = compileAndRead(compiler, context, sql);
+            context.setStreamGroupByEnabled(true);
+            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                Assert.assertEquals(expected, read(factory, context));
+                Assert.assertEquals(0, stream.getLocallyReducedFrameCount());
             }
         });
     }
@@ -3922,6 +4033,13 @@ public class StreamGroupByTest extends AbstractCairoTest {
             return e.getClass().getSimpleName() + '@' + error.getPosition() + ": " + error.getFlyweightMessage();
         }
         throw new AssertionError("expected an error: " + sql);
+    }
+
+    // The rows of a bucket come in no particular order.
+    private static String sortedLines(CharSequence text) {
+        final String[] lines = text.toString().split("\n");
+        Arrays.sort(lines);
+        return String.join("\n", lines);
     }
 
     private void assertFirstFrameCapacityMatchesGroups(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
