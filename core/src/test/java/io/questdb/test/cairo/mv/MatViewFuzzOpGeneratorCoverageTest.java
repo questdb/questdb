@@ -316,7 +316,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                         }
                     }
                     case APPLY_BASE_WAL -> isBaseAppliedOnPendingDefinition |= wasDefinitionPending;
-                    case RESET_VIEW_TRACKER -> isTrackerResetAfterAppliedAlter |= isAlterApplied && !wasDefinitionPending;
+                    case RESET_VIEW_TRACKER ->
+                            isTrackerResetAfterAppliedAlter |= isAlterApplied && !wasDefinitionPending;
                     case VIEW_ALTER_AS -> {
                         Assert.assertEquals("ALTER ... AS refused by the suspension exactly while the view's WAL is suspended short of a definition event",
                                 wasViewWalSuspended && wasDefinitionPending, op.isRefusedBySuspension);
@@ -547,7 +548,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     // an UPDATE of a day the base holds no partition of queues no range
                     case BASE_UPDATE -> isRangeTaskQueued |= generator.isBaseDay(op.day);
                     case BASE_ATTACH_PARTITION -> isRangeTaskQueued = true;
-                    case VIEW_INVALIDATE -> Assert.assertNotEquals(MatViewFuzzOpGenerator.INVALIDATE_NONE, op.invalidationShape);
+                    case VIEW_INVALIDATE ->
+                            Assert.assertNotEquals(MatViewFuzzOpGenerator.INVALIDATE_NONE, op.invalidationShape);
                     case RUN_REFRESH_JOB, BASE_TRUNCATE, BASE_TRUNCATE_ATTACH_UPDATE -> isRangeTaskQueued = false;
                     case VIEW_FULL -> isFullIssued = true;
                     case RESTART, BOOT_LOAD, BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> {
@@ -776,7 +778,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                         isPeriodRefreshQueued = false;
                     }
                     // a restart loses the queued tasks, and these base replacements drain the queues first
-                    case RESTART, BOOT_LOAD, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> isPeriodRefreshQueued = false;
+                    case RESTART, BOOT_LOAD, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART ->
+                            isPeriodRefreshQueued = false;
                     case VIEW_RESUME_WAL -> {
                         if (wasDefinitionPending && !op.isSkipDefinition) {
                             periodViewResumeWalWhileDefinitionPending++;
