@@ -884,13 +884,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // over an indexed key, the correction's keys, with the repair knobs drawn per run (see
         // LiveViewFuzzKnobs). Phase two stays in timestamp order, as there, because TTL keeps
         // evicting behind it, so the oracle is the whole logical dataset bucketed by the anchor.
-        // The first run, and every later one with even odds, ends on a lagging repair over an
-        // hour the TTL evicted from the view's open anchor segment: see runLaggingTtlEpisode.
+        // Two more runs partition the base by the hour under a daily anchor and end on a lagging
+        // repair over an hour the TTL evicted from the view's open anchor segment: see
+        // runLaggingTtlEpisode.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             for (int i = 0; i < 3; i++) {
                 runAnchoredRemovalFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
-                        REMOVAL_TTL, rnd.nextBoolean(), false, rnd.nextBoolean(), i == 0 || rnd.nextBoolean());
+                        REMOVAL_TTL, rnd.nextBoolean(), false, rnd.nextBoolean(), false);
+            }
+            for (int i = 0; i < 2; i++) {
+                runAnchoredRemovalFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
+                        REMOVAL_TTL, rnd.nextBoolean(), false, rnd.nextBoolean(), true);
             }
         });
         assertReachedLaggingTtlResidualBoundaryRebuilds();
