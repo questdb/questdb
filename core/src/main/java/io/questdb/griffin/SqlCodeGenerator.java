@@ -1904,6 +1904,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * their key types. Such pairs hold types of one family, SYMBOL, STRING and VARCHAR, or timestamps
      * of either unit, so the wider type holds the keys of both.
      */
+    // The input whose random access a factory passes on. INTERSECT and EXCEPT pass on that of their first input, which
+    // getBaseFactory() does not expose; a UNION has none to pass on.
+    private static RecordCursorFactory getRandomAccessInput(RecordCursorFactory factory) {
+        if (factory instanceof IntersectRecordCursorFactory || factory instanceof IntersectAllRecordCursorFactory
+                || factory instanceof ExceptRecordCursorFactory || factory instanceof ExceptAllRecordCursorFactory) {
+            return ((AbstractSetRecordCursorFactory) factory).getFactoryA();
+        }
+        return factory.getBaseFactory();
+    }
+
     private static int getSharedKeyType(int keyTypeA, int keyTypeB) {
         if (keyTypeA == VARCHAR || keyTypeB == VARCHAR) {
             return VARCHAR;
@@ -2107,8 +2117,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // Over a hash GROUP BY, only these factories pass random access through to a light join or sort.
     private static boolean isOverStreamGroupBy(RecordCursorFactory factory) {
-        for (RecordCursorFactory f = factory; !f.recordCursorSupportsRandomAccess();
-             f = f instanceof AbstractSetRecordCursorFactory set ? set.getFactoryA() : f.getBaseFactory()) {
+        for (RecordCursorFactory f = factory; !f.recordCursorSupportsRandomAccess(); f = getRandomAccessInput(f)) {
             if (f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
                 return true;
             }
@@ -2124,7 +2133,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static boolean isRandomAccessLostToStream(RecordCursorFactory factory) {
-        for (RecordCursorFactory f = factory; f != null && !f.recordCursorSupportsRandomAccess(); f = f.getBaseFactory()) {
+        for (RecordCursorFactory f = factory; f != null && !f.recordCursorSupportsRandomAccess(); f = getRandomAccessInput(f)) {
             if (f.isRewindRecomputing()) {
                 return true;
             }

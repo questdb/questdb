@@ -992,6 +992,54 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowIdJoinsCopyStreamsInsteadOfSorting() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t SELECT (x * 3_600_000_000L)::TIMESTAMP, x::INT FROM long_sequence(48)", context);
+            engine.execute("CREATE TABLE u (ts TIMESTAMP, y INT) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO u SELECT (x * 3_600_000_000L + 1_800_000_000L)::TIMESTAMP, x::INT FROM long_sequence(48)", context);
+            // t has a row on each hour x = 1..48, and u a row half an hour later with y = x, so the latest u row at
+            // hour h and one second later has y = h - 1. LIMIT -5 keeps hours 44 to 48, and INTERSECT the even ones.
+            assertRows(compiler, context, "SELECT a.ts, a.c, h.offset, b.y FROM ((SELECT ts, count() c FROM t SAMPLE BY 1h ORDER BY ts LIMIT -5) "
+                    + "INTERSECT (SELECT ts, count() c FROM t WHERE x % 2 = 0 SAMPLE BY 1h)) a HORIZON JOIN u b RANGE FROM 0s TO 1s STEP 1s AS h", """
+                    ts\tc\toffset\ty
+                    1970-01-02T20:00:00.000000Z\t1\t0\t43
+                    1970-01-02T20:00:00.000000Z\t1\t1000000\t43
+                    1970-01-02T22:00:00.000000Z\t1\t0\t45
+                    1970-01-02T22:00:00.000000Z\t1\t1000000\t45
+                    1970-01-03T00:00:00.000000Z\t1\t0\t47
+                    1970-01-03T00:00:00.000000Z\t1\t1000000\t47
+                    """);
+
+            assertRowIdJoinsCopy(compiler, context, "(SELECT ts, count() c FROM t SAMPLE BY 1h)", "(Async )?Stream Group By");
+            // INTERSECT and EXCEPT pass on the random access of their first input, which a stream GROUP BY under a
+            // negative or bind-variable LIMIT lacks.
+            for (String setOperation : new String[]{"INTERSECT", "EXCEPT", "INTERSECT ALL", "EXCEPT ALL"}) {
+                for (String limit : new String[]{"ORDER BY ts LIMIT -5", "LIMIT -5", "ORDER BY ts LIMIT -10, -5", "LIMIT $1"}) {
+                    assertRowIdJoinsCopy(
+                            compiler,
+                            context,
+                            "((SELECT ts, count() c FROM t SAMPLE BY 1h " + limit + ") " + setOperation
+                                    + " (SELECT ts, count() c FROM t WHERE x % 2 = 0 SAMPLE BY 1h))",
+                            "(Intersect|Except)( All)?"
+                    );
+                }
+            }
+
+            // A UNION has no random access to pass on, so the join copies neither it nor an INTERSECT over it.
+            final String union = "SELECT * FROM u a SPLICE JOIN (((SELECT ts, x c FROM t UNION ALL SELECT ts, x c FROM t) "
+                    + "INTERSECT SELECT ts, x c FROM t) TIMESTAMP(ts)) b";
+            try {
+                compiler.compile(union, context);
+                Assert.fail(union);
+            } catch (SqlException e) {
+                Assert.assertEquals(union.indexOf("SPLICE"), e.getPosition());
+                TestUtils.assertEquals("right side of splice join doesn't support random access", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
     public void testStreamGroupByDisabled() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -3611,6 +3659,53 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 + "(x % 5_000)::VARCHAR s, x v, (x % 3)::SYMBOL sym FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
         engine.execute("CREATE TABLE hash_input (ts TIMESTAMP, k LONG, s VARCHAR, v LONG, sym SYMBOL)", context);
         engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+    }
+
+    // SPLICE JOIN, HORIZON JOIN and the markout_horizon hint read their operand by row id. Over a stream GROUP BY they
+    // read a copy of the node that copiedNodeRegex matches rather than sort rows that arrive in order, and return the
+    // rows of the hash GROUP BY. Both factories run with the bind variable at -5 and at 5.
+    private static void assertRowIdJoinsCopy(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            String operand,
+            String copiedNodeRegex
+    ) throws Exception {
+        final String horizon = "SELECT a.ts, a.c, h.offset, b.y FROM %s a HORIZON JOIN u b RANGE FROM 0s TO 1s STEP 1s AS h";
+        final String markout = "SELECT /*+ markout_horizon(a o) */ a.ts + o.usec_offs ts, a.c FROM %s a "
+                + "CROSS JOIN (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(2)) o ORDER BY a.ts + o.usec_offs";
+        for (String join : new String[]{
+                "SELECT * FROM u a SPLICE JOIN %s b",
+                "SELECT * FROM %s a SPLICE JOIN u b",
+                horizon,
+                horizon.formatted("(%s TIMESTAMP(ts))"),
+                markout
+        }) {
+            final String sql = join.formatted(operand);
+            final boolean isMarkout = join.equals(markout);
+            for (boolean isParallelHorizon : join.contains("HORIZON JOIN") ? new boolean[]{false, true} : new boolean[]{false}) {
+                context.setParallelHorizonJoinEnabled(isParallelHorizon);
+                context.getBindVariableService().setLong(0, -5);
+                context.setStreamGroupByEnabled(false);
+                try (RecordCursorFactory expected = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    context.setStreamGroupByEnabled(true);
+                    try (RecordCursorFactory actual = compiler.compile(sql, context).getRecordCursorFactory()) {
+                        final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                        Assert.assertTrue(sql + '\n' + plan, plan.matches("(?s).*\n( *)Materialize\n\\1  +" + copiedNodeRegex + "( workers: \\d+)?\n.*"));
+                        if (isMarkout) {
+                            Assert.assertTrue(sql + '\n' + plan, plan.matches("(?s).*\n *Markout Horizon Join .*"));
+                        } else {
+                            Assert.assertFalse(sql + '\n' + plan, plan.matches("(?is).*\\bsort\\b.*"));
+                        }
+                        for (long bindLimit : new long[]{-5, 5}) {
+                            context.getBindVariableService().setLong(0, bindLimit);
+                            final String expectedRows = read(expected, context);
+                            Assert.assertEquals(sql, expectedRows, read(actual, context));
+                            Assert.assertEquals(sql, expectedRows, read(actual, context));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private static void assertRows(SqlCompiler compiler, SqlExecutionContext context, String sql, String expected) throws Exception {
