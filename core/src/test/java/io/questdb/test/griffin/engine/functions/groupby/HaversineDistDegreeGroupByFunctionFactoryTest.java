@@ -1300,6 +1300,40 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testAntipodalSteps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k SYMBOL, lat DOUBLE, lon DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('a', 12.0, 0.0, 1_000_000), ('a', -12.0, 180.0, 2_000_000),
+                        ('b', 0.0, 0.0, 1_000_000), ('b', 12.0, 0.0, 2_000_000), ('b', -12.0, 180.0, 3_000_000), ('b', -11.0, 180.0, 4_000_000),
+                        ('c', 135.0, 0.0, 1_000_000), ('c', 45.0, 180.0, 2_000_000)
+                    """);
+            assertQuery("SELECT haversine_dist_deg(lat, lon, ts) h FROM tab WHERE k = 'a'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            h
+                            20015.36325617409
+                            """);
+            assertQuery("SELECT k, haversine_dist_deg(lat, lon, ts) h FROM tab WHERE k IN ('a', 'c') ORDER BY k")
+                    .expectSize()
+                    .returns("""
+                            k\th
+                            a\t20015.36325617409
+                            c\t0.0
+                            """);
+            assertQuery("SELECT abs(haversine_dist_deg(lat, lon, ts) - 21460.917269119996) < 1e-9 ok FROM tab WHERE k = 'b'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ok
+                            true
+                            """);
+        });
+    }
+
+    @Test
     public void testCircumferenceAtEquator() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (lat double, lon double, k timestamp)");

@@ -228,7 +228,10 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     private double calculateHaversineDistanceFromRadians(double currentTotal, double lat1, double lon1, double lat2, double lon2) {
         double halfLatDist = (lat2 - lat1) / 2;
         double halfLonDist = (lon2 - lon1) / 2;
+        // rounding can take a just outside [0, 1], at antipodal steps and at latitudes beyond the poles, where sqrt
+        // would turn the total into NaN
         double a = sin(halfLatDist) * sin(halfLatDist) + cos(lat1) * cos(lat2) * sin(halfLonDist) * sin(halfLonDist);
+        a = max(0, min(1, a));
         double c = 2 * atan2(sqrt(a), sqrt(1 - a));
         currentTotal += EARTH_RADIUS * c;
         return currentTotal;

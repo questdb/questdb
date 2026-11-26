@@ -5308,6 +5308,21 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithHaversineAntipodalStep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, g INT, lat DOUBLE, lon DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 0, 12.0, 0.0, 1_000_000), ('a', 0, -12.0, 180.0, 2_000_000)");
+            assertQuery("SELECT * FROM t PIVOT (haversine_dist_deg(lat, lon, ts) FOR k IN ('a', 'b') GROUP BY g)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ta\tb
+                            0\t20015.36325617409\t0.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotWithIsOrderedAndHaversineEmptyCells() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k SYMBOL, g INT, v LONG, ip IPV4, lat DOUBLE, lon DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

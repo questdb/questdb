@@ -196,6 +196,24 @@ public class LateralNonNullEmptyAggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHaversineAntipodalStepKeepsItsDistance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("INSERT INTO a VALUES (1), (2)");
+            execute("CREATE TABLE b (k INT, lat DOUBLE, lon DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO b VALUES (1, 12.0, 0.0, 1_000_000), (1, -12.0, 180.0, 2_000_000)");
+            assertQuery("SELECT a.k, l.h FROM a, LATERAL (SELECT haversine_dist_deg(lat, lon, ts) h FROM b WHERE b.k = a.k) l ORDER BY a.k")
+                    .noLeakCheck()
+                    .withPlanContaining("functions: [a.k,coalesce(l.h,0.0)]")
+                    .returns("""
+                            k\th
+                            1\t20015.36325617409
+                            2\t0.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHaversineRestoresZeroAsACountDoes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
