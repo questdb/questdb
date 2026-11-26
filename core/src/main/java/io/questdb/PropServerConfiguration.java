@@ -152,6 +152,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    // the fewest workers a group of the split shared network pool has
+    public static final int MIN_NETWORK_GROUP_WORKERS = 8;
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     // public so a downstream configuration can detect the secret-file channel a sensitive key may arrive
     // through without re-deriving the suffixes from string literals
@@ -2558,8 +2560,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepThreshold,
                     sharedWorkerSleepTimeout
             );
-            if (getBoolean(properties, env, PropertyKey.SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET, false)) {
-                configureNetworkGroups(sharedWorkerPoolNetworkConfiguration);
+            final int networkGroupCount = getInt(properties, env, PropertyKey.SHARED_NETWORK_WORKER_GROUPS, 1);
+            if (networkGroupCount < 1) {
+                throw ServerConfigurationException.forInvalidKey(
+                        PropertyKey.SHARED_NETWORK_WORKER_GROUPS.getPropertyPath(),
+                        networkGroupCount + ", expected 1 or more"
+                );
+            }
+            if (networkGroupCount > 1) {
+                configureNetworkGroups(sharedWorkerPoolNetworkConfiguration, networkGroupCount);
             }
 
             final int queryWorkers = configureSharedThreadPool(
@@ -3074,58 +3083,63 @@ public class PropServerConfiguration implements ServerConfiguration {
         );
     }
 
-    // Splits the shared network pool into one group per CPU socket when the detected layout passes
-    // the checks of CpuTopology, and logs the outcome either way.
-    private void configureNetworkGroups(PropWorkerPoolConfiguration poolConfiguration) throws ServerConfigurationException {
-        final String splitKey = PropertyKey.SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET.getPropertyPath();
-        for (int cpu : poolConfiguration.sharedWorkerAffinity) {
-            if (cpu > -1) {
-                throw ServerConfigurationException.forInvalidKey(
-                        splitKey,
-                        "cannot be combined with " + PropertyKey.SHARED_NETWORK_WORKER_AFFINITY.getPropertyPath()
-                );
-            }
-        }
+    // Splits the shared network pool into requestedGroupCount worker groups, so that each server on
+    // it gets one dispatcher per group, and logs the outcome. Each group needs
+    // MIN_NETWORK_GROUP_WORKERS workers, so a pool too small for the requested count gets fewer
+    // groups. On a layout of several CPU sockets that passes the checks of CpuTopology, groups that
+    // divide evenly over the CPU sockets run on their CPU socket's CPUs. Groups on any other layout,
+    // one CPU socket included, run on all the allowed CPUs: the gain comes from the extra
+    // dispatchers, which pay off on one CPU socket too.
+    private void configureNetworkGroups(PropWorkerPoolConfiguration poolConfiguration, int requestedGroupCount) {
+        final String groupsKey = PropertyKey.SHARED_NETWORK_WORKER_GROUPS.getPropertyPath();
         final CpuTopology topology = createCpuTopology();
         if (topology == null) {
-            log.advisory().$("network workers not split: ").$(splitKey)
+            log.advisory().$("network workers not split: ").$(groupsKey)
                     .$(" applies on Linux only, where SO_REUSEPORT spreads connections over the groups' listeners").$();
             return;
         }
         final int workerCount = poolConfiguration.sharedWorkerCount;
-        final CpuTopology.Layout layout = topology.readLayout(workerCount);
-        final int[][] socketCpus = layout.getSocketCpus();
-        final int[] socketIds = layout.getSocketIds();
-        if (socketCpus == null || socketIds == null) {
-            final String refusal = layout.getRefusal();
-            final String description = layout.getDescription();
-            (layout.isRefusalWarning() ? log.advisory() : log.info())
-                    .$("network workers not split: ").$(refusal)
-                    .$(" [layout=").$(description).I$();
+        final int groupCount = Math.min(requestedGroupCount, workerCount / MIN_NETWORK_GROUP_WORKERS);
+        if (groupCount < 2) {
+            log.advisory().$("network workers not split: ").$(workerCount)
+                    .$(" network workers cannot fill 2 groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
             return;
         }
-        final int groupCount = socketCpus.length;
-        // for example "group 0 workers 0-94 on CPUs 0-95 (socket 0), group 1 workers 95-189 on CPUs 96-191 (socket 1)"
-        final StringBuilder groups = new StringBuilder();
-        int firstWorker = 0;
-        for (int g = 0; g < groupCount; g++) {
-            int lastWorker = firstWorker;
-            while (lastWorker + 1 < workerCount && WorkerPool.getGroup(lastWorker + 1, groupCount, workerCount) == g) {
-                lastWorker++;
-            }
-            if (g > 0) {
-                groups.append(", ");
-            }
-            groups.append("group ").append(g)
-                    .append(" workers ").append(firstWorker).append('-').append(lastWorker)
-                    .append(" on CPUs ").append(CpuTopology.formatCpuList(socketCpus[g]))
-                    .append(" (socket ").append(socketIds[g]).append(')');
-            firstWorker = lastWorker + 1;
+        if (groupCount < requestedGroupCount) {
+            log.advisory().$(groupsKey).$('=').$(requestedGroupCount)
+                    .$(" reduced to ").$(groupCount)
+                    .$(": ").$(workerCount).$(" network workers fill ").$(groupCount)
+                    .$(" groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
         }
         poolConfiguration.groupCount = groupCount;
-        poolConfiguration.groupCpus = socketCpus;
-        final String groupsText = groups.toString();
-        log.info().$("network workers split by CPU socket: ").$(groupsText).$();
+        poolConfiguration.groupCpus = null;
+        for (int cpu : poolConfiguration.sharedWorkerAffinity) {
+            if (cpu > -1) {
+                log.info().$("network workers split into ").$(groupCount).$(" groups without CPU pinning: ")
+                        .$(PropertyKey.SHARED_NETWORK_WORKER_AFFINITY.getPropertyPath()).$(" sets the workers' CPUs").$();
+                return;
+            }
+        }
+        final CpuTopology.Layout layout = topology.read();
+        final int[][] socketCpus = layout.getSocketCpus();
+        final int[] socketIds = layout.getSocketIds();
+        final String unpinnedReason;
+        final boolean isUnpinnedWarning;
+        if (socketCpus == null || socketIds == null) {
+            unpinnedReason = layout.getRefusal();
+            isUnpinnedWarning = layout.isRefusalWarning();
+        } else if (groupCount % socketCpus.length != 0) {
+            unpinnedReason = groupCount + " groups don't divide evenly over " + socketCpus.length + " sockets";
+            isUnpinnedWarning = true;
+        } else {
+            pinNetworkGroups(poolConfiguration, socketCpus, socketIds);
+            return;
+        }
+        final String description = layout.getDescription();
+        (isUnpinnedWarning ? log.advisory() : log.info())
+                .$("network workers split into ").$(groupCount)
+                .$(" groups without CPU pinning: ").$(unpinnedReason)
+                .$(" [layout=").$(description).I$();
     }
 
     private int configureSharedThreadPool(
@@ -3369,6 +3383,37 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    // Runs the network pool's groups, a multiple of the CPU socket count, on the CPUs of their CPU
+    // sockets: the first groupCount / socketCount groups on the first CPU socket, and so on.
+    private void pinNetworkGroups(PropWorkerPoolConfiguration poolConfiguration, int[][] socketCpus, int[] socketIds) {
+        final int workerCount = poolConfiguration.sharedWorkerCount;
+        final int groupCount = poolConfiguration.groupCount;
+        final int groupsPerSocket = groupCount / socketCpus.length;
+        final int[][] groupCpus = new int[groupCount][];
+        // for example "group 0 workers 0-94 on CPUs 0-95 (socket 0), group 1 workers 95-189 on CPUs 96-191 (socket 1)"
+        final StringBuilder groups = new StringBuilder();
+        int firstWorker = 0;
+        for (int g = 0; g < groupCount; g++) {
+            final int socket = g / groupsPerSocket;
+            groupCpus[g] = socketCpus[socket];
+            int lastWorker = firstWorker;
+            while (lastWorker + 1 < workerCount && WorkerPool.getGroup(lastWorker + 1, groupCount, workerCount) == g) {
+                lastWorker++;
+            }
+            if (g > 0) {
+                groups.append(", ");
+            }
+            groups.append("group ").append(g)
+                    .append(" workers ").append(firstWorker).append('-').append(lastWorker)
+                    .append(" on CPUs ").append(CpuTopology.formatCpuList(socketCpus[socket]))
+                    .append(" (socket ").append(socketIds[socket]).append(')');
+            firstWorker = lastWorker + 1;
+        }
+        poolConfiguration.groupCpus = groupCpus;
+        final String groupsText = groups.toString();
+        log.info().$("network workers split by CPU socket: ").$(groupsText).$();
+    }
+
     private WorkerPoolMode readWorkerPoolMode(
             Properties properties,
             @Nullable Map<String, String> env,
@@ -3469,8 +3514,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     /**
-     * The source of the CPU socket layout for {@code shared.network.worker.split.by.cpu.socket},
-     * or null where the split doesn't apply.
+     * The source of the CPU socket layout for {@code shared.network.worker.groups}, or null where
+     * worker groups don't apply.
      */
     protected @Nullable CpuTopology createCpuTopology() {
         return Os.isLinux() ? new CpuTopology() : null;

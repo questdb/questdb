@@ -34,8 +34,8 @@ import java.util.TreeMap;
 
 /**
  * The CPU sockets among the CPUs this process may use, read from the Linux {@code /proc} and
- * {@code /sys} trees, and the checks that decide whether the layout looks real enough to split the
- * shared network pool by socket.
+ * {@code /sys} trees, and the checks that decide whether the layout looks real enough to pin the
+ * groups of the shared network pool to sockets.
  * <p>
  * The allowed CPUs come from {@code Cpus_allowed_list} in {@code /proc/self/status}, which reflects
  * {@code taskset}, cgroup cpusets and {@code docker --cpuset-cpus}. That list can name offline CPUs,
@@ -53,7 +53,6 @@ public final class CpuTopology {
     public static final int MAX_CPU_COUNT_SPREAD_PERCENT = 25;
     public static final int MAX_SOCKETS = 8;
     public static final int MIN_CPUS_PER_SOCKET = 8;
-    public static final int MIN_WORKERS_PER_GROUP = 32;
     private static final String ALLOWED_LIST_PREFIX = "Cpus_allowed_list:";
     private final Path procRoot;
     private final Path sysRoot;
@@ -141,10 +140,10 @@ public final class CpuTopology {
     }
 
     /**
-     * Reads the topology and runs the layout checks for a network pool of {@code workerCount}
-     * workers, returning the per-socket CPU lists or the reason for refusing them.
+     * Reads the topology and runs the layout checks, returning the per-socket CPU lists or the
+     * reason for refusing them.
      */
-    public Layout readLayout(int workerCount) {
+    public Layout read() {
         final int[] allowed;
         try {
             allowed = readAllowedCpus();
@@ -177,12 +176,12 @@ public final class CpuTopology {
             // -1 when the kernel lists no node, which matters only once there are several sockets
             nodes[i] = readNode(dir);
         }
-        return checkLayout(cpus, sockets, nodes, workerCount);
+        return checkLayout(cpus, sockets, nodes);
     }
 
     // sockets[i] and nodes[i] are the socket and the NUMA node of allowed CPU allowed[i], with
     // node -1 when the kernel lists none
-    private static Layout checkLayout(int[] allowed, int[] sockets, int[] nodes, int workerCount) {
+    private static Layout checkLayout(int[] allowed, int[] sockets, int[] nodes) {
         // socket id -> its allowed CPUs, in CPU order
         final TreeMap<Integer, IntList> bySocket = new TreeMap<>();
         // NUMA node -> the first socket seen on it
@@ -249,13 +248,6 @@ public final class CpuTopology {
             return Layout.refused(
                     "socket " + maxSocket + " has " + maxCpus + " allowed CPUs and socket " + minSocket + " has " + minCpus
                             + ", more than " + MAX_CPU_COUNT_SPREAD_PERCENT + "% apart",
-                    true,
-                    description
-            );
-        }
-        if (workerCount / socketCount < MIN_WORKERS_PER_GROUP) {
-            return Layout.refused(
-                    workerCount + " network workers make groups smaller than " + MIN_WORKERS_PER_GROUP + " workers over " + socketCount + " sockets",
                     true,
                     description
             );

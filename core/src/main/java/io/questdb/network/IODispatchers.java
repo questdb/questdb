@@ -129,7 +129,7 @@ public class IODispatchers {
     public static int getGroupCount(IODispatcherConfiguration configuration, WorkerPool pool) {
         final int groupCount = pool.getGroupCount();
         if (groupCount > 1 && configuration.getBindPort() == 0) {
-            LOG.advisory().$("not split by CPU socket, the server binds to port 0 [who=")
+            LOG.advisory().$("not split into worker groups, the server binds to port 0 [who=")
                     .$(configuration.getDispatcherLogName())
                     .$(", groups=").$(groupCount)
                     .I$();

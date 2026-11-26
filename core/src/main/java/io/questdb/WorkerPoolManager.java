@@ -154,7 +154,7 @@ public abstract class WorkerPoolManager implements Target {
                     .$(", priority=").$(config.workerPoolPriority())
                     .I$();
             if (sharedPool.getGroupCount() > 1) {
-                LOG.advisory().$("not split by CPU socket, the split applies to the shared network pool only [requester=")
+                LOG.advisory().$("not split into worker groups, the split applies to the shared network pool only [requester=")
                         .$(requesterName)
                         .$(", pool=").$(poolName)
                         .I$();

@@ -42,13 +42,13 @@ public class CpuTopologyTest {
     @Test
     public void testAcceptsCpuCountsWithinSpread() throws IOException {
         // 48 and 40 CPUs are 16.7% apart
-        assertAccepted(twoSockets(96).allowed("0-47,96-135").read(64), new int[][]{range(0, 47), range(96, 135)}, new int[]{0, 1});
+        assertAccepted(twoSockets(96).allowed("0-47,96-135").read(), new int[][]{range(0, 47), range(96, 135)}, new int[]{0, 1});
     }
 
     @Test
     public void testAcceptsCpusetOnBothSockets() throws IOException {
         final Fixture fixture = twoSockets(96).allowed("0-15,96-111");
-        final CpuTopology.Layout layout = fixture.read(64);
+        final CpuTopology.Layout layout = fixture.read();
         assertAccepted(layout, new int[][]{range(0, 15), range(96, 111)}, new int[]{0, 1});
         Assert.assertEquals("socket 0: CPUs 0-15 on node 0, socket 1: CPUs 96-111 on node 1", layout.getDescription());
     }
@@ -66,12 +66,12 @@ public class CpuTopologyTest {
             even[i] = 2 * i;
             odd[i] = 2 * i + 1;
         }
-        assertAccepted(fixture.read(64), new int[][]{even, odd}, new int[]{0, 1});
+        assertAccepted(fixture.read(), new int[][]{even, odd}, new int[]{0, 1});
     }
 
     @Test
     public void testAcceptsTwoSockets() throws IOException {
-        final CpuTopology.Layout layout = twoSockets(96).read(190);
+        final CpuTopology.Layout layout = twoSockets(96).read();
         assertAccepted(layout, new int[][]{range(0, 95), range(96, 191)}, new int[]{0, 1});
         Assert.assertEquals("socket 0: CPUs 0-95 on node 0, socket 1: CPUs 96-191 on node 1", layout.getDescription());
     }
@@ -99,11 +99,11 @@ public class CpuTopologyTest {
         for (int cpu = 0; cpu < 32; cpu++) {
             fixture.cpu(cpu, cpu / 16, cpu / 16);
         }
-        final CpuTopology.Layout layout = fixture.read(64);
+        final CpuTopology.Layout layout = fixture.read();
         assertAccepted(layout, new int[][]{range(0, 15), range(16, 31)}, new int[]{0, 1});
         Assert.assertEquals("socket 0: CPUs 0-15 on node 0, socket 1: CPUs 16-31 on node 1", layout.getDescription());
         // the same CPUs listed as online have no socket id
-        assertRefused(fixture.online("0-63").read(64), "CPU 32 has no valid socket id", true);
+        assertRefused(fixture.online("0-63").read(), "CPU 32 has no valid socket id", true);
     }
 
     @Test
@@ -113,7 +113,7 @@ public class CpuTopologyTest {
         for (int cpu = 0; cpu < 32; cpu++) {
             fixture.cpu(cpu, cpu < 16 ? 1 : 0, cpu < 16 ? 0 : 1);
         }
-        final CpuTopology.Layout layout = fixture.read(64);
+        final CpuTopology.Layout layout = fixture.read();
         assertAccepted(layout, new int[][]{range(0, 15), range(16, 31)}, new int[]{1, 0});
         Assert.assertEquals("socket 0: CPUs 16-31 on node 1, socket 1: CPUs 0-15 on node 0", layout.getDescription());
     }
@@ -143,7 +143,7 @@ public class CpuTopologyTest {
     public void testRefusesLopsidedCpuset() throws IOException {
         // 48 and 32 CPUs are 33% apart
         assertRefused(
-                twoSockets(96).allowed("0-47,96-127").read(64),
+                twoSockets(96).allowed("0-47,96-127").read(),
                 "socket 0 has 48 allowed CPUs and socket 1 has 32, more than 25% apart",
                 true
         );
@@ -155,14 +155,14 @@ public class CpuTopologyTest {
         for (int cpu = 0; cpu < 32; cpu++) {
             fixture.cpu(cpu, cpu, 0);
         }
-        assertRefused(fixture.read(190), "the allowed CPUs report 32 sockets, more than 8", true);
+        assertRefused(fixture.read(), "the allowed CPUs report 32 sockets, more than 8", true);
     }
 
     @Test
     public void testRefusesMissingAllowedList() throws IOException {
         final Fixture fixture = twoSockets(8);
         fixture.writeStatus("Name:\tjava\n");
-        final CpuTopology.Layout layout = fixture.read(64);
+        final CpuTopology.Layout layout = fixture.read();
         Assert.assertFalse(layout.isAccepted());
         Assert.assertTrue(layout.getRefusal(), layout.getRefusal().startsWith("could not read the allowed CPUs: no Cpus_allowed_list: line"));
     }
@@ -171,14 +171,14 @@ public class CpuTopologyTest {
     public void testRefusesMissingNode() throws IOException {
         final Fixture fixture = twoSockets(96);
         fixture.removeNode(100);
-        assertRefused(fixture.read(190), "CPU 100 has no NUMA node", true);
+        assertRefused(fixture.read(), "CPU 100 has no NUMA node", true);
     }
 
     @Test
     public void testRefusesMissingOnlineList() throws IOException {
         final Fixture fixture = twoSockets(96);
         fixture.removeOnline();
-        final CpuTopology.Layout layout = fixture.read(190);
+        final CpuTopology.Layout layout = fixture.read();
         Assert.assertFalse(layout.isAccepted());
         Assert.assertTrue(layout.isRefusalWarning());
         Assert.assertTrue(layout.getRefusal(), layout.getRefusal().startsWith("could not read the online CPUs: "));
@@ -189,12 +189,12 @@ public class CpuTopologyTest {
     public void testRefusesMissingSocketId() throws IOException {
         final Fixture fixture = twoSockets(96);
         fixture.removeSocket(5);
-        assertRefused(fixture.read(190), "CPU 5 has no valid socket id", true);
+        assertRefused(fixture.read(), "CPU 5 has no valid socket id", true);
     }
 
     @Test
     public void testRefusesMissingStatusFile() throws IOException {
-        final CpuTopology.Layout layout = new CpuTopology(temp.newFolder("noproc").toPath(), temp.newFolder("nosys").toPath()).readLayout(64);
+        final CpuTopology.Layout layout = new CpuTopology(temp.newFolder("noproc").toPath(), temp.newFolder("nosys").toPath()).read();
         Assert.assertFalse(layout.isAccepted());
         Assert.assertTrue(layout.isRefusalWarning());
         Assert.assertTrue(layout.getRefusal(), layout.getRefusal().startsWith("could not read the allowed CPUs"));
@@ -205,7 +205,7 @@ public class CpuTopologyTest {
     public void testRefusesNegativeSocketId() throws IOException {
         final Fixture fixture = twoSockets(96);
         fixture.cpu(7, -1, 0);
-        assertRefused(fixture.read(190), "CPU 7 has no valid socket id", true);
+        assertRefused(fixture.read(), "CPU 7 has no valid socket id", true);
     }
 
     @Test
@@ -214,7 +214,7 @@ public class CpuTopologyTest {
         for (int cpu = 0; cpu < 32; cpu++) {
             fixture.cpu(cpu, cpu / 16, 0);
         }
-        assertRefused(fixture.read(64), "NUMA node 0 holds CPUs of sockets 0 and 1", true);
+        assertRefused(fixture.read(), "NUMA node 0 holds CPUs of sockets 0 and 1", true);
     }
 
     @Test
@@ -224,19 +224,12 @@ public class CpuTopologyTest {
             fixture.cpu(cpu, 0, 0);
         }
         // a single socket is a normal setup, so the refusal is not a warning
-        assertRefused(fixture.read(64), "the allowed CPUs 0-31 are all on socket 0", false);
+        assertRefused(fixture.read(), "the allowed CPUs 0-31 are all on socket 0", false);
     }
 
     @Test
     public void testRefusesSingleSocketCpuset() throws IOException {
-        assertRefused(twoSockets(96).allowed("96-191").read(64), "the allowed CPUs 96-191 are all on socket 1", false);
-    }
-
-    @Test
-    public void testRefusesSmallPool() throws IOException {
-        assertRefused(twoSockets(96).read(16), "16 network workers make groups smaller than 32 workers over 2 sockets", true);
-        assertRefused(twoSockets(96).read(63), "63 network workers make groups smaller than 32 workers over 2 sockets", true);
-        Assert.assertTrue(twoSockets(96).read(64).isAccepted());
+        assertRefused(twoSockets(96).allowed("96-191").read(), "the allowed CPUs 96-191 are all on socket 1", false);
     }
 
     @Test
@@ -245,12 +238,12 @@ public class CpuTopologyTest {
         for (int cpu = 0; cpu < 32; cpu++) {
             fixture.cpu(cpu, cpu / 4, cpu / 4);
         }
-        assertRefused(fixture.read(256), "socket 0 has 4 allowed CPUs, fewer than 8", true);
+        assertRefused(fixture.read(), "socket 0 has 4 allowed CPUs, fewer than 8", true);
     }
 
     @Test
     public void testRefusesWhenNoAllowedCpuIsOnline() throws IOException {
-        assertRefused(twoSockets(32).allowed("32-63").online("0-31").read(64), "none of the allowed CPUs 32-63 is online", true);
+        assertRefused(twoSockets(32).allowed("32-63").online("0-31").read(), "none of the allowed CPUs 32-63 is online", true);
     }
 
     @Test
@@ -261,7 +254,7 @@ public class CpuTopologyTest {
             fixture.cpu(cpu, 0, 0);
             fixture.removeNode(cpu);
         }
-        final CpuTopology.Layout layout = fixture.read(64);
+        final CpuTopology.Layout layout = fixture.read();
         assertRefused(layout, "the allowed CPUs 0-15 are all on socket 0", false);
         Assert.assertEquals("socket 0: CPUs 0-15", layout.getDescription());
     }
@@ -340,8 +333,8 @@ public class CpuTopologyTest {
             return this;
         }
 
-        CpuTopology.Layout read(int workerCount) {
-            return new CpuTopology(procRoot, sysRoot).readLayout(workerCount);
+        CpuTopology.Layout read() {
+            return new CpuTopology(procRoot, sysRoot).read();
         }
 
         void removeNode(int cpu) throws IOException {
