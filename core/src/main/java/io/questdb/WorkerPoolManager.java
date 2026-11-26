@@ -140,6 +140,12 @@ public abstract class WorkerPoolManager implements Target {
             WorkerPool dedicatedPool = dedicatedPools.get(poolName);
             if (dedicatedPool == null) {
                 dedicatedPool = serverConfiguration.createWorkerPool(config);
+                try {
+                    checkGroups(dedicatedPool, config);
+                } catch (Throwable th) {
+                    Misc.free(dedicatedPool);
+                    throw th;
+                }
                 dedicatedPools.put(poolName, dedicatedPool);
             }
             LOG.info().$("custom thread pool [name=").$(poolName)
@@ -147,12 +153,6 @@ public abstract class WorkerPoolManager implements Target {
                     .$(", workers=").$(dedicatedPool.getWorkerCount())
                     .$(", priority=").$(config.workerPoolPriority())
                     .I$();
-            if (sharedPool.getGroupCount() > 1) {
-                LOG.advisory().$("not split into worker groups, the split applies to the shared network pool only [requester=")
-                        .$(requesterName)
-                        .$(", pool=").$(poolName)
-                        .I$();
-            }
             pool = dedicatedPool;
         }
         recordPoolRole(pool, requesterName);

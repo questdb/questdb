@@ -453,6 +453,69 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testGetInstanceDedicatedPoolChecksGroups() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int[][] cpus = {{0, 1}, {2, 3}};
+            final WorkerPoolConfiguration pinned = new WorkerPoolConfiguration() {
+                @Override
+                public int getGroupCount() {
+                    return 2;
+                }
+
+                @Override
+                public int[][] getGroupCpus() {
+                    return cpus;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pinned";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+            // the factory builds every pool from a configuration that doesn't forward the group methods,
+            // which the shared pools don't notice because they have no groups
+            final WorkerPoolManager dropping = new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, null, c -> new WorkerPool(c::getWorkerCount))) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try {
+                try {
+                    dropping.getSharedPoolNetwork(pinned, WorkerPoolManager.Requester.HTTP_SERVER);
+                    Assert.fail();
+                } catch (IllegalStateException e) {
+                    // the dropping factory's pool has the default name
+                    Assert.assertEquals(
+                            "pool does not have the configured worker groups [pool=worker, configured=2, actual=1,"
+                                    + " configuredCpus=[[0, 1], [2, 3]], actualCpus=null]",
+                            e.getMessage()
+                    );
+                }
+            } finally {
+                dropping.halt();
+            }
+
+            final WorkerPoolManager keeping = new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, null, WorkerPool::new)) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try {
+                final WorkerPool pool = keeping.getSharedPoolNetwork(pinned, WorkerPoolManager.Requester.HTTP_SERVER);
+                Assert.assertEquals(2, pool.getGroupCount());
+                Assert.assertSame(cpus, pool.getGroupCpus());
+            } finally {
+                keeping.halt();
+            }
+        });
+    }
+
+    @Test
     public void testGetInstanceDedicatedPoolGetAgain() {
         final int workerCount = 2;
         final String poolName = "pool";

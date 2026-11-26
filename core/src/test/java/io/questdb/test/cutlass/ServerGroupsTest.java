@@ -24,7 +24,12 @@
 
 package io.questdb.test.cutlass;
 
+import io.questdb.FreeOnExit;
 import io.questdb.Metrics;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.WorkerPoolManager;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
@@ -53,6 +58,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.cutlass.pgwire.Port0PGConfiguration;
+import io.questdb.test.tools.CpuTopologyFixture;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -67,6 +73,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -98,6 +105,81 @@ public class ServerGroupsTest extends AbstractCairoTest {
             .withTimeout(3, TimeUnit.MINUTES)
             .withLookingForStuckThread(true)
             .build();
+
+    @Test
+    public void testDedicatedPoolsSplitFromConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            final String installRoot = temp.newFolder().getAbsolutePath();
+            TestUtils.copyMimeTypes(installRoot);
+            final Properties properties = new Properties();
+            properties.setProperty(PropertyKey.HTTP_NET_BIND_TO.getPropertyPath(), "0.0.0.0:" + pickFreePort());
+            properties.setProperty(PropertyKey.PG_NET_BIND_TO.getPropertyPath(), "0.0.0.0:" + pickFreePort());
+            properties.setProperty(PropertyKey.LINE_TCP_NET_BIND_TO.getPropertyPath(), "0.0.0.0:" + pickFreePort());
+            properties.setProperty(PropertyKey.SHARED_WORKER_COUNT.getPropertyPath(), "2");
+            properties.setProperty(PropertyKey.HTTP_WORKER_GROUPS.getPropertyPath(), "2");
+            properties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "64");
+            properties.setProperty(PropertyKey.PG_WORKER_GROUPS.getPropertyPath(), "2");
+            properties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "16");
+            properties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_GROUPS.getPropertyPath(), "2");
+            properties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "16");
+            final PropServerConfiguration serverConfiguration = CpuTopologyFixture.configuration(
+                    installRoot,
+                    properties,
+                    CpuTopologyFixture.twoSockets(temp.newFolder().toPath(), 48),
+                    LOG
+            );
+            final WorkerPoolManager manager = new WorkerPoolManager(serverConfiguration) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try (FreeOnExit freeOnExit = new FreeOnExit()) {
+                // the HTTP server takes its network socket factory from the configuration's factory provider
+                serverConfiguration.init(engine, freeOnExit);
+                try (
+                        HttpServer http = Services.INSTANCE.createHttpServer(serverConfiguration, engine, manager);
+                        PGServer pg = Services.INSTANCE.createPGWireServer(serverConfiguration.getPGWireConfiguration(), engine, manager);
+                        LineTcpReceiver ilp = Services.INSTANCE.createLineTcpReceiver(
+                                serverConfiguration.getLineTcpReceiverConfiguration(),
+                                engine,
+                                manager
+                        )
+                ) {
+                    Assert.assertNotNull(http);
+                    Assert.assertNotNull(pg);
+                    Assert.assertNotNull(ilp);
+                    // each server gets a dispatcher per group of its own pool
+                    Assert.assertEquals(2, http.getGroupCount());
+                    Assert.assertEquals(2, pg.getGroupCount());
+                    Assert.assertEquals(2, ilp.getGroupCount());
+
+                    // the servers' dedicated pools, which the manager hands out again by name
+                    final WorkerPool httpPool = manager.getSharedPoolNetwork(
+                            serverConfiguration.getHttpServerConfiguration(),
+                            WorkerPoolManager.Requester.HTTP_SERVER
+                    );
+                    final WorkerPool pgPool = manager.getSharedPoolNetwork(
+                            serverConfiguration.getPGWireConfiguration(),
+                            WorkerPoolManager.Requester.PG_WIRE_SERVER
+                    );
+                    final WorkerPool ilpPool = manager.getSharedPoolNetwork(
+                            serverConfiguration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration(),
+                            WorkerPoolManager.Requester.LINE_TCP_IO
+                    );
+                    Assert.assertEquals("http", httpPool.getPoolName());
+                    assertCpus(httpPool, range(0, 47), range(48, 95));
+                    Assert.assertEquals("pgwire", pgPool.getPoolName());
+                    assertCpus(pgPool, range(0, 47), range(48, 95));
+                    Assert.assertEquals("ilpio", ilpPool.getPoolName());
+                    assertCpus(ilpPool, range(0, 47), range(48, 95));
+                    Assert.assertEquals(1, manager.getSharedPoolNetwork().getGroupCount());
+                    Assert.assertNull(manager.getSharedPoolNetwork().getGroupCpus());
+                }
+            } finally {
+                manager.halt();
+            }
+        });
+    }
 
     @Test
     public void testHttpFailedGroupFreesEarlierGroups() throws Exception {
@@ -270,6 +352,16 @@ public class ServerGroupsTest extends AbstractCairoTest {
         assertPgServedByOwnGroup(WorkerPoolMode.LEGACY, false);
     }
 
+    private static void assertCpus(WorkerPool pool, int[]... expected) {
+        Assert.assertEquals(pool.getPoolName(), expected.length, pool.getGroupCount());
+        final int[][] cpus = pool.getGroupCpus();
+        Assert.assertNotNull(pool.getPoolName(), cpus);
+        Assert.assertEquals(pool.getPoolName(), expected.length, cpus.length);
+        for (int g = 0; g < expected.length; g++) {
+            Assert.assertArrayEquals(pool.getPoolName() + " group " + g, expected[g], cpus[g]);
+        }
+    }
+
     private static void assertHttpResponds(long fd) {
         send(fd, "GET /nowhere HTTP/1.1\r\nHost: localhost\r\n\r\n");
         final int capacity = 4096;
@@ -380,6 +472,12 @@ public class ServerGroupsTest extends AbstractCairoTest {
         try (ServerSocket socket = new ServerSocket(0)) {
             return socket.getLocalPort();
         }
+    }
+
+    private static int[] range(int from, int to) {
+        final int[] cpus = new int[to - from + 1];
+        Arrays.setAll(cpus, i -> from + i);
+        return cpus;
     }
 
     private static void send(long fd, String text) {
