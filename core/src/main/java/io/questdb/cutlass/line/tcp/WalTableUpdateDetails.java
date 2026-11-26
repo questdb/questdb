@@ -54,6 +54,7 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // implicit ALTER advances getLastSeqTxn() the same way a data commit does, so a
     // metadata-only txn can be reported on its own. QwpTudCache.reportCommittedTxn
     // accepts that rather than gating on it; the reasoning lives there.
+    // hasUnreportedMaxUncommittedRowsCommit() tells the commits at the cap apart.
     // Never reused across connections: QwpIngressProcessorState.onDisconnected() (and
     // QwpTudCache.close()) call QwpTudCache.reset(), which frees every TUD. The writer
     // underneath is pooled and outlives the TUD, which is what the constructor seed
@@ -179,6 +180,15 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     @TestOnly
     public boolean hasQwpCaches() {
         return qwpColumnMapping != null || qwpSchemaCacheEntry != null;
+    }
+
+    /**
+     * Whether the txns this entry has not reported yet include a commit at the
+     * max-uncommitted-rows cap. A txn that only changed the table's structure, such as
+     * the implicit ALTER that adds a column, does not count.
+     */
+    public boolean hasUnreportedMaxUncommittedRowsCommit() {
+        return getMaxUncommittedRowsCommitSeqTxn() > lastReportedSeqTxn;
     }
 
     public boolean isRenamedAtLookup() {

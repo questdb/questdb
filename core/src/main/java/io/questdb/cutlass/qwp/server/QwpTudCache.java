@@ -120,6 +120,9 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     // lookup: null or an entry of the map. onEntryRemoved(), reset() and the
     // distressed clear() forget it.
     private WalTableUpdateDetails lastCachedTud;
+    // Commits at the max-uncommitted-rows cap that commitIfMaxUncommittedRowsReached()
+    // reported, whether that pass or the appender made them; never reset.
+    private long maxUncommittedRowsCommitCount;
     private Path path;
     // Number of releasedTables entries in state TABLE_RELEASED.
     private int releasedTableCount;
@@ -399,6 +402,15 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     }
 
     /**
+     * How many commits at the max-uncommitted-rows cap
+     * {@link #commitIfMaxUncommittedRowsReached} has reported, counting one per table and
+     * pass. Only data commits count: a txn that only changed a table's structure does not.
+     */
+    public long getMaxUncommittedRowsCommitCount() {
+        return maxUncommittedRowsCommitCount;
+    }
+
+    /**
      * The table's slot for its last schema parse, on the table's entry, or null when
      * this cache has no entry for the table yet. Like
      * {@link #getCachedTableUpdateDetails}, it changes nothing in the cache.
@@ -439,6 +451,11 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     if (hadBufferedRows) {
                         tud.commitIfMaxUncommittedRowsCountReached();
                         advanceStructureCheckGate(tud);
+                    }
+                    // Checked before the report marks it reported. The commit may be the
+                    // appender's, made while it wrote the frame, rather than this pass's.
+                    if (tud.hasUnreportedMaxUncommittedRowsCommit()) {
+                        maxUncommittedRowsCommitCount++;
                     }
                     reportCommittedTxn(tud, consumer);
                 }

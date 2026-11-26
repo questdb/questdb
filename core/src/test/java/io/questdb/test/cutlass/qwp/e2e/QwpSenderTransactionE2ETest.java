@@ -30,6 +30,7 @@ import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.TransactionTooLargeException;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,6 +52,8 @@ import java.util.function.Consumer;
 public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     // ~100 encoded bytes per row.
     private static final String PAD = "x".repeat(90);
+    // The server's only report that qwp.max.uncommitted.rows split a transaction.
+    private static final String SPLIT_ADVISORY = "deferred-commit group committed in parts";
 
     @Before
     public void pinFragmentation() {
@@ -77,6 +80,11 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT count(), count_distinct(v) FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\tcount_distinct\n1000\t1000\n");
         });
+    }
+
+    @Test
+    public void testNoAutoFlushTriggerAddingColumnLogsNoSplit() throws Exception {
+        assertAddingColumnLogsNoSplit("auto_flush=off;");
     }
 
     @Test
@@ -340,6 +348,77 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testServerLogsOnceForEachTransactionItSplits() throws Exception {
+        // The client cannot see the server split its transaction at
+        // qwp.max.uncommitted.rows, so the server logs it, once per transaction. The cap
+        // splits each transaction of 2,500 and 3,000 rows in two or three frames, and the
+        // 500-row one not at all. It commits the last rows of a 3,000-row transaction, so
+        // the frame that closes it has nothing left to commit: the next transaction must
+        // still log.
+        qwpMaxUncommittedRows = 1_000;
+        runInContext(port -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (Sender sender = Sender.fromConfig(conf(port) + "transaction=on;auto_flush_rows=100;")) {
+                int from = 0;
+                for (int rows : new int[]{2_500, 2_500, 3_000, 3_000, 500}) {
+                    final long txnBefore = from == 0 ? 0 : lastTxn("t");
+                    writeRows(sender, from, rows);
+                    sender.flush();
+                    Assert.assertTrue(sender.drain(60_000));
+                    capture.stop();
+                    // One WAL txn per 1,000 rows at the cap, and one for the rest on flush().
+                    Assert.assertEquals("WAL txns of the transaction from row " + from, rows > 1_000 ? 3 : 1,
+                            lastTxn("t") - txnBefore);
+                    if (rows > 1_000) {
+                        capture.assertOnlyOnce(SPLIT_ADVISORY);
+                    } else {
+                        capture.assertNotLogged(SPLIT_ADVISORY);
+                    }
+                    // The next transaction's log starts empty.
+                    capture.start();
+                    from += rows;
+                }
+            } finally {
+                capture.stop();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), count_distinct(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tcount_distinct\n11500\t11500\n");
+        });
+    }
+
+    @Test
+    public void testServerLogsSplitOfTransactionThatAlsoAddsColumn() throws Exception {
+        // The transaction adds column x to t, which commits an ALTER and none of its rows,
+        // and the cap splits its rows of u: the server logs the split, once.
+        qwpMaxUncommittedRows = 1_000;
+        runInContext(port -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (Sender sender = Sender.fromConfig(conf(port) + "transaction=on;auto_flush_rows=100;")) {
+                writeRows(sender, "t", 0, 300);
+                writeRowsWithColumnX(sender, "t", 300, 300);
+                writeRows(sender, "u", 0, 1_500);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+                capture.stop();
+                capture.assertOnlyOnce(SPLIT_ADVISORY);
+            } finally {
+                capture.stop();
+            }
+            // t: the ALTER, then all 600 rows. u: 1,000 rows at the cap, then the other 500.
+            Assert.assertEquals(2, lastTxn("t"));
+            Assert.assertEquals(2, lastTxn("u"));
+            drainWalQueue();
+            assertQuery("SELECT count(), count(x) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tcount1\n600\t300\n");
+            assertQuery("SELECT count() FROM u").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n1500\n");
+        });
+    }
+
+    @Test
     public void testStrictResetDiscardsSplitFailedDuringOutage() throws Exception {
         assertSplitFailedDuringOutageDiscarded("transaction=strict;", Sender::reset);
     }
@@ -386,6 +465,11 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
                     .returns("count\tmin\tmax\n10\t10000\t10009\n");
         }, 2 * 1024 * 1024);
+    }
+
+    @Test
+    public void testStrictTransactionAddingColumnLogsNoSplit() throws Exception {
+        assertAddingColumnLogsNoSplit("transaction=strict;auto_flush_rows=100;");
     }
 
     @Test
@@ -551,6 +635,11 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTransactionAddingColumnLogsNoSplit() throws Exception {
+        assertAddingColumnLogsNoSplit("transaction=on;auto_flush_rows=100;");
+    }
+
+    @Test
     public void testTransactionalModeCommitsInPartsPastClientBuffer() throws Exception {
         // The client holds a transaction until the server commits it. transaction=on
         // used to block the row that took its transaction past sf_max_total_bytes for
@@ -659,6 +748,31 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     private static String outageConf(int port) {
         return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=1000;"
                 + "reconnect_initial_backoff_millis=10;reconnect_max_backoff_millis=50;auto_flush_rows=200;";
+    }
+
+    // A deferred frame that adds column x commits the ALTER as a sequencer txn of its
+    // own and none of the transaction's rows, so the transaction commits whole, and the
+    // server must not log that the cap split it.
+    private void assertAddingColumnLogsNoSplit(String mode) throws Exception {
+        runInContext(port -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (Sender sender = Sender.fromConfig(conf(port) + mode)) {
+                writeRows(sender, 0, 1_000);
+                writeRowsWithColumnX(sender, "t", 1_000, 1_000);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+                capture.stop();
+                capture.assertNotLogged(SPLIT_ADVISORY);
+            } finally {
+                capture.stop();
+            }
+            // Sequencer txn 1 is the ALTER, txn 2 commits all 2,000 rows.
+            Assert.assertEquals(2, lastTxn("t"));
+            drainWalQueue();
+            assertQuery("SELECT count(), count(x), min(x), max(x) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tcount1\tmin\tmax\n2000\t1000\t1000\t1999\n");
+        });
     }
 
     // A sender with no auto-flush trigger sends a transaction of any size in deferred
@@ -862,6 +976,13 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
+    // As writeRows, with a LONG column x equal to v.
+    private static void writeRowsWithColumnX(Sender sender, String table, int from, int count) {
+        for (int i = from, n = from + count; i < n; i++) {
+            sender.table(table).longColumn("v", i).longColumn("x", i).stringColumn("s", PAD).atNow();
+        }
+    }
+
     // As writeRows, with a SYMBOL column k of seven values, derived from v.
     private static void writeSymbolRows(Sender sender, String table, int from, int count) {
         for (int i = from, n = from + count; i < n; i++) {
@@ -909,6 +1030,10 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
         }
         Assert.fail("the client buffer must refuse a row");
         return -1;
+    }
+
+    private static long lastTxn(String table) {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(table));
     }
 
     private TableToken awaitTable() throws Exception {

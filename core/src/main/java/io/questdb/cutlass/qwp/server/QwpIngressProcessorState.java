@@ -310,13 +310,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
-    // Commits this connection has reported, of any kind. The deferred-frame path
-    // diffs it across the force-commit traversal to notice that the cap split the
-    // client's open group.
-    private long committedTxnCount;
     // True once the force commit that split the open deferred-commit group was
     // logged, so a group the cap splits many times logs once. Reset when the
-    // group ends: committed, rolled back, or cleared.
+    // group ends: by the plain frame that closes it, whichever path commits that
+    // frame (prepareMessage), or when the group is rolled back or cleared.
     private boolean isDeferredGroupSplitLogged;
     // Commit batch: consecutive plain frames of one receive pass, of any tables, whose
     // rows are appended to their tables' writers and committed together, one WAL txn
@@ -874,7 +871,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             uncommittedDeferredRows = false;
             // commitAll covered every frame of the group, rowless ones included.
             firstRowlessDeferredSequence = -1;
-            isDeferredGroupSplitLogged = false;
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
@@ -884,12 +880,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void commitIfMaxUncommittedRowsReached() {
         try {
-            final long committedBefore = committedTxnCount;
+            final long capCommitsBefore = tudCache.getMaxUncommittedRowsCommitCount();
             uncommittedDeferredRows = tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
-            // On the deferred path any commit is a force commit at the cap: the
-            // client's transaction now lands in more than one WAL transaction per
-            // table. Say so once per group; the client cannot see it.
-            if (committedTxnCount != committedBefore && !isDeferredGroupSplitLogged) {
+            // A commit at the cap lands the client's transaction in more than one WAL
+            // transaction per table. Say so once per group; the client cannot see it.
+            // The implicit ALTER of a column the frame adds commits no rows, so it
+            // does not count.
+            if (tudCache.getMaxUncommittedRowsCommitCount() != capCommitsBefore && !isDeferredGroupSplitLogged) {
                 isDeferredGroupSplitLogged = true;
                 LOG.advisory().$('[').$(fd)
                         .$("] deferred-commit group committed in parts: a table reached qwp.max.uncommitted.rows")
@@ -1837,6 +1834,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public void prepareMessage() {
         clearPreparedMessage();
         messageAppendedRows = false;
+        if (!isDeferCommit()) {
+            // A plain frame closes the open group, so the next group the cap splits logs
+            // again. Reset here, not in commit(): once the cap has committed every row of
+            // the group, the closing frame joins a commit batch instead.
+            isDeferredGroupSplitLogged = false;
+        }
         if (bufferPosition == 0 || !isOk()) {
             return;
         }
@@ -2542,7 +2545,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         if (seqTxn < 0) {
             return;
         }
-        committedTxnCount++;
         if (!durableAckEnabled) {
             pendingAckSeqTxns.put(tableName, seqTxn);
             return;
