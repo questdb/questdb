@@ -2945,6 +2945,48 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticDateTickCalendarOverflowAfterOtherCondition() throws Exception {
+        // The interval scan applies the conditions of an AND from the last one: it evaluates a literal
+        // listed first into the intervals of the condition after it, and a literal listed last into no
+        // intervals. A literal whose fixed date alone has more own extents than the interval limit
+        // parses as its bind variable on each run, which merges only the intervals that it adds. On
+        // Monday 2025-01-27, today holds the 1,440 seconds at the minutes of the day, the session of
+        // XNYS, from 14:30 to 21:00Z, holds none of the 840 seconds at the minutes from 00:00 to 13:59 of
+        // Friday 2025-01-24, and the duration extends the session of the Monday by a minute: the 391
+        // minutes from 14:30 to 21:00, which the days from 2025-01-24 on and today hold, and the 361 of
+        // them from 15:00 on.
+        useTickCalendar();
+        assertMemoryLeak(() -> {
+            createMinuteTables();
+            setCurrentMicros(MONDAY_NOON);
+            try {
+                final String literal = "ts IN '[$today, 2025-01-27T[00..23]:[00..59]:00, 2025-01-24T[00..13]:[00..59]:00]#XNYS;1m'";
+                // the condition, then the count and the first minute of the rows
+                final String[][] cases = {
+                        {"ts >= '2025-01-24'", "391", "2025-01-27T14:30"},
+                        {"ts IN '$today'", "391", "2025-01-27T14:30"},
+                        {"ts >= '2025-01-27T15:00'", "361", "2025-01-27T15:00"}
+                };
+                for (String[] c : cases) {
+                    for (String condition : new String[]{c[0] + " AND " + literal, literal + " AND " + c[0]}) {
+                        // the table, and the seconds and fraction of a second that it prints
+                        for (String[] table : new String[][]{{"m", ":00.000000Z"}, {"mn", ":00.000000000Z"}}) {
+                            assertQuery("SELECT count(), min(ts), max(ts) FROM " + table[0] + " WHERE " + condition)
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .withPlanContaining("Interval forward scan")
+                                    .returns("count\tmin\tmax\n" + c[1] + '\t' + c[2] + table[1] + "\t2025-01-27T21:00" + table[1] + '\n');
+                        }
+                    }
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testStaticDateTickCalendarOverflowFailsInEveryContext() throws Exception {
         // A fixed date whose own extents alone exceed the interval limit, the 1,440 seconds at the
         // minutes of 2025-01-24, which nothing else in the list holds on Monday 2025-01-27, fails a query

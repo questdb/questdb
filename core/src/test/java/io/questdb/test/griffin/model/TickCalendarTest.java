@@ -1448,6 +1448,40 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testCompiledStaticDateOverflowParseMergesLocallyAfterEarlierIntervals() throws SqlException {
+        // RuntimeIntervalModel evaluates a literal into a list that already holds the intervals of the
+        // conditions that it applies first, as for ts IN '<literal>' AND ts >= '2025-01-24', see
+        // InTimestampTimestampTest#testStaticDateTickCalendarOverflowAfterOtherCondition. A list that
+        // parses as its bind variable on each evaluation merges only from where its own intervals start:
+        // it leaves the intervals before them, here from 1 to 2 and from 5 to 6, as they are, appends the
+        // session of Monday 2025-01-27, from 14:30 to 21:00Z, a minute longer, and its merges count as
+        // many intervals as into an empty list, 9,063, see testCompiledStaticDateOverflowParseMergesLocally.
+        final String expression = "[$today, 2025-01-27T[00..23]:[00..59]:00, 2025-01-24T[00..13]:[00..59]:00]#XNYS;1m";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = expression + " [" + ColumnType.nameOf(timestampType) + ']';
+            final long now = driver.parseFloorLiteral(MONDAY_NOON);
+            final LongList expected = new LongList();
+            expected.add(1L, 2L);
+            expected.add(5L, 6L);
+            expected.add(driver.parseFloorLiteral("2025-01-27T14:30:00.000000Z"), driver.parseFloorLiteral("2025-01-27T21:01:00.000000Z") - 1);
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+                Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+                final LongList out = new LongList();
+                for (int i = 0; i < 2; i++) {
+                    out.clear();
+                    out.add(1L, 2L);
+                    out.add(5L, 6L);
+                    final long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
+                    compiled.evaluate(out, now);
+                    Assert.assertEquals(context, 9_063, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
+                    Assert.assertEquals(context, intervalToString(driver, expected), intervalToString(driver, out));
+                }
+            }
+        }
+    }
+
+    @Test
     public void testCompiledStaticDateOverflowParsesAsBindVariable() throws SqlException {
         // A fixed date whose own extents alone exceed the interval limit makes the compiled form parse
         // the list as its bind variable on each evaluation, where earlier elements may hold them, and
