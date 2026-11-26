@@ -121,6 +121,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }

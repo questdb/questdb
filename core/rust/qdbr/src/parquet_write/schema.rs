@@ -363,6 +363,12 @@ pub struct Column {
     pub strided_timestamp_16: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
+    /// Symbol columns only: each column chunk's dictionary holds only the symbols its
+    /// rows use, indexed densely, so the dictionary indices are not the table's symbol
+    /// keys and the file does not mark the column `LocalKeyIsGlobal`. Otherwise the
+    /// dictionary holds an entry for every key up to the largest one the chunk uses, and a
+    /// dictionary index is the table's symbol key.
+    pub dense_symbol_dictionary: bool,
 }
 
 /// Tagged container that tells an encoder which physical layout backs the
@@ -458,6 +464,7 @@ impl Column {
             strided_timestamp_16,
             designated_timestamp_ascending,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
+            dense_symbol_dictionary: false,
         })
     }
 
@@ -536,11 +543,12 @@ pub fn to_parquet_schema(
 
     let mut qdb_meta = QdbMeta::new(partition.columns.len());
     for column in partition.columns.iter() {
-        let format = if column.data_type.tag() == ColumnTypeTag::Symbol {
-            Some(QdbMetaColFormat::LocalKeyIsGlobal)
-        } else {
-            None
-        };
+        let format =
+            if column.data_type.tag() == ColumnTypeTag::Symbol && !column.dense_symbol_dictionary {
+                Some(QdbMetaColFormat::LocalKeyIsGlobal)
+            } else {
+                None
+            };
 
         let ascii = if column.data_type.tag() == ColumnTypeTag::Varchar
             && !column.secondary_data.is_empty()
@@ -958,6 +966,57 @@ mod tests {
         // Out-of-range or inverted bounds are rejected, never a panic under JNI.
         assert!(col.strided_row_group_slice(5, 11).is_err());
         assert!(col.strided_row_group_slice(7, 3).is_err());
+    }
+
+    #[test]
+    fn to_parquet_schema_marks_only_global_symbol_columns() {
+        // A Symbol column whose chunks hold dense dictionaries does not carry the
+        // LocalKeyIsGlobal format: its dictionary indices are not the table's symbol keys.
+        let column = |id: i32, name: &'static str, tag: ColumnTypeTag, is_dense: bool| {
+            let mut column = Column::from_raw_data(
+                id,
+                name,
+                col_type(tag).code(),
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                false,
+                true,
+                0,
+            )
+            .expect("column");
+            column.dense_symbol_dictionary = is_dense;
+            column
+        };
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                column(0, "dense", ColumnTypeTag::Symbol, true),
+                column(1, "global", ColumnTypeTag::Symbol, false),
+                column(2, "i", ColumnTypeTag::Int, false),
+                column(3, "s", ColumnTypeTag::String, true),
+            ],
+        };
+        let (_, additional_data) =
+            to_parquet_schema(&partition, false, -1, SeqTxn::UNSET).expect("schema");
+        let qdb_meta = QdbMeta::deserialize(
+            additional_data[0]
+                .value
+                .as_deref()
+                .expect("questdb metadata"),
+        )
+        .expect("deserialize");
+        let formats: Vec<Option<QdbMetaColFormat>> =
+            qdb_meta.schema.iter().map(|c| c.format).collect();
+        assert_eq!(
+            formats,
+            vec![None, Some(QdbMetaColFormat::LocalKeyIsGlobal), None, None]
+        );
     }
 
     #[test]

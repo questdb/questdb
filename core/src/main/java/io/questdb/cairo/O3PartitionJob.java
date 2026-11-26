@@ -7941,6 +7941,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Encoder calls descriptor.clear() in its own finally; descriptor
             // is non-owning so this is just a metadata reset either way.
             descriptor.clear();
+            // frees the rebase arena, which grows with the O3 rows, and the index decode buffers
+            ctx.releaseDecodeBuffers();
             if (parquetMetaFd != -1) {
                 ff.close(parquetMetaFd);
             }

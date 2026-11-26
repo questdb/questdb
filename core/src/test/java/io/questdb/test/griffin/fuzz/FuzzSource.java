@@ -53,8 +53,18 @@ import io.questdb.test.griffin.fuzz.types.LongType;
  * <p>
  * To keep the grammar bounded, a subquery or CTE always takes a
  * {@code direct} or {@code longSequence} base; no wrap-of-wrap.
+ * <p>
+ * One more subquery serves as a side of SPLICE JOIN and as the left-hand side
+ * of HORIZON JOIN, over direct tables only: a WINDOW JOIN of two tables ordered
+ * by the master's designated timestamp (see {@link #rowIdJoinSide}). Its rows
+ * already arrive in that order, so ORDER BY skips its sort unless a SPLICE JOIN
+ * or a single-threaded HORIZON JOIN reads them by row id.
  */
 public final class FuzzSource {
+    // Out of 100: how often rowIdJoinSide() reads a WINDOW JOIN sub-query instead of the table.
+    private static final int ROW_ID_JOIN_SIDE_WINDOW_JOIN_PCT = 20;
+    // The fuzz tables step their rows 30 minutes apart, so hour windows hold earlier rows and second windows hardly any.
+    private static final String[] WINDOW_JOIN_UNITS = {" SECOND", " MINUTE", " HOUR"};
     private final String fromSql;
     private final boolean isBareIdentifier;
     private final boolean orderStable;
@@ -105,6 +115,16 @@ public final class FuzzSource {
     }
 
     /**
+     * A side of SPLICE JOIN or the left-hand side of HORIZON JOIN, which those
+     * joins read by row id when they run single-threaded: the table itself or,
+     * one time in five, a WINDOW JOIN of it with the other table (see
+     * {@link #windowJoin}).
+     */
+    public static FuzzSource rowIdJoinSide(Rnd rnd, FuzzTable table, FuzzTable other) {
+        return rnd.nextInt(100) < ROW_ID_JOIN_SIDE_WINDOW_JOIN_PCT ? windowJoin(rnd, table, other) : direct(table);
+    }
+
+    /**
      * Inline subquery wrapping the given base. The clause must append
      * an alias after it; SQL grammar typically requires one for a
      * subquery in FROM, and the clause already offers an alias knob.
@@ -138,6 +158,14 @@ public final class FuzzSource {
 
     public FuzzTable getTable() {
         return table;
+    }
+
+    /**
+     * Returns true when {@link #getFromSql} is a table or CTE name rather than
+     * an expression body such as a subquery or {@code long_sequence()}.
+     */
+    public boolean isBareIdentifier() {
+        return isBareIdentifier;
     }
 
     /**
@@ -246,6 +274,29 @@ public final class FuzzSource {
 
     private static InnerQuery star(FuzzSource base) {
         return new InnerQuery("SELECT * FROM " + base.getFromSql(), base.getTable(), base.isOrderStable());
+    }
+
+    /**
+     * Inline WINDOW JOIN subquery over two direct tables that share {@code sym}
+     * and {@code k}, ordered by the master's designated timestamp:
+     * {@code (SELECT t.*, count() AS wc, sum(p.k) AS ws FROM master t WINDOW JOIN
+     * slave p [ON (t.sym = p.sym)] RANGE BETWEEN n unit PRECEDING AND CURRENT ROW
+     * EXCLUDE PREVAILING ORDER BY t.ts)}. The outer query sees the master's
+     * columns plus the two LONG aggregates.
+     */
+    private static FuzzSource windowJoin(Rnd rnd, FuzzTable master, FuzzTable slave) {
+        final StringSink sql = new StringSink();
+        sql.put("(SELECT t.*, count() AS wc, sum(p.k) AS ws FROM ").put(master.getName()).put(" t WINDOW JOIN ").put(slave.getName()).put(" p");
+        if (rnd.nextBoolean()) {
+            sql.put(" ON (t.sym = p.sym)");
+        }
+        sql.put(" RANGE BETWEEN ").put(1 + rnd.nextInt(3)).put(WINDOW_JOIN_UNITS[rnd.nextInt(WINDOW_JOIN_UNITS.length)])
+                .put(" PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.").put(master.getTsColumnName()).put(')');
+        final ObjList<FuzzColumn> cols = new ObjList<>();
+        cols.addAll(master.getColumns());
+        cols.add(new FuzzColumn("wc", LongType.INSTANCE));
+        cols.add(new FuzzColumn("ws", LongType.INSTANCE));
+        return new FuzzSource("", sql.toString(), new FuzzTable(master.getName(), cols, master.getTsColumnName()), false, true);
     }
 
     private record InnerQuery(String sql, FuzzTable table, boolean orderStable) {
