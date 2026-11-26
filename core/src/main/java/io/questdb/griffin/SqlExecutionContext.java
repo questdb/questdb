@@ -152,6 +152,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     Decimal64 getDecimal64();
 
+    /**
+     * Returns the resources of the execution that runs on this context, or null when none runs.
+     */
+    default @Nullable SqlExecutionResources getExecutionResources() {
+        return null;
+    }
+
     default @Nullable ExecutionState getExecutionState() {
         return null;
     }
@@ -479,12 +486,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     /**
      * Returns whether a factory may keep the plan choices that its compile took from the tables'
      * row counts after the tables change size. A context that runs a factory which no holder
-     * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
-     * join then keeps its compile-time build side and key table presizing, which cost memory and
-     * never change the rows, instead of throwing {@link TableReferenceOutOfDateException} to ask
-     * for a recompile. A RIGHT join that took the fused plan while the table before it held no
-     * more rows than the table after it therefore keeps building the table before it, however
-     * large that table grows.
+     * compiles again tolerates the change: a fused GROUP BY over a hash join then keeps its
+     * compile-time build side and key table presizing, which cost memory and never change the
+     * rows, instead of throwing {@link TableReferenceOutOfDateException} to ask for a recompile.
+     * A RIGHT join that took the fused plan while the table before it held no more rows than the
+     * table after it therefore keeps building the table before it, however large that table
+     * grows.
      */
     default boolean isTableRowCountChangeTolerated() {
         return false;
@@ -618,6 +625,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setJitMode(int jitMode);
 
     default void setLiveViewCompile(boolean value) {
+    }
+
+    default void setExecutionResources(@Nullable SqlExecutionResources resources) {
     }
 
     /**

@@ -191,6 +191,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     }
 
     public RowGroupBuffers getKeyRowGroupBuffers() {
+        keyRowGroupBuffers.reopen();
         return keyRowGroupBuffers;
     }
 
@@ -251,7 +252,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     /**
      * Reusable scratch arena for window-relative rebased var-column aux vectors.
      * The caller sizes it once per apply (a later resize moves earlier slots),
-     * then hands out base+offset slots. Freed in {@link #close()}.
+     * then hands out base+offset slots. {@link #releaseDecodeBuffers()} frees it
+     * when the partition task ends, as does {@link #close()}, and the next resize
+     * allocates it again: a slot is valid until the next resize or the end of the
+     * task.
      */
     public MemoryCARW getRebaseAuxMem() {
         return rebaseAuxMem;
@@ -341,6 +345,13 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = size;
         return mergeIndexAddr;
+    }
+
+    @Override
+    public void releaseDecodeBuffers() {
+        super.releaseDecodeBuffers();
+        Misc.free(keyRowGroupBuffers);
+        Misc.free(rebaseAuxMem);
     }
 
     /**

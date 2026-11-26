@@ -540,6 +540,16 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPlainSourceIntoCompositeTargetWithRoomForTheFold() throws Exception {
+        assertFoldIntoACompositeTargetNearItsFileLimit(true);
+    }
+
+    @Test
+    public void testPlainSourceIntoCompositeTargetWithoutRoomForTheFold() throws Exception {
+        assertFoldIntoACompositeTargetNearItsFileLimit(false);
+    }
+
+    @Test
     public void testPlainSourceIntoCompositeTarget() throws Exception {
         assertMemoryLeak(() -> {
             createSplitDay();
@@ -639,6 +649,34 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
                 scalar("SELECT sum(numRows) FROM table_partitions('x')" +
                         " WHERE name LIKE '" + DAY + "%' AND NOT name LIKE '%.detached'")
         );
+    }
+
+    private static void assertFoldIntoACompositeTargetNearItsFileLimit(boolean isRoomForTheFold) throws Exception {
+        assertMemoryLeak(() -> {
+            createSplitDay();
+            makeComposite("T01:00:00");
+            Assert.assertTrue("fixture left the target plain", isComposite(DAY));
+            final long dayTs = MicrosTimestampDriver.floor(DAY + "T00:00:00.000000Z");
+            final int pieceCount;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                pieceCount = reader.getGeometry().getPieceCount(reader.getTxFile().getPartitionIndex(dayTs));
+            }
+            NearFullGeometryFixture.plantCommittedRecord(
+                    engine,
+                    "x",
+                    dayTs,
+                    NearFullGeometryFixture.LAST_GENERATION,
+                    isRoomForTheFold ? pieceCount + 1 : pieceCount,
+                    false,
+                    0,
+                    0,
+                    0
+            );
+
+            assertFoldPreservesTheDay();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            Assert.assertEquals("whether the target stays composite after the fold", isRoomForTheFold, isComposite(DAY));
+        });
     }
 
     /**
