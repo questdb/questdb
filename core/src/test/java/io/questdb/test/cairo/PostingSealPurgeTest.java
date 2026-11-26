@@ -30,9 +30,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.PostingSealPurgeOperator;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxnScoreboard;
@@ -43,6 +45,8 @@ import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.MPSequence;
@@ -64,6 +68,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -915,6 +920,78 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeSparesIndexRecreatedFromColumnTop() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean isKeyFileRemoved = new AtomicBoolean();
+        final PostingSealPurgeJob[] purgeJob = {null};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (isKeyFileRemoved.get() && Utf8s.containsAscii(name, "s.pv.") && isArmed.compareAndSet(true, false)) {
+                    runPurgeJob(purgeJob[0]);
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get() && Utf8s.containsAscii(name, "s.pk.")) {
+                    isKeyFileRemoved.set(true);
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                purgeJob[0] = job;
+                execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 1_000_000L), x::INT FROM long_sequence(1000)");
+                execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 0)");
+                execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+                drainWalQueue();
+                execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T21:00:00', 1_000_000L), 0, 'k' || (x % 3) FROM long_sequence(73)");
+                drainWalQueue();
+                assertPhysicalRows("2024-01-01", 1073);
+
+                final TableToken token = engine.verifyTableName("t");
+                try (WalWriter walWriter = engine.getWalWriter(token)) {
+                    walWriter.commitWithParams(
+                            MicrosTimestampDriver.floor("2024-01-01T20:00:00.000000Z"),
+                            MicrosTimestampDriver.floor("2024-01-01T23:59:59.999999Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                    walWriter.commit();
+                }
+                drainWalQueue();
+                releaseSavePointHolds("t");
+                execute("INSERT INTO t VALUES ('2024-01-02T00:00:01', 0, NULL)");
+                drainWalQueue();
+                assertPhysicalRows("2024-01-01", 1000);
+
+                isArmed.set(true);
+                execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T21:00:00', 1_000_000L), 0, 'k' || x FROM long_sequence(3)");
+                drainWalQueue();
+                assertFalse("the purge must have run while the index was recreated", isArmed.get());
+                assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(token));
+            }
+            assertQuery("SELECT s, count() c FROM t WHERE s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s")
+                    .expectSize()
+                    .returns("""
+                            s\tc
+                            k1\t1
+                            k2\t1
+                            k3\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testRecoveryFromLogTable() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -1149,6 +1226,13 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 assertTrue("log table must have at least " + 1 + " completed row(s) for "
                         + columnFilter + ", got " + actual, actual >= 1);
             }
+        }
+    }
+
+    private void assertPhysicalRows(String day, long physicalRows) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("t"))) {
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(MicrosTimestampDriver.floor(day + "T00:00:00.000000Z"));
+            assertEquals("physical rows " + day, physicalRows, reader.getPartitionPhysicalRowCount(partitionIndex));
         }
     }
 

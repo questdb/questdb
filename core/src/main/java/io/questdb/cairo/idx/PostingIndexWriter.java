@@ -1443,14 +1443,18 @@ public class PostingIndexWriter implements IndexWriter {
         boolean kFdUnassigned = true;
 
         try {
-            LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
+            if (isInit) {
+                // Seal purges may still be queued for the value files of the index this replaces: start past its sealTxns.
+                this.sealTxn = PostingIndexUtils.readKeyFileGenCounter(ff, path, plen, name, columnNameTxn) + 1;
+            }
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, columnNameTxn);
 
             if (isInit) {
                 // A new index: never truncate a file an older partition version may share through a hard link
                 TableUtils.removeExistingOrFail(ff, keyFile);
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
-                initKeyMemory(keyMem);
+                initKeyMemory(keyMem, sealTxn);
             } else {
                 // allowFreshIfMissing skips this exists() pre-check rather than falling back to a fresh, empty index:
                 // the caller has independently established this column had no data before the writer session now.
@@ -1485,6 +1489,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (isInit) {
                 chain.resetState();
+                chain.openExisting(keyMem);
                 this.maxValue = -1L;
                 this.keyCount = 0;
                 this.genCount = 0;

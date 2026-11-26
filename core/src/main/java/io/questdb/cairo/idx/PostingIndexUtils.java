@@ -1391,6 +1391,34 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
+     */
+    static long readKeyFileGenCounter(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        long genCounter = -1;
+        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
+        if (fd > -1) {
+            try {
+                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
+                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
+                    if (sequence > 0 && (sequence & 1L) == 0
+                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
+                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
+                    }
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        return genCounter;
+    }
+
+    /**
      * Walks the v2 chain via fd-based reads and returns the head entry's
      * {@code SEAL_TXN}. Useful when the caller has just opened the .pk file
      * (e.g. snapshot restore, seal-purge job) and would otherwise pay an
@@ -2128,34 +2156,6 @@ public final class PostingIndexUtils {
         } catch (NumericException e) {
             return PARSE_FAIL;
         }
-    }
-
-    /**
-     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
-     */
-    private static long readKeyFileGenCounter(
-            FilesFacade ff,
-            Path path,
-            int pathTrimTo,
-            CharSequence columnName,
-            long postingColumnNameTxn
-    ) {
-        long genCounter = -1;
-        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
-        if (fd > -1) {
-            try {
-                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
-                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
-                    if (sequence > 0 && (sequence & 1L) == 0
-                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
-                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
-                    }
-                }
-            } finally {
-                ff.close(fd);
-            }
-        }
-        return genCounter;
     }
 
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {
