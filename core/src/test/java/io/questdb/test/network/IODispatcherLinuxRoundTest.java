@@ -647,7 +647,7 @@ public class IODispatcherLinuxRoundTest {
         final IntList publishedSizes = new IntList();
 
         TestDispatcher(IODispatcherConfiguration configuration, IOContextFactory<TestContext> ioContextFactory) {
-            super(configuration, ioContextFactory);
+            super(configuration, ioContextFactory, false);
         }
 
         int pendingSize() {
