@@ -38,7 +38,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
-import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTolerableFailureLoggingTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
@@ -88,15 +87,14 @@ public class WalTolerableFailureLoggingTest extends AbstractCairoTest {
 
                 Assert.assertEquals("the tolerated command still advances the apply watermark",
                         seqTxn, writer.getSeqTxn());
-                assertEventually(
-                        () -> capture.assertLoggedRE("tolerated WAL command failure \\[table=.*wal_log.*"
-                                + "seqTxn=" + seqTxn
-                                + ", command=ALTER TABLE"
-                                + ", error=injected tolerable alter failure"
-                                + ", errno=" + CairoException.PARTITION_MANIPULATION_RECOVERABLE
-                                + "\\]"),
-                        2
-                );
+                // The logging worker can stall for many seconds on a busy CI agent; waitForRegex() returns on the
+                // first match, so its long deadline costs nothing when the record arrives.
+                capture.waitForRegex("tolerated WAL command failure \\[table=.*wal_log.*"
+                        + "seqTxn=" + seqTxn
+                        + ", command=ALTER TABLE"
+                        + ", error=injected tolerable alter failure"
+                        + ", errno=" + CairoException.PARTITION_MANIPULATION_RECOVERABLE
+                        + "\\]");
             }
         });
     }

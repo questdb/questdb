@@ -38,6 +38,7 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -62,7 +63,15 @@ public class CaseCommon {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int argType = arg.getType();
+        if (argType == toType) {
+            // a decimal cast to its own type would still wrap the value, and is not thread-safe
+            return arg;
+        }
         if (isNull(argType)) {
+            // Close the argument the NULL constant replaces: a CASE whose every branch is NULL owns
+            // its conditions, which can hold native memory. A caller that frees the argument again
+            // after an error finds nothing left to free.
+            Misc.free(arg);
             return Constants.getNullConstant(toType);
         }
         if (ColumnType.isArray(argType)) {

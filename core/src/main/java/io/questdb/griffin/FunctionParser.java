@@ -1194,6 +1194,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return args.getQuick(0);
             }
 
+            // A NULL constant casts to a NULL string, as a NULL value does at runtime. The casts
+            // to text fold a constant by formatting it, which would turn the NULL into its
+            // sentinel's text, such as 'NaN'.
+            if (arg0.isConstant() && arg0.isNullConstant() && ColumnType.isSymbolOrStringOrVarchar(castToType)) {
+                arg0.close();
+                return Constants.getNullConstant(castToType);
+            }
+
             // We manually handle the float/double to decimal cast here to avoid precision loss
             if (node.lhs.type == ExpressionNode.CONSTANT && ColumnType.isDecimal(castToType) &&
                     (fromType == ColumnType.DOUBLE || fromType == ColumnType.FLOAT)) {

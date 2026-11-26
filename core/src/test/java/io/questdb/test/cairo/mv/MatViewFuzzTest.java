@@ -59,6 +59,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -2909,6 +2910,41 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return sink.toString();
     }
 
+    // A period view records the end of the last complete period. The clock of the fuzz only moves forward, so a refresh
+    // never records an end after it: the period that ends there has not ended yet.
+    private static void checkPeriodHiNotAheadOfClock(
+            MatViewTimerJob timerJob,
+            ObjHashSet<TableToken> tableTokens,
+            AtomicReference<String> periodHiAheadOfClock
+    ) {
+        engine.getTableTokens(tableTokens, false);
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            final TableToken viewToken = tableTokens.get(i);
+            final MatViewState state = viewToken.isMatView() ? engine.getMatViewStateStore().getViewState(viewToken) : null;
+            if (state == null) {
+                continue;
+            }
+            final long periodHi = state.getLastPeriodHi();
+            if (periodHi == Numbers.LONG_NULL) {
+                continue;
+            }
+            final long periodHiUs = state.getViewDefinition().getBaseTableTimestampDriver().toMicros(periodHi);
+            // The refresh read the clock before it recorded the end, so read the clock after the end. The timer threads
+            // move the clock under the lock of the timer job.
+            final long nowUs;
+            synchronized (timerJob) {
+                nowUs = currentMicros;
+            }
+            if (periodHiUs > nowUs) {
+                periodHiAheadOfClock.compareAndSet(
+                        null,
+                        viewToken.getTableName() + " recorded the period end " + Micros.toUSecString(periodHiUs)
+                                + " at " + Micros.toUSecString(nowUs)
+                );
+            }
+        }
+    }
+
     private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
@@ -3621,10 +3657,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
         final ObjList<Thread> refreshJobs = new ObjList<>();
         final int refreshJobCount = 1 + rnd.nextInt(4);
+        final AtomicReference<String> periodHiAheadOfClock = new AtomicReference<>();
 
         try {
             for (int i = 0; i < refreshJobCount; i++) {
-                refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, periodLengthMicros, clockJumpLimit));
+                refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, periodLengthMicros, clockJumpLimit, periodHiAheadOfClock));
             }
 
             final int sampleByInterval = 1 + rnd.nextInt(length);
@@ -3644,6 +3681,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         } finally {
             stopAndJoinJobs(stop, refreshJobs);
         }
+        Assert.assertNull(periodHiAheadOfClock.get());
 
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
@@ -3700,7 +3738,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         try {
             for (int i = 0; i < refreshJobCount; i++) {
-                refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, clockJump, clockJumpLimit));
+                refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, clockJump, clockJumpLimit, null));
             }
 
             for (int i = 0; i < tableCount; i++) {
@@ -3827,22 +3865,29 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return th;
     }
 
+    // Unless periodHiAheadOfClock is null, the job checks after each refresh that no view recorded a period end after
+    // the clock, and keeps the first one that did there.
     private Thread startTimerJob(
             int workerId,
             AtomicBoolean stop,
             Rnd outsideRnd,
             MatViewTimerJob timerJob,
             long clockJump,
-            long clockJumpLimit
+            long clockJumpLimit,
+            @Nullable AtomicReference<String> periodHiAheadOfClock
     ) {
         final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         final Thread th = new Thread(
                 () -> {
                     try {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
+                            final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
                             while (!stop.get()) {
                                 drainMatViewTimerQueue(timerJob);
                                 refreshJob.run();
+                                if (periodHiAheadOfClock != null) {
+                                    checkPeriodHiNotAheadOfClock(timerJob, tableTokens, periodHiAheadOfClock);
+                                }
                                 Os.sleep(rnd.nextInt(10));
                                 if (rnd.nextBoolean()) {
                                     // Try to move the clock one jump forward.
