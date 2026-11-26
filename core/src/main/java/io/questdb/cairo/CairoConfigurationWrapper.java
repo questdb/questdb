@@ -1750,6 +1750,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getViewCompileBusyRetryTimeout() {
+        return getDelegate().getViewCompileBusyRetryTimeout();
+    }
+
+    @Override
     public int getViewLexerPoolCapacity() {
         return getDelegate().getViewLexerPoolCapacity();
     }
@@ -2157,6 +2162,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return getDelegate().isSqlParquetRowGroupPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlStreamGroupByEnabled() {
+        return getDelegate().isSqlStreamGroupByEnabled();
     }
 
     @Override

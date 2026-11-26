@@ -66,7 +66,7 @@ public interface GroupByFunction extends Function, Mutable {
      * This method:
      * <ul>
      *     <li>runs without a preceding {@link #computeFirst(MapValue, Record, long)} invocation;</li>
-     *     <li>is not followed by {@link #merge(MapValue, MapValue)};</li>
+     *     <li>may be followed by {@link #merge(MapValue, MapValue)} in parallel execution;</li>
      *     <li>is used only when {@link #supportsBatchComputation()} returns {@code true}.</li>
      * </ul>
      *
@@ -256,6 +256,28 @@ public interface GroupByFunction extends Function, Mutable {
     int getValueIndex();
 
     /**
+     * Returns true only when all three of the following hold:
+     * <ul>
+     *     <li>the function is BOOLEAN-, DOUBLE- or LONG-typed;</li>
+     *     <li>after {@link #setEmpty(MapValue)}, the getter for that type ({@code getBool(mapValue)},
+     *     {@code getDouble(mapValue)} or {@code getLong(mapValue)}) reports a value other than NULL,
+     *     which is false for BOOLEAN and NaN for DOUBLE;</li>
+     *     <li>that getter reads only the map value: no {@code init()}, no allocator, no other state.</li>
+     * </ul>
+     * A WINDOW JOIN with a constant-false join filter reads that value once at compile time,
+     * without aggregating any row, and reports it for every master row. A function whose empty
+     * group reports a non-NULL value must override this method, e.g. count() reports 0 and
+     * isOrdered() reports true. Functions that store a pointer but report NULL over an empty
+     * group, such as percentile_disc, must not.
+     *
+     * @return true if the empty group reports a non-NULL BOOLEAN, DOUBLE or LONG readable from the
+     * map value alone
+     */
+    default boolean hasNonNullEmptyValue() {
+        return false;
+    }
+
+    /**
      * Called on a shared cursor's GroupByFunction to initialize it from the primary
      * (computation) instance. The default implementation copies the value index.
      * Functions that store auxiliary data internally (e.g., StringAggGroupByFunction
@@ -322,6 +344,14 @@ public interface GroupByFunction extends Function, Mutable {
 
     default boolean isScalar() {
         return true;
+    }
+
+    /**
+     * All per-group state is stored in the MapValue. After copying or merging it,
+     * the source state can be reused or released immediately.
+     */
+    default boolean isStateSelfContained() {
+        return false;
     }
 
     /**
