@@ -821,7 +821,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException {
         if (configuration.isSqlLegacyPlannerEnabled()) {
-            return legacyCompiler().generateViewFactory(viewSql, executionContext);
+            return generateLegacyViewFactory(viewSql, executionContext);
         }
         return SqlUtil.generateFactory(this, generateExecutionModel(viewSql, executionContext), executionContext);
     }
@@ -7051,6 +7051,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             executionContext.setLiveViewCompile(false);
         }
         return codeGenerator.generateExplain(innerModel, factory, model.getFormat());
+    }
+
+    // Master's planner throws TableReferenceOutOfDateException when a table it reads changes while
+    // it optimises the view's SQL, and master's ViewCompilerJob compiled the view again on it.
+    private RecordCursorFactory generateLegacyViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException {
+        final LegacySqlCompiler compiler = legacyCompiler();
+        for (int retries = 0; ; retries++) {
+            try {
+                return compiler.generateViewFactory(viewSql, executionContext);
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries == maxRecompileAttempts) {
+                    throw e;
+                }
+                LOG.info().$("retrying view compilation [reason=").$safe(e.getFlyweightMessage()).I$();
+            }
+        }
     }
 
     /**

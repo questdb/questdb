@@ -726,6 +726,30 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     }
 
     @Test
+    public void testLegacyPlannerCompileInvalidatesViewWhenRetriesRunOut() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        testCompileInvalidatesViewWhenRetriesRunOut();
+    }
+
+    @Test
+    public void testLegacyPlannerCompileRetriesWhenPivotSubqueryTableChanges() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        testCompileRetriesWhenPivotSubqueryTableChanges();
+    }
+
+    @Test
+    public void testLegacyPlannerCompileRetriesWhenTableIsRecreated() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        testCompileRetriesWhenTableIsRecreated();
+    }
+
+    @Test
+    public void testLegacyPlannerCompileRetriesWhenTableIsRecreatedDuringPlanRetry() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        testCompileRetriesWhenTableIsRecreatedDuringPlanRetry();
+    }
+
+    @Test
     public void testLockedViewIsCompiledOncePerRequestAndOncePerDelay() throws Exception {
         // While the lock of t's readers lasts, each request compiles the views once, as without the
         // lock, and the busy retry compiles each view once per busy retry timeout, however many
