@@ -337,7 +337,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.clear(pendingWriters);
         Misc.clear(authenticator);
         Misc.clear(bindVariableService);
-        sqlExecutionContext.setLegacyPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER);
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         freezeRecvBuffer = false;
@@ -487,11 +486,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setAuthenticator(SocketAuthenticator authenticator) {
         this.authenticator = authenticator;
-    }
-
-    @Override
-    public void setLegacyPlanner(int legacyPlanner) {
-        sqlExecutionContext.setLegacyPlanner(legacyPlanner);
     }
 
     @Override

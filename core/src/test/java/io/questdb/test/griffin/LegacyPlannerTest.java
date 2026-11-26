@@ -41,15 +41,12 @@ import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -79,13 +76,6 @@ public class LegacyPlannerTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         engineFactory = COMPILER_FACTORY.engineFactory();
         AbstractCairoTest.setUpStatic();
-    }
-
-    @Override
-    @After
-    public void tearDown() throws Exception {
-        setSessionPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER);
-        super.tearDown();
     }
 
     @Test
@@ -282,20 +272,6 @@ public class LegacyPlannerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLegacyPlannerOf() {
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER, SqlExecutionContextImpl.legacyPlannerOf(null));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("1")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("true ")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("tru")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("falsey")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_ON, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("true")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_ON, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("TRUE")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_OFF, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("false")));
-        Assert.assertEquals(SqlExecutionContextImpl.LEGACY_PLANNER_OFF, SqlExecutionContextImpl.legacyPlannerOf(new Utf8String("False")));
-    }
-
-    @Test
     public void testMatViewRefresh() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
@@ -399,22 +375,6 @@ public class LegacyPlannerTest extends AbstractCairoTest {
             assertLegacy(true);
             setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "false");
             assertLegacy(false);
-        });
-    }
-
-    @Test
-    public void testSessionOverridesServerProperty() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            setSessionPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_ON);
-            assertLegacy(true);
-            setSessionPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER);
-            assertLegacy(false);
-            setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
-            setSessionPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_OFF);
-            assertLegacy(false);
-            setSessionPlanner(SqlExecutionContextImpl.LEGACY_PLANNER_SERVER);
-            assertLegacy(true);
         });
     }
 
@@ -530,10 +490,6 @@ public class LegacyPlannerTest extends AbstractCairoTest {
                 CursorPrinter.println(record, metadata, sink);
             }
         }
-    }
-
-    private static void setSessionPlanner(int legacyPlanner) {
-        ((SqlExecutionContextImpl) sqlExecutionContext).setLegacyPlanner(legacyPlanner);
     }
 
     private void assertViewState(String expected) throws Exception {

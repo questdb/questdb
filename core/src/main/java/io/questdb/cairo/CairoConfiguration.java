@@ -1665,8 +1665,7 @@ public interface CairoConfiguration {
     boolean isSqlLatestByJitEnabled();
 
     /**
-     * Whether statements compile with the legacy planner rather than the logical-plan one, unless the session chooses,
-     * see {@link io.questdb.griffin.SqlExecutionContext#isLegacyPlannerEnabled()}. Reloadable.
+     * Whether statements compile with the legacy planner rather than the logical-plan one. Reloadable.
      */
     boolean isSqlLegacyPlannerEnabled();
 

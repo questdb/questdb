@@ -63,8 +63,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -72,9 +70,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    public static final int LEGACY_PLANNER_OFF = 2;
-    public static final int LEGACY_PLANNER_ON = 1;
-    public static final int LEGACY_PLANNER_SERVER = 0;
     private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
@@ -116,7 +111,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean isViewCompile;
     private boolean isViewMetadataSubquery;
     private int jitMode;
-    private int legacyPlanner = LEGACY_PLANNER_SERVER;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
     private long nowMicros;
@@ -177,23 +171,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
         windowContexts.add(windowContext);
-    }
-
-    /**
-     * The session's choice of planner that {@code true} or {@code false} spells, as the {@code Legacy-Planner} HTTP
-     * header and the {@code legacy_planner} PostgreSQL startup option do: any other value, or none, leaves the choice
-     * to the server.
-     */
-    public static int legacyPlannerOf(@Nullable Utf8Sequence value) {
-        if (value != null) {
-            if (Utf8s.equalsIgnoreCaseAscii("true", value)) {
-                return LEGACY_PLANNER_ON;
-            }
-            if (Utf8s.equalsIgnoreCaseAscii("false", value)) {
-                return LEGACY_PLANNER_OFF;
-            }
-        }
-        return LEGACY_PLANNER_SERVER;
     }
 
     @Override
@@ -529,7 +506,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public boolean isLegacyPlannerEnabled() {
-        return legacyPlanner == LEGACY_PLANNER_SERVER ? cairoConfiguration.isSqlLegacyPlannerEnabled() : legacyPlanner == LEGACY_PLANNER_ON;
+        return cairoConfiguration.isSqlLegacyPlannerEnabled();
     }
 
     @Override
@@ -776,14 +753,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
-    }
-
-    /**
-     * Sets the session's choice of planner: {@link #LEGACY_PLANNER_ON} or {@link #LEGACY_PLANNER_OFF} overrides the
-     * server's, {@link #LEGACY_PLANNER_SERVER} follows it.
-     */
-    public void setLegacyPlanner(int legacyPlanner) {
-        this.legacyPlanner = legacyPlanner;
     }
 
     @Override

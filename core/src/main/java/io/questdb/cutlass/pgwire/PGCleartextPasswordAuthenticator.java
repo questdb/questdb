@@ -32,7 +32,6 @@ import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -45,7 +44,6 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -287,57 +285,6 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         sendBufWritePos = sendBufStart + len;
     }
 
-    // Applies the settings of the "options" startup parameter, "-c name=value" each, separated by spaces, and reports
-    // whether it knew every setting and its value.
-    private boolean parseOptions(long lo, long hi) {
-        boolean parsed = true;
-        long p = lo;
-        while (true) {
-            while (p < hi && Unsafe.getByte(p) == ' ') {
-                p++;
-            }
-            if (p == hi) {
-                return parsed;
-            }
-            if (hi - p < 2 || Unsafe.getByte(p) != '-' || Unsafe.getByte(p + 1) != 'c') {
-                return false;
-            }
-            p += 2;
-            while (p < hi && Unsafe.getByte(p) == ' ') {
-                p++;
-            }
-            final long settingLo = p;
-            while (p < hi && Unsafe.getByte(p) != ' ') {
-                p++;
-            }
-            parsed &= parseSetting(settingLo, p);
-        }
-    }
-
-    private boolean parseSetting(long lo, long hi) {
-        long eq = lo;
-        while (eq < hi && Unsafe.getByte(eq) != '=') {
-            eq++;
-        }
-        if (eq == hi) {
-            return false;
-        }
-        if (Utf8s.equalsAscii("statement_timeout", lo, eq)) {
-            try {
-                optionsListener.setSqlTimeout(Numbers.parseLong(dus.of(eq + 1, hi, false)));
-                return true;
-            } catch (NumericException ex) {
-                return false;
-            }
-        }
-        if (Utf8s.equalsAscii("legacy_planner", lo, eq)) {
-            final int legacyPlanner = SqlExecutionContextImpl.legacyPlannerOf(dus.of(eq + 1, hi, false));
-            optionsListener.setLegacyPlanner(legacyPlanner);
-            return legacyPlanner != SqlExecutionContextImpl.LEGACY_PLANNER_SERVER;
-        }
-        return false;
-    }
-
     private void prepareBackendKeyData(ResponseSink responseSink) {
         responseSink.put('K');
         responseSink.putInt(Integer.BYTES * 3); // length of this message
@@ -522,7 +469,20 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 e.put(dus.of(valueLo, valueHi, false));
                 this.username = e.toImmutable();
             }
-            final boolean parsed = !PGKeywords.isOptions(nameLo, nameHi - nameLo) || parseOptions(valueLo, valueHi);
+            boolean parsed = true;
+            if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
+                if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
+                    try {
+                        dus.of(valueLo + 21, valueHi, false);
+                        long statementTimeout = Numbers.parseLong(dus);
+                        optionsListener.setSqlTimeout(statementTimeout);
+                    } catch (NumericException ex) {
+                        parsed = false;
+                    }
+                } else {
+                    parsed = false;
+                }
+            }
             if (parsed) {
                 LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi, false))
                         .$(", value=").$(dus.of(valueLo, valueHi, false))

@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -305,11 +304,6 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
         @Override
         public ObjList<? extends Utf8Sequence> getHeaderNames() {
             return headerNames;
-        }
-
-        @Override
-        public int getLegacyPlanner() {
-            return SqlExecutionContextImpl.LEGACY_PLANNER_SERVER;
         }
 
         @Override

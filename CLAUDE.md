@@ -604,13 +604,12 @@ one.
 - **Edit legacy code only to keep it building.** When a change to shared code
   (functions, cursor factories, runtime, storage) breaks the legacy planner,
   adapt it with the smallest mechanical edit.
-- **The switch.** `cairo.sql.legacy.planner.enabled` (default `false`,
-  reloadable) chooses the planner for the server. The `Legacy-Planner` HTTP
-  header and the `legacy_planner` PostgreSQL startup option
-  (`options=-c legacy_planner=true`), `true` or `false`, override it for one
-  request or connection, and `SqlExecutionContext.isLegacyPlannerEnabled()`
-  resolves the choice. Tests run on the new planner unless they set the
-  switch.
+- **The switch.** `cairo.sql.legacy.planner.enabled` (default `false`) is the
+  only way to choose the planner, for the whole server. It is reloadable:
+  statements compile with the planner the server names at the time, and the
+  select and insert caches key their plans by planner, so a reload never
+  reuses a plan the other planner compiled. Tests run on the new planner
+  unless they set the property.
 
 ### Entry Points
 

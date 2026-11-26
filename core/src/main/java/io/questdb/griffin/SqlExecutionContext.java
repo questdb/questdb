@@ -364,9 +364,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * Whether the statements of this context compile with the {@link LegacyPlanner}: as the session chose, see
-     * {@link SqlExecutionContextImpl#setLegacyPlanner(int)}, or else as the server does, see
-     * {@link io.questdb.cairo.CairoConfiguration#isSqlLegacyPlannerEnabled()}.
+     * Whether the statements of this context compile with the {@link LegacyPlanner}, as the server's reloadable
+     * {@link io.questdb.cairo.CairoConfiguration#isSqlLegacyPlannerEnabled()} says.
      */
     boolean isLegacyPlannerEnabled();
 

@@ -51,4 +51,33 @@ public class PGKeywords {
                 && Unsafe.getByte(i++) == 'e'
                 && Unsafe.getByte(i) == 'r';
     }
+
+    //"-c statement_timeout="
+    public static boolean startsWithTimeoutOption(long lpsz, long len) {
+        if (len < 21) {
+            return false;
+        }
+        long i = lpsz;
+        return Unsafe.getByte(i++) == '-'
+                && Unsafe.getByte(i++) == 'c'
+                && Unsafe.getByte(i++) == ' '
+                && Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'a'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'm'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'n'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i++) == 'i'
+                && Unsafe.getByte(i++) == 'm'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'o'
+                && Unsafe.getByte(i++) == 'u'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i) == '=';
+    }
 }

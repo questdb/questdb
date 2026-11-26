@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
@@ -92,7 +91,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private boolean isStatusCode = true;
     private boolean isStatusText = true;
     private boolean isUrl = true;
-    private int legacyPlanner = SqlExecutionContextImpl.LEGACY_PLANNER_SERVER;
     private DirectUtf8String method;
     private DirectUtf8String methodLine;
     private boolean needMethod;
@@ -172,7 +170,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.isUrl = true;
         this.isQueryParams = false;
         this.statementTimeout = -1L;
-        this.legacyPlanner = SqlExecutionContextImpl.LEGACY_PLANNER_SERVER;
         this.protocol = null;
         this.statusCode = null;
         this.statusText = null;
@@ -262,11 +259,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public int getIgnoredCookieCount() {
         return ignoredCookieCount;
-    }
-
-    @Override
-    public int getLegacyPlanner() {
-        return legacyPlanner;
     }
 
     @Override
@@ -828,13 +820,8 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         parseContentType();
         parseContentDisposition();
         parseStatementTimeout();
-        parseLegacyPlanner();
         parseContentLength();
         cookieSortAndMap();
-    }
-
-    private void parseLegacyPlanner() {
-        legacyPlanner = SqlExecutionContextImpl.legacyPlannerOf(getHeader(HEADER_LEGACY_PLANNER));
     }
 
     private long parseMediaType(long lo, long hi) {

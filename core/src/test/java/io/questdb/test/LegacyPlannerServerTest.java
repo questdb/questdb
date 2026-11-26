@@ -31,11 +31,9 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -45,6 +43,11 @@ import java.sql.Statement;
 import java.util.Properties;
 
 public class LegacyPlannerServerTest extends AbstractBootstrapTest {
+    private static final String[] CACHING = {
+            "http.query.cache.enabled=true",
+            "pg.select.cache.enabled=true",
+            "metrics.enabled=true"
+    };
     // the legacy planner projects the join through a SelectedRecord and names the column without its table
     private static final String LEGACY_PLAN = "functions: [x+1]";
     private static final String NEW_PLAN = "functions: [a.x+1]";
@@ -60,177 +63,89 @@ public class LegacyPlannerServerTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testHttpExportHeaderSelectsPlanner() throws Exception {
-        assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer(); TestHttpClient client = new TestHttpClient()) {
-                assertPlan(LEGACY_PLAN, httpGet(client, "/exp", PLAN_SQL, "true"));
-                assertPlan(NEW_PLAN, httpGet(client, "/exp", PLAN_SQL, null));
-            }
-        });
-    }
-
-    @Test
     public void testHttpExportSelectCacheKeepsPlannersApart() throws Exception {
-        createCachingConfiguration();
+        createDummyConfiguration(CACHING);
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = startServer(); TestHttpClient client = new TestHttpClient()) {
                 client.setKeepConnection(true);
                 final Counter hits = serverMain.getEngine().getMetrics().jsonQueryMetrics().cacheHitCounter();
                 final long hitsBefore = hits.getValue();
-                Assert.assertEquals("\"x\"\r\n1\r\n", httpGet(client, "/exp", SELECT_SQL, null));
-                httpGet(client, "/exp", SELECT_SQL, "true");
+                Assert.assertEquals("\"x\"\r\n1\r\n", httpGet(client, "/exp", SELECT_SQL));
+                reloadPlanner(serverMain, true, CACHING);
+                httpGet(client, "/exp", SELECT_SQL);
                 Assert.assertEquals(0, hits.getValue() - hitsBefore);
-                Assert.assertEquals("\"x\"\r\n1\r\n", httpGet(client, "/exp", SELECT_SQL, "true"));
+                Assert.assertEquals("\"x\"\r\n1\r\n", httpGet(client, "/exp", SELECT_SQL));
                 Assert.assertEquals(1, hits.getValue() - hitsBefore);
-                httpGet(client, "/exp", SELECT_SQL, null);
+                reloadPlanner(serverMain, false, CACHING);
+                httpGet(client, "/exp", SELECT_SQL);
                 Assert.assertEquals(2, hits.getValue() - hitsBefore);
-            }
-        });
-    }
-
-    @Test
-    public void testHttpHeaderAppliesToItsRequestOnly() throws Exception {
-        assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer(); TestHttpClient client = new TestHttpClient()) {
-                client.setKeepConnection(true);
-                assertPlan(LEGACY_PLAN, httpGet(client, "/exec", PLAN_SQL, "true"));
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, null));
-            }
-        });
-    }
-
-    @Test
-    public void testHttpHeaderOverridesServerProperty() throws Exception {
-        createDummyConfiguration("cairo.sql.legacy.planner.enabled=true");
-        assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer(); TestHttpClient client = new TestHttpClient()) {
-                assertPlan(LEGACY_PLAN, httpGet(client, "/exec", PLAN_SQL, null));
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, "false"));
-                assertPlan(LEGACY_PLAN, httpGet(client, "/exec", PLAN_SQL, "garbage"));
-            }
-        });
-    }
-
-    @Test
-    public void testHttpHeaderSelectsPlanner() throws Exception {
-        assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer(); TestHttpClient client = new TestHttpClient()) {
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, null));
-                assertPlan(LEGACY_PLAN, httpGet(client, "/exec", PLAN_SQL, "true"));
-                assertPlan(LEGACY_PLAN, httpGet(client, "/exec", PLAN_SQL, "TRUE"));
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, "false"));
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, "False"));
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, ""));
-                assertPlan(NEW_PLAN, httpGet(client, "/exec", PLAN_SQL, "1"));
             }
         });
     }
 
     @Test
     public void testHttpSelectCacheKeepsPlannersApart() throws Exception {
-        createCachingConfiguration();
+        createDummyConfiguration(CACHING);
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = startServer(); TestHttpClient client = new TestHttpClient()) {
                 // one connection runs the requests in order, so each returns its factory to the cache before the next
                 client.setKeepConnection(true);
                 final Counter hits = serverMain.getEngine().getMetrics().jsonQueryMetrics().cacheHitCounter();
                 final long hitsBefore = hits.getValue();
-                httpGet(client, "/exec", SELECT_SQL, null);
-                httpGet(client, "/exec", SELECT_SQL, "true");
+                httpGet(client, "/exec", SELECT_SQL);
+                reloadPlanner(serverMain, true, CACHING);
+                httpGet(client, "/exec", SELECT_SQL);
                 Assert.assertEquals(0, hits.getValue() - hitsBefore);
-                httpGet(client, "/exec", SELECT_SQL, "true");
+                httpGet(client, "/exec", SELECT_SQL);
                 Assert.assertEquals(1, hits.getValue() - hitsBefore);
-                httpGet(client, "/exec", SELECT_SQL, null);
+                reloadPlanner(serverMain, false, CACHING);
+                httpGet(client, "/exec", SELECT_SQL);
                 Assert.assertEquals(2, hits.getValue() - hitsBefore);
             }
         });
     }
 
     @Test
-    public void testPgOptionAppliesAlongsideStatementTimeout() throws Exception {
+    public void testPgPreparedStatementOpenAcrossReloadReturnsToItsPlanner() throws Exception {
+        createDummyConfiguration(CACHING);
         assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer()) {
-                for (String options : new String[]{
-                        "-c statement_timeout=1 -c legacy_planner=true",
-                        "-c legacy_planner=true -c statement_timeout=1",
-                        "-c  legacy_planner=true   -cstatement_timeout=1 ",
-                        "-c unknown=1 -c legacy_planner=true -c statement_timeout=1"
-                }) {
-                    try (Connection conn = pgConnection(options); Statement stmt = conn.createStatement()) {
-                        assertPlan(LEGACY_PLAN, pgPlan(stmt));
-                        try {
-                            stmt.executeQuery("SELECT sum(x) FROM long_sequence(10_000_000_000)");
-                            Assert.fail("statement timeout ignored for options: " + options);
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-                        }
-                    }
+            try (ServerMain serverMain = startServer()) {
+                final Counter hits = serverMain.getEngine().getMetrics().pgWireMetrics().selectCacheHitCounter();
+                reloadPlanner(serverMain, true, CACHING);
+                try (Connection conn = preparingConnection(); PreparedStatement stmt = conn.prepareStatement(SELECT_SQL)) {
+                    assertSelect(stmt);
+                    assertSelect(stmt);
+                    reloadPlanner(serverMain, false, CACHING);
+                    assertSelect(stmt);
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testPgOptionOverridesServerProperty() throws Exception {
-        createDummyConfiguration("cairo.sql.legacy.planner.enabled=true");
-        assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer()) {
-                assertPgPlan(LEGACY_PLAN, null);
-                assertPgPlan(NEW_PLAN, "-c legacy_planner=false");
-                assertPgPlan(LEGACY_PLAN, "-c legacy_planner=maybe");
-            }
-        });
-    }
-
-    @Test
-    public void testPgOptionSelectsPlanner() throws Exception {
-        assertMemoryLeak(() -> {
-            try (ServerMain ignored = startServer()) {
-                assertPgPlan(NEW_PLAN, null);
-                assertPgPlan(LEGACY_PLAN, "-c legacy_planner=true");
-                assertPgPlan(LEGACY_PLAN, "-c legacy_planner=True");
-                assertPgPlan(NEW_PLAN, "-c legacy_planner=false");
-                assertPgPlan(NEW_PLAN, "-c legacy_planner=");
-                assertPgPlan(NEW_PLAN, "-c legacy_planner");
-                assertPgPlan(NEW_PLAN, "-c statement_timeout=60000");
-                assertPgPlan(LEGACY_PLAN, "-c statement_timeout=soon -c legacy_planner=true");
-                assertPgPlan(LEGACY_PLAN, "-c legacy_planner=true -c");
-                // a token that is no "-c" setting ends the options, so nothing after it applies
-                assertPgPlan(NEW_PLAN, "x -c legacy_planner=true");
-                assertPgPlan(NEW_PLAN, "-x legacy_planner=true");
-                assertPgPlan(NEW_PLAN, "-");
-                // a connection never inherits the planner of the one that used its context before
-                assertPgPlan(LEGACY_PLAN, "-c legacy_planner=true");
-                assertPgPlan(NEW_PLAN, null);
+                final long hitsBefore = hits.getValue();
+                pgSelect();
+                Assert.assertEquals(0, hits.getValue() - hitsBefore);
+                reloadPlanner(serverMain, true, CACHING);
+                pgSelect();
+                Assert.assertEquals(1, hits.getValue() - hitsBefore);
             }
         });
     }
 
     @Test
     public void testPgPreparedStatementSelectCacheKeepsPlannersApart() throws Exception {
-        createCachingConfiguration();
+        createDummyConfiguration(CACHING);
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = startServer()) {
                 final Counter hits = serverMain.getEngine().getMetrics().pgWireMetrics().selectCacheHitCounter();
-                final Properties properties = new Properties();
-                properties.putAll(PG_CONNECTION_PROPERTIES);
-                properties.setProperty("options", "-c legacy_planner=true");
-                // a server-side statement from the first run, so that every later run reuses the executed statement
-                properties.setProperty("prepareThreshold", "1");
-                try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, properties);
-                     PreparedStatement stmt = conn.prepareStatement(SELECT_SQL)) {
+                reloadPlanner(serverMain, true, CACHING);
+                try (Connection conn = preparingConnection(); PreparedStatement stmt = conn.prepareStatement(SELECT_SQL)) {
                     for (int i = 0; i < 3; i++) {
-                        try (ResultSet rs = stmt.executeQuery()) {
-                            Assert.assertTrue(rs.next());
-                            Assert.assertEquals(1, rs.getInt(1));
-                            Assert.assertFalse(rs.next());
-                        }
+                        assertSelect(stmt);
                     }
                 }
+                reloadPlanner(serverMain, false, CACHING);
                 final long hitsBefore = hits.getValue();
-                pgSelect(null);
+                pgSelect();
                 Assert.assertEquals(0, hits.getValue() - hitsBefore);
-                pgSelect("-c legacy_planner=true");
+                reloadPlanner(serverMain, true, CACHING);
+                pgSelect();
                 Assert.assertEquals(1, hits.getValue() - hitsBefore);
             }
         });
@@ -238,27 +153,46 @@ public class LegacyPlannerServerTest extends AbstractBootstrapTest {
 
     @Test
     public void testPgSelectCacheKeepsPlannersApart() throws Exception {
-        createCachingConfiguration();
+        createDummyConfiguration(CACHING);
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = startServer()) {
                 // pgwire returns an executed statement to the cache at Sync, before the client sees its result
                 final Counter hits = serverMain.getEngine().getMetrics().pgWireMetrics().selectCacheHitCounter();
                 final long hitsBefore = hits.getValue();
-                pgSelect(null);
-                pgSelect("-c legacy_planner=true");
+                pgSelect();
+                reloadPlanner(serverMain, true, CACHING);
+                pgSelect();
                 Assert.assertEquals(0, hits.getValue() - hitsBefore);
-                pgSelect("-c legacy_planner=true");
+                pgSelect();
                 Assert.assertEquals(1, hits.getValue() - hitsBefore);
-                pgSelect(null);
+                reloadPlanner(serverMain, false, CACHING);
+                pgSelect();
                 Assert.assertEquals(2, hits.getValue() - hitsBefore);
             }
         });
     }
 
-    private static void assertPgPlan(String expectedPlan, @Nullable String options) throws Exception {
-        try (Connection conn = pgConnection(options); Statement stmt = conn.createStatement()) {
-            assertPlan(expectedPlan, pgPlan(stmt));
-        }
+    @Test
+    public void testReloadSwitchesPlanner() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = startServer(); TestHttpClient client = new TestHttpClient()) {
+                assertPlanners(client, NEW_PLAN);
+                reloadPlanner(serverMain, true);
+                assertPlanners(client, LEGACY_PLAN);
+                reloadPlanner(serverMain, false);
+                assertPlanners(client, NEW_PLAN);
+            }
+        });
+    }
+
+    @Test
+    public void testServerPropertySelectsPlannerAtStartup() throws Exception {
+        createDummyConfiguration("cairo.sql.legacy.planner.enabled=true");
+        assertMemoryLeak(() -> {
+            try (ServerMain ignored = startServer(); TestHttpClient client = new TestHttpClient()) {
+                assertPlanners(client, LEGACY_PLAN);
+            }
+        });
     }
 
     private static void assertPlan(String expectedPlan, CharSequence plan) {
@@ -266,20 +200,31 @@ public class LegacyPlannerServerTest extends AbstractBootstrapTest {
         TestUtils.assertNotContains(plan, LEGACY_PLAN.equals(expectedPlan) ? NEW_PLAN : LEGACY_PLAN);
     }
 
-    private static void createCachingConfiguration() throws Exception {
-        createDummyConfiguration(
-                "http.query.cache.enabled=true",
-                "pg.select.cache.enabled=true",
-                "metrics.enabled=true"
-        );
+    private static void assertPlanners(TestHttpClient client, String expectedPlan) throws Exception {
+        assertPlan(expectedPlan, httpGet(client, "/exec", PLAN_SQL));
+        assertPlan(expectedPlan, httpGet(client, "/exp", PLAN_SQL));
+        try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES); Statement stmt = conn.createStatement()) {
+            final StringBuilder plan = new StringBuilder();
+            try (ResultSet rs = stmt.executeQuery(PLAN_SQL)) {
+                while (rs.next()) {
+                    plan.append(rs.getString(1)).append('\n');
+                }
+            }
+            assertPlan(expectedPlan, plan);
+        }
     }
 
-    private static String httpGet(TestHttpClient client, String url, String sql, @Nullable String legacyPlanner) {
+    private static void assertSelect(PreparedStatement stmt) throws Exception {
+        try (ResultSet rs = stmt.executeQuery()) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(1, rs.getInt(1));
+            Assert.assertFalse(rs.next());
+        }
+    }
+
+    private static String httpGet(TestHttpClient client, String url, String sql) {
         final HttpClient.Request request = client.getHttpClient().newRequest("localhost", HTTP_PORT);
         request.GET().url(url).query("query", sql);
-        if (legacyPlanner != null) {
-            request.header("Legacy-Planner", legacyPlanner);
-        }
         final HttpClient.ResponseHeaders response = request.send();
         response.await();
         final Utf8StringSink sink = new Utf8StringSink();
@@ -288,31 +233,33 @@ public class LegacyPlannerServerTest extends AbstractBootstrapTest {
         return sink.toString();
     }
 
-    private static Connection pgConnection(@Nullable String options) throws Exception {
-        final Properties properties = new Properties();
-        properties.putAll(PG_CONNECTION_PROPERTIES);
-        if (options != null) {
-            properties.setProperty("options", options);
-        }
-        return DriverManager.getConnection(PG_CONNECTION_URI, properties);
-    }
-
-    private static String pgPlan(Statement stmt) throws Exception {
-        final StringBuilder plan = new StringBuilder();
-        try (ResultSet rs = stmt.executeQuery(PLAN_SQL)) {
-            while (rs.next()) {
-                plan.append(rs.getString(1)).append('\n');
-            }
-        }
-        return plan.toString();
-    }
-
-    private static void pgSelect(@Nullable String options) throws Exception {
-        try (Connection conn = pgConnection(options); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(SELECT_SQL)) {
+    private static void pgSelect() throws Exception {
+        try (
+                Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(SELECT_SQL)
+        ) {
             Assert.assertTrue(rs.next());
             Assert.assertEquals(1, rs.getInt(1));
             Assert.assertFalse(rs.next());
         }
+    }
+
+    // a server-side statement from the first run, so that every later run reuses the executed statement
+    private static Connection preparingConnection() throws Exception {
+        final Properties properties = new Properties();
+        properties.putAll(PG_CONNECTION_PROPERTIES);
+        properties.setProperty("prepareThreshold", "1");
+        return DriverManager.getConnection(PG_CONNECTION_URI, properties);
+    }
+
+    private static void reloadPlanner(ServerMain serverMain, boolean isLegacy, String... extra) throws Exception {
+        final String[] properties = new String[extra.length + 1];
+        System.arraycopy(extra, 0, properties, 0, extra.length);
+        properties[extra.length] = "cairo.sql.legacy.planner.enabled=" + isLegacy;
+        createDummyConfiguration(properties);
+        Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+        Assert.assertEquals(isLegacy, serverMain.getEngine().getConfiguration().isSqlLegacyPlannerEnabled());
     }
 
     private static ServerMain startServer() throws Exception {

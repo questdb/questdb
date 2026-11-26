@@ -24,8 +24,7 @@
 
 /**
  * The query planner as it was at commit {@code d35f9dd9b73aa74023525ee3a4d34037c1bd3ecb}, kept as a fallback
- * for the logical-plan planner. The {@code cairo.sql.legacy.planner.enabled} property, the
- * {@code Legacy-Planner} HTTP header and the {@code legacy_planner} PostgreSQL startup option select it.
+ * for the logical-plan planner. The reloadable {@code cairo.sql.legacy.planner.enabled} property selects it.
  * <p>
  * The legacy planner takes no fixes, and goes once the new planner has run stably for several releases.
  */
