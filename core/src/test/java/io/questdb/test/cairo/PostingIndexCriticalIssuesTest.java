@@ -3975,10 +3975,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // Drain deferred purges with nothing pinned, then verify the exact final
             // covered totals (count exact; sum within epsilon to dodge double formatting).
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-            engine.releaseAllWriters();
+            releaseAndDrainPostingSealPurges();
 
             final long expectedSum = initialSum + (expectedRows - initialRows); // each O3 row adds price 1.0
             try (
@@ -4530,10 +4527,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
 
             // Pool halted: drain the deferred purges with nothing pinned.
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-            engine.releaseAllWriters();
+            releaseAndDrainPostingSealPurges();
 
             // 6 days * 2000 + 6 O3 rows.
             assertQuery("SELECT count() FROM t_mt WHERE sym = 'A'")
@@ -5779,6 +5773,75 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 runPostingSealPurgeJob(purgeJob);
             }
             Assert.assertFalse(isRecoveryValueFilePresent(stagedSealTxn));
+        });
+    }
+
+    /**
+     * The state the concurrent fuzz tests leave when the pool's purge job never runs, as on a loaded CI agent: O3
+     * commits rewrite covered parquet partitions and reseal the native last one while the purge queue is full, so
+     * the writer keeps every purge they record. Closing the writer before the drain hands the drain all of them,
+     * and each partition keeps only its live value file.
+     */
+    @Test
+    public void testParquetCoveringSealPurgesHeldBehindFullQueueAreReclaimedAfterWriterClose() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_held (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= 3; d++) {
+                execute("INSERT INTO t_held SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(1000)");
+            }
+            // The last day stays native: CONVERT skips the active partition.
+            execute("ALTER TABLE t_held CONVERT PARTITION TO PARQUET LIST '2024-02-01', '2024-02-02'");
+            releaseAndDrainPostingSealPurges();
+
+            final TableToken token = engine.getTableTokenIfExists("t_held");
+            Assert.assertNotNull("table must exist", token);
+            final String[] days = {"2024-02-01", "2024-02-02", "2024-02-03"};
+            fillPostingSealPurgeQueue(token);
+            try {
+                for (int minute = 10; minute < 12; minute++) {
+                    execute("INSERT INTO t_held VALUES ('2024-02-01T00:" + minute + ":00.500000Z', 'A', 1.0), "
+                            + "('2024-02-02T00:" + minute + ":00.500000Z', 'A', 1.0), "
+                            + "('2024-02-03T00:" + minute + ":00.500000Z', 'A', 1.0)");
+                }
+                for (String day : days) {
+                    final long partitionTimestamp = MicrosFormatUtils.parseTimestamp(day + "T00:00:00.000000Z");
+                    Assert.assertTrue(
+                            "the writer must hold the purges of the superseded value files of " + day,
+                            countPostingValueFiles("t_held", "sym", partitionTimestamp) > 1
+                    );
+                }
+
+                releaseAndDrainPostingSealPurges();
+
+                for (String day : days) {
+                    final long partitionTimestamp = MicrosFormatUtils.parseTimestamp(day + "T00:00:00.000000Z");
+                    Assert.assertEquals(
+                            "partition " + day + " must keep exactly one value file",
+                            1,
+                            countPostingValueFiles("t_held", "sym", partitionTimestamp)
+                    );
+                }
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+            // 3 days of rows 1..1000 and 6 O3 rows of price 1.0; the covered query reads the live value files.
+            assertQuery("SELECT count(), sum(price) FROM t_held WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            3006\t1501506.0
+                            """);
         });
     }
 
@@ -13139,6 +13202,20 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             PostingIndexChainWriter chain = new PostingIndexChainWriter();
             chain.openExisting(pk);
             return chain.getRegionLimit();
+        }
+    }
+
+    /**
+     * Drains every posting seal purge the pool's job left behind. A commit that finds the purge queue full keeps
+     * the rest of its purges until its next commit or its close, so the writers close first and hand them over. A
+     * pool whose workers start late, as on a loaded 2-CPU CI agent, may not run its purge job at all. The readers
+     * close too: Windows refuses to delete a file a pooled reader still maps.
+     */
+    private static void releaseAndDrainPostingSealPurges() throws SqlException {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+            runPostingSealPurgeJob(purgeJob);
         }
     }
 
