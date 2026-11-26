@@ -339,6 +339,30 @@ public class TtlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuturePartitionSurvivesMonthTtl() throws Exception {
+        // A month TTL ages partitions in calendar months, and a partition dated after the wall clock has no
+        // age, however many months ahead it is. Every partition before the future ones has expired, so the
+        // eviction scan reaches them.
+        setCurrentMicros(1_717_243_200_000_000L); // 2024-06-01T12:00:00Z
+        try {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 MONTH" + wal);
+            execute("INSERT INTO tango VALUES ('2024-04-01T00:00:00.000000Z'), ('2024-09-01T00:00:00.000000Z'), ('2024-10-01T00:00:00.000000Z')");
+            drainWalQueue();
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            2024-09-01T00:00:00.000000Z
+                            2024-10-01T00:00:00.000000Z
+                            """);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
     public void testFutureTimestampDoesNotWipeTable() throws Exception {
         // Set wall clock to 2024-06-01T12:00:00Z
         setCurrentMicros(1717243200000000L); // 1717243200 seconds since epoch, in micros

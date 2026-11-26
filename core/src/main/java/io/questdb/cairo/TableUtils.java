@@ -3790,7 +3790,12 @@ public final class TableUtils {
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
         // TTL < 0 means it's in months
         if (ttl <= 0) {
-            return timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
+            // monthsBetween() counts whole months in either direction, so on its own it ages a boundary
+            // N months past the reference as N months old. A boundary past the reference has no age at
+            // all, as the signed difference of the hour branch below answers. With the wall-clock
+            // reference, every partition holding future-dated rows lies there.
+            return partitionBoundary <= maxTimestamp
+                    && timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
         }
         // The parser admits hour counts far past what a nanosecond timestamp can express:
         // CommonUtils.toHoursOrMonths range-checks DAYS and WEEKS but passes the HOUR unit

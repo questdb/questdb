@@ -601,6 +601,25 @@ public class TableUtilsTest extends AbstractTest {
         Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
     }
 
+    @Test
+    public void testCheckStoragePolicyTtlMonthsFutureFloor() {
+        // A partition dated after the reference has no age, however many months ahead it is. The same distance
+        // before the reference is past a 1-month policy.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long maxTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long pastPartition = driver.fromDays(19_723 - 120); // 2023-09-03
+        long futurePartition = driver.fromDays(19_723 + 120); // 2024-04-30
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, pastPartition, maxTimestamp, -1));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, -1));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, -12));
+        // Hour and zero TTLs agree.
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, 24));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, 0));
+    }
+
     @Test(expected = AssertionError.class)
     public void testCheckStoragePolicyTtlRejectsNull() {
         TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
@@ -686,6 +705,21 @@ public class TableUtilsTest extends AbstractTest {
         // 2 months after ceiling: not enough for 3-month TTL
         long maxTimestamp2Months = partitionCeiling + driver.fromDays(59);
         Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
+    }
+
+    @Test
+    public void testCheckTtlMonthsFutureCeiling() {
+        // Table TTL ages a partition from its ceiling. A ceiling after the reference has no age: neither a
+        // partition dated months ahead, nor the partition holding the reference, expires.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.MONTH);
+        long maxTimestamp = driver.fromDays(19_723); // 2024-01-01, the floor of its partition
+        long futurePartition = driver.fromDays(19_723 + 121); // 2024-05-01, ceiling 2024-06-01
+
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, futurePartition, maxTimestamp, -1));
+        // Its ceiling, 2024-02-01, is a whole month after the reference.
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, maxTimestamp, maxTimestamp, -1));
     }
 
     @Test(expected = AssertionError.class)
