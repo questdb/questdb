@@ -222,9 +222,9 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             }
             // The planner builds the single-threaded top K only over a GROUP BY, whose rows carry no table's
             // designated timestamp.
-            assertFalse("SELECT ts, count() c FROM t GROUP BY ts ORDER BY ts DESC LIMIT 3", BACKWARD, "Long Top K lo: 3", "keys: [ts desc]");
+            assertFalse("SELECT ts, count() c FROM t GROUP BY ts ORDER BY ts DESC LIMIT 3", BACKWARD, "Limit value: 3", "Async Stream Group By", "Row backward scan");
             // A TIMESTAMP(col) claim on the GROUP BY gives the top K a base with the same timestamp, still not a table's.
-            assertFalse("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts) timestamp(ts) ORDER BY ts DESC LIMIT 3", BACKWARD, "Long Top K lo: 3", "keys: [ts desc]", "SelectedRecord", "Async Group By");
+            assertFalse("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts) timestamp(ts) ORDER BY ts DESC LIMIT 3", BACKWARD, "Encode sort lo: 3", "keys: [ts desc]", "SelectedRecord", "Async Stream Group By");
 
             // The timestamp is not a table's designated timestamp, or the rows do not follow the reported direction.
             assertFalse("SELECT * FROM t timestamp(other_ts)", FORWARD, "PageFrame", "Frame forward scan on: t");
@@ -255,7 +255,7 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             assertFalse("SELECT * FROM vrl", ANY_DIRECTION, "LatestByAllIndexed", "Frame backward scan on: r");
             assertFalse("SELECT s, x, ts FROM rc WHERE s IN ('a', 'b') LATEST ON ts PARTITION BY s", ANY_DIRECTION, "CoveringIndex op: latest");
             assertFalse("SELECT * FROM (SELECT s, x, rnd_int() r, ts FROM t) LATEST ON ts PARTITION BY s", ANY_DIRECTION, "LatestBy");
-            assertFalse("SELECT ts, count() c FROM t SAMPLE BY 1d", ANY_DIRECTION, "Encode sort light", "Group");
+            assertFalse("SELECT ts, count() c FROM t SAMPLE BY 1d", ANY_DIRECTION, "Async Stream Group By", "keyFunctions: [timestamp_floor_utc('1d',ts)]");
             assertFalse("SELECT ts, count() c FROM t SAMPLE BY 1d FILL(NULL)", ANY_DIRECTION, "Fill");
             assertFalse("SELECT x, ts, row_number() OVER () rn FROM t", ANY_DIRECTION, "Window");
             assertFalse("SELECT s, x, ts, avg(x) OVER (PARTITION BY s) a FROM t WHERE s IN ('a', 'b')", ANY_DIRECTION, "CachedWindow");

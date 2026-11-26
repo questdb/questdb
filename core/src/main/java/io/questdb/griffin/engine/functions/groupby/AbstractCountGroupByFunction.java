@@ -137,7 +137,13 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("count(").val(arg).val(')');
     }
+
 }
