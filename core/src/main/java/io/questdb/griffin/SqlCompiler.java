@@ -59,9 +59,12 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * @param viewDefinition   the definition of the view
      * @param viewColumnNames  the names of the view's columns, in the order the view stores them
      * @param executionContext the context to compile the SQL with, which the method leaves as it found it
-     * @param sqlColumns       receives the output columns of the returned SQL as CREATE MATERIALIZED VIEW compiles
-     *                         it; when the method returns null, those of the stored SQL as the view's refresh
-     *                         compiles it, or none when the stored SQL does not compile
+     * @param sqlColumns       receives the columns that CREATE MATERIALIZED VIEW without a column list, a TIMESTAMP
+     *                         clause or an INDEX clause builds from the returned SQL: the output columns of the SQL
+     *                         as CREATE compiles it, with the indexes that a passthrough view's columns inherit from
+     *                         the base table, and the designated timestamp; when the method returns null, those it
+     *                         builds from the stored SQL as the view's refresh compiles it, or none when the stored
+     *                         SQL does not compile
      */
     @Nullable
     String addExplicitColumnNames(

@@ -208,6 +208,53 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
+     * Returns the name of the column that CREATE MATERIALIZED VIEW without a TIMESTAMP clause makes the view's
+     * designated timestamp in place of the optimised query's own, the column of the query's GROUP BY timestamp_floor()
+     * when the query has no SAMPLE BY, or null when it takes the query's designated timestamp.
+     */
+    public static @Nullable String findTimestampFloorColumnName(@NotNull IQueryModel queryModel) {
+        if (findSampleByNode(queryModel) != null) {
+            return null;
+        }
+        final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
+        return queryColumn != null ? SqlUtil.toColumnName(queryColumn.getName()) : null;
+    }
+
+    /**
+     * Puts into {@code indexes}, keyed by column name, the index each column of a passthrough view's optimised query
+     * inherits from the base table under CREATE MATERIALIZED VIEW without a column list and an INDEX clause, see
+     * inheritBaseSymbolColumnIndex(): a column that passes an indexed SYMBOL column of the base table through, as the
+     * first of the view's columns that pass it. The columns of an aggregating view inherit no index.
+     */
+    public static void inheritBaseSymbolColumnIndexes(
+            @NotNull IQueryModel queryModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata,
+            @NotNull LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> indexes
+    ) {
+        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        final ObjList<String> passthroughColumnNames = new ObjList<>(baseTableMetadata.getColumnCount());
+        collectPassthroughColumnNames(columns, queryModel, baseTableName, baseTableMetadata, passthroughColumnNames);
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final String columnName = SqlUtil.toColumnName(column.getName());
+            final CreateTableColumnModel columnModel = CreateTableColumnModel.FACTORY.newInstance();
+            inheritBaseSymbolColumnIndex(
+                    column.getAst(),
+                    queryModel.getNestedModel(),
+                    columnModel,
+                    columnName,
+                    baseTableName,
+                    baseTableMetadata,
+                    passthroughColumnNames
+            );
+            if (columnModel.isIndexed()) {
+                indexes.put(columnName, columnModel);
+            }
+        }
+    }
+
+    /**
      * Returns true when an output column of an aggregating view's optimised query buckets the base table's designated
      * timestamp: it references that timestamp through aliases, nested selects, the master of a join and the floored
      * argument of timestamp_floor(), which SAMPLE BY lowers to, with no other transformation. Refresh recomputes the
@@ -625,22 +672,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
             final ObjList<String> passthroughColumnNames = new ObjList<>(baseTableMetadata.getColumnCount());
             if (passthrough) {
-                passthroughColumnNames.setPos(baseTableMetadata.getColumnCount());
+                collectPassthroughColumnNames(columns, queryModel, baseTableName, baseTableMetadata, passthroughColumnNames);
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     final QueryColumn column = columns.getQuick(i);
-                    final int baseColumnIndex = resolveBaseColumnIndex(
-                            column.getAst(),
-                            queryModel.getNestedModel(),
-                            baseTableName,
-                            baseTableMetadata,
-                            false
-                    );
-                    final String columnName = SqlUtil.toColumnName(column.getName());
-                    if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
-                        passthroughColumnNames.setQuick(baseColumnIndex, columnName);
-                    }
                     if (isPassthroughTimestampColumn(queryModel, column, baseTableName, baseTableMetadata)) {
-                        baseTimestampColumnNames.add(columnName);
+                        baseTimestampColumnNames.add(SqlUtil.toColumnName(column.getName()));
                     }
                 }
             } else {
@@ -758,6 +794,31 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+    }
+
+    // Puts into passthroughColumnNames, at the index of each base table column, the name of the first column of the
+    // passthrough query that passes the base column through, or null when none does.
+    private static void collectPassthroughColumnNames(
+            ObjList<QueryColumn> columns,
+            IQueryModel queryModel,
+            CharSequence baseTableName,
+            TableMetadata baseTableMetadata,
+            ObjList<String> passthroughColumnNames
+    ) {
+        passthroughColumnNames.setPos(baseTableMetadata.getColumnCount());
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final int baseColumnIndex = resolveBaseColumnIndex(
+                    column.getAst(),
+                    queryModel.getNestedModel(),
+                    baseTableName,
+                    baseTableMetadata,
+                    false
+            );
+            if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
+                passthroughColumnNames.setQuick(baseColumnIndex, SqlUtil.toColumnName(column.getName()));
+            }
+        }
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

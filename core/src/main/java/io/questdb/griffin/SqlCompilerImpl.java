@@ -99,6 +99,7 @@ import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -111,6 +112,7 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -236,6 +238,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // the names addExplicitColumnNames() requires of the columns of the SQL it returns
     private final ObjList<CharSequence> matViewColumnNames = new ObjList<>();
     private final MatViewExplicitColumnNames matViewExplicitColumnNames = new MatViewExplicitColumnNames();
+    // the indexes the columns of the last materialized view query addExplicitColumnNames() compiled inherit from the
+    // base table under CREATE MATERIALIZED VIEW, keyed by column name, see collectMatViewCreateFacts()
+    private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> matViewInheritedIndexes = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewSqlValidator matViewSqlValidator = new MatViewSqlValidator();
     private final AlterMatViewQueryValidator alterMatViewQueryValidator = new AlterMatViewQueryValidator();
     private final int maxRecompileAttempts;
@@ -262,6 +267,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    // the column of the GROUP BY timestamp_floor() of the last materialized view query addExplicitColumnNames()
+    // compiled, which CREATE MATERIALIZED VIEW makes the view's designated timestamp, see collectMatViewCreateFacts()
+    private String matViewTimestampFloorColumnName;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -502,8 +510,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             optimiser.setBareNoArgCallSink(matViewBareNoArgCallNames, matViewBareNoArgCallPositions);
             try {
                 final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+                collectMatViewCreateFacts(queryModel, viewDefinition);
                 try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
-                    GenericRecordMetadata.copyColumns(factory.getMetadata(), sqlColumns);
+                    putMatViewCreateColumns(factory.getMetadata(), sqlColumns);
                 }
             } finally {
                 optimiser.setBareNoArgCallSink(null, null);
@@ -532,7 +541,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     columnNames.add(sqlColumns.getColumnName(i));
                 }
             }
-            return isMatViewSqlProducingColumns(sql, viewDefinition.getBaseTableName(), columnNames, executionContext, sqlColumns) ? sql : null;
+            return isMatViewSqlProducingColumns(sql, viewDefinition, columnNames, executionContext, sqlColumns) ? sql : null;
         } catch (SqlException e) {
             logExplicitColumnNamesFailure(viewToken, e.getFlyweightMessage());
             return null;
@@ -552,6 +561,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
             matViewExplicitColumnNames.clear();
             matViewColumnNames.clear();
+            matViewInheritedIndexes.clear();
+            matViewTimestampFloorColumnName = null;
             clear();
         }
     }
@@ -3502,6 +3513,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.clear();
         columnNames.clear();
         matViewSqlValidator.clear();
+    }
+
+    // Reads from the optimised query of a materialized view what CREATE MATERIALIZED VIEW without a column list, a
+    // TIMESTAMP clause or an INDEX clause takes from it besides its columns' names and types, for
+    // putMatViewCreateColumns(). It reads the model before the factory's generation, whose retry may recycle it. The
+    // view's SQL is passthrough for CREATE as it was when the view took it.
+    private void collectMatViewCreateFacts(IQueryModel queryModel, MatViewDefinition viewDefinition) {
+        matViewInheritedIndexes.clear();
+        matViewTimestampFloorColumnName = CreateMatViewOperationImpl.findTimestampFloorColumnName(queryModel);
+        if (viewDefinition.isPassthrough()) {
+            final String baseTableName = viewDefinition.getBaseTableName();
+            try (TableMetadata baseTableMetadata = engine.getTableMetadata(engine.verifyTableName(baseTableName))) {
+                CreateMatViewOperationImpl.inheritBaseSymbolColumnIndexes(queryModel, baseTableName, baseTableMetadata, matViewInheritedIndexes);
+            }
+        }
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -7667,7 +7693,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // ignoring case, in the same order. Then sqlColumns receives its output columns, and is left as it is otherwise.
     private boolean isMatViewSqlProducingColumns(
             String sql,
-            String baseTableName,
+            MatViewDefinition viewDefinition,
             ObjList<CharSequence> columnNames,
             SqlExecutionContext executionContext,
             GenericRecordMetadata sqlColumns
@@ -7679,8 +7705,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final ExecutionModel model = parser.parse(lexer, executionContext, this);
         // the SQL is the view's own with names added, which parses to a query as the view's own does
         assert model.getModelType() == ExecutionModel.QUERY;
-        parser.validateMatViewSql((IQueryModel) model, baseTableName);
+        parser.validateMatViewSql((IQueryModel) model, viewDefinition.getBaseTableName());
         final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+        collectMatViewCreateFacts(queryModel, viewDefinition);
         final RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false);
         try {
             // each name has to come at its own position
@@ -7690,8 +7717,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     return false;
                 }
             }
-            sqlColumns.clear();
-            GenericRecordMetadata.copyColumns(metadata, sqlColumns);
+            putMatViewCreateColumns(metadata, sqlColumns);
             return true;
         } finally {
             Misc.free(factory);
@@ -7932,6 +7958,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         engine.checkTableSuspendable(tableToken, tableNamePosition);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    // Puts into sqlColumns the columns that CREATE MATERIALIZED VIEW without a column list, a TIMESTAMP clause or an
+    // INDEX clause builds from the query whose output queryMetadata describes, as collectMatViewCreateFacts() read the
+    // query: the query's names and types, the index each column inherits from the base table, and the designated
+    // timestamp, the column of GROUP BY timestamp_floor() or the query's own. An inherited index keeps the columns it
+    // covers in the query, which tells the caller that it covers any.
+    private void putMatViewCreateColumns(RecordMetadata queryMetadata, GenericRecordMetadata sqlColumns) {
+        sqlColumns.clear();
+        for (int i = 0, n = queryMetadata.getColumnCount(); i < n; i++) {
+            final String columnName = queryMetadata.getColumnName(i);
+            final CreateTableColumnModel index = matViewInheritedIndexes.get(columnName);
+            final TableColumnMetadata column;
+            if (index != null) {
+                column = new TableColumnMetadata(columnName, queryMetadata.getColumnType(i), index.getIndexType(), index.getIndexValueBlockSize(), false, null);
+                final ObjList<CharSequence> coveredColumnNames = index.getCoveringColumnNames();
+                final IntList coveredColumns = new IntList(coveredColumnNames.size());
+                for (int j = 0, m = coveredColumnNames.size(); j < m; j++) {
+                    coveredColumns.add(queryMetadata.getColumnIndexQuiet(coveredColumnNames.getQuick(j)));
+                }
+                column.setCoveringColumnIndices(coveredColumns);
+            } else {
+                column = new TableColumnMetadata(columnName, queryMetadata.getColumnType(i), IndexType.NONE, 0, false, null);
+            }
+            sqlColumns.add(column);
+        }
+        sqlColumns.setTimestampIndex(
+                matViewTimestampFloorColumnName != null
+                        ? queryMetadata.getColumnIndexQuiet(matViewTimestampFloorColumnName)
+                        : queryMetadata.getTimestampIndex()
+        );
     }
 
     private void refreshViewDefinitionAfterExpiryPolicyChange(

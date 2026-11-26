@@ -42,7 +42,8 @@ import org.junit.Test;
  * SHOW CREATE MATERIALIZED VIEW, and SHOW CREATE DATABASE, which prints the same, print the column list of CREATE
  * MATERIALIZED VIEW v (col TYPE, ...) AS (...) TIMESTAMP(ts) for a view whose columns differ from those a CREATE
  * without a list builds from the printed SQL: as many, with the same names in the same letter case, of the same types,
- * in the same order, with every SYMBOL column NOCACHE. The list states each column's name, quoted where SQL needs it,
+ * in the same order, with every SYMBOL column NOCACHE, with no index but the one a passthrough view's column inherits
+ * from the base table, and with the same designated timestamp. The list states each column's name, quoted where SQL needs it,
  * type, SYMBOL cache flag and index, so that it takes no default of the server that runs it.
  * <p>
  * Oracle: the round trip. The view's DDL is written by hand from that layout. Running it after the view is dropped
@@ -178,6 +179,38 @@ public class ShowCreateMatViewColumnListTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesignatedTimestampTheSqlDoesNotPick() throws Exception {
+        // CREATE without TIMESTAMP(...) designates the query's timestamp, or the column of its GROUP BY
+        // timestamp_floor(), which a query without ORDER BY does not designate itself, unless the query keeps a SAMPLE
+        // BY; a view designated another column comes with the list and TIMESTAMP(...)
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            final String twoSql = "SELECT ts, ts AS ts2, price FROM base";
+            final String floorSql = "SELECT timestamp_floor('1h', ts) AS ts, sym, last(price) AS price FROM base";
+            // SAMPLE BY over a subquery stays SAMPLE BY, which designates ts and keeps day a key
+            final String sampledSql = "SELECT ts, timestamp_floor('1d', ts) AS day, sym, last(price) AS price FROM (SELECT * FROM base) SAMPLE BY 1h";
+            execute("CREATE MATERIALIZED VIEW second AS (" + twoSql + ") TIMESTAMP(ts2) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW first AS (" + twoSql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW floored AS (" + floorSql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW sampled AS (" + sampledSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name IN ('floored', 'sampled') ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("table_name\tdesignatedTimestamp\nfloored\tts\nsampled\tts\n");
+            assertShowCreateReplays(
+                    "second",
+                    "CREATE MATERIALIZED VIEW 'second' (\n\tts TIMESTAMP,\n\tts2 TIMESTAMP,\n\tprice DOUBLE\n) WITH BASE 'base' REFRESH IMMEDIATE AS (\n"
+                            + twoSql + "\n) TIMESTAMP(ts2) PARTITION BY DAY;",
+                    "ts"
+            );
+            assertShowCreateReplays("first", plainDdl("first", twoSql), "ts");
+            assertShowCreateReplays("floored", plainDdl("floored", floorSql));
+            assertShowCreateReplays("sampled", plainDdl("sampled", sampledSql));
+        });
+    }
+
+    @Test
     public void testIndexes() throws Exception {
         // the list states each index with its type, and a BITMAP index with its capacity, which CAPACITY alone means
         assertMemoryLeak(() -> {
@@ -279,6 +312,41 @@ public class ShowCreateMatViewColumnListTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexTheSqlDoesNotBuild() throws Exception {
+        // CREATE without a list gives an aggregating view's columns no index, so a view whose columns differ from its
+        // SQL's only in an index comes with the list: an index of CREATE's INDEX clause, of a list that otherwise
+        // matches the SQL, and of ALTER ... ADD INDEX. A view whose index ALTER ... DROP INDEX removed comes without.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            execute("CREATE MATERIALIZED VIEW clause AS (" + VIEW_SQL + "), INDEX (sym CAPACITY 128) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW listed (ts TIMESTAMP, sym SYMBOL NOCACHE INDEX TYPE POSTING, price DOUBLE, amount DOUBLE)"
+                    + " AS (" + VIEW_SQL + ") PARTITION BY DAY");
+            createView("altered");
+            createView("dropped");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW altered ALTER COLUMN sym ADD INDEX TYPE POSTING DELTA");
+            execute("ALTER MATERIALIZED VIEW dropped ALTER COLUMN sym ADD INDEX CAPACITY 64");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW dropped ALTER COLUMN sym DROP INDEX");
+            drainWalAndMatViewQueues();
+            assertShowCreateReplays(
+                    "clause",
+                    listDdl("clause", "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE INDEX CAPACITY 128,\n\tprice DOUBLE,\n\tamount DOUBLE", VIEW_SQL)
+            );
+            assertShowCreateReplays(
+                    "listed",
+                    listDdl("listed", "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE INDEX TYPE POSTING,\n\tprice DOUBLE,\n\tamount DOUBLE", VIEW_SQL)
+            );
+            assertShowCreateReplays(
+                    "altered",
+                    listDdl("altered", "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE INDEX TYPE POSTING DELTA,\n\tprice DOUBLE,\n\tamount DOUBLE", VIEW_SQL)
+            );
+            assertShowCreateReplays("dropped", plainDdl("dropped", VIEW_SQL));
+        });
+    }
+
+    @Test
     public void testListPrintedWhenSqlNoLongerCompiles() throws Exception {
         // Without a compile SHOW CREATE cannot tell whether the SQL builds the view's columns, so it prints them. The
         // DDL fails where the SQL does not compile, and creates the same view where it does.
@@ -341,6 +409,32 @@ public class ShowCreateMatViewColumnListTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOlderViewsComparedWithTheSqlTheyPrint() throws Exception {
+        // SHOW CREATE compares a view with the columns CREATE builds from the SQL it prints, which names the columns of
+        // an older view's SQL that relies on generated names. A view created under the legacy alias rules designates
+        // its GROUP BY timestamp_floor() column, which the printed SQL names after the view's column, and comes without
+        // the list; one with an index comes with it.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+            final String floorSql = "SELECT timestamp_floor('1h', ts), sym, last(price) AS price FROM base";
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW floored AS (" + floorSql + ") PARTITION BY DAY");
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW indexed AS (" + floorSql + "), INDEX (sym CAPACITY 64) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+            final String namedSql = "SELECT timestamp_floor('1h', ts) AS timestamp_floor, sym, last(price) AS price FROM base";
+            assertShowCreateReplays("floored", plainDdl("floored", namedSql), "timestamp_floor, sym");
+            assertShowCreateReplays(
+                    "indexed",
+                    "CREATE MATERIALIZED VIEW 'indexed' (\n\ttimestamp_floor TIMESTAMP,\n\tsym SYMBOL NOCACHE INDEX CAPACITY 64,\n\tprice DOUBLE\n"
+                            + ") WITH BASE 'base' REFRESH IMMEDIATE AS (\n" + namedSql + "\n) TIMESTAMP(timestamp_floor) PARTITION BY DAY;",
+                    "timestamp_floor, sym"
+            );
+        });
+    }
+
+    @Test
     public void testOlderViewsThatNameTheirColumnsWithBareCalls() throws Exception {
         // The SQL of a view created before CREATE required explicit names may name its columns and call a
         // zero-argument function bare. Its refresh maps it by name, so each call keeps its own name as its alias,
@@ -381,6 +475,115 @@ public class ShowCreateMatViewColumnListTest extends AbstractCairoTest {
                     "n_same",
                     "CREATE MATERIALIZED VIEW 'n_same' WITH BASE 'base' REFRESH IMMEDIATE AS (\n" + countSqlNamed + "\n) PARTITION BY DAY;"
             );
+        });
+    }
+
+    @Test
+    public void testPassthroughViewCoveringIndexes() throws Exception {
+        // An index that covers columns comes with the list, whose INCLUDE states them: one a passthrough view inherits,
+        // one whose base column's index covers columns and the view's none, and the other way round. A covered column
+        // that DROP COLUMN removed is covered no more, so a view whose index then matches the inherited one comes
+        // without the list.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+            execute("CREATE TABLE base (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), tag SYMBOL INDEX TYPE POSTING, price DOUBLE,"
+                    + " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 'x', 1.5, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 'y', 2.5, '2024-01-01T00:20:00.000000Z')
+                    """);
+            final String sql = "SELECT ts, sym, tag, price FROM base";
+            final String tagSql = "SELECT ts, tag, price FROM base";
+            final String tagOnlySql = "SELECT ts, tag FROM base";
+            execute("CREATE MATERIALIZED VIEW inherited AS (" + sql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW uncovered (ts TIMESTAMP, sym SYMBOL NOCACHE INDEX TYPE POSTING, tag SYMBOL NOCACHE INDEX TYPE POSTING,"
+                    + " price DOUBLE) AS (" + sql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW covered (ts TIMESTAMP, tag SYMBOL NOCACHE INDEX TYPE POSTING INCLUDE (price), price DOUBLE)"
+                    + " AS (" + tagSql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW dropped (ts TIMESTAMP, tag SYMBOL NOCACHE INDEX TYPE POSTING INCLUDE (extra), extra INT)"
+                    + " AS (" + tagOnlySql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW dropped DROP COLUMN extra");
+            drainWalAndMatViewQueues();
+            assertShowCreateReplays(
+                    "inherited",
+                    listDdl("inherited", "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE INDEX TYPE POSTING INCLUDE (price),\n"
+                            + "\ttag SYMBOL NOCACHE INDEX TYPE POSTING,\n\tprice DOUBLE", sql)
+            );
+            assertShowCreateReplays(
+                    "uncovered",
+                    listDdl("uncovered", "\tts TIMESTAMP,\n\tsym SYMBOL NOCACHE INDEX TYPE POSTING,\n\ttag SYMBOL NOCACHE INDEX TYPE POSTING,\n"
+                            + "\tprice DOUBLE", sql)
+            );
+            assertShowCreateReplays(
+                    "covered",
+                    listDdl("covered", "\tts TIMESTAMP,\n\ttag SYMBOL NOCACHE INDEX TYPE POSTING INCLUDE (price),\n\tprice DOUBLE", tagSql),
+                    "ts"
+            );
+            assertQuery("SELECT indexInclude FROM table_columns('dropped') WHERE \"column\" = 'tag'").noLeakCheck().noRandomAccess()
+                    .returns("indexInclude\n\n");
+            assertShowCreateReplays("dropped", plainDdl("dropped", tagOnlySql), "ts");
+        });
+    }
+
+    @Test
+    public void testPassthroughViewInheritsIndexes() throws Exception {
+        // CREATE without a list gives a passthrough view's column the index of the base column it passes through, the
+        // first of the view's columns that pass it, so a view whose indexes are those comes without the list. A view
+        // whose index differs from the one it would inherit comes with it: one that ALTER dropped or added, and one
+        // whose base column's index has changed since, in type or in capacity.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL INDEX CAPACITY 64, tag SYMBOL INDEX TYPE POSTING, kind SYMBOL, price DOUBLE,"
+                    + " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 'x', 'k', 1.5, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 'y', 'l', 2.5, '2024-01-01T00:20:00.000000Z')
+                    """);
+            final String sql = "SELECT * FROM base";
+            final String twiceSql = "SELECT ts, sym, sym AS sym2, price, price * 2 AS doubled FROM base";
+            for (String viewName : new String[]{"inherited", "dropped", "added", "retyped", "resized"}) {
+                execute("CREATE MATERIALIZED VIEW " + viewName + " AS (" + sql + ") PARTITION BY DAY");
+            }
+            execute("CREATE MATERIALIZED VIEW twice AS (" + twiceSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String indexes = "SELECT \"column\", indexType, CASE WHEN indexType = 'BITMAP' THEN indexBlockCapacity END bitmapCapacity"
+                    + " FROM table_columns('twice') WHERE indexed";
+            assertQuery(indexes).noLeakCheck().noRandomAccess().returns("column\tindexType\tbitmapCapacity\nsym\tBITMAP\t64\n");
+            assertShowCreateReplays("inherited", plainDdl("inherited", sql));
+            assertShowCreateReplays("twice", plainDdl("twice", twiceSql));
+            assertQuery(indexes).noLeakCheck().noRandomAccess().returns("column\tindexType\tbitmapCapacity\nsym\tBITMAP\t64\n");
+
+            execute("ALTER MATERIALIZED VIEW dropped ALTER COLUMN tag DROP INDEX");
+            execute("ALTER MATERIALIZED VIEW added ALTER COLUMN kind ADD INDEX TYPE POSTING");
+            drainWalAndMatViewQueues();
+            assertShowCreateReplays(
+                    "dropped",
+                    listDdl("dropped", "\tsym SYMBOL NOCACHE INDEX CAPACITY 64,\n\ttag SYMBOL NOCACHE,\n\tkind SYMBOL NOCACHE,\n"
+                            + "\tprice DOUBLE,\n\tts TIMESTAMP", sql)
+            );
+            assertShowCreateReplays(
+                    "added",
+                    listDdl("added", "\tsym SYMBOL NOCACHE INDEX CAPACITY 64,\n\ttag SYMBOL NOCACHE INDEX TYPE POSTING,\n"
+                            + "\tkind SYMBOL NOCACHE INDEX TYPE POSTING,\n\tprice DOUBLE,\n\tts TIMESTAMP", sql)
+            );
+
+            final String viewColumns = "\tsym SYMBOL NOCACHE INDEX CAPACITY 64,\n\ttag SYMBOL NOCACHE INDEX TYPE POSTING,\n"
+                    + "\tkind SYMBOL NOCACHE,\n\tprice DOUBLE,\n\tts TIMESTAMP";
+            execute("ALTER TABLE base ALTER COLUMN sym DROP INDEX");
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE base ALTER COLUMN sym ADD INDEX CAPACITY 256");
+            drainWalAndMatViewQueues();
+            assertShowCreateReplays("resized", listDdl("resized", viewColumns, sql));
+            // sym's index is the one the views inherited again, and tag's changes its type
+            execute("ALTER TABLE base ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE base ALTER COLUMN tag DROP INDEX");
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE base ALTER COLUMN sym ADD INDEX CAPACITY 64");
+            execute("ALTER TABLE base ALTER COLUMN tag ADD INDEX CAPACITY 64");
+            drainWalAndMatViewQueues();
+            assertShowCreateReplays("retyped", listDdl("retyped", viewColumns, sql));
         });
     }
 
@@ -657,6 +860,12 @@ public class ShowCreateMatViewColumnListTest extends AbstractCairoTest {
     private static String listDdl(String viewName, String columnLines, String sql) {
         return "CREATE MATERIALIZED VIEW '" + viewName + "' (\n" + columnLines + "\n) WITH BASE 'base' REFRESH IMMEDIATE AS (\n"
                 + sql + "\n) TIMESTAMP(ts) PARTITION BY DAY;";
+    }
+
+    // The DDL of a view on base, REFRESH IMMEDIATE and PARTITION BY DAY, that SHOW CREATE prints without the column
+    // list.
+    private static String plainDdl(String viewName, String sql) {
+        return "CREATE MATERIALIZED VIEW '" + viewName + "' WITH BASE 'base' REFRESH IMMEDIATE AS (\n" + sql + "\n) PARTITION BY DAY;";
     }
 
     // The columns, storage, definition, column mapping, status and rows of a view.
