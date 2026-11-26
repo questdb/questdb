@@ -316,8 +316,8 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
         while count >= 32 {
             self.unpack_next()?;
             let min_delta = self.iterator.min_delta;
-            for i in 0..32 {
-                current_value = current_value.wrapping_add(min_delta.wrapping_add(self.values[i]));
+            for (i, &value) in self.values.iter().enumerate() {
+                current_value = current_value.wrapping_add(min_delta.wrapping_add(value));
                 let len = current_value;
                 let value_ptr = checked_advance!(len, pos);
                 let len_u = len as u32;

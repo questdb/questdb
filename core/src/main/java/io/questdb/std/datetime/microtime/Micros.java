@@ -477,7 +477,7 @@ public final class Micros {
             return offset;
         }
         final long nanos = micros * MICRO_NANOS;
-        return (nanos - getRemainderMicros(nanos - offset, stride)) / MICRO_NANOS;
+        return (nanos - getRemainderMicros((micros - offset) * MICRO_NANOS, stride)) / MICRO_NANOS;
     }
 
     /**
