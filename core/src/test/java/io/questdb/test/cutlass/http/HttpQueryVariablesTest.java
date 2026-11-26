@@ -178,12 +178,13 @@ public class HttpQueryVariablesTest extends AbstractTest {
             engine.execute("CREATE TABLE t (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
             final String sql = "SELECT ts, count() FROM t SAMPLE BY 1h GROUP BY @k";
             for (String url : new String[]{"/query", "/exp", "/api/v1/sql/validate"}) {
-                final Utf8StringSink sink = new Utf8StringSink();
-                Assert.assertEquals("400", testHttpClient.get(url, sql, "@k := s", null, sink));
-                TestUtils.assertEquals(
+                assertResponse(
+                        url,
+                        "400",
                         "{\"query\":\"" + sql + "\",\"error\":\"SELECT query must not contain both GROUP BY and SAMPLE BY\",\"position\":"
                                 + sql.indexOf("GROUP BY") + '}',
-                        sink.toString()
+                        sql,
+                        "@k := s"
                 );
             }
         }));
@@ -238,11 +239,12 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "@a := 1"
             );
             // not an assignment
-            final Utf8StringSink sink = new Utf8StringSink();
-            Assert.assertEquals("400", testHttpClient.get("SELECT 1", "a := 1", sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    "/query",
+                    "400",
                     "{\"query\":\"SELECT 1\",\"error\":\"unexpected token [a] - variable assignment expected, such as @name := value\",\"position\":0,\"errorSource\":\"variables\"}",
-                    sink.toString()
+                    "SELECT 1",
+                    "a := 1"
             );
         }));
     }
@@ -328,11 +330,12 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 assertSameExport("SELECT v FROM t WHERE v > 2", "SELECT v FROM t WHERE v > @min", "@min := 2", null);
             }
             // the same text without the variables reads no @min, cached or not
-            final Utf8StringSink sink = new Utf8StringSink();
-            Assert.assertEquals("400", testHttpClient.get("/exp", "SELECT v FROM t WHERE v > @min", null, null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    "/exp",
+                    "400",
                     "{\"query\":\"SELECT v FROM t WHERE v > @min\",\"error\":\"Invalid column: @min\",\"position\":26}",
-                    sink.toString()
+                    "SELECT v FROM t WHERE v > @min",
+                    null
             );
         }));
     }
@@ -340,17 +343,20 @@ public class HttpQueryVariablesTest extends AbstractTest {
     @Test
     public void testExportErrorInVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            final Utf8StringSink sink = new Utf8StringSink();
-            Assert.assertEquals("400", testHttpClient.get("/exp", "SELECT @a x FROM long_sequence(1)", "@a := nope_fn()", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    "/exp",
+                    "400",
                     "{\"query\":\"SELECT @a x FROM long_sequence(1)\",\"error\":\"unknown function name: nope_fn()\",\"position\":6,\"errorSource\":\"variables\"}",
-                    sink.toString()
+                    "SELECT @a x FROM long_sequence(1)",
+                    "@a := nope_fn()"
             );
             // an error in the query keeps its position
-            Assert.assertEquals("400", testHttpClient.get("/exp", "SELECT @a x, nope_fn()", "@a := 1", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    "/exp",
+                    "400",
                     "{\"query\":\"SELECT @a x, nope_fn()\",\"error\":\"unknown function name: nope_fn()\",\"position\":13}",
-                    sink.toString()
+                    "SELECT @a x, nope_fn()",
+                    "@a := 1"
             );
         }));
     }
@@ -358,10 +364,8 @@ public class HttpQueryVariablesTest extends AbstractTest {
     @Test
     public void testExportParquetReadsVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            final CharSequenceObjHashMap<String> parquet = new CharSequenceObjHashMap<>();
-            parquet.put("fmt", "parquet");
             // streamed from the query's cursor
-            assertSameExport("SELECT 7 v FROM long_sequence(3)", "SELECT @a v FROM long_sequence(3)", "@a := 7", parquet);
+            assertSameExport("SELECT 7 v FROM long_sequence(3)", "SELECT @a v FROM long_sequence(3)", "@a := 7", TestHttpClient.PARQUET_GET_PARAM);
             // A computed BINARY column makes the export go through a temp table, which is
             // CREATE TABLE AS on the query's text: the variables reach it too.
             engine.execute("CREATE TABLE b AS (SELECT x, rnd_bin(4, 4, 0) bin FROM long_sequence(3))", sqlExecutionContext);
@@ -369,7 +373,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "SELECT CASE WHEN x > 1 THEN bin END bin, 1 v FROM b",
                     "SELECT CASE WHEN x > @a THEN bin END bin, @a v FROM b",
                     "@a := 1",
-                    parquet
+                    TestHttpClient.PARQUET_GET_PARAM
             );
         }));
     }
@@ -383,14 +387,12 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 .withSendBufferSize(1024)
                 .withForceSendFragmentationChunkSize(1024)
                 .run((engine, sqlExecutionContext) -> {
-                    final CharSequenceObjHashMap<String> parquet = new CharSequenceObjHashMap<>();
-                    parquet.put("fmt", "parquet");
                     engine.execute("CREATE TABLE b AS (SELECT x, rnd_bin(64, 64, 0) bin FROM long_sequence(2_000))", sqlExecutionContext);
                     final Utf8StringSink file = assertSameExport(
                             "SELECT CASE WHEN x > 1 THEN bin END bin, 1 v FROM b",
                             "SELECT CASE WHEN x > @a THEN bin END bin, @a v FROM b",
                             "@a := 1",
-                            parquet
+                            TestHttpClient.PARQUET_GET_PARAM
                     );
                     // An export cut short would match a reference cut short at the same place. A
                     // whole file, here over a hundred send buffers, opens and closes with PAR1.
@@ -509,12 +511,13 @@ public class HttpQueryVariablesTest extends AbstractTest {
                         final String error = (String) c[2];
                         final int position = (int) c[3];
                         final boolean isInVariables = (boolean) c[4];
-                        final Utf8StringSink sink = new Utf8StringSink();
-                        Assert.assertEquals("400", testHttpClient.get(url, sql, variables, null, sink));
-                        TestUtils.assertEquals(
+                        assertResponse(
+                                url,
+                                "400",
                                 "{\"query\":\"" + sql + "\",\"error\":\"" + error + "\",\"position\":" + position
                                         + (isInVariables ? ",\"errorSource\":\"variables\"" : "") + '}',
-                                sink.toString()
+                                sql,
+                                variables
                         );
                         final String logVariables = variables != null ? ", vars=`" + Pattern.quote(variables) + '`' : "";
                         final String logPosition = position + (isInVariables ? ", errorSource=variables" : "");
@@ -606,13 +609,8 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 capture.start();
                 // the filter runs while the cursor looks for its first row, so the cursor sees the error
                 final String sql = "SELECT x FROM long_sequence(1) WHERE simulate_crash('M')";
-                final Utf8StringSink sink = new Utf8StringSink();
-                Assert.assertEquals("500", testHttpClient.get(sql, "@a := 1", sink));
                 // an internal error reports position 0, which lies in the query, not in the variables
-                TestUtils.assertEquals(
-                        "{\"query\":\"" + sql + "\",\"error\":\"simulated OOM\",\"position\":0}",
-                        sink.toString()
-                );
+                assertResponse("/query", "500", "{\"query\":\"" + sql + "\",\"error\":\"simulated OOM\",\"position\":0}", sql, "@a := 1");
                 final String errLine = "err \\[id=\\d+, sql=`" + Pattern.quote(sql) + "`, vars=`@a := 1`, principal=.*, jit=false, time=\\d+, exception=java.lang.OutOfMemoryError: simulated OOM";
                 capture.waitForRegex(errLine);
                 capture.assertOnlyOnce(errLine);
@@ -739,45 +737,55 @@ public class HttpQueryVariablesTest extends AbstractTest {
     public void testValidateReadsVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             final String url = "/api/v1/sql/validate";
-            final Utf8StringSink sink = new Utf8StringSink();
-            Assert.assertEquals("200", testHttpClient.get(url, "SELECT @a x, @b y", "@a := 1, @b := 'zz'", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    url,
+                    "200",
                     "{\"query\":\"SELECT @a x, @b y\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"},{\"name\":\"y\",\"type\":\"STRING\"}],\"timestamp\":-1}",
-                    sink.toString()
+                    "SELECT @a x, @b y",
+                    "@a := 1, @b := 'zz'"
             );
             // without them, the query reads no variables
-            Assert.assertEquals("400", testHttpClient.get(url, "SELECT @a x", null, null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    url,
+                    "400",
                     "{\"query\":\"SELECT @a x\",\"error\":\"Invalid column: @a\",\"position\":7}",
-                    sink.toString()
+                    "SELECT @a x",
+                    null
             );
             // an error in the variables
-            Assert.assertEquals("400", testHttpClient.get(url, "SELECT @a x", "@a := nope_fn()", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    url,
+                    "400",
                     "{\"query\":\"SELECT @a x\",\"error\":\"unknown function name: nope_fn()\",\"position\":6,\"errorSource\":\"variables\"}",
-                    sink.toString()
+                    "SELECT @a x",
+                    "@a := nope_fn()"
             );
             // an unfinished query, as the console validates it while the user types: the error at
             // the end of the query is no error in the variables
-            Assert.assertEquals("400", testHttpClient.get(url, "SELECT * FROM", "@a := 1", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    url,
+                    "400",
                     "{\"query\":\"SELECT * FROM\",\"error\":\"table name or sub-query expected\",\"position\":13}",
-                    sink.toString()
+                    "SELECT * FROM",
+                    "@a := 1"
             );
             // and one at the end of the variables is
-            Assert.assertEquals("400", testHttpClient.get(url, "SELECT 1", "@a := now() at time", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(
+                    url,
+                    "400",
                     "{\"query\":\"SELECT 1\",\"error\":\"did you mean 'at time zone <tz>'?\",\"position\":19,\"errorSource\":\"variables\"}",
-                    sink.toString()
+                    "SELECT 1",
+                    "@a := now() at time"
             );
             // an INSERT reads them; an UPDATE does not, as on /exec
             engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
-            Assert.assertEquals("200", testHttpClient.get(url, "INSERT INTO t SELECT @a", "@a := 1", null, sink));
-            TestUtils.assertEquals("{\"queryType\":\"INSERT AS SELECT\"}", sink.toString());
-            Assert.assertEquals("400", testHttpClient.get(url, "UPDATE t SET v = @a", "@a := 1", null, sink));
-            TestUtils.assertEquals(
+            assertResponse(url, "200", "{\"queryType\":\"INSERT AS SELECT\"}", "INSERT INTO t SELECT @a", "@a := 1");
+            assertResponse(
+                    url,
+                    "400",
                     "{\"query\":\"UPDATE t SET v = @a\",\"error\":\"Invalid column: @a\",\"position\":17}",
-                    sink.toString()
+                    "UPDATE t SET v = @a",
+                    "@a := 1"
             );
         }));
     }
@@ -785,6 +793,14 @@ public class HttpQueryVariablesTest extends AbstractTest {
     private static void assertGet(CharSequence expected, CharSequence sql, @Nullable String variables) {
         final Utf8StringSink sink = new Utf8StringSink();
         testHttpClient.get(sql, variables, sink);
+        TestUtils.assertEquals(expected, sink.toString());
+    }
+
+    // The endpoint answers the statement, sent with the variables or without them for null, with
+    // the status and the response.
+    private static void assertResponse(String url, String status, CharSequence expected, CharSequence sql, @Nullable String variables) {
+        final Utf8StringSink sink = new Utf8StringSink();
+        Assert.assertEquals(status, testHttpClient.get(url, sql, variables, null, sink));
         TestUtils.assertEquals(expected, sink.toString());
     }
 

@@ -235,7 +235,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
                 log.$(", msg=").$safe(message)
                         .$(", errno=").$(errno);
-                putPosition(log, pos, variables);
+                putErrorPosition(log, ", pos=", pos, variables != null);
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(", exception=").$(e);
@@ -269,6 +269,24 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             log.$("`, ").$(executionContext)
                     .$(", jit=").$(jit)
                     .I$();
+        }
+    }
+
+    /**
+     * Adds {@code key} and the position of an error to a log record, as the HTTP endpoints report
+     * the position: one that lies in the variables the client sent with the statement, see
+     * {@link SqlParser#isInQueryVariables(int)}, as its offset in them, followed by
+     * {@code , errorSource=variables}, since it points into no text the line shows, and any other
+     * one as it is.
+     *
+     * @param hasVariables whether the client sent the statement with variables; without them, no
+     *                     position lies in them
+     */
+    public static void putErrorPosition(LogRecord log, CharSequence key, int position, boolean hasVariables) {
+        if (hasVariables && SqlParser.isInQueryVariables(position)) {
+            log.$(key).$(position - SqlParser.QUERY_VARIABLES_POSITION).$(", errorSource=variables");
+        } else {
+            log.$(key).$(position);
         }
     }
 
@@ -481,17 +499,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
             log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
-        }
-    }
-
-    // Adds the position of an error as the HTTP endpoints report it. One in the variables the client
-    // sent with the statement lies at or past SqlParser.QUERY_VARIABLES_POSITION, which points into
-    // no text the line shows, so it logs as the position in the variables, marked as lying there.
-    private static void putPosition(LogRecord log, int position, @Nullable CharSequence variables) {
-        if (variables != null && position >= SqlParser.QUERY_VARIABLES_POSITION) {
-            log.$(", pos=").$(position - SqlParser.QUERY_VARIABLES_POSITION).$(", errorSource=variables");
-        } else {
-            log.$(", pos=").$(position);
         }
     }
 

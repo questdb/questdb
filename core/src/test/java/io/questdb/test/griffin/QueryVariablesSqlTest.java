@@ -82,11 +82,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 executeWithVariables("a := 1", with + "(SELECT 1 y) INSERT INTO x VALUES (10)");
                 executeWithVariables("a := 1", with + "(SELECT 1 y) UPDATE x SET a = a + 1");
                 final String explain = "EXPLAIN " + with + "(SELECT 1 y) INSERT INTO x VALUES (20)";
-                final StringSink expected = new StringSink();
-                printSql(explain, expected);
-                final StringSink actual = new StringSink();
-                withVariables("a := 1", explain, () -> printSql(explain, actual));
-                TestUtils.assertEquals(expected, actual);
+                assertSamePrint(explain, explain, "a := 1");
                 // the query of an INSERT reads them, as a query does
                 executeWithVariables("@a := 7", with + "(SELECT @a y) INSERT INTO x SELECT y FROM c");
                 assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns("a\n11\n7\n");
@@ -194,11 +190,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     {"EXPLAIN DECLARE @a := 7 WITH c AS (SELECT @a x) SELECT * FROM c", "EXPLAIN WITH c AS (SELECT @a x) SELECT * FROM c"},
             };
             for (String[] statement : statements) {
-                final StringSink expected = new StringSink();
-                printSql(statement[0], expected);
-                final StringSink actual = new StringSink();
-                withVariables("@a := 7", statement[1], () -> printSql(statement[1], actual));
-                TestUtils.assertEquals(expected, actual);
+                assertSamePrint(statement[0], statement[1], "@a := 7");
             }
         });
     }
@@ -217,12 +209,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     {"EXPLAIN DECLARE @lim := 3 (SELECT v FROM t WHERE v > @lim)", "EXPLAIN (SELECT v FROM t WHERE v > @lim)"},
             };
             for (String[] statement : statements) {
-                final StringSink expected = new StringSink();
-                printSql(statement[0], expected);
-                TestUtils.assertContains(expected, "filter:");
-                final StringSink actual = new StringSink();
-                withVariables("@lim := 3", statement[1], () -> printSql(statement[1], actual));
-                TestUtils.assertEquals(expected, actual);
+                TestUtils.assertContains(assertSamePrint(statement[0], statement[1], "@lim := 3"), "filter:");
             }
         });
     }
@@ -601,11 +588,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 executeWithVariables(variables, sql);
             }
             for (String explain : new String[]{"EXPLAIN UPDATE x SET a = 0", "EXPLAIN WITH c AS (SELECT 1 y) INSERT INTO x VALUES (50)"}) {
-                final StringSink expected = new StringSink();
-                printSql(explain, expected);
-                final StringSink actual = new StringSink();
-                withVariables(variables, explain, () -> printSql(explain, actual));
-                TestUtils.assertEquals(expected, actual);
+                assertSamePrint(explain, explain, variables);
             }
 
             drainWalAndViewQueues();
@@ -667,16 +650,15 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 final String sql = (String) c[0];
                 final String result = (String) c[1];
                 final boolean isRandomAccess = (boolean) c[2];
-                assertSubQueryValueResult("DECLARE " + variables + ' ' + sql, result, isRandomAccess);
-                withVariables(variables, sql, () -> assertSubQueryValueResult(sql, result, isRandomAccess));
+                assertQuery("DECLARE " + variables + ' ' + sql).noLeakCheck().supportsRandomAccess(isRandomAccess).returns(result);
+                withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck().supportsRandomAccess(isRandomAccess).returns(result));
             }
 
-            final StringSink expected = new StringSink();
-            printSql("EXPLAIN DECLARE " + variables + " SELECT sym, v FROM s WHERE sym IN @q", expected);
-            final StringSink actual = new StringSink();
-            final String explain = "EXPLAIN SELECT sym, v FROM s WHERE sym IN @q";
-            withVariables(variables, explain, () -> printSql(explain, actual));
-            TestUtils.assertEquals(expected, actual);
+            assertSamePrint(
+                    "EXPLAIN DECLARE " + variables + " SELECT sym, v FROM s WHERE sym IN @q",
+                    "EXPLAIN SELECT sym, v FROM s WHERE sym IN @q",
+                    variables
+            );
 
             executeWithVariables(variables, "INSERT INTO r SELECT v FROM s WHERE v = @m");
             executeWithVariables(variables, "WITH c AS (SELECT sym FROM s WHERE sym IN @q) INSERT INTO r2 SELECT sym FROM c");
@@ -776,13 +758,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                         .expectSize(isSizeKnown).supportsRandomAccess(isRandomAccess).returns(result);
                 withVariables(variables, sql, () -> assertQuery(sql).noLeakCheck().timestamp("ts")
                         .expectSize(isSizeKnown).supportsRandomAccess(isRandomAccess).returns(result));
-
-                final StringSink expected = new StringSink();
-                printSql("EXPLAIN " + declared, expected);
-                final StringSink actual = new StringSink();
-                final String explain = "EXPLAIN " + sql;
-                withVariables(variables, explain, () -> printSql(explain, actual));
-                TestUtils.assertEquals(expected, actual);
+                assertSamePrint("EXPLAIN " + declared, "EXPLAIN " + sql, variables);
             }
 
             // the scan reads the day alone
@@ -1077,6 +1053,17 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, position, message));
     }
 
+    // The statement sent with the variables prints what the reference prints without them: for
+    // EXPLAIN, the same plan. Returns the print.
+    private static String assertSamePrint(String reference, String sql, String variables) throws Exception {
+        final StringSink expected = new StringSink();
+        printSql(reference, expected);
+        final StringSink actual = new StringSink();
+        withVariables(variables, sql, () -> printSql(sql, actual));
+        TestUtils.assertEquals(expected, actual);
+        return expected.toString();
+    }
+
     private static void executeWithVariables(String variables, String sql) throws Exception {
         withVariables(variables, sql, () -> execute(sql));
     }
@@ -1097,14 +1084,6 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         }
         withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, position, message));
         return message;
-    }
-
-    private void assertSubQueryValueResult(String sql, String result, boolean isRandomAccess) throws Exception {
-        if (isRandomAccess) {
-            assertQuery(sql).noLeakCheck().returns(result);
-        } else {
-            assertQuery(sql).noLeakCheck().noRandomAccess().returns(result);
-        }
     }
 
     // Runs the code with the variables a client sent with the statement's text, as /exec does.

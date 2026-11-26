@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -119,19 +120,16 @@ final class QueryVariablesParameter implements Mutable {
      * Adds {@code key} and the position of an error in what the query was compiled from to a log
      * record that shows the query's text and the variables, see {@link #putLog(LogRecord)}: the
      * position the response reports, see {@link #locateError(int)}, followed by
-     * {@code , errorSource=variables} for an error in the variables. Unlike locateError(), it leaves
-     * the error the response reports as it is.
+     * {@code , errorSource=variables} for an error in the variables, as the query's own error line
+     * shows it, see {@link QueryProgress#putErrorPosition}. Unlike locateError(), it leaves the
+     * error the response reports as it is.
      */
     void putLogPosition(LogRecord log, String key, int position) {
-        if (isInVariables(position)) {
-            log.$(key).$(position - SqlParser.QUERY_VARIABLES_POSITION).$(", errorSource=variables");
-        } else {
-            log.$(key).$(position);
-        }
+        QueryProgress.putErrorPosition(log, key, position, text.length() > 0);
     }
 
-    // a position at or past SqlParser.QUERY_VARIABLES_POSITION lies in the variables, see locateError()
+    // whether the client sent variables and the position lies in them, see locateError()
     private boolean isInVariables(int position) {
-        return text.length() > 0 && position >= SqlParser.QUERY_VARIABLES_POSITION;
+        return text.length() > 0 && SqlParser.isInQueryVariables(position);
     }
 }

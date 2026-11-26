@@ -417,7 +417,7 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
     // The token at an error's position: in the statement, or in the client's variables it was sent
     // with, which the parser reads from SqlParser.QUERY_VARIABLES_POSITION on.
     private static String tokenAt(String sql, @Nullable String variables, int position) {
-        return variables != null && position >= SqlParser.QUERY_VARIABLES_POSITION
+        return variables != null && SqlParser.isInQueryVariables(position)
                 ? tokenAt(variables, position - SqlParser.QUERY_VARIABLES_POSITION)
                 : tokenAt(sql, position);
     }

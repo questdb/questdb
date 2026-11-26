@@ -405,6 +405,15 @@ public class SqlParser {
     }
 
     /**
+     * Whether a position lies in the variables a client declared outside the statement's text,
+     * see {@link #QUERY_VARIABLES_POSITION}: its offset in them is the position less that one.
+     * Only a statement sent with variables has positions that lie in them.
+     */
+    public static boolean isInQueryVariables(int position) {
+        return position >= QUERY_VARIABLES_POSITION;
+    }
+
+    /**
      * Parses a DECIMAL[(precision[, scale])] type from the lexer.
      * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
      * precision of 18 and a scale of 3 (or 0 if precision &lt; 8) so that the underlying type will be a DECIMAL64.
