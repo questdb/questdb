@@ -108,6 +108,32 @@ public class QwpIngressRollbackWireTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackDiscardsDeferredRowsOfEveryTable() throws Exception {
+        // The open transaction holds rows of two tables: the rollback discards the rows of
+        // both, and the frame after it, which writes both tables again, commits only its own.
+        assertMemoryLeak(() -> {
+            createTable("ta");
+            createTable("tb");
+            ObjList<byte[]> sent = ingestInOnePass(
+                    createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage("ta", 1, 1_000_000))),
+                    createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage("tb", 2, 1_000_000))),
+                    rollbackFrame(),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("ta", 3, 2_000_000),
+                            tableBlock("tb", 4, 2_000_000)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM ta").expectSize().returns("v\n3\n");
+            assertQuery("SELECT v FROM tb").expectSize().returns("v\n4\n");
+            Assert.assertEquals(3, maxCumulativeOkAck(sent));
+            for (long seq = 0; seq < 4; seq++) {
+                Assert.assertFalse("seq " + seq, hasErrorResponseForSeq(sent, seq));
+            }
+        });
+    }
+
+    @Test
     public void testRollbackIsAckedEagerly() throws Exception {
         // The rollback closes a run of withheld deferred frames, so its ack goes
         // out at once rather than after ACK_BATCH_SIZE more frames.
@@ -151,7 +177,11 @@ public class QwpIngressRollbackWireTest extends AbstractCairoTest {
     }
 
     private static void createTable() throws Exception {
-        execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createTable("tab");
+    }
+
+    private static void createTable(String tableName) throws Exception {
+        execute("CREATE TABLE " + tableName + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
 
     private static ObjList<byte[]> ingestInOnePass(byte[]... frames) throws Exception {

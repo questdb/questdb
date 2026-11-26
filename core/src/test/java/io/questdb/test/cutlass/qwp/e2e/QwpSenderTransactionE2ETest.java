@@ -327,6 +327,30 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testRollbackDiscardsTransactionOfEveryTable() throws Exception {
+        // The frames of the transaction carry rows of two tables: the rollback discards the
+        // rows of both. The next transaction writes both tables over several frames too,
+        // and its commit commits every row the server holds uncommitted: only its own.
+        runInContext(port -> {
+            try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(conf(port) + "transaction=on;")) {
+                Assert.assertTrue("the server confirms rollback", sender.isServerRollbackEnabled());
+                writeRowsOfTwoTables(sender, 0, 3_000);
+                awaitTable("ta");
+                awaitTable("tb");
+                sender.rollback();
+                writeRowsOfTwoTables(sender, 10_000, 3_000);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM ta").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n1500\t10000\t12998\n");
+            assertQuery("SELECT count(), min(v), max(v) FROM tb").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n1500\t10001\t12999\n");
+        });
+    }
+
+    @Test
     public void testRetryOfSplitFailedDuringOutageCommitsEachRowOnce() throws Exception {
         // flush() of a split that failed partway used to send the whole batch again, so
         // the table that had reached the client buffer committed twice.
@@ -987,6 +1011,13 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     private static void writeSymbolRows(Sender sender, String table, int from, int count) {
         for (int i = from, n = from + count; i < n; i++) {
             sender.table(table).symbol("k", "k" + (i % 7)).longColumn("v", i).stringColumn("s", PAD).atNow();
+        }
+    }
+
+    // Writes the rows alternately to tables ta and tb: even values to ta, odd to tb.
+    private static void writeRowsOfTwoTables(Sender sender, int from, int count) {
+        for (int i = from, n = from + count; i < n; i++) {
+            sender.table((i & 1) == 0 ? "ta" : "tb").longColumn("v", i).stringColumn("s", PAD).atNow();
         }
     }
 

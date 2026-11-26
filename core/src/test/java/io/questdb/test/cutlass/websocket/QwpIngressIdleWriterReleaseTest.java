@@ -469,6 +469,30 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleReleaseMatchesNonAsciiTableNamesIgnoringCase() throws Exception {
+        // The engine folds the case of non-ASCII letters too, so tä names the table
+        // released under TÄ.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE \"tä\" (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            byte[] upper = clientEncodedFrame(1, "TÄ");
+            byte[] lower = clientEncodedFrame(1, "tä");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 1, concat(upper, PING, lower))) {
+                f.drive(upper.length);
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                // tä takes the released table back within the limit of 1.
+                f.drive(lower.length);
+                Assert.assertFalse("tä must take back the table released under TÄ", hasErrorResponseForSeq(f.sentFrames, 1));
+                Assert.assertEquals(1, maxCumulativeOkAck(f.sentFrames));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM \"tä\"").expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testIdleReleaseSurvivesWriterCloseFailure() throws Exception {
         // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
         // and the suite runs either mode, so pin one whose msync failure does not stop the engine.

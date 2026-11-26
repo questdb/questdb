@@ -81,19 +81,24 @@ public class QwpTudCacheTableNameTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable("tä");
             createTable("u");
-            try (QwpTudCache cache = newCache()) {
-                lookup(cache, "tä", 1);
-                cache.releaseIdleWriters();
-                Assert.assertEquals(0, cache.size());
-                // The released table keeps its slot under the table limit and takes it
-                // back under another spelling.
-                final WalTableUpdateDetails tud = lookup(cache, "TÄ", 1);
-                Assert.assertEquals(1, cache.size());
-                Assert.assertSame(engine.verifyTableName("tä"), tud.getTableToken());
-                assertTooManyTables(cache, "u", 1);
-                // Taken back, the slot counts once.
-                Assert.assertNotNull(lookup(cache, "u", 2));
-                Assert.assertEquals(2, cache.size());
+            // The entry keeps the spelling of the lookup that created it, which is not its
+            // key "tä" when that spelling is "TÄ": the release must record the key.
+            for (String[] spellings : new String[][]{{"tä", "TÄ"}, {"TÄ", "tä"}}) {
+                final String context = spellings[0] + " / " + spellings[1];
+                try (QwpTudCache cache = newCache()) {
+                    lookup(cache, spellings[0], 1);
+                    cache.releaseIdleWriters();
+                    Assert.assertEquals(context, 0, cache.size());
+                    // The released table keeps its slot under the table limit and takes it
+                    // back under another spelling.
+                    final WalTableUpdateDetails tud = lookup(cache, spellings[1], 1);
+                    Assert.assertEquals(context, 1, cache.size());
+                    Assert.assertSame(context, engine.verifyTableName("tä"), tud.getTableToken());
+                    assertTooManyTables(cache, "u", 1);
+                    // Taken back, the slot counts once.
+                    Assert.assertNotNull(context, lookup(cache, "u", 2));
+                    Assert.assertEquals(context, 2, cache.size());
+                }
             }
         });
     }

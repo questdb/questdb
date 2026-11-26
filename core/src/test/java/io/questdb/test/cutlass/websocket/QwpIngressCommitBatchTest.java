@@ -393,7 +393,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * client gets a NACK above A or a CLOSE, the first frame with rows above A is the
      * failed table's first frame, and no row of that table from that frame on is
      * committed; rows of tables that committed may be, and the replay sends them
-     * again.</li>
+     * again;</li>
+     * <li>I5: every committed row is one that its frame sent to commit: none of a frame
+     * refused for its own data, and none of a deferred group that a rollback frame
+     * discarded, although the rollback's ack covers the group's frames.</li>
      * </ul>
      * Iterations whose only faults are the frames' own data errors also check I3:
      * the frames before the first bad frame are committed and acked, and the bad
@@ -5772,6 +5775,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             hasCommittedAboveAck |= value / 10 > acked;
             Assert.assertTrue("I2: a row of a frame above the ack is committed [" + context + ", value=" + value
                     + ", acked=" + acked + "]", value / 10 <= acked || isCommitFaulty);
+            // Frame s sends the values 10s and 10s + 1.
+            final int frame = (int) (value / 10);
+            Assert.assertTrue("I5: a committed row was not sent to commit [" + context + ", value=" + value + "]",
+                    frame <= lastSeq && frameValues.getQuick(frame).indexOf(value) > -1);
         }
         if (hasCommittedAboveAck) {
             // Only a commit of several tables that failed on one after others committed:
