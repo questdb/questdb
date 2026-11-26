@@ -874,7 +874,9 @@ public class MatViewState implements QuietCloseable {
     /**
      * Returns what the column mapping that the last compile of the view's SQL built leaves out: the view columns the
      * SQL does not produce and the SQL's columns the view lacks. Returns null before the first such compile in this
-     * process and after one that failed. Refresh compiles the SQL, and so does view ADD COLUMN's check.
+     * process and after one that failed. Refresh compiles the SQL, and so does view ADD COLUMN's check. View DROP
+     * COLUMN takes the column out of the mapping of the last compile, see
+     * {@link MatViewColumnMapping#summarizeWithoutViewColumn}.
      */
     public @Nullable MatViewColumnMapping.Summary getColumnMappingSummary() {
         return columnMappingSummary;

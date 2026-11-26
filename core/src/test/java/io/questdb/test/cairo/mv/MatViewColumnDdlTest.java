@@ -399,8 +399,8 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
                     Assert.assertEquals(sql.indexOf("sym LONG"), e.getPosition());
                 }
             }
-            // the mapping the last refresh built, before the view dropped sym
-            assertMapping("price_1h", "", "");
+            // the mapping the last refresh built, without the view column sym that DROP COLUMN took out
+            assertMapping("price_1h", "", "sym");
             assertColumns("price_1h", """
                     column\ttype
                     ts\tTIMESTAMP
@@ -550,7 +550,7 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("ALTER MATERIALIZED VIEW trades_copy DROP COLUMN tag");
             drainWalAndMatViewQueues();
-            assertMapping("trades_copy", "", "");
+            assertMapping("trades_copy", "", "tag");
 
             // the view's SQL reads price, so it no longer compiles
             execute("ALTER TABLE trades DROP COLUMN price");
@@ -966,26 +966,108 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
 
     @Test
     public void testMappingColumnsAfterDropColumn() throws Exception {
-        // DROP COLUMN only parses the view's SQL, so the mapping changes at the next refresh, which compiles the SQL
-        // for the view's new columns.
+        // DROP COLUMN only parses the view's SQL, and takes the dropped column out of the mapping of the SQL's last
+        // compile as soon as the statement returns: the SQL's column of the name is then ignored. The next refresh,
+        // which compiles the SQL for the view's new columns, builds the same mapping.
         assertMemoryLeak(() -> {
             createBase();
             createView();
             insertBaseRows();
             drainWalAndMatViewQueues();
-            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN amount");
-            drainWalQueue();
             assertMapping("price_1h", "", "");
+            // the statement names the column in another letter case, the mapping names the SQL's column
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN AMOUNT");
+            assertMapping("price_1h", "", "amount");
+            drainWalQueue();
+            assertMapping("price_1h", "", "amount");
             execute("INSERT INTO base VALUES ('b', 5.5, 50.0, '2024-01-01T01:20:00.000000Z')");
             drainWalAndMatViewQueues();
             assertMapping("price_1h", "", "amount");
             execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN price");
+            // in the order of the SQL's columns, not in the order of the drops
+            assertMapping("price_1h", "", "price,amount");
             drainWalQueue();
             execute("INSERT INTO base VALUES ('b', 6.5, 60.0, '2024-01-01T01:30:00.000000Z')");
             drainWalAndMatViewQueues();
-            // in the order of the SQL's columns
             assertMapping("price_1h", "", "price,amount");
             assertViewValid("price_1h");
+        });
+    }
+
+    @Test
+    public void testMappingColumnsAfterDropOfColumnSqlLacks() throws Exception {
+        // A view column the SQL does not produce leaves the mapping with the column, also one whose ADD COLUMN still
+        // waits in the view's WAL, and the SQL's columns keep their verdict.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView();
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra INT");
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN note INT");
+            drainWalQueue();
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN amount");
+            assertMapping("price_1h", "extra,note", "amount");
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN tag INT");
+            assertMapping("price_1h", "extra,note,tag", "amount");
+            // tag's ADD COLUMN has not applied yet
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN Tag");
+            assertMapping("price_1h", "extra,note", "amount");
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN extra");
+            assertMapping("price_1h", "note", "amount");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('b', 5.5, 50.0, '2024-01-01T01:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            // the refresh's compile agrees
+            assertMapping("price_1h", "note", "amount");
+            assertColumns("price_1h", """
+                    column\ttype
+                    ts\tTIMESTAMP
+                    sym\tSYMBOL
+                    price\tDOUBLE
+                    note\tINT
+                    """);
+            assertViewValid("price_1h");
+        });
+    }
+
+    @Test
+    public void testMappingColumnsAfterDropColumnWithoutCompiledMapping() throws Exception {
+        // DROP COLUMN compiles nothing, so a mapping that no compile built in this process stays unknown, as does one
+        // that a concurrent DROP MATERIALIZED VIEW removed with the view's state. A statement that is only validated
+        // changes nothing.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView();
+            assertMappingUnknown("price_1h");
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN amount");
+            assertMappingUnknown("price_1h");
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            assertMapping("price_1h", "", "amount");
+
+            try (
+                    SqlExecutionContextImpl validationContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                validationContext.setValidationOnly(true);
+                compiler.compile("ALTER MATERIALIZED VIEW price_1h DROP COLUMN price", validationContext);
+            }
+            assertMapping("price_1h", "", "amount");
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            engine.getMatViewStateStore().removeViewState(viewToken);
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN price");
+            assertMappingUnknown("price_1h");
+            drainWalQueue();
+            assertColumns("price_1h", """
+                    column\ttype
+                    ts\tTIMESTAMP
+                    sym\tSYMBOL
+                    """);
+            execute("DROP MATERIALIZED VIEW price_1h");
+            drainWalQueue();
+            Assert.assertNull(engine.getTableTokenIfExists("price_1h"));
         });
     }
 

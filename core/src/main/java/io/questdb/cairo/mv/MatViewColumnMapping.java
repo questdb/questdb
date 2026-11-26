@@ -48,6 +48,8 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -235,34 +237,28 @@ public final class MatViewColumnMapping {
             RecordMetadata viewMetadata,
             @Nullable CharSequence addedViewColumnName
     ) {
-        StringSink unmappedViewColumns = null;
-        for (int i = 0, n = viewMetadata.getColumnCount(); i < n; i++) {
-            // a dropped column keeps its slot with a negative type
-            if (viewMetadata.getColumnType(i) > -1) {
-                final CharSequence columnName = viewMetadata.getColumnName(i);
-                if (queryMetadata.getColumnIndexQuiet(columnName) < 0) {
-                    unmappedViewColumns = putListed(unmappedViewColumns, columnName);
-                }
-            }
-        }
-        if (addedViewColumnName != null && queryMetadata.getColumnIndexQuiet(addedViewColumnName) < 0) {
-            unmappedViewColumns = putListed(unmappedViewColumns, addedViewColumnName);
-        }
-        StringSink ignoredQueryColumns = null;
+        final ObjList<String> queryColumnNames = new ObjList<>(queryMetadata.getColumnCount());
         for (int i = 0, n = queryMetadata.getColumnCount(); i < n; i++) {
-            final CharSequence columnName = queryMetadata.getColumnName(i);
-            if (viewMetadata.getColumnIndexQuiet(columnName) < 0
-                    && (addedViewColumnName == null || !Chars.equalsIgnoreCase(columnName, addedViewColumnName))) {
-                ignoredQueryColumns = putListed(ignoredQueryColumns, columnName);
-            }
+            queryColumnNames.add(Chars.toString(queryMetadata.getColumnName(i)));
         }
-        if (unmappedViewColumns == null && ignoredQueryColumns == null) {
-            return Summary.EMPTY;
+        return summarize(queryColumnNames, viewMetadata, addedViewColumnName, null);
+    }
+
+    /**
+     * Returns what the name mapping that {@code summary} describes leaves out once the view loses the column
+     * {@code droppedViewColumnName}: the query columns stay those of the mapping's compile, and the view has the
+     * columns of {@code viewMetadata} but the dropped one. Returns null, an unknown mapping, when {@code summary} is
+     * null or describes a positional copy, which knows no query column names.
+     */
+    public static @Nullable Summary summarizeWithoutViewColumn(
+            @Nullable Summary summary,
+            RecordMetadata viewMetadata,
+            CharSequence droppedViewColumnName
+    ) {
+        if (summary == null || summary.queryColumnNames == null) {
+            return null;
         }
-        return new Summary(
-                unmappedViewColumns != null ? unmappedViewColumns.toString() : "",
-                ignoredQueryColumns != null ? ignoredQueryColumns.toString() : ""
-        );
+        return summarize(summary.queryColumnNames, viewMetadata, null, droppedViewColumnName);
     }
 
     private static void checkConvertible(RecordMetadata queryMetadata, int queryColumnIndex, RecordMetadata viewMetadata, int viewColumnIndex) {
@@ -275,6 +271,11 @@ public final class MatViewColumnMapping {
                     .put(" [from=").put(queryMetadata.getColumnName(queryColumnIndex))
                     .put(", to=").put(viewMetadata.getColumnName(viewColumnIndex)).put(']');
         }
+    }
+
+    // True when the name is not null and names the column, without regard to case.
+    private static boolean isNamed(@Nullable CharSequence name, CharSequence columnName) {
+        return name != null && Chars.equalsIgnoreCase(name, columnName);
     }
 
     // Query column i goes to view column i: the copier positional copy has always used.
@@ -300,20 +301,64 @@ public final class MatViewColumnMapping {
         return list;
     }
 
+    // The view has the columns of viewMetadata, also addedViewColumnName when not null and not droppedViewColumnName.
+    // Names compare without regard to case, as column names do.
+    private static Summary summarize(
+            ObjList<String> queryColumnNames,
+            RecordMetadata viewMetadata,
+            @Nullable CharSequence addedViewColumnName,
+            @Nullable CharSequence droppedViewColumnName
+    ) {
+        final LowerCaseCharSequenceHashSet queryColumnNameSet = new LowerCaseCharSequenceHashSet();
+        for (int i = 0, n = queryColumnNames.size(); i < n; i++) {
+            queryColumnNameSet.add(queryColumnNames.getQuick(i));
+        }
+        StringSink unmappedViewColumns = null;
+        for (int i = 0, n = viewMetadata.getColumnCount(); i < n; i++) {
+            // a dropped column keeps its slot with a negative type
+            if (viewMetadata.getColumnType(i) > -1) {
+                final CharSequence columnName = viewMetadata.getColumnName(i);
+                if (!queryColumnNameSet.contains(columnName) && !isNamed(droppedViewColumnName, columnName)) {
+                    unmappedViewColumns = putListed(unmappedViewColumns, columnName);
+                }
+            }
+        }
+        if (addedViewColumnName != null && !queryColumnNameSet.contains(addedViewColumnName)) {
+            unmappedViewColumns = putListed(unmappedViewColumns, addedViewColumnName);
+        }
+        StringSink ignoredQueryColumns = null;
+        for (int i = 0, n = queryColumnNames.size(); i < n; i++) {
+            final String columnName = queryColumnNames.getQuick(i);
+            if ((viewMetadata.getColumnIndexQuiet(columnName) < 0 || isNamed(droppedViewColumnName, columnName))
+                    && !isNamed(addedViewColumnName, columnName)) {
+                ignoredQueryColumns = putListed(ignoredQueryColumns, columnName);
+            }
+        }
+        return new Summary(
+                unmappedViewColumns != null ? unmappedViewColumns.toString() : "",
+                ignoredQueryColumns != null ? ignoredQueryColumns.toString() : "",
+                queryColumnNames
+        );
+    }
+
     /**
      * What the mapping from a view's query columns to its columns leaves out, as {@code materialized_views()} reports
      * it: the view columns no query column names, which get NULL, and the query columns no view column names, which
      * refresh ignores. Each is a comma-separated list of names, in column order, and empty when there is none. A
-     * positional copy leaves nothing out.
+     * positional copy leaves nothing out. A name mapping keeps its query's column names, so that a view column
+     * change can update it without a compile, see {@link #summarizeWithoutViewColumn}.
      */
     public static final class Summary {
-        public static final Summary EMPTY = new Summary("", "");
+        public static final Summary EMPTY = new Summary("", "", null);
         private final String ignoredQueryColumns;
+        // the query's column names of a name mapping, in query order; null for a positional copy
+        private final @Nullable ObjList<String> queryColumnNames;
         private final String unmappedViewColumns;
 
-        private Summary(String unmappedViewColumns, String ignoredQueryColumns) {
+        private Summary(String unmappedViewColumns, String ignoredQueryColumns, @Nullable ObjList<String> queryColumnNames) {
             this.unmappedViewColumns = unmappedViewColumns;
             this.ignoredQueryColumns = ignoredQueryColumns;
+            this.queryColumnNames = queryColumnNames;
         }
 
         public String getIgnoredQueryColumns() {

@@ -2114,7 +2114,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // ALTER MATERIALIZED VIEW v DROP COLUMN c: ALTER TABLE's DROP COLUMN, one column per statement and not the
     // designated timestamp, on a view whose SQL names its columns, as the definition the statement's WAL entry applies
-    // after has it, see awaitMatViewDefinition(). Refresh then ignores the query column of the name.
+    // after has it, see awaitMatViewDefinition(). Refresh then ignores the query column of the name. The statement only
+    // parses the SQL, which reads no table, and takes the column out of the mapping of the SQL's last compile.
     private void alterMatViewDropColumn(
             SqlExecutionContext executionContext,
             int matViewNamePosition,
@@ -2124,6 +2125,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterTableDropColumn(executionContext, matViewNamePosition, matViewToken, viewMetadata, true);
         final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
         validateMatViewColumnChange(executionContext, matViewNamePosition, viewDefinition, false);
+        if (executionContext.isValidationOnly()) {
+            return;
+        }
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(matViewToken);
+        if (viewState != null) {
+            viewState.setColumnMappingSummary(MatViewColumnMapping.summarizeWithoutViewColumn(
+                    viewState.getColumnMappingSummary(),
+                    viewMetadata,
+                    alterOperationBuilder.getExtraStrInfo().getQuick(0)
+            ));
+        }
     }
 
     // With isMatView set, the statement adds one column, see MAT_VIEW_ONE_COLUMN_PER_STATEMENT.

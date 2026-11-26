@@ -912,6 +912,33 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSummaryWithoutViewColumn() throws Exception {
+        // A name mapping keeps its query's columns, so a view column drop updates it without a compile: the query
+        // column of the dropped name joins the ignored ones, in query order, and a view column the query lacks leaves
+        // the unmapped ones. Names compare without regard to case. A positional copy knows no query column names,
+        // and an unknown mapping stays unknown.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE v (ts TIMESTAMP, a INT, b INT, extra INT) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    RecordCursorFactory factory = select("SELECT x AS y, x::INT AS b, x::INT AS A, timestamp_sequence(0, 1) AS ts FROM long_sequence(1)");
+                    TableWriter writer = getWriter("v")
+            ) {
+                final RecordMetadata queryMetadata = factory.getMetadata();
+                final RecordMetadata viewMetadata = writer.getMetadata();
+                final MatViewColumnMapping.Summary summary = MatViewColumnMapping.summarize(queryMetadata, viewMetadata, false);
+                assertSummary("extra", "y", summary);
+                assertSummary("extra", "y,b", MatViewColumnMapping.summarizeWithoutViewColumn(summary, viewMetadata, "B"));
+                assertSummary("extra", "y,A", MatViewColumnMapping.summarizeWithoutViewColumn(summary, viewMetadata, "a"));
+                assertSummary("", "y", MatViewColumnMapping.summarizeWithoutViewColumn(summary, viewMetadata, "EXTRA"));
+                Assert.assertNull(MatViewColumnMapping.summarizeWithoutViewColumn(null, viewMetadata, "a"));
+                final MatViewColumnMapping.Summary positional = MatViewColumnMapping.summarize(queryMetadata, viewMetadata, true);
+                assertSummary("", "", positional);
+                Assert.assertNull(MatViewColumnMapping.summarizeWithoutViewColumn(positional, viewMetadata, "a"));
+            }
+        });
+    }
+
+    @Test
     public void testViewSqlCompileModeDefaults() throws Exception {
         assertMemoryLeak(() -> {
             // A context that does not implement the mode never enters it, and reads as positional copy.
@@ -1043,6 +1070,12 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
         try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName(viewName))) {
             walWriter.addColumn(columnName, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
         }
+    }
+
+    private static void assertSummary(String unmappedViewColumns, String ignoredQueryColumns, MatViewColumnMapping.Summary summary) {
+        Assert.assertNotNull(summary);
+        Assert.assertEquals(unmappedViewColumns, summary.getUnmappedViewColumns());
+        Assert.assertEquals(ignoredQueryColumns, summary.getIgnoredQueryColumns());
     }
 
     private static void assertViewSqlGeneratedColumnNames(String sql, boolean expected) throws SqlException {
