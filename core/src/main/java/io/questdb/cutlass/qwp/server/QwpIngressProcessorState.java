@@ -819,6 +819,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         try {
                             throwIfJoinRefused(tud);
                         } catch (Throwable th) {
+                            // The NACK reports the table's schema, as on the normal path, where
+                            // the append captures it before the commit refuses the table.
+                            captureSchemaFeedback(tud);
                             rejectCommitError(th);
                             return leaveCommitBatch(seq);
                         }

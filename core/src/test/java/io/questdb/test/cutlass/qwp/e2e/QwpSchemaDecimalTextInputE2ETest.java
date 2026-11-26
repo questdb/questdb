@@ -137,17 +137,32 @@ public class QwpSchemaDecimalTextInputE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testPublicSenderMissingTablesInferFiniteAndSpecialDecimal256Scales() throws Exception {
+    public void testPublicSenderMissingTablesInferDecimal256ScaleFromFirstFiniteValue() throws Exception {
         runInContext(port -> {
             try (Sender sender = connectWs(
                     port, 0, 0, TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
                 sender.table("schema_decimal_text_input_missing")
                         .decimalColumn("value", "123.4500m")
                         .at(1, ChronoUnit.MICROS);
+                // The sender stores -Infinity as NULL. A block that holds only NULLs
+                // carries no scale, so the server defers creating the column.
                 sender.table("schema_decimal_text_input_missing_special")
                         .decimalColumn("value", "-Infinity")
                         .at(2, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
+                Assert.assertTrue(fsn >= 0);
+                Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+
+                drainWalQueue();
+                assertQuery("SELECT \"column\" FROM table_columns('schema_decimal_text_input_missing_special')")
+                        .noLeakCheck().noRandomAccess().returns("column\ntimestamp\n");
+
+                // The first finite value creates the column with its own scale. Without the
+                // 'm' suffix the parser drops trailing zeros, so -2.50 has scale 1.
+                sender.table("schema_decimal_text_input_missing_special")
+                        .decimalColumn("value", "-2.50")
+                        .at(3, ChronoUnit.MICROS);
+                fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
             }
@@ -160,9 +175,9 @@ public class QwpSchemaDecimalTextInputE2ETest extends AbstractQwpWebSocketTest {
                     .noLeakCheck().expectSize().returns("value\n123.4500\n");
             assertQuery("SELECT type FROM table_columns('schema_decimal_text_input_missing_special') "
                     + "WHERE \"column\" = 'value'")
-                    .noLeakCheck().noRandomAccess().returns("type\nDECIMAL(76,0)\n");
-            assertQuery("SELECT value, value IS NULL is_null FROM schema_decimal_text_input_missing_special")
-                    .noLeakCheck().expectSize().returns("value\tis_null\n\ttrue\n");
+                    .noLeakCheck().noRandomAccess().returns("type\nDECIMAL(76,1)\n");
+            assertQuery("SELECT value, value IS NULL is_null FROM schema_decimal_text_input_missing_special ORDER BY timestamp")
+                    .noLeakCheck().expectSize().returns("value\tis_null\n\ttrue\n-2.5\tfalse\n");
         });
     }
 

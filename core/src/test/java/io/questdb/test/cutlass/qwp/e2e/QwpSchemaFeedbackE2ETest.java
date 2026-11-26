@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
@@ -35,6 +36,7 @@ import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -431,6 +433,56 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
             }
         }, 65_536, Integer.MAX_VALUE, 1);
         assertQuery("select count() from feedback_non_wal").expectSize().noRandomAccess().returns("count\n0\n");
+    }
+
+    @Test
+    public void testSuspendedTableRefusalReturnsChangedSchemaOnNack() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        execute("create table feedback_suspended_plain (n long, ts timestamp) timestamp(ts) partition by day wal");
+        execute("create table feedback_suspended_deferred (n long, ts timestamp) timestamp(ts) partition by day wal");
+        runInContext(port -> {
+            // A plain frame is refused as its table joins the commit batch, a deferred
+            // group as it commits. Both NACKs report the schema changed since the
+            // connection's first frame.
+            for (boolean isDeferred : new boolean[]{false, true}) {
+                String tableName = isDeferred ? "feedback_suspended_deferred" : "feedback_suspended_plain";
+                try (WebSocketClient client = connectSchemaClient(port);
+                     QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer table = longTable(tableName, 1)) {
+                    // Reports the schema and caches the table's writer on the connection.
+                    assertFeedback(client, encoder, table, 0, 1);
+                    execute("alter table " + tableName + " add column extra long");
+                    // The lookup refuses a suspended table only when it opens a writer, so
+                    // the cached writer meets this suspension at the batch join or the commit.
+                    execute("alter table " + tableName + " suspend wal");
+
+                    encoder.setDeferCommit(isDeferred);
+                    sendSchema(client, encoder, table);
+                    if (isDeferred) {
+                        sendCommit(client, encoder);
+                    }
+                    WebSocketResponse nack = receiveResponse(client);
+                    Assert.assertEquals(tableName, WebSocketResponse.STATUS_WRITE_ERROR, nack.getStatus());
+                    Assert.assertEquals(tableName, isDeferred ? 2 : 1, nack.getSequence());
+                    TestUtils.assertContains(nack.getErrorMessage(), "table is suspended");
+                    Assert.assertFalse(tableName, nack.isSchemaInvalidation());
+                    Assert.assertEquals(tableName, 1, nack.getSchemaUpdateCount());
+                    Assert.assertEquals(tableName, nack.getSchemaUpdateTableName(0));
+                    QwpSchemaResponse schema = nack.getSchemaUpdate(0);
+                    Assert.assertEquals(tableName, QwpSchemaProtocol.RESULT_KNOWN, schema.getResult());
+                    Assert.assertEquals(tableName, 3, schema.getColumnCount());
+                    Assert.assertEquals(tableName, "n", schema.getColumnName(0));
+                    Assert.assertEquals(tableName, "ts", schema.getColumnName(1));
+                    Assert.assertEquals(tableName, "extra", schema.getColumnName(2));
+                    Assert.assertEquals(tableName, 1, schema.getDesignatedIndex());
+                }
+                execute("alter table " + tableName + " resume wal");
+            }
+        });
+        drainWalQueue();
+        // Only each table's first frame committed.
+        assertQuery("select n, extra from feedback_suspended_plain").expectSize().returns("n\textra\n1\tnull\n");
+        assertQuery("select n, extra from feedback_suspended_deferred").expectSize().returns("n\textra\n1\tnull\n");
     }
 
     private void assertSharedAckCapacity(int fragmentSize) throws Exception {
