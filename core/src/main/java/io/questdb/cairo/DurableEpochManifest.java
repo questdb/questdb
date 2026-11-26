@@ -862,8 +862,9 @@ public final class DurableEpochManifest {
     }
 
     // Reads the _txn section of the generation at `path`, whose valid header is at `header`, into memory the caller
-    // frees (NATIVE_DEFAULT, the size the header records). Returns 0 when the section cannot be opened or read, is
-    // short, or fails its checksum.
+    // frees (NATIVE_O3, the size the header records). Returns 0 when the section cannot be opened or read, is
+    // short, or fails its checksum. Only TxnSectionCache calls it, for O3PartitionPurgeJob, so the copy carries
+    // the job's tag.
     private static long readTxnSection(FilesFacade ff, Path path, long header) {
         final long size = Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE);
         if (size <= 0) {
@@ -875,7 +876,7 @@ public final class DurableEpochManifest {
         }
         long buf = 0;
         try {
-            buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            buf = Unsafe.malloc(size, MemoryTag.NATIVE_O3);
             if (ff.read(fd, buf, size, FILE_SIZE) != size
                     || Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE + Long.BYTES) != TableUtils.calculateCvAreaChecksum(buf, size)) {
                 return 0;
@@ -885,7 +886,7 @@ public final class DurableEpochManifest {
             return copy;
         } finally {
             if (buf != 0) {
-                Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf, size, MemoryTag.NATIVE_O3);
             }
             ff.close(fd);
         }
@@ -1060,7 +1061,8 @@ public final class DurableEpochManifest {
 
     /**
      * Holds the {@code _txn} section of each generation, read at most once until {@link #clear()}. It owns the
-     * copies' native memory. It is for one table and one thread at a time.
+     * copies' native memory, which it accounts under {@link MemoryTag#NATIVE_O3}, the tag of its owner,
+     * {@link O3PartitionPurgeJob}. It is for one table and one thread at a time.
      */
     public static final class TxnSectionCache implements Mutable, QuietCloseable {
         private static final int STATE_LISTS_EVERYTHING = 1;
@@ -1075,7 +1077,7 @@ public final class DurableEpochManifest {
         public void clear() {
             for (int generation = 0; generation < 2; generation++) {
                 if (addresses[generation] != 0) {
-                    Unsafe.free(addresses[generation], sizes[generation], MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(addresses[generation], sizes[generation], MemoryTag.NATIVE_O3);
                     addresses[generation] = 0;
                     sizes[generation] = 0;
                 }
@@ -1117,7 +1119,7 @@ public final class DurableEpochManifest {
         private void load(FilesFacade ff, Path tablePath, int rootLen, int tableId, int generation) {
             // A throw from here on leaves the generation listing everything.
             states[generation] = STATE_LISTS_EVERYTHING;
-            final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_O3);
             try {
                 tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
                 if (readHeader(ff, tablePath, tableId, generation, header) != HEADER_VALID) {
@@ -1131,7 +1133,7 @@ public final class DurableEpochManifest {
                     states[generation] = STATE_LOADED;
                 }
             } finally {
-                Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_O3);
             }
         }
     }
