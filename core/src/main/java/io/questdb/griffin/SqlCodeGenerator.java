@@ -16020,9 +16020,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // SPLICE JOIN and the single-threaded HORIZON JOIN read the rows of rowIdOrderByModel by row id. Its sort supplies
     // the random access when the rows arrive without it, unless a reader above takes their page frames instead: a
-    // parallel filter supplies random access itself, and the parallel HORIZON JOIN reads page frames.
+    // parallel filter supplies random access itself, and the parallel HORIZON JOIN reads page frames. Rows of a stream
+    // GROUP BY need no sort either, since the join reads them through a copy.
     private boolean isRowIdSortRequired(RecordCursorFactory factory, IQueryModel model) {
-        if (model != rowIdOrderByModel || factory.recordCursorSupportsRandomAccess()) {
+        if (model != rowIdOrderByModel || factory.recordCursorSupportsRandomAccess() || isRandomAccessLostToStream(factory)) {
             return false;
         }
         // A factory that offers a filter to steal also offers random access or page frames: the async filters, the
