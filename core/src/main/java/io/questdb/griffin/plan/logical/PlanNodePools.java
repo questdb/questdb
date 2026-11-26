@@ -31,7 +31,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * The pools the binder, at every nesting depth, and the optimiser draw plan nodes, sub-queries and bound expressions from. A
@@ -189,35 +188,6 @@ public final class PlanNodePools implements Mutable {
      * Whether a decorrelation domain of the statement re-reads a join input it shares with its master, see
      * {@link #recordSharedSource()}.
      */
-    /**
-     * Returns the largest capacity, in values, that an int list of a pooled join graph keeps, see
-     * {@link JoinGraph#getCapacity()}.
-     */
-    @TestOnly
-    public int getJoinGraphCapacity() {
-        int capacity = 0;
-        for (int i = 0, n = joinGraphs.getCapacity(); i < n; i++) {
-            capacity = Math.max(capacity, joinGraphs.peekQuick(i).getCapacity());
-        }
-        return capacity;
-    }
-
-    /**
-     * Returns the largest capacity, in columns, that the output schema of a pooled join or join input keeps, see
-     * {@link OutputSchema#getCapacity()}.
-     */
-    @TestOnly
-    public int getJoinSchemaCapacity() {
-        int capacity = 0;
-        for (int i = 0, n = joins.getCapacity(); i < n; i++) {
-            capacity = Math.max(capacity, joins.peekQuick(i).getOutput().getCapacity());
-        }
-        for (int i = 0, n = joinInputs.getCapacity(); i < n; i++) {
-            capacity = Math.max(capacity, joinInputs.peekQuick(i).getOutput().getCapacity());
-        }
-        return capacity;
-    }
-
     public boolean hasSharedSources() {
         return hasSharedSources;
     }

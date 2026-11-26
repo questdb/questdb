@@ -916,14 +916,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return planNodePools.joinEqualities.getCapacity();
     }
 
+    /**
+     * Returns the largest room, in values, that an int list of a pooled join graph keeps.
+     */
     @TestOnly
     public int getJoinGraphCapacity() {
-        return planNodePools.getJoinGraphCapacity();
+        int capacity = 0;
+        for (int i = 0, n = planNodePools.joinGraphs.getCapacity(); i < n; i++) {
+            capacity = Math.max(capacity, planNodePools.joinGraphs.peekQuick(i).getCapacity());
+        }
+        return capacity;
     }
 
+    /**
+     * Returns the largest room, in columns, that the output schema of a pooled join or join input keeps.
+     */
     @TestOnly
     public int getJoinSchemaCapacity() {
-        return planNodePools.getJoinSchemaCapacity();
+        int capacity = 0;
+        for (int i = 0, n = planNodePools.joins.getCapacity(); i < n; i++) {
+            capacity = Math.max(capacity, planNodePools.joins.peekQuick(i).getOutput().getCapacity());
+        }
+        for (int i = 0, n = planNodePools.joinInputs.getCapacity(); i < n; i++) {
+            capacity = Math.max(capacity, planNodePools.joinInputs.peekQuick(i).getOutput().getCapacity());
+        }
+        return capacity;
     }
 
     @TestOnly
@@ -964,9 +981,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return planNodePools.subqueries.getCapacity();
     }
 
+    /**
+     * Returns the largest room, in values, that a scratch int or long list of the compiler keeps.
+     */
     @TestOnly
-    public int getTemporaryIntListCapacity() {
-        return temporaries.getIntListCapacity();
+    public int getTemporaryListCapacity() {
+        return temporaries.getListCapacity();
     }
 
     @TestOnly

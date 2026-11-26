@@ -41,6 +41,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
@@ -49,11 +50,6 @@ import org.jetbrains.annotations.TestOnly;
  * constructor; a user fills a member and consumes it before another user of the same member runs.
  */
 public final class CompilerTemporaries implements Mutable {
-    /**
-     * The most values an int list keeps room for between statements. A statement of tens of joins needs far fewer,
-     * while a chain of hundreds of outer joins collects ordering edges that grow with the square of its inputs.
-     */
-    public static final int MAX_RETAINED_CAPACITY = 4096;
     public final ObjList<BoundExpression> arguments = new ObjList<>(2);
     public final ObjList<BoundExpression> expressions = new ObjList<>();
     public final IntList functionPositions = new IntList();
@@ -78,14 +74,30 @@ public final class CompilerTemporaries implements Mutable {
     public final CharSequenceHashSet tokens = new CharSequenceHashSet();
     public final UniqueColumnNames uniqueNames = new UniqueColumnNames();
     public final IntList values = new IntList();
+    // the room each int list had when its statement began, which tells whether the statement grew it
+    private final IntList intListCapacities = new IntList();
+    private final ObjList<RetainedCapacity> intListRetainedCapacities = new ObjList<>();
+    private final ObjList<IntList> intLists = new ObjList<>();
+    private final RetainedCapacity longsRetainedCapacity = new RetainedCapacity(longs.capacity());
+    // the room the long list had when its statement began
+    private int longsCapacity = longs.capacity();
 
     public CompilerTemporaries(int minRetainedJoinNodes) {
         this.joinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, minRetainedJoinNodes);
+        retain(functionPositions);
+        retain(indexes);
+        retain(masterKeys);
+        retain(positions);
+        retain(slaveKeys);
+        retain(values);
     }
 
     /**
      * Empties the functions, the join children with their pool and the names, which the compiler releases between
-     * statements, and the int lists, which keep room for at most {@link #MAX_RETAINED_CAPACITY} values.
+     * statements, and the int and long lists, which keep the room their recent statements needed, see
+     * {@link RetainedCapacity}.
+     * A statement that grew a list needed about its new room; one that did not needed no more than the room the list
+     * had, and at least the values the list holds at the end.
      */
     @Override
     public void clear() {
@@ -93,21 +105,36 @@ public final class CompilerTemporaries implements Mutable {
         joinChildren.clear();
         joinChildrenPool.clear();
         names.clear();
-        functionPositions.clearAndTrim(MAX_RETAINED_CAPACITY);
-        indexes.clearAndTrim(MAX_RETAINED_CAPACITY);
-        masterKeys.clearAndTrim(MAX_RETAINED_CAPACITY);
-        positions.clearAndTrim(MAX_RETAINED_CAPACITY);
-        slaveKeys.clearAndTrim(MAX_RETAINED_CAPACITY);
-        values.clearAndTrim(MAX_RETAINED_CAPACITY);
+        for (int i = 0, n = intLists.size(); i < n; i++) {
+            final IntList list = intLists.getQuick(i);
+            list.clearAndTrim(intListRetainedCapacities.getQuick(i).endUse(used(list.capacity(), intListCapacities.getQuick(i), list.size())));
+            intListCapacities.setQuick(i, list.capacity());
+        }
+        longs.clearAndTrim(longsRetainedCapacity.endUse(used(longs.capacity(), longsCapacity, longs.size())));
+        longsCapacity = longs.capacity();
     }
 
     /**
-     * Returns the largest capacity, in values, of the int lists.
+     * Returns the largest room, in values, that an int or long list keeps.
      */
     @TestOnly
-    public int getIntListCapacity() {
-        int capacity = Math.max(functionPositions.capacity(), indexes.capacity());
-        capacity = Math.max(capacity, Math.max(masterKeys.capacity(), positions.capacity()));
-        return Math.max(capacity, Math.max(slaveKeys.capacity(), values.capacity()));
+    int getListCapacity() {
+        int capacity = longs.capacity();
+        for (int i = 0, n = intLists.size(); i < n; i++) {
+            capacity = Math.max(capacity, intLists.getQuick(i).capacity());
+        }
+        return capacity;
+    }
+
+    // The room a statement needed from a list: the room it grew the list to, or, when it did not grow the list, no
+    // more than the room the list had and at least the values the list holds at the end.
+    private static int used(int capacity, int startCapacity, int size) {
+        return capacity > startCapacity ? capacity : size;
+    }
+
+    private void retain(IntList list) {
+        intLists.add(list);
+        intListCapacities.add(list.capacity());
+        intListRetainedCapacities.add(new RetainedCapacity(list.capacity()));
     }
 }

@@ -171,6 +171,29 @@ public class LongListTest {
     }
 
     @Test
+    public void testClearAndTrim() {
+        final LongList list = new LongList(4);
+        for (int i = 0; i < 1_000; i++) {
+            list.add(i);
+        }
+        final int capacity = list.capacity();
+        list.clearAndTrim(capacity);
+        Assert.assertEquals(0, list.size());
+        Assert.assertEquals(capacity, list.capacity());
+        for (int i = 0; i < 1_000; i++) {
+            list.add(i);
+        }
+        list.clearAndTrim(capacity - 1);
+        Assert.assertEquals(0, list.size());
+        Assert.assertEquals(4, list.capacity());
+        list.add(7);
+        list.add(8);
+        Assert.assertEquals(2, list.size());
+        Assert.assertEquals(7, list.getQuick(0));
+        Assert.assertEquals(8, list.getQuick(1));
+    }
+
+    @Test
     public void testEquals() {
         final LongList list1 = new LongList();
         list1.add(1L);

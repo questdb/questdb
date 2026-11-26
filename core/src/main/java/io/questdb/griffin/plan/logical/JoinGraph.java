@@ -47,7 +47,8 @@ public final class JoinGraph implements Mutable {
     /**
      * The most values each int list of a cleared graph keeps room for. A join of tens of inputs states its edges in
      * far fewer, while the ordering constraints of a chain of hundreds of outer joins grow with the square of its
-     * inputs.
+     * inputs. The cap is fixed rather than following recent use, as {@link OutputSchema#MAX_RETAINED_CAPACITY} is: a
+     * pooled graph can sit unused for any number of statements.
      */
     public static final int MAX_RETAINED_CAPACITY = 4096;
     private final IntList constantFilterOrigins = new IntList();

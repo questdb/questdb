@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -293,19 +292,32 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                 }
             }
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndClose(compiler, "SELECT 1");
+                compiler.clear();
+                final int temporaryFloor = compiler.getTemporaryListCapacity();
+
                 compileAndClose(compiler, sql);
                 Assert.assertTrue(compiler.getJoinSchemaCapacity() > OutputSchema.MAX_RETAINED_CAPACITY);
                 Assert.assertTrue(compiler.getJoinGraphCapacity() > JoinGraph.MAX_RETAINED_CAPACITY);
-                Assert.assertTrue(compiler.getTemporaryIntListCapacity() > CompilerTemporaries.MAX_RETAINED_CAPACITY);
+                final int temporaryPeak = compiler.getTemporaryListCapacity();
+                Assert.assertTrue(temporaryPeak > JoinGraph.MAX_RETAINED_CAPACITY);
                 compiler.clear();
                 final int retained = compiler.getJoinSchemaCapacity();
                 Assert.assertTrue(retained <= OutputSchema.MAX_RETAINED_CAPACITY);
                 Assert.assertTrue(retained > OutputSchema.MAX_RETAINED_CAPACITY / 2);
                 Assert.assertTrue(compiler.getJoinGraphCapacity() <= JoinGraph.MAX_RETAINED_CAPACITY);
-                Assert.assertTrue(compiler.getTemporaryIntListCapacity() <= CompilerTemporaries.MAX_RETAINED_CAPACITY);
+                Assert.assertEquals(temporaryPeak, compiler.getTemporaryListCapacity());
 
                 compileAndClose(compiler, "SELECT * FROM c t0 JOIN c t1 ON t1.k = t0.k");
                 compiler.clear();
+                Assert.assertEquals(retained, compiler.getJoinSchemaCapacity());
+                Assert.assertEquals(temporaryPeak, compiler.getTemporaryListCapacity());
+
+                for (int i = 0, n = 2 * RetainedCapacity.WINDOW_USES; i < n; i++) {
+                    compileAndClose(compiler, "SELECT 1");
+                    compiler.clear();
+                }
+                Assert.assertEquals(temporaryFloor, compiler.getTemporaryListCapacity());
                 Assert.assertEquals(retained, compiler.getJoinSchemaCapacity());
             }
         });

@@ -46,7 +46,10 @@ public final class OutputSchema implements Mutable {
     /**
      * The most columns a schema keeps room for across {@link #clearAndTrim()}. It covers the widest tables QuestDB
      * users commonly keep, a few hundred columns, so their plans reuse the room statement after statement, while a
-     * join chain, which grows one prefix schema per step, keeps room only in the steps up to this width.
+     * join chain, which grows one prefix schema per step, keeps room only in the steps up to this width. The cap is
+     * fixed rather than following recent use, see {@link io.questdb.std.RetainedCapacity}: a pooled node can sit
+     * unused for any number of statements, so a policy that shrinks a schema only when it clears again would keep
+     * the room of one wide statement in every node that statement took.
      */
     public static final int MAX_RETAINED_CAPACITY = 512;
     private static final int VISIBLE = 1;
