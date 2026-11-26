@@ -762,9 +762,17 @@ public final class MatViewFuzzOpGenerator {
                                     absent.add(name);
                                 }
                             }
-                            if (absent.size() > 0) {
-                                // the view has a catalogue column past ts and sym
-                                final int i = 2 + rnd.nextInt(op.sqlColumns.size() - 2);
+                            // A catalogue column of the view, which a column list may put anywhere, ts and sym
+                            // included. Replacing ts would make the statement refuse the SQL for its designated
+                            // timestamp before the same-position check.
+                            final IntList cataloguePositions = new IntList();
+                            for (int k = 0, n = op.sqlColumns.size(); k < n; k++) {
+                                if (isCatalogueName(op.sqlColumns.getQuick(k))) {
+                                    cataloguePositions.add(k);
+                                }
+                            }
+                            if (absent.size() > 0 && cataloguePositions.size() > 0) {
+                                final int i = cataloguePositions.getQuick(rnd.nextInt(cataloguePositions.size()));
                                 op.sqlColumns.setQuick(i, absent.getQuick(rnd.nextInt(absent.size())));
                             }
                         }

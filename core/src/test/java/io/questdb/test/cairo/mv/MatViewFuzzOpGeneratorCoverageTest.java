@@ -1270,6 +1270,41 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     }
 
     @Test
+    public void testPositionalAlterAsOnListViewKeepsTimestamp() {
+        // A view created with a column list may hold ts anywhere. ALTER ... AS draws a SQL that copies by position with
+        // one of the view's columns replaced by a column the view lacks, and keeps ts: the statement refuses a SQL
+        // without the view's designated timestamp before the same-position check whose refusal the fuzz expects.
+        final Rnd rnd = new Rnd(42, 42);
+        final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
+        int replacedPastTimestamp = 0;
+        for (int round = 0; round < ROUNDS; round++) {
+            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, false);
+            generator.initViewWithColumnList(rnd);
+            for (int day = 0; day < DAY_COUNT; day++) {
+                generator.initRows(rnd, day, op);
+            }
+            for (int step = 0; step < STEPS_PER_ROUND; step++) {
+                final ObjList<String> viewColumns = new ObjList<>();
+                viewColumns.addAll(generator.getViewColumns());
+                generator.next(rnd, op);
+                if (op.kind != MatViewFuzzOpGenerator.Kind.VIEW_ALTER_AS || !op.isPositional) {
+                    continue;
+                }
+                Assert.assertTrue("a SQL that copies by position without ts: " + op.sqlColumns, op.sqlColumns.indexOf(MatViewFuzzOpGenerator.TS) > -1);
+                boolean isEveryColumnInView = true;
+                for (int i = 0, n = op.sqlColumns.size(); i < n; i++) {
+                    isEveryColumnInView &= viewColumns.indexOf(op.sqlColumns.getQuick(i)) > -1;
+                }
+                if (!isEveryColumnInView && viewColumns.indexOf(MatViewFuzzOpGenerator.TS) > 1) {
+                    replacedPastTimestamp++;
+                }
+            }
+        }
+        // a column replaced in a view that holds ts past its first two columns, where the replacement used to land
+        Assert.assertTrue("replaced past ts: " + replacedPastTimestamp, replacedPastTimestamp > 0);
+    }
+
+    @Test
     public void testPositionalCopyRule() {
         // the rule ALTER MATERIALIZED VIEW ... AS applies to a SQL that copies by position, which the generator predicts
         final ObjList<String> view = new ObjList<>("ts", "sym", "price", "qty");
