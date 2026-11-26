@@ -119,6 +119,12 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         return true;
     }
 
+    @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // links and embedded assets on other sites reach the web console's files
+        return true;
+    }
+
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
         return LOG.info().$('[').$(context.getFd()).$("] ");
     }
