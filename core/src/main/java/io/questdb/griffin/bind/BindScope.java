@@ -105,8 +105,14 @@ final class BindScope implements Mutable {
     final IntList pivotIndexes;
     final ObjList<CharSequence> pivotKeyAliases;
     final IntList pivotKeyIndexes;
-    //The dateadd calls the binding root's and_offset rewrite wraps the timestamp column in.
-    final ObjList<ExpressionNode> projectedOffsets = new ObjList<>();
+    /**
+     * The timestamp column references of the binding root's and_offset predicates: each reads as dateadd of the unit
+     * and stride at the same index over the column, and a reference listed more than once nests those calls, the one
+     * listed last innermost.
+     */
+    final ObjList<ExpressionNode> projectedOffsetColumns = new ObjList<>();
+    final IntList projectedOffsetStrides = new IntList();
+    final ObjList<CharSequence> projectedOffsetUnits = new ObjList<>();
     final IntList projectionAliasIndexes = new IntList();
     final OutputSchema referenceScope = new OutputSchema();
     final LowerCaseCharSequenceIntHashMap selectAliasIndexes = new LowerCaseCharSequenceIntHashMap();
@@ -213,7 +219,9 @@ final class BindScope implements Mutable {
         outerColumnIds.clear();
         outerScopes.clear();
         pivotForAliases.clear();
-        projectedOffsets.clear();
+        projectedOffsetColumns.clear();
+        projectedOffsetStrides.clear();
+        projectedOffsetUnits.clear();
         projectionAliasIndexes.clear();
         referenceScope.clear();
         selectAliasIndexes.clear();

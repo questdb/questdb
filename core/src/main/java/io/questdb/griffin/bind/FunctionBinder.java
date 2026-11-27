@@ -60,6 +60,7 @@ import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalStrConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalVarcharConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -596,6 +597,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             function = resolveCall(node, count);
         }
         pushFunction(function, node.position);
+        if (node.type == ExpressionNode.LITERAL) {
+            bindProjectedOffsets(node);
+        }
     }
 
     private static long foldedReference(int columnId, int position) {
@@ -823,6 +827,24 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
+     * Reads the timestamp column the literal names through the dateadd calls of the and_offset predicates around it,
+     * innermost first, see {@link BindScope#projectedOffsetColumns}.
+     */
+    private void bindProjectedOffsets(ExpressionNode node) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final ObjList<ExpressionNode> columns = scope.projectedOffsetColumns;
+        final int position = node.position;
+        for (int i = columns.size() - 1; i > -1; i--) {
+            if (columns.getQuick(i) == node) {
+                pushFunction(captureConstant(IntConstant.newInstance(scope.projectedOffsetStrides.getQuick(i)), position, null), position);
+                final CharSequence unit = scope.projectedOffsetUnits.getQuick(i);
+                pushFunction(captureConstant(resolver.createConstant(position, unit, sqlExecutionContext), position, unit), position);
+                pushFunction(resolveCall("dateadd", position, CallRole.PROJECTED_OFFSET, false, 3), position);
+            }
+        }
+    }
+
+    /**
      * Binds one root, the expression tree of the node or, without a node, the named call over already-bound
      * arguments, and hands its built root to the prepared functions.
      */
@@ -890,7 +912,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             functionStack.setPos(functionMark);
             positionStack.setPos(functionMark);
             scope.bindingRoot = null;
-            scope.projectedOffsets.clear();
+            scope.projectedOffsetColumns.clear();
+            scope.projectedOffsetStrides.clear();
+            scope.projectedOffsetUnits.clear();
             ctx.syntheticNodes.rewind(syntheticNodeMark);
             scope.currentPreparation = null;
             scope.boundLowerBound = null;
@@ -985,9 +1009,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 case CLASSIFYING_ROOT -> ctx.isAggregate(node) ? CallRole.AGGREGATE_ROOT : CallRole.ROOT;
                 default -> CallRole.ROOT;
             };
-        }
-        if (scope.projectedOffsets.indexOf(node) >= 0) {
-            return CallRole.PROJECTED_OFFSET;
         }
         return isWindowArgument(node) ? CallRole.WINDOW_ARGUMENT : CallRole.ARGUMENT;
     }
@@ -1150,10 +1171,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 push(type(function, position), leafMark());
                 return function;
             }
-            final ConstantExpression constant = constant(function, position).markLiteral(null);
-            final int tag = ColumnType.tagOf(constant.getDataType());
-            push(token != null && (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT)
-                    ? constant.withLiteralText(Chars.toString(token)) : constant, leafMark());
+            push(literal(function, position, token), leafMark());
             return function;
         } catch (Throwable th) {
             Misc.free(function, th);
@@ -1636,6 +1654,36 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
+     * The constant a literal binds as; a floating-point one keeps the text it is spelled in.
+     */
+    private ConstantExpression literal(Function function, int position, CharSequence token) {
+        final ConstantExpression constant = constant(function, position).markLiteral(null);
+        final int tag = ColumnType.tagOf(constant.getDataType());
+        return token != null && (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT) ? constant.withLiteralText(Chars.toString(token)) : constant;
+    }
+
+    /**
+     * Records each column reference of the node's operands, at any depth, that names the timestamp column as read
+     * through dateadd(unit, stride, timestamp), see {@link BindScope#projectedOffsetColumns}.
+     */
+    private void markTimestampColumns(ExpressionNode node, CharSequence unit, int stride, int timestampIndex) {
+        final BindScope scope = ctx.scope();
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            final ExpressionNode operand = node.operandAt(i);
+            if (operand == null) {
+                continue;
+            }
+            if (operand.type != ExpressionNode.LITERAL) {
+                markTimestampColumns(operand, unit, stride, timestampIndex);
+            } else if (findColumn(operand, scope.expressionInput, scope.expressionInputAlias) == timestampIndex) {
+                scope.projectedOffsetColumns.add(operand);
+                scope.projectedOffsetUnits.add(unit);
+                scope.projectedOffsetStrides.add(stride);
+            }
+        }
+    }
+
+    /**
      * Replaces each stand-in among the arguments of a call the binder constructs with the constant it stands in for,
      * which the function may keep.
      */
@@ -1924,9 +1972,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
-     * Rewrites a well-formed and_offset(predicate, unit, offset) into the predicate over
-     * dateadd(unit, -offset, timestamp), which interval extraction inverts as a projected offset.
-     * Any other and_offset stays unknown to the function parser.
+     * Rewrites a well-formed and_offset(predicate, unit, offset) into the predicate, whose timestamp column references
+     * bind as dateadd(unit, -offset, timestamp), see {@link BindScope#projectedOffsetColumns}, which interval
+     * extraction inverts as a projected offset. Any other and_offset stays unknown to the function parser.
      */
     private void rewriteAndOffsets(ExpressionNode node) {
         if (node == null) {
@@ -1952,7 +2000,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         } catch (NumericException e) {
             return;
         }
-        wrapTimestampColumns(predicate, unit.token, Integer.toString(-offset), timestampIndex);
+        markTimestampColumns(predicate, unit.token, -offset, timestampIndex);
         node.copyFrom(predicate);
     }
 
@@ -2281,33 +2329,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return scope.bindingRole == BindingRole.WINDOW ? scope.bindingRoot : null;
     }
 
-    private ExpressionNode wrapTimestampColumn(ExpressionNode node, CharSequence unit, CharSequence stride, int timestampIndex) {
-        if (node == null) {
-            return null;
-        }
-        if (node.type != ExpressionNode.LITERAL) {
-            wrapTimestampColumns(node, unit, stride, timestampIndex);
-            return node;
-        }
-        final BindScope scope = ctx.scope();
-        if (findColumn(node, scope.expressionInput, scope.expressionInputAlias) != timestampIndex) {
-            return node;
-        }
-        final ExpressionNode dateadd = ctx.syntheticNodes.next().of(ExpressionNode.FUNCTION, "dateadd", 0, node.position);
-        dateadd.paramCount = 3;
-        dateadd.args.add(node);
-        dateadd.args.add(ctx.syntheticNodes.next().of(ExpressionNode.CONSTANT, stride, 0, node.position));
-        dateadd.args.add(ctx.syntheticNodes.next().of(ExpressionNode.CONSTANT, unit, 0, node.position));
-        scope.projectedOffsets.add(dateadd);
-        return dateadd;
-    }
-
-    private void wrapTimestampColumns(ExpressionNode node, CharSequence unit, CharSequence stride, int timestampIndex) {
-        for (int i = 0, n = node.operandCount(); i < n; i++) {
-            node.setOperandAt(i, wrapTimestampColumn(node.operandAt(i), unit, stride, timestampIndex));
-        }
-    }
-
     static int callFlags(Function function, ObjList<BoundExpression> arguments) {
         int flags = BoundExpression.functionFlags(function);
         for (int i = 0, n = arguments.size(); i < n; i++) {
@@ -2372,6 +2393,18 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     static int resolveColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) throws SqlException {
         return checkColumn(node, findColumn(node, input, inputAlias), input, inputAlias);
+    }
+
+    /**
+     * The constant the literal text binds as, as in an expression tree: the function resolver parses the text.
+     */
+    ConstantExpression bindLiteral(CharSequence token, int position, SqlExecutionContext executionContext) throws SqlException {
+        final Function function = resolver.createConstant(position, token, executionContext);
+        try {
+            return literal(function, position, token);
+        } finally {
+            Misc.free(function);
+        }
     }
 
     /**
