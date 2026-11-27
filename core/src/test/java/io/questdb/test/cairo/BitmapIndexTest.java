@@ -1793,12 +1793,116 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNewKeyAsksWhereTheKeyFileHoldsDataFrom16KiBOfSkippedKeys() throws Exception {
+        // A new key that skips entries below 16 KiB reads them without asking the file system anything. From 16 KiB on it
+        // asks where the key file holds data, here all of it: one question, where the next hole starts, settles it, and
+        // the key reads the run up to its own entry.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
+        final DataRunsFacade ff = new DataRunsFacade();
+        assertMemoryLeak(ff, () -> {
+            final LongList values = new LongList();
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                writeRollbackSlack();
+                final long length = keyFileLength();
+                ff.reset(0, length);
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                BitmapIndexWriter.testScannedKeyBytes.set(0);
+                try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                    // 511 keys skipped, 16_352 bytes
+                    writer.add(1_511, 1);
+                    Assert.assertEquals(16_352, BitmapIndexWriter.testScannedKeyBytes.get());
+                    Assert.assertEquals(0, ff.seekHoleCount);
+                    // 512 keys skipped, 16_384 bytes
+                    writer.add(2_024, 2);
+                    writer.setMaxValue(999);
+                    Assert.assertEquals(16_352 + 16_384, BitmapIndexWriter.testScannedKeyBytes.get());
+                    Assert.assertEquals(0, ff.seekDataCount);
+                    Assert.assertEquals(1, ff.seekHoleCount);
+                    Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+                }
+                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    Assert.assertEquals(2_025, reader.getKeyCount());
+                    for (int key = 0; key < 2_025; key++) {
+                        final String expected = key < 1_000 ? "[" + key + "]" : key == 1_511 ? "[1]" : key == 2_024 ? "[2]" : "[]";
+                        assertThat(expected, reader.getCursor(key, 0, Long.MAX_VALUE), values);
+                    }
+                }
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
+    public void testNewKeyReadsOnlyTheDataRunsOfTheKeysItSkips() throws Exception {
+        // A no-truncate close leaves a whole key append page past the last entry. From 16 KiB of skipped entries on, a new
+        // key asks the file system where the key file holds data and reads only those runs: here the page that holds
+        // the last entries. It asks for every run before it reads any. Below 16 KiB it reads the entries without asking.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
+        final DataRunsFacade ff = new DataRunsFacade();
+        assertMemoryLeak(ff, () -> {
+            final LongList values = new LongList();
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                for (boolean isOpenByFd : new boolean[]{false, true}) {
+                    removeIndexFiles();
+                    create(configuration, path.trimTo(plen), "x", 64);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                        for (int key = 0; key < 1_000; key++) {
+                            writer.add(key, key);
+                        }
+                        writer.setMaxValue(999);
+                        writer.closeNoTruncate();
+                    }
+                    final long length = keyFileLength();
+                    Assert.assertEquals(512 * 1024, length);
+                    final int farKey = (int) (length / BitmapIndexUtils.KEY_ENTRY_SIZE);
+                    // the entries end at 32_064, in the 8th 4 KiB page
+                    ff.reset(0, 32_768);
+
+                    BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                    BitmapIndexWriter.testScannedKeyBytes.set(0);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                        openIndexWriter(writer, isOpenByFd);
+                        writer.add(1_000, 1_000);
+                        // keys 1_001 to 1_006, below 16 KiB
+                        writer.add(1_007, 1_007);
+                        Assert.assertEquals(192, BitmapIndexWriter.testScannedKeyBytes.get());
+                        Assert.assertEquals(0, ff.seekHoleCount);
+                        // [32_320, length): data in [32_320, 32_768), then only holes
+                        writer.add(farKey, farKey);
+                        writer.setMaxValue(farKey);
+                        Assert.assertEquals(192 + 448, BitmapIndexWriter.testScannedKeyBytes.get());
+                        Assert.assertEquals(1, ff.seekHoleCount);
+                        Assert.assertEquals(1, ff.seekDataCount);
+                        Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+                    }
+                    try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        Assert.assertEquals(farKey + 1, reader.getKeyCount());
+                        for (int key = 0; key <= farKey; key++) {
+                            final boolean hasValue = key <= 1_000 || key == 1_007 || key == farKey;
+                            assertThat(hasValue ? "[" + key + "]" : "[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+                        }
+                    }
+                }
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
     public void testNewKeyReadsOnlyTheKeysItSkipsBelowMappedLength() throws Exception {
         // Opening a writer reads no entry. A new key reads the entries it skips, and only those below the length of the
         // key file the writer mapped at open: past it the file grew with zeros in this session. A close that does not
-        // truncate, as a rollback makes, leaves a whole key append page past the last entry.
+        // truncate, as a rollback makes, leaves a whole key append page past the last entry. The file system here cannot
+        // tell where the key file holds data, so the new key reads every entry it skips below that length.
         node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
-        assertMemoryLeak(() -> {
+        final DataRunsFacade ff = new DataRunsFacade();
+        ff.fixedSeekData = -2;
+        ff.fixedSeekHole = -2;
+        assertMemoryLeak(ff, () -> {
             final LongList values = new LongList();
             BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
             try {
@@ -1849,6 +1953,132 @@ public class BitmapIndexTest extends AbstractCairoTest {
                             assertThat(hasValue ? "[" + key + "]" : "[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
                         }
                     }
+                }
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
+    public void testNewKeyReadsTheKeysItSkipsPastTooManyDataRuns() throws Exception {
+        // A file system that reports the skipped entries in more data runs than a new key asks about one by one: the key
+        // reads the first eight runs, and every entry past them. It asks all its questions before it reads anything:
+        // reading a run reads ahead the pages past it, which ext4 and XFS would then report as data.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
+        final DataRunsFacade ff = new DataRunsFacade();
+        assertMemoryLeak(ff, () -> {
+            final LongList values = new LongList();
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                writeRollbackSlack();
+                final long length = keyFileLength();
+                // ten runs of 1 KiB, one every 4 KiB from 32_768
+                final long[] runs = new long[20];
+                for (int i = 0; i < 10; i++) {
+                    runs[2 * i] = 32_768 + 4_096L * i;
+                    runs[2 * i + 1] = runs[2 * i] + 1_024;
+                }
+                ff.reset(runs);
+                final int farKey = (int) (length / BitmapIndexUtils.KEY_ENTRY_SIZE);
+                BitmapIndexWriter.testScannedKeyBytes.set(0);
+                try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                    writer.add(farKey, farKey);
+                    writer.setMaxValue(farKey);
+                    // eight runs, then [runs[16], length)
+                    Assert.assertEquals(8 * 1_024 + length - runs[16], BitmapIndexWriter.testScannedKeyBytes.get());
+                    Assert.assertEquals(10, ff.seekHoleCount);
+                    Assert.assertEquals(9, ff.seekDataCount);
+                    // it asked every question before it read any run
+                    Assert.assertEquals(19, ff.scannedAtQuestion.size());
+                    for (int i = 0; i < ff.scannedAtQuestion.size(); i++) {
+                        Assert.assertEquals(0, ff.scannedAtQuestion.getQuick(i));
+                    }
+                }
+                assertKeysAfterRollbackSlack(farKey, values);
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
+    public void testNewKeyReadsTheKeysItSkipsWhenSeekAnswersAreBogus() throws Exception {
+        // A new key trusts only answers about the offset it asked about. An answer it cannot use, a hole or data before
+        // that offset, or data where it was told a hole starts, makes it read every entry from where it stands; a hole it
+        // was told about before stays unread.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
+        final DataRunsFacade ff = new DataRunsFacade();
+        assertMemoryLeak(ff, () -> {
+            final LongList values = new LongList();
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                for (int answer = 0; answer < 6; answer++) {
+                    writeRollbackSlack();
+                    final long length = keyFileLength();
+                    final long lo = BitmapIndexUtils.getKeyEntryOffset(1_000);
+                    // a hole at lo, then data in [65_536, 69_632) only
+                    ff.reset(65_536, 69_632);
+                    final long expectedScan;
+                    final int expectedSeekHoles;
+                    final int expectedSeekData;
+                    switch (answer) {
+                        case 0 -> {
+                            // the file system cannot tell where a hole starts
+                            ff.fixedSeekHole = -2;
+                            expectedScan = length - lo;
+                            expectedSeekHoles = 1;
+                            expectedSeekData = 0;
+                        }
+                        case 1 -> {
+                            // data before the hole it was told starts at lo
+                            ff.fixedSeekData = lo - 1;
+                            expectedScan = length - lo;
+                            expectedSeekHoles = 1;
+                            expectedSeekData = 1;
+                        }
+                        case 2 -> {
+                            // data where it was told a hole starts
+                            ff.fixedSeekData = lo;
+                            expectedScan = length - lo;
+                            expectedSeekHoles = 1;
+                            expectedSeekData = 1;
+                        }
+                        case 3 -> {
+                            // the file system cannot tell where the hole after the data starts
+                            ff.fixedSeekHole = -2;
+                            ff.fixedSeekHoleFromCall = 1;
+                            expectedScan = length - 65_536;
+                            expectedSeekHoles = 2;
+                            expectedSeekData = 1;
+                        }
+                        case 4 -> {
+                            // a hole where it was told the data starts, then data there again
+                            ff.fixedSeekHole = 65_536;
+                            ff.fixedSeekHoleFromCall = 1;
+                            expectedScan = length - 65_536;
+                            expectedSeekHoles = 2;
+                            expectedSeekData = 2;
+                        }
+                        default -> {
+                            // a hole before the data
+                            ff.fixedSeekHole = 4_096;
+                            ff.fixedSeekHoleFromCall = 1;
+                            expectedScan = length - 65_536;
+                            expectedSeekHoles = 2;
+                            expectedSeekData = 1;
+                        }
+                    }
+                    final int farKey = (int) (length / BitmapIndexUtils.KEY_ENTRY_SIZE);
+                    BitmapIndexWriter.testScannedKeyBytes.set(0);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                        writer.add(farKey, farKey);
+                        writer.setMaxValue(farKey);
+                        Assert.assertEquals("answer " + answer, expectedScan, BitmapIndexWriter.testScannedKeyBytes.get());
+                        Assert.assertEquals("answer " + answer, expectedSeekHoles, ff.seekHoleCount);
+                        Assert.assertEquals("answer " + answer, expectedSeekData, ff.seekDataCount);
+                    }
+                    assertKeysAfterRollbackSlack(farKey, values);
                 }
             } finally {
                 BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
@@ -2053,6 +2283,50 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNewKeyZeroesStaleKeysInDataRuns() throws Exception {
+        // The old entries a kill inside truncate() leaves above a zero key count, over more than 16 KiB, and an entry a
+        // kill inside add() leaves far past them, in the space a no-truncate close keeps: the file system reports both as
+        // data, and the space between them as a hole. A new key past them zeroes both runs and reads nothing of the hole,
+        // nor of the data past its own entry.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
+        final DataRunsFacade ff = new DataRunsFacade();
+        assertMemoryLeak(ff, () -> {
+            final LongList values = new LongList();
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                for (boolean isOpenByFd : new boolean[]{false, true}) {
+                    final int newKey = 12_000;
+                    writeStaleKeysAndOrphanInRollbackSlack();
+                    // the old entries end at 32_064, the orphan entry lies at 320_064, and the entry of the new key at
+                    // 384_064, before the last run
+                    ff.reset(0, 32_768, 319_488, 323_584, 450_560, 454_656);
+                    BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                    BitmapIndexWriter.testScannedKeyBytes.set(0);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                        openIndexWriter(writer, isOpenByFd);
+                        Assert.assertEquals(0, writer.getKeyCount());
+                        writer.add(newKey, 5);
+                        writer.setMaxValue(5);
+                        // [64, 32_768) and [319_488, 323_584)
+                        Assert.assertEquals(32_704 + 4_096, BitmapIndexWriter.testScannedKeyBytes.get());
+                        Assert.assertEquals(32_704 + 4_096, BitmapIndexWriter.testZeroedKeyBytes.get());
+                        Assert.assertEquals(2, ff.seekHoleCount);
+                        Assert.assertEquals(2, ff.seekDataCount);
+                        for (int key = 0; key < newKey; key++) {
+                            assertThat("[]", writer.getCursor(key), values);
+                        }
+                        assertThat("[5]", writer.getCursor(newKey), values);
+                    }
+                    assertAllZero(readKeyFile(BitmapIndexUtils.KEY_FILE_RESERVED, BitmapIndexUtils.getKeyEntryOffset(newKey)));
+                    assertKeysAfterStaleKeysAndOrphan(newKey, values);
+                }
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
     public void testNewKeyZeroesStaleKeysLeftByKillAtKeyFileCut() throws Exception {
         // truncate() zeroes the entries in the page it keeps mapped, then cuts the key file after that page. A process
         // killed at the cut leaves the old entries of the pages past it above a zero key count. The next writer open
@@ -2110,6 +2384,39 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 for (int key = 0; key < keyCount; key++) {
                     assertThat(key == firstKey ? "[5]" : key == lastKey ? "[6]" : "[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testNewKeyZeroesStaleKeysOverFileSystemDataRuns() throws Exception {
+        // testNewKeyZeroesStaleKeysInDataRuns on the file system the test runs on, with no facade between: whatever it
+        // reports, data runs as on ext4, XFS and tmpfs, or nothing it can tell, the new key zeroes both the old entries and
+        // the orphan entry, and reads no more than the entries it skips.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024);
+        assertMemoryLeak(() -> {
+            final LongList values = new LongList();
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                for (boolean isOpenByFd : new boolean[]{false, true}) {
+                    final int newKey = 12_000;
+                    writeStaleKeysAndOrphanInRollbackSlack();
+                    BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                    BitmapIndexWriter.testScannedKeyBytes.set(0);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                        openIndexWriter(writer, isOpenByFd);
+                        writer.add(newKey, 5);
+                        writer.setMaxValue(5);
+                        final long skipped = BitmapIndexUtils.getKeyEntryOffset(newKey) - BitmapIndexUtils.KEY_FILE_RESERVED;
+                        Assert.assertTrue(BitmapIndexWriter.testScannedKeyBytes.get() <= skipped);
+                        // at least the 1_000 old entries and the orphan entry
+                        Assert.assertTrue(BitmapIndexWriter.testZeroedKeyBytes.get() >= 32_000 + BitmapIndexUtils.KEY_ENTRY_SIZE);
+                    }
+                    assertAllZero(readKeyFile(BitmapIndexUtils.KEY_FILE_RESERVED, BitmapIndexUtils.getKeyEntryOffset(newKey)));
+                    assertKeysAfterStaleKeysAndOrphan(newKey, values);
+                }
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
             }
         });
     }
@@ -2863,6 +3170,28 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     // The keys of an index of keyCount keys, each holding its key, after assertNewKeysWriteNoSkippedKeys()
+    // What a reader finds after writeRollbackSlack() and one new key, farKey with its own number as its value
+    private void assertKeysAfterRollbackSlack(int farKey, LongList values) {
+        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            Assert.assertEquals(farKey + 1, reader.getKeyCount());
+            for (int key = 0; key <= farKey; key++) {
+                final boolean hasValue = key < 1_000 || key == farKey;
+                assertThat(hasValue ? "[" + key + "]" : "[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+            }
+        }
+    }
+
+    // What a reader finds after writeStaleKeysAndOrphanInRollbackSlack() and one new key, newKey with the value 5
+    private void assertKeysAfterStaleKeysAndOrphan(int newKey, LongList values) {
+        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            Assert.assertEquals(newKey + 1, reader.getKeyCount());
+            for (int key = 0; key < newKey; key++) {
+                assertThat("[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+            }
+            assertThat("[5]", reader.getCursor(newKey, 0, Long.MAX_VALUE), values);
+        }
+    }
+
     private void assertNewKeysOverCleanKeys(IntFunction<RowCursor> cursors, int keyCount, long keyFileLength, LongList values) {
         final int sparseKey = keyCount + 7;
         final int farKey = farKey(keyFileLength);
@@ -3514,6 +3843,21 @@ public class BitmapIndexTest extends AbstractCairoTest {
         writeKeyFile(offset, bytes);
     }
 
+    // The index a rollback with rows in flight leaves at a key append page of 512 KiB: 1_000 keys, each with its own
+    // number as its value, and the key file not cut since the writer closed, a key append page long
+    private void writeRollbackSlack() {
+        removeIndexFiles();
+        create(configuration, path.trimTo(plen), "x", 64);
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+            for (int key = 0; key < 1_000; key++) {
+                writer.add(key, key);
+            }
+            writer.setMaxValue(999);
+            writer.closeNoTruncate();
+        }
+        Assert.assertEquals(512 * 1024, keyFileLength());
+    }
+
     // The index a process killed inside truncate() leaves after the key count drops and before the entries are
     // zeroed: 100 keys, each with the value 1_000 + key, the key file as long as the writer made it, and a zero key
     // count
@@ -3530,6 +3874,19 @@ public class BitmapIndexTest extends AbstractCairoTest {
         writeKeyFileInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, 0);
         final ByteBuffer header = ByteBuffer.wrap(readKeyFile(0, BitmapIndexUtils.KEY_FILE_RESERVED)).order(ByteOrder.nativeOrder());
         Assert.assertEquals(0, header.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT));
+    }
+
+    // writeRollbackSlack() followed by a process kill inside truncate() after the key count drops, which leaves the
+    // entries of the 1_000 keys above a zero key count, and by a kill inside add() of key 10_000 before it raised the key
+    // count, which leaves that entry at 320_064, past them: its count and count check 1, its blocks at offset 0
+    private void writeStaleKeysAndOrphanInRollbackSlack() {
+        writeRollbackSlack();
+        final byte[] orphan = new byte[(int) BitmapIndexUtils.KEY_ENTRY_SIZE];
+        final ByteBuffer entry = ByteBuffer.wrap(orphan).order(ByteOrder.nativeOrder());
+        entry.putLong(BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 1);
+        entry.putLong(BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
+        writeKeyFile(BitmapIndexUtils.getKeyEntryOffset(10_000), orphan);
+        writeKeyFileInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, 0);
     }
 
     // Writes keys 0 and 1 into one block each, a second value of key 0 into its block, and key 2's single value
@@ -3562,6 +3919,82 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     // Records the key file header at each cut of x.k or x.v while recording, where a process kill can land, and the
     // whole key file at the cut of x.k.
+    // Answers where x.k holds data from the runs a test sets, rather than from the file system, and counts the questions.
+    // Other files get the answers of the file system.
+    private static class DataRunsFacade extends TestFilesFacadeImpl {
+        // [lo, hi) pairs in ascending order: x.k holds only holes outside them
+        private final LongList dataRuns = new LongList();
+        // the bytes BitmapIndexWriter had read of skipped entries when it asked each question
+        private final LongList scannedAtQuestion = new LongList();
+        // when set, seekData() returns this rather than an answer from the runs
+        private long fixedSeekData = Long.MIN_VALUE;
+        // when set, seekHole() returns this rather than an answer from the runs, from call fixedSeekHoleFromCall on
+        private long fixedSeekHole = Long.MIN_VALUE;
+        private int fixedSeekHoleFromCall;
+        private long keyFd = -1;
+        private int seekDataCount;
+        private int seekHoleCount;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (Utf8s.endsWithAscii(name, "x.k")) {
+                keyFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public long seekData(long fd, long offset) {
+            if (fd != keyFd) {
+                return super.seekData(fd, offset);
+            }
+            seekDataCount++;
+            scannedAtQuestion.add(BitmapIndexWriter.testScannedKeyBytes.get());
+            if (fixedSeekData != Long.MIN_VALUE) {
+                return fixedSeekData;
+            }
+            for (int i = 0, n = dataRuns.size(); i < n; i += 2) {
+                if (dataRuns.getQuick(i + 1) > offset) {
+                    return Math.max(offset, dataRuns.getQuick(i));
+                }
+            }
+            return -1;
+        }
+
+        @Override
+        public long seekHole(long fd, long offset) {
+            if (fd != keyFd) {
+                return super.seekHole(fd, offset);
+            }
+            scannedAtQuestion.add(BitmapIndexWriter.testScannedKeyBytes.get());
+            if (fixedSeekHole != Long.MIN_VALUE && seekHoleCount >= fixedSeekHoleFromCall) {
+                seekHoleCount++;
+                return fixedSeekHole;
+            }
+            seekHoleCount++;
+            for (int i = 0, n = dataRuns.size(); i < n; i += 2) {
+                if (dataRuns.getQuick(i) <= offset && offset < dataRuns.getQuick(i + 1)) {
+                    return dataRuns.getQuick(i + 1);
+                }
+            }
+            return offset;
+        }
+
+        void reset(long... runs) {
+            dataRuns.clear();
+            for (long run : runs) {
+                dataRuns.add(run);
+            }
+            fixedSeekData = Long.MIN_VALUE;
+            fixedSeekHole = Long.MIN_VALUE;
+            fixedSeekHoleFromCall = 0;
+            scannedAtQuestion.clear();
+            seekDataCount = 0;
+            seekHoleCount = 0;
+        }
+    }
+
     private static class KeyFileCutFacade extends TestFilesFacadeImpl {
         private final StringSink cuts = new StringSink();
         private boolean isRecording;

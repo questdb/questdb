@@ -60,8 +60,16 @@ public class BitmapIndexWriter implements IndexWriter {
     public static final AtomicLong testZeroedKeyBytes = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private static final long MAX_VALUE_OFFSET = BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE;
+    // Data runs that zeroSkippedKeysInDataRuns() reads one by one before it reads the rest: bounds the calls into the
+    // file system when it reports data in many short runs.
+    private static final int SKIPPED_KEYS_MAX_DATA_RUNS = 8;
+    // From this many bytes of skipped entries on, asking the file system where the key file holds data costs less than
+    // reading the entries: four 4 KiB pages that nothing has read yet take about as long as the calls.
+    private static final long SKIPPED_KEYS_SEEK_MIN_BYTES = 16 * 1024;
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
+    // [lo, hi) pairs of the data runs zeroSkippedKeysInDataRuns() reads
+    private final long[] dataRuns = new long[2 * SKIPPED_KEYS_MAX_DATA_RUNS];
     private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
@@ -721,20 +729,87 @@ public class BitmapIndexWriter implements IndexWriter {
     // the entry it then covers. Below it, a process killed inside truncate() after the key count dropped, or inside add()
     // before it raised the key count, can leave old entries. Writes only when it finds a non-zero byte, so that the
     // pages of a clean key file stay clean. The append offset of keyMem stays at the length of() mapped: puts at an
-    // offset and extensions keep it, and truncate() moves it to the header end once it has zeroed the entries.
+    // offset and extensions keep it, and truncate() moves it to the header end once it has zeroed the entries. Over
+    // SKIPPED_KEYS_SEEK_MIN_BYTES or more, it reads only the runs that the file system may hold as non-zero.
     private void zeroSkippedKeys(long keyOffset) {
         final long lo = BitmapIndexUtils.getKeyEntryOffset(Math.max(keyCount, 0));
         final long hi = Math.min(keyOffset, keyMem.getAppendOffset());
-        if (hi > lo) {
-            final long address = keyMem.addressOf(lo);
-            final long size = hi - lo;
-            if (isScannedKeyBytesCounterEnabled) {
-                testScannedKeyBytes.addAndGet(size);
+        if (hi - lo >= SKIPPED_KEYS_SEEK_MIN_BYTES) {
+            zeroSkippedKeysInDataRuns(lo, hi);
+        } else if (hi > lo) {
+            zeroSkippedKeysIfNotZero(lo, hi);
+        }
+    }
+
+    // A no-truncate close, as a rollback makes, leaves up to a key append page of the key file past the last entry that
+    // was allocated and never written. Reading it faults in every page of it, and on tmpfs zeroes each one, while the
+    // file system reports it as a hole, which reads as zeros. This reads only the runs of [lo, hi) that the file system
+    // reports as data, which include pages written through a mapping and not written back yet, and the whole range
+    // when the file system cannot tell. It trusts no other answer: a hole or data before the offset it asked about, or
+    // data where it was told a hole starts, makes it read the rest. It asks for every run before it reads any: reading
+    // a run through the mapping reads ahead the pages past it, and ext4 and XFS report pages read ahead as data. It
+    // asks where a hole starts first, so that one question settles skipped entries that all lie in data, and two the
+    // usual data run followed by holes.
+    private void zeroSkippedKeysInDataRuns(long lo, long hi) {
+        final FilesFacade keyFf = keyMem.getFilesFacade();
+        final long keyFd = keyMem.getFd();
+        int runCount = 0;
+        // where the rest of [lo, hi), read whole, starts: hi when nothing past the runs is left to read
+        long restLo = hi;
+        long pos = lo;
+        // whether a hole starts at pos: the file system said so, or a data run ends there
+        boolean isHoleAtPos = false;
+        while (pos < hi) {
+            if (!isHoleAtPos) {
+                final long holeLo = keyFf.seekHole(keyFd, pos);
+                if (holeLo < pos) {
+                    // the file system cannot tell
+                    restLo = pos;
+                    break;
+                }
+                if (holeLo > pos) {
+                    if (runCount == SKIPPED_KEYS_MAX_DATA_RUNS) {
+                        // too many runs to ask about each
+                        restLo = pos;
+                        break;
+                    }
+                    dataRuns[2 * runCount] = pos;
+                    pos = dataRuns[2 * runCount + 1] = Math.min(holeLo, hi);
+                    runCount++;
+                    isHoleAtPos = true;
+                    continue;
+                }
             }
-            if (!isZeroFilled(address, size)) {
-                Vect.memset(address, size, 0);
-                testZeroedKeyBytes.addAndGet(size);
+            final long dataLo = keyFf.seekData(keyFd, pos);
+            if (dataLo == -1 || dataLo >= hi) {
+                // only holes from pos to hi
+                break;
             }
+            if (dataLo <= pos) {
+                // the file system cannot tell, or reports data where a hole starts
+                restLo = pos;
+                break;
+            }
+            pos = dataLo;
+            isHoleAtPos = false;
+        }
+        for (int i = 0; i < runCount; i++) {
+            zeroSkippedKeysIfNotZero(dataRuns[2 * i], dataRuns[2 * i + 1]);
+        }
+        if (restLo < hi) {
+            zeroSkippedKeysIfNotZero(restLo, hi);
+        }
+    }
+
+    private void zeroSkippedKeysIfNotZero(long lo, long hi) {
+        final long address = keyMem.addressOf(lo);
+        final long size = hi - lo;
+        if (isScannedKeyBytesCounterEnabled) {
+            testScannedKeyBytes.addAndGet(size);
+        }
+        if (!isZeroFilled(address, size)) {
+            Vect.memset(address, size, 0);
+            testZeroedKeyBytes.addAndGet(size);
         }
     }
 

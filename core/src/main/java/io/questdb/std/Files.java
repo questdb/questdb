@@ -322,6 +322,26 @@ public final class Files {
         return syncfs0(toOsFd(fd));
     }
 
+    /**
+     * Linux lseek(2) {@code SEEK_DATA} on the file systems that report holes reliably and cheaply: ext2/3/4, XFS and
+     * tmpfs. Returns the offset of the first byte at or past {@code offset} that the file may hold as non-zero, -1 when
+     * the file holds only holes from {@code offset} to its end, or -2 when it cannot tell: another file system or
+     * OS, or a failed call. A hole reads as zeros. Bytes written through a shared mapping count as data before they
+     * are written back, as do bytes written by a process that has since exited. Moves the file offset of {@code fd}:
+     * not for a file that {@link #append(long, long, long)} writes to.
+     */
+    public static long seekData(long fd, long offset) {
+        return seekData0(toOsFd(fd), offset);
+    }
+
+    /**
+     * Linux lseek(2) {@code SEEK_HOLE} on the file systems {@link #seekData(long, long)} trusts: the offset of the first
+     * hole at or past {@code offset}, the file length when no hole follows, or -2 when it cannot tell.
+     */
+    public static long seekHole(long fd, long offset) {
+        return seekHole0(toOsFd(fd), offset);
+    }
+
     public static long getDirSize(Path path) {
         long pFind = findFirst(path.$().ptr());
         if (pFind > 0L) {
@@ -832,6 +852,10 @@ public final class Files {
     private static native int syncFileRange0(int fd, long offset, long nbytes, int flags);
 
     private static native int syncfs0(int fd);
+
+    private static native long seekData0(int fd, long offset);
+
+    private static native long seekHole0(int fd, long offset);
 
     private static native long getDiskSize(long lpszPath);
 

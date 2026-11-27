@@ -407,6 +407,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, j
     return -1;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_seekData0(JNIEnv *e, jclass cl, jint fd, jlong offset) {
+    /* Windows has no SEEK_DATA: it cannot tell where the data of a file lies. */
+    (void) e; (void) cl; (void) fd; (void) offset;
+    return -2;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_seekHole0(JNIEnv *e, jclass cl, jint fd, jlong offset) {
+    (void) e; (void) cl; (void) fd; (void) offset;
+    return -2;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
     /* Windows has no sync_file_range: a no-op returning 0. Callers must not rely on it for durability. */
     (void) e; (void) cl; (void) fd; (void) offset; (void) nbytes; (void) flags;

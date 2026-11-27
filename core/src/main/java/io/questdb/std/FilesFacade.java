@@ -104,6 +104,24 @@ public interface FilesFacade {
     void fsyncAndClose(long fd);
 
     /**
+     * The offset of the first byte at or past {@code offset} that the file may hold as non-zero, -1 when it holds only
+     * zeros from {@code offset} to its end, or -2 when the facade cannot tell. See {@link Files#seekData(long, long)}.
+     * The default cannot tell, so that a facade claims nothing about the files it serves unless it says so.
+     */
+    default long seekData(long fd, long offset) {
+        return -2;
+    }
+
+    /**
+     * The offset of the first byte at or past {@code offset} where a run of zeros that the file system tracks as a
+     * hole starts, the file length when none follows, or -2 when the facade cannot tell. See
+     * {@link Files#seekHole(long, long)}. The default cannot tell.
+     */
+    default long seekHole(long fd, long offset) {
+        return -2;
+    }
+
+    /**
      * Linux sync_file_range(2): starts writeback of the file's page-cache pages over
      * {@code [offset, offset+nbytes)} to the device cache without a device flush (see the
      * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 off Linux; durability still needs a
