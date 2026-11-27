@@ -908,7 +908,11 @@ final class TemporalJoinBinder {
         final ObjList<PivotForColumn> forColumns = model.getPivotForColumns();
         for (int i = 0, n = forColumns.size(); i < n; i++) {
             final ExpressionNode key = forColumns.getQuick(i).getInExpr();
-            rejectHorizonWhere(key, output, firstUnresolvableReference(key, masterOutput, masterAlias));
+            resolveHorizonWhere(key, output);
+            final int outsidePosition = firstUnresolvableReference(key, masterOutput, masterAlias);
+            if (outsidePosition != Integer.MAX_VALUE) {
+                throw SqlException.position(outsidePosition).put("PIVOT FOR key of HORIZON JOIN can only reference left-hand side columns");
+            }
         }
         bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterTimestampIndex),
                 executionContext.getCairoEngine().getConfiguration().getSqlHorizonJoinMaxOffsets());
@@ -1027,11 +1031,7 @@ final class TemporalJoinBinder {
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
             final WindowJoinStep step = plan.getSteps().getQuick(s);
             final QueryModel occurrence = sources.getQuick(first + s);
-            step.getMasterScope().copyFrom(output);
-            final OutputSchema scope = step.getScope();
-            scope.copyFrom(output);
-            final OutputSchema slaveOutput = step.getSlave().getOutput();
-            scope.addColumnsFrom(slaveOutput, step.getSlaveAlias());
+            final OutputSchema scope = windowJoinStepScope(plan, s);
             bindWindowJoinBounds(step, occurrence.getWindowJoinContext(), step.getMasterScope(), executionContext);
             final ExpressionNode criteria = windowJoinCriteria(occurrence, sourceAlias(masterModel), step.getSlaveAlias());
             if (criteria != null) {

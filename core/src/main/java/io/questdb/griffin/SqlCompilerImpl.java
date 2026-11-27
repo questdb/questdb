@@ -120,6 +120,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
@@ -908,6 +909,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return RowExpiryUtil.isReclaimingPolicy(predicate, classification.isMonotonic());
         } catch (SqlException e) {
             return false;
+        }
+    }
+
+    /**
+     * Binds a stand-alone expression of a statement over a schema built from {@code metadata}, as
+     * {@link #bindStatementExpression} does, and returns whether it binds to a constant NULL of its type, see
+     * {@link ConstantExpression#isNull()}. Nothing instantiates the bound expression; what its binding prepared closes
+     * before this returns.
+     */
+    public boolean isNullStatementExpression(ExpressionNode expression, RecordMetadata metadata, SqlExecutionContext executionContext)
+            throws SqlException {
+        assert root == null;
+        expressionScope.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            expressionScope.addColumnFrom(metadata, i, i);
+        }
+        try {
+            final boolean isNull = binder.bindExpression(expression, expressionScope, ColumnType.UNDEFINED, executionContext) instanceof ConstantExpression constant
+                    && constant.isNull();
+            clearExpressions();
+            return isNull;
+        } catch (Throwable th) {
+            final Throwable failure = closePrepared(th);
+            assert failure == th;
+            throw th;
+        } finally {
+            expressionScope.clear();
         }
     }
 

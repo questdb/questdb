@@ -871,20 +871,12 @@ public final class ExpiryPolicyBinder implements Mutable {
             return;
         }
         final boolean isNullThreshold;
-        Function t = null;
         try {
-            t = compiler.bindStatementExpression(thresholdNode, metadata, ColumnType.UNDEFINED, executionContext);
-            if (t == null || !t.isConstant()) {
-                return;
-            }
-            t.init(null, executionContext);
-            isNullThreshold = t.isNullConstant();
+            isNullThreshold = compiler.isNullStatementExpression(thresholdNode, metadata, executionContext);
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // The whole-predicate bind already reported anything that matters; a failure here only
             // means the threshold could not be evaluated, which is not itself a reason to reject.
             return;
-        } finally {
-            Misc.free(t);
         }
         // The caret carries the caller's position, as every other error here does: a node position of the parsed
         // policy is an offset into the predicate text rather than into the statement the user wrote.

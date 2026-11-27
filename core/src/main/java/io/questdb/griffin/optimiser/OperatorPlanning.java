@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.TableAccessInfo;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
@@ -372,9 +372,10 @@ final class OperatorPlanning implements Mutable {
         final ObjList<FunctionExpression> aggregates = sample.getAggregates();
         for (int i = 0, n = aggregates.size(); i < n; i++) {
             final FunctionExpression call = aggregates.getQuick(i);
+            final FunctionFactory.PartialMerge merge = call.getPartialMerge();
             if (call.getArgumentCount() != 1 || !(call.argumentAt(0) instanceof ColumnExpression column)
                     || !column.isDirectReference() || ColumnType.isArray(column.getDataType())
-                    || !SqlKeywords.isFirstKeyword(call.getName()) && !SqlKeywords.isLastKeyword(call.getName())) {
+                    || merge != FunctionFactory.PartialMerge.FIRST && merge != FunctionFactory.PartialMerge.LAST) {
                 return false;
             }
         }

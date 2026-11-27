@@ -99,17 +99,12 @@ final class SumNormalisation implements OptimiserPass {
     }
 
     /**
-     * The index of the aggregate {@code name(column)} of the grouping, or of {@code name()} when columnId is -1;
-     * -1 when the grouping has none.
+     * The index of the aggregate of the grouping that computes what {@code aggregate} computes, -1 when it has none.
      */
-    private static int findColumnAggregate(GroupingPlan grouping, CharSequence name, int columnId) {
+    private static int findAggregate(GroupingPlan grouping, FunctionExpression aggregate) {
         final ObjList<FunctionExpression> aggregates = grouping.getAggregates();
         for (int i = 0, n = aggregates.size(); i < n; i++) {
-            final FunctionExpression aggregate = aggregates.getQuick(i);
-            if ((columnId < 0 ? aggregate.getArgumentCount() == 0
-                    : aggregate.getArgumentCount() == 1 && aggregate.argumentAt(0) instanceof ColumnExpression column
-                      && !column.isCast() && column.getColumnId() == columnId)
-                    && Chars.equalsIgnoreCase(aggregate.getName(), name)) {
+            if (LogicalPlans.isSameExpression(aggregates.getQuick(i), aggregate)) {
                 return i;
             }
         }
@@ -235,9 +230,9 @@ final class SumNormalisation implements OptimiserPass {
             final int columnId = column.getColumnId();
             final int columnIndex = input.getColumnIndexById(columnId);
             final int position = sum.getPosition();
-            int sumIndex = findColumnAggregate(grouping, "sum", columnId);
+            final FunctionExpression columnSum = bindAggregate("sum", position, inputColumn(input, columnIndex, column.getPosition()), input);
+            int sumIndex = findAggregate(grouping, columnSum);
             if (sumIndex < 0) {
-                final FunctionExpression columnSum = bindAggregate("sum", position, inputColumn(input, columnIndex, column.getPosition()), input);
                 if (isKept) {
                     sumIndex = addAggregate(grouping, columnSum, "sum");
                 } else {
@@ -253,11 +248,11 @@ final class SumNormalisation implements OptimiserPass {
             int countIndex = -1;
             if (operation.getName().charAt(0) != '*') {
                 final int type = input.getColumnType(columnIndex);
-                final int countColumnId = type == ColumnType.INT || type == ColumnType.LONG ? columnId : -1;
-                countIndex = findColumnAggregate(grouping, "count", countColumnId);
+                final boolean isNullable = type == ColumnType.INT || type == ColumnType.LONG;
+                final FunctionExpression count = bindAggregate("count", position, isNullable ? inputColumn(input, columnIndex, column.getPosition()) : null, input);
+                countIndex = findAggregate(grouping, count);
                 if (countIndex < 0) {
-                    countIndex = addAggregate(grouping, bindAggregate("count", position,
-                            countColumnId < 0 ? null : inputColumn(input, columnIndex, column.getPosition()), input), "COUNT");
+                    countIndex = addAggregate(grouping, count, "COUNT");
                 }
             }
             for (int k = firstSelection; k >= 0; k = nextSelections.getQuick(k)) {

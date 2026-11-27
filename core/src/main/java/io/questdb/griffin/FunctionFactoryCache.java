@@ -137,25 +137,6 @@ public class FunctionFactoryCache {
         return factories.get(token);
     }
 
-    /**
-     * How the values over the parts of a group merge for the group by function of the name, as every group by overload
-     * of the name declares it, see {@link FunctionFactory#getPartialMerge}; {@link FunctionFactory.PartialMerge#NONE}
-     * for a name of no group by function. A PIVOT over a WINDOW JOIN asks it of a measure before it resolves the
-     * measure's overload.
-     */
-    public FunctionFactory.PartialMerge getPartialMerge(CharSequence name) {
-        final ObjList<FunctionFactoryDescriptor> overloads = factories.get(name);
-        FunctionFactory.PartialMerge merge = null;
-        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
-            final FunctionFactory factory = overloads.getQuick(i).getFactory();
-            if (factory.isGroupBy()) {
-                assert merge == null || merge == factory.getPartialMerge() : "group by overloads of a name merge alike";
-                merge = factory.getPartialMerge();
-            }
-        }
-        return merge == null ? FunctionFactory.PartialMerge.NONE : merge;
-    }
-
     public boolean isCursor(CharSequence name) {
         return name != null && cursorFunctionNames.contains(name);
     }
