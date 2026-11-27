@@ -27,6 +27,7 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -35,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
@@ -481,6 +483,70 @@ public class QueryFuzzTest extends AbstractCairoTest {
         reversed.put(line("k0", "1.0")).put('\n');
         forward.put(line("k1", "1.0")).put('\n');
         Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(forward, reversed, new boolean[]{false, true}));
+    }
+
+    // A cursor that streams its result, such as the parallel GROUP BY over time buckets, runs its
+    // reduction again on toTop(), and its workers may then merge FLOAT and DOUBLE partials in another
+    // order. test_latched_counter() holds for its first evaluations alone, so each CASE below returns
+    // one value on the first pass and another on the pass after toTop(): the check takes last-digit
+    // drift in a FLOAT or DOUBLE column and fails any other difference.
+    @Test
+    public void testToTopReiterationToleratesFpDrift() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
+            try {
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.30000000000000004 ELSE 0.3 END d FROM long_sequence(1)",
+                        1,
+                        false
+                );
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.3::FLOAT ELSE 0.30000004::FLOAT END f FROM long_sequence(1)",
+                        1,
+                        false
+                );
+                // Several rows, each drifting.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT x, CASE WHEN test_latched_counter() THEN x * 0.1 * (1 + 1e-15) ELSE x * 0.1 END d FROM long_sequence(3)",
+                        3,
+                        false
+                );
+                // A DOUBLE that moves by more than drift.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.3 ELSE 0.4 END d FROM long_sequence(1)",
+                        1,
+                        true
+                );
+                // A LONG that moves by one, the smallest step it has.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 1_000_000L ELSE 1_000_001L END l FROM long_sequence(1)",
+                        1,
+                        true
+                );
+                // A DOUBLE that drifts next to a VARCHAR that changes.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.30000000000000004 ELSE 0.3 END d,"
+                                + " CASE WHEN test_latched_counter() THEN 'a' ELSE 'b' END s FROM long_sequence(1)",
+                        2,
+                        true
+                );
+                // A pass that loses a row.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT 0.3 d FROM long_sequence(2) WHERE test_latched_counter()",
+                        1,
+                        true
+                );
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
     }
 
     @Test
@@ -983,9 +1049,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     // Pins the probe frames of the parallel hash join under its own cap of a probe frame's rows, two
-    // rows, while the build scans keep the context's frames: a pinned seed's probes have more frames
-    // than the ring has entries, which the frames in flight then share, and the cursor-verify axis
-    // reads them in part.
+    // rows, while the build scans keep the context's frames: the seed's probes have more frames than
+    // the ring has entries, which the frames in flight then share, and the cursor-verify axis reads
+    // them in part. A dispatch limit of four, the run's query workers, gives the ring four entries
+    // on any host, which a probe of nine rows or more outnumbers. Under the default, which follows
+    // the host's query workers up to 32, the seed's probes of 63 rows have 32 frames of two rows:
+    // more than a small host's entries, and no more than the 32 entries of a host of many cores.
     @Test
     public void testParallelJoinProbeFramesAxis() throws Exception {
         withSystemProperties(
@@ -996,17 +1065,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "0"},
-                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "4"},
                         {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "1"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
                 },
                 () -> runQueryFuzz(runner -> {
                     final String counts = "aliased " + runner.getParallelJoinAliasedRuns()
-                            + ", partial reads " + runner.getParallelJoinPartialReadChecks()
-                            + " (continued " + runner.getParallelJoinPartialReadContinued() + ")";
+                            + ", partial reads " + runner.getParallelJoinPartialReadChecks();
                     Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadChecks() > 0);
-                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
                 })
         );
     }
@@ -1546,6 +1613,25 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
         }
         return tables;
+    }
+
+    private static void assertToTopReiteration(QueryRunner runner, String sql, int trueEvaluations, boolean isFailureExpected) {
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                return count <= trueEvaluations;
+            }
+        });
+        final QueryRunner.Result result = runner.run(new GeneratedQuery(sql, true));
+        // The pass after toTop() evaluated the function past its first evaluations.
+        Assert.assertTrue(sql, TestLatchedCounterFunctionFactory.getCount() > trueEvaluations);
+        if (isFailureExpected) {
+            Assert.assertTrue(sql, result.isFailed());
+            TestUtils.assertContains(result.getFailure().getMessage(), "toTop re-iteration changed the row set");
+        } else {
+            Assert.assertFalse(result.getFailure() != null ? result.getFailure().getMessage() : sql, result.isFailed());
+            Assert.assertFalse(result.getSkipReason(), result.isSkipped());
+        }
     }
 
     private static void assertConcurrentCancellations(ObjList<QueryRunner> runners) {

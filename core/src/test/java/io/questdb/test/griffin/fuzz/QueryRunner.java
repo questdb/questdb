@@ -2190,14 +2190,19 @@ public class QueryRunner {
      * pass has fully materialized. First, {@code toTop()} must preserve precomputed
      * state, so {@link RecordCursor#preComputedStateSize()} must read the same value
      * across the rewind (the invariant the assertQuery battery checks). Second,
-     * re-iterating must reproduce the first pass: {@code toTop()} is contractually a
-     * cheap rewind that neither re-executes the query nor recomputes cached state,
-     * so the second pass must yield the same rows -- the same multiset for a
+     * re-iterating must reproduce the first pass: {@code toTop()} must not discard
+     * cached state, so the second pass must yield the same rows -- the same multiset for a
      * deterministic query (iteration order can legitimately vary for hash/parallel
      * cursors, so a strict order check would false-positive), or at least the same
      * row count for a non-deterministic one (LIMIT without a fully disambiguating
-     * ORDER BY). A violation is always a real bug and throws
-     * {@link CursorCheckException}. Leaves the cursor exhausted.
+     * ORDER BY). A cursor that streams its result, such as the parallel GROUP BY over
+     * time buckets, cannot cache it and runs its reduction again on {@code toTop()};
+     * its workers then merge the partial FLOAT/DOUBLE aggregates in another order, so
+     * the second pass may differ from the first in their last digits. The multiset
+     * comparison therefore tolerates floating-point drift in FLOAT/DOUBLE columns, as
+     * {@link #reconcilePair} does, and compares every other column exactly. A violation
+     * is always a real bug and throws {@link CursorCheckException}. Leaves the cursor
+     * exhausted.
      */
     private void checkToTop(String sql, RecordCursor cursor, RecordMetadata metadata, int columnCount,
                             StringSink firstPass, int firstRowsRead, boolean deterministic) {
@@ -2234,7 +2239,8 @@ public class QueryRunner {
                     sql, firstPass, firstRowsRead, null, -1), null);
         }
         if (deterministic) {
-            if (!rowsetEquals(firstPass, rowsToTop)) {
+            if (!rowsetEquals(firstPass, rowsToTop)
+                    && !rowsetEqualsWithFpTolerance(firstPass, rowsToTop, buildFpColumnMask(metadata, columnCount))) {
                 throw new CursorCheckException(cursorFailureMessage(
                         "toTop re-iteration changed the row set", sql, firstPass, firstRowsRead, rowsToTop, secondRowsRead), null);
             }
