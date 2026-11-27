@@ -435,6 +435,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
     private final LongList partitionRemovalsAfterSavePoint = new LongList();
     private final LongList partitionRemoveCandidates = new LongList();
     private final PostingIndexUtils.SealedFileTxns postingSealedFileTxns = new PostingIndexUtils.SealedFileTxns();
+    private final PostingSupersededFileRemover postingSupersededFileRemover = new PostingSupersededFileRemover();
     // indexed columns a FORCE REINDEX rebuilds in a partition
     private final IntList reindexColumnIndexes = new IntList();
     // (partition timestamp, replaced name txn) of the partitions a reindex replaced: the stale parquet ones an ADD
@@ -12545,6 +12546,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                     }
                 }
                 indexer.seal();
+                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
             } finally {
                 indexer.releaseIndexWriter();
             }
@@ -12570,6 +12572,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
         indexer.seal();
+        removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
 
         if (isLastPartitionComposite()) {
             // rowHwm came off the partition's PHYSICAL extent, so the index built above already covers
@@ -12598,6 +12601,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                     metadata.getCoveringColumnIndices(columnIndex), columnVersionWriter, timestamp
             )) {
                 LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
+                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
                 return;
             }
             // An interrupted ADD INDEX can leave a chain that covers part of the partition, torn by a power loss, and
@@ -12622,6 +12626,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
                 indexer.seal();
+                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
             } finally {
                 ff.close(columnDataFd);
             }
@@ -12792,6 +12797,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                 if (hasCovering) {
                     coveredColumnAccumulator.releaseScratchFiles(indexer, ff, path, plen);
                 }
+            }
+            if (allowDestructiveRecovery) {
+                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
             }
         }
     }
@@ -20126,6 +20134,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
         } finally {
             partitionDir.trimTo(supersededParquetIndexDirLen);
             supersededParquetIndexDir = null;
+        }
+    }
+
+    private void removeSupersededPostingFiles(CharSequence columnName, long columnNameTxn, byte indexType, int plen) {
+        if (IndexType.isPosting(indexType)) {
+            postingSupersededFileRemover.remove(ff, path, plen, columnName, columnNameTxn);
         }
     }
 

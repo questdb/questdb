@@ -1945,15 +1945,15 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
      * <p>
      * Reproduction:
      * <ol>
-     *   <li>ALTER ADD INDEX TYPE POSTING creates {@code sym.pk} +
-     *       {@code sym.pv.0} (columnNameTxn == COLUMN_NAME_TXN_NONE,
-     *       sealTxn == 0).</li>
+     *   <li>ALTER ADD INDEX TYPE POSTING creates {@code sym.pk} and the
+     *       {@code sym.pv.{sealTxn}} its head names (columnNameTxn ==
+     *       COLUMN_NAME_TXN_NONE).</li>
      *   <li>UPDATE bumps the column version and queues the old
-     *       {@code sym.pk}/{@code sym.pv.0} for purge.</li>
+     *       {@code sym.pk}/{@code sym.pv.{sealTxn}} for purge.</li>
      *   <li>A reader holds the column version pinned; the first purge
      *       run cannot proceed.</li>
      *   <li>Before the reader is released, manually remove just
-     *       {@code sym.pk}. The real {@code sym.pv.0} still sits in the
+     *       {@code sym.pk}. The real {@code sym.pv.{sealTxn}} still sits in the
      *       partition directory.</li>
      *   <li>Second purge run: existsIndexFile sees no .pk, falls back to
      *       {@code sealTxn = columnVersion = -1}, probes
@@ -1962,7 +1962,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
      * After the fix, the purge should either resolve the live sealTxn from
      * the partition layout (e.g. scanSealedFiles for any .pv matching the
      * columnVersion) or refuse to mark the task complete -- either way the
-     * orphan {@code sym.pv.0} must not survive a fully drained purge queue.
+     * orphan {@code sym.pv.{sealTxn}} must not survive a fully drained purge queue.
      */
     @Test
     public void testPurgeMarksTaskCompleteAndLeaksPostingValueWhenKeyFileMissing() throws Exception {
@@ -1978,10 +1978,15 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 execute("ALTER TABLE t_purge_leak ALTER COLUMN sym ADD INDEX TYPE POSTING");
 
                 String partition = "1970-01-03";
+                final String valueFile;
                 try (Path path = new Path()) {
-                    // Sanity: sym.pk + sym.pv.0 exist before the UPDATE.
+                    path.of(configuration.getDbRoot()).concat(engine.verifyTableName("t_purge_leak")).concat(partition).concat("sym.pk").$();
+                    valueFile = "sym.pv." + PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(), path.$());
+                }
+                try (Path path = new Path()) {
+                    // Sanity: sym.pk + sym.pv.{sealTxn} exist before the UPDATE.
                     assertPostingKeyFileExists(path, "t_purge_leak", partition, true);
-                    assertPartitionFileExists(path, partition, "sym.pv.0", true);
+                    assertPartitionFileExists(path, partition, valueFile, true);
                 }
 
                 try (TableReader rdr = getReader("t_purge_leak")) {
@@ -2009,7 +2014,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     assertPartitionFileExists(path, partition, "sym.d", false);
                     assertPartitionFileExists(path, partition, "sym.o", false);
                     assertPostingKeyFileExists(path, "t_purge_leak", partition, false);
-                    assertPartitionFileExists(path, partition, "sym.pv.0", true);
+                    assertPartitionFileExists(path, partition, valueFile, true);
                 }
 
                 runPurgeJob(purgeJob);
@@ -2019,13 +2024,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 // completedRowIds when existsIndexFile returned false.
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
 
-                // Red assertion: the orphan sym.pv.0 must not survive a
+                // Red assertion: the orphan sym.pv.{sealTxn} must not survive a
                 // drained purge queue. On master the column purge silently
                 // walks away from it (current behaviour, this assertion
                 // fails); the fix must either clean it up or keep the task
                 // outstanding for retry.
                 try (Path path = new Path()) {
-                    assertPartitionFileExists(path, partition, "sym.pv.0", false);
+                    assertPartitionFileExists(path, partition, valueFile, false);
                 }
             }
         });

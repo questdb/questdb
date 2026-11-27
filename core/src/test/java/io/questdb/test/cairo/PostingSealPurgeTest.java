@@ -63,6 +63,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
@@ -93,6 +94,17 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 10);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 2);
+    }
+
+    @Test
+    public void testAddIndexRemovesSupersededFiles() throws Exception {
+        assertAddIndexRemovesSupersededFiles("BYPASS WAL");
+    }
+
+    @Test
+    public void testAddIndexRemovesSupersededFilesOfMergeAppendTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertAddIndexRemovesSupersededFiles("WAL");
     }
 
     @Test
@@ -413,6 +425,21 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     public void testPurgeRemovesCoverFilesOfNameTxnZero() throws Exception {
         // A cover file name writes name txn 0 like no name txn, so the scan reports it as no name txn.
         assertPurgeRemovesCoverFiles(0);
+    }
+
+    @Test
+    public void testReindexRemovesSupersededFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 1_800_000_000L), 'k' || (x % 4), x FROM long_sequence(144)");
+            execute("ALTER TABLE t ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            engine.releaseAllWriters();
+            execute("REINDEX TABLE t COLUMN s LOCK EXCLUSIVE");
+            assertOnlyLiveSealedFiles("2024-01-01");
+            assertOnlyLiveSealedFiles("2024-01-02");
+            assertOnlyLiveSealedFiles("2024-01-03");
+            assertKeyCountsAndSums();
+        });
     }
 
     @Test
@@ -1306,6 +1333,32 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         });
     }
 
+    private void assertAddIndexRemovesSupersededFiles(String walClause) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 1_800_000_000L), 'k' || (x % 4), x FROM long_sequence(144)");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE t ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            drainWalQueue();
+            assertOnlyLiveSealedFiles("2024-01-01");
+            assertOnlyLiveSealedFiles("2024-01-02");
+            assertOnlyLiveSealedFiles("2024-01-03");
+            assertKeyCountsAndSums();
+        });
+    }
+
+    private void assertKeyCountsAndSums() throws Exception {
+        assertQuery("SELECT s, count() c, sum(v) v FROM t WHERE s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s")
+                .expectSize()
+                .returns("""
+                        s\tc\tv
+                        k0\t36\t2664
+                        k1\t36\t2556
+                        k2\t36\t2592
+                        k3\t36\t2628
+                        """);
+    }
+
     private void assertLogTableCompletedCount(String columnFilter) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {
@@ -1355,7 +1408,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                         assertTrue("fixture: the O3 copy must have sealed at the generation cap", PostingIndexWriter.COVERING_AUTOSEAL_COUNT.get() > 0);
                         releaseSavePointHolds("t");
                         runPurgeJob(job, 4);
-                        assertOnlyLiveValueFile("2024-01-01");
+                        assertOnlyLiveSealedFiles("2024-01-01");
                     }
                     execute("INSERT INTO t VALUES (" + (dayStart + 500_000L) + "::TIMESTAMP, 'k1')");
                     keyCounts[1]++;
@@ -1370,7 +1423,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
-    private void assertOnlyLiveValueFile(String day) {
+    private void assertOnlyLiveSealedFiles(String day) {
         try (TableReader reader = engine.getReader(engine.verifyTableName("t")); Path path = new Path()) {
             final long partitionTimestamp = MicrosTimestampDriver.floor(day + "T00:00:00.000000Z");
             final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
@@ -1392,17 +1445,14 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     PostingIndexUtils.keyFileName(path, "s", postingColumnNameTxn)
             );
             assertTrue("fixture: the index must have a head", headSealTxn > -1);
-            final String prefix = postingColumnNameTxn > COLUMN_NAME_TXN_NONE ? "s.pv." + postingColumnNameTxn + '.' : "s.pv.";
-            final String[] names = new File(path.trimTo(plen).toString()).list(
-                    (dir, name) -> name.startsWith(prefix) && name.indexOf('.', prefix.length()) < 0
-            );
-            assertNotNull(names);
-            final long[] sealTxns = new long[names.length];
-            for (int i = 0; i < names.length; i++) {
-                sealTxns[i] = Long.parseLong(names[i].substring(prefix.length()));
+            final PostingIndexUtils.SealedFileTxns sealTxns = new PostingIndexUtils.SealedFileTxns();
+            PostingIndexUtils.scanSealedFiles(configuration.getFilesFacade(), path, plen, "s", postingColumnNameTxn, sealTxns);
+            sealTxns.sort();
+            final StringSink sealTxnList = new StringSink();
+            for (int i = 0, n = sealTxns.size(); i < n; i++) {
+                sealTxnList.put(i > 0 ? ", " : "").put(sealTxns.get(i));
             }
-            Arrays.sort(sealTxns);
-            assertEquals("value files of " + day, "[" + headSealTxn + "]", Arrays.toString(sealTxns));
+            assertEquals("sealTxns of the value and cover files of " + day, "[" + headSealTxn + "]", "[" + sealTxnList + "]");
         }
     }
 
@@ -1469,7 +1519,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 drainWalQueue();
                 releaseSavePointHolds("t");
                 runPurgeJob(job, 4);
-                assertOnlyLiveValueFile("2024-01-01");
+                assertOnlyLiveSealedFiles("2024-01-01");
             }
             assertQuery("SELECT s, count() c FROM t WHERE s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s")
                     .expectSize()

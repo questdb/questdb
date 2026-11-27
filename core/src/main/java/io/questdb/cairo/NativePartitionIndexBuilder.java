@@ -67,7 +67,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
     private final IntList coveredTypes = new IntList();
     private final MemoryMAR ddlMem;
     private final FilesFacade ff;
-    private final PostingSupersededFileRemover supersededFileRemover;
+    private final PostingSupersededFileRemover supersededFileRemover = new PostingSupersededFileRemover();
     private int commitMode = CommitMode.NOSYNC;
     private SymbolColumnIndexer indexer;
     private byte indexerType = -1;
@@ -76,7 +76,6 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
         this.configuration = configuration;
         this.ff = ff;
         this.ddlMem = Vm.getPMARInstance(configuration);
-        this.supersededFileRemover = new PostingSupersededFileRemover(ff);
     }
 
     /**
@@ -248,7 +247,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
             }
             partitionDir.trimTo(dirLen);
         }
-        supersededFileRemover.remove(partitionDir, dirLen, columnName, columnNameTxn);
+        supersededFileRemover.remove(ff, partitionDir, dirLen, columnName, columnNameTxn);
     }
 
     private void createIndexFiles(
