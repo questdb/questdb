@@ -3976,6 +3976,187 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotOverLatestOnOfJoinFiltersBeforeLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, g INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE q (sym SYMBOL, px DOUBLE, qts TIMESTAMP) TIMESTAMP(qts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1, 1, '2024-01-01T00:00:00Z'), ('b', 1, 2, '2024-01-01T00:00:01Z'), ('c', 2, 3, '2024-01-01T00:00:02Z'),
+                        ('a', 2, 4, '2024-01-01T00:00:03Z'), ('c', 1, 5, '2024-01-01T00:00:04Z'), ('b', 2, 6, '2024-01-02T00:00:00Z')
+                    """);
+            execute("""
+                    INSERT INTO q VALUES
+                        ('a', 10.0, '2024-01-01T00:00:00Z'), ('b', 20.0, '2024-01-01T00:00:01Z'), ('c', 30.0, '2024-01-01T00:00:02Z'),
+                        ('a', 40.0, '2024-01-01T00:00:03Z'), ('d', 50.0, '2024-01-01T00:00:04Z')
+                    """);
+            assertQuery("SELECT * FROM t JOIN q ON t.s = q.sym LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR s IN ('a', 'b'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([sum(px),NaN,s,switch(s,'a',sum(px),NaN)])),first_not_null(case([sum(px),NaN,s,switch(s,'b',sum(px),NaN)]))]
+                                GroupBy vectorized: false
+                                  keys: [s]
+                                  values: [sum(q.px)]
+                                    Hash Join Light
+                                      condition: q.sym=t.s
+                                      symbolKeyJoin: true
+                                        LatestByAllFiltered
+                                          jit: true
+                                            Row backward scan
+                                              filter: s in [a,b]
+                                            Frame backward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: q
+                            """)
+                    .returns("""
+                            a\tb
+                            null\t40.0
+                            """);
+            assertQuery("SELECT * FROM t JOIN q ON t.s = q.sym WHERE v > 0 LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR sym IN ('a', 'b'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([sum(px),NaN,sym,switch(sym,'a',sum(px),NaN)])),first_not_null(case([sum(px),NaN,sym,switch(sym,'b',sum(px),NaN)]))]
+                                GroupBy vectorized: false
+                                  keys: [sym]
+                                  values: [sum(q.px)]
+                                    Hash Join Light
+                                      condition: q.sym=t.s
+                                      symbolKeyJoin: true
+                                        LatestByAllFiltered
+                                          jit: true
+                                            Row backward scan
+                                              filter: 0<v
+                                            Frame backward scan on: t
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: sym in [a,b]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: q
+                            """)
+                    .returns("""
+                            a\tb
+                            null\t20.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR s IN ('a', 'b'))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([sum(px),NaN,s,switch(s,'a',sum(px),NaN)])),first_not_null(case([sum(px),NaN,s,switch(s,'b',sum(px),NaN)]))]
+                                GroupBy vectorized: false
+                                  keys: [s]
+                                  values: [sum(sum)]
+                                    Window Fast Join
+                                      vectorized: true
+                                      symbol: s=sym
+                                      window lo: 1000000 preceding (include prevailing)
+                                      window hi: current row
+                                        LatestByAllFiltered
+                                          jit: true
+                                            Row backward scan
+                                              filter: s in [a,b]
+                                            Frame backward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                            """)
+                    .returns("""
+                            a\tb
+                            null\t40.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h
+                    LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR s IN ('a', 'b'))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([sum(px),NaN,s,switch(s,'a',sum(px),NaN)])),first_not_null(case([sum(px),NaN,s,switch(s,'b',sum(px),NaN)]))]
+                                Horizon Join offsets: 2
+                                  keys: [s]
+                                  values: [sum(q.px)]
+                                    LatestByAllFiltered
+                                      jit: true
+                                        Row backward scan
+                                          filter: s in [a,b]
+                                        Frame backward scan on: t
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: q
+                            """)
+                    .returns("""
+                            a\tb
+                            null\t80.0
+                            """);
+            assertQuery("SELECT * FROM t RIGHT JOIN q ON t.s = q.sym LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR s IN ('a', 'b'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([sum(px),NaN,s,switch(s,'a',sum(px),NaN)])),first_not_null(case([sum(px),NaN,s,switch(s,'b',sum(px),NaN)]))]
+                                GroupBy vectorized: false
+                                  keys: [s]
+                                  values: [sum(q.px)]
+                                    Filter filter: t.s in [a,b]
+                                        Hash Right Outer Join Light
+                                          condition: q.sym=t.s
+                                          symbolKeyJoin: true
+                                            Filter filter: s in [a,b]
+                                                LatestByAllFiltered
+                                                    Row backward scan
+                                                    Frame backward scan on: t
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: q
+                            """)
+                    .returns("""
+                            a\tb
+                            null\t20.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    WHERE false PIVOT (sum(px) FOR s IN ('a', 'b'))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [first_not_null(case([sum(px),NaN,s,switch(s,'a',sum(px),NaN)])),first_not_null(case([sum(px),NaN,s,switch(s,'b',sum(px),NaN)]))]
+                                GroupBy vectorized: false
+                                  keys: [s]
+                                  values: [sum(sum)]
+                                    Empty table
+                            """)
+                    .returns("""
+                            a\tb
+                            null\tnull
+                            """);
+            assertExceptionNoLeakCheck("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h PIVOT (sum(px) FOR sym IN ('a', 'b'))",
+                    86, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+            assertExceptionNoLeakCheck("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h PIVOT (sum(px) FOR nosuch IN ('a', 'b'))",
+                    86, "Invalid column: nosuch");
+        });
+    }
+
+    @Test
     public void testPivotToTableWithOperatorTokenColumnNames() throws Exception {
         // Operator-token pivot values now yield clean physical column names, so CREATE TABLE AS
         // SELECT succeeds (the old "in"-with-quotes name was rejected as invalid) and the columns
@@ -4095,6 +4276,17 @@ public class PivotTest extends AbstractSqlParserTest {
                     .returns("""
                             a\tb
                             22.0\t13.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t PIVOT (
+                        SUM(row_number() OVER (PARTITION BY s ORDER BY ts)) r1, SUM(row_number() OVER (PARTITION BY s ORDER BY ts)) r2
+                        FOR s IN ('a', 'b')
+                    )""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_r1\ta_r2\tb_r1\tb_r2
+                            6\t6\t3\t3
                             """);
         });
     }
@@ -4253,6 +4445,27 @@ public class PivotTest extends AbstractSqlParserTest {
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (max(px, px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (last(px, px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (first_not_null(px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinFirstLastReadTheEmptinessOfTheirOwnWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            execute("CREATE TABLE u (s SYMBOL, w LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES ('b', 7, 3_500_000)");
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    WINDOW JOIN u ON (t.s = u.s) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (sum(px) p, first(u.w) f, last(u.w) l FOR t.s IN ('a', 'b'))
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_p\ta_f\ta_l\tb_p\tb_f\tb_l
+                            140.0\tnull\tnull\t25.0\t7\t7
+                            """);
         });
     }
 

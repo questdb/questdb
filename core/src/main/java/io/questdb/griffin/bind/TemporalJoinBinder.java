@@ -59,6 +59,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.bind.BindContext.*;
 
@@ -380,7 +381,7 @@ final class TemporalJoinBinder {
         return step;
     }
 
-    private static CharSequence windowJoinAggregateName(ExpressionNode node, QueryModel model) {
+    static CharSequence windowJoinAggregateName(ExpressionNode node, QueryModel model) {
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             final QueryColumn column = model.getColumns().getQuick(i);
             if (column.getAst() == node) {
@@ -656,8 +657,26 @@ final class TemporalJoinBinder {
         return step;
     }
 
-    private int windowJoinStepOf(ExpressionNode node, WindowJoinPlan plan) throws SqlException {
+    /**
+     * The step of the WINDOW JOIN whose window the aggregate call reads: the step of the slave columns it reads, the
+     * first step when it reads none.
+     */
+    int windowJoinStepOf(ExpressionNode node, WindowJoinPlan plan) throws SqlException {
         return Math.max(windowJoinReferencedStep(node, plan, -1, node.position), 0);
+    }
+
+    /**
+     * The scope the aggregates of step {@code step} of the WINDOW JOIN bind over: the output of the join so far, the
+     * aggregates of the earlier steps included, then the columns of the step's slave. A PIVOT that adds the aggregates
+     * of each step in turn, see {@link #addWindowJoinAggregate}, opens the step's scope this way first.
+     */
+    OutputSchema windowJoinStepScope(WindowJoinPlan plan, int step) {
+        final WindowJoinStep target = plan.getSteps().getQuick(step);
+        target.getMasterScope().copyFrom(plan.getOutput());
+        final OutputSchema scope = target.getScope();
+        scope.copyFrom(plan.getOutput());
+        scope.addColumnsFrom(target.getSlave().getOutput(), target.getSlaveAlias());
+        return scope;
     }
 
     /**
@@ -886,6 +905,11 @@ final class TemporalJoinBinder {
         if (where != null) {
             rejectHorizonWhere(where, output, whereOutsidePosition);
         }
+        final ObjList<PivotForColumn> forColumns = model.getPivotForColumns();
+        for (int i = 0, n = forColumns.size(); i < n; i++) {
+            final ExpressionNode key = forColumns.getQuick(i).getInExpr();
+            rejectHorizonWhere(key, output, firstUnresolvableReference(key, masterOutput, masterAlias));
+        }
         bindHorizonOffsets(plan, horizon, masterOutput.getColumnType(masterTimestampIndex),
                 executionContext.getCairoEngine().getConfiguration().getSqlHorizonJoinMaxOffsets());
         for (int s = 0, m = plan.getSlaves().size(); s < m; s++) {
@@ -928,9 +952,13 @@ final class TemporalJoinBinder {
         return index < masterCount + precedingSlaveCount ? index + 2 : index - precedingSlaveCount;
     }
 
+    /**
+     * Binds the WINDOW JOIN of {@code source} filtered by {@code where}, with the aggregates of {@code aggregateColumns},
+     * or with none when it is null: a PIVOT binds its own, see {@link #addWindowJoinAggregate}.
+     */
     WindowJoinPlan bindWindowJoin(
-            QueryModel model, ObjList<QueryColumn> aggregateColumns, ExpressionNode aggregates, QueryModel source,
-            ExpressionNode where, SqlExecutionContext executionContext
+            QueryModel model, @Nullable ObjList<QueryColumn> aggregateColumns, QueryModel source, ExpressionNode where,
+            SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope bindScope = ctx.scope();
         final ExpressionNode masterFilter = where;
@@ -988,12 +1016,8 @@ final class TemporalJoinBinder {
         output.setTimestampIndex(masterOutput.getTimestampIndex());
 
         bindScope.clearAggregateNodes();
-        if (aggregates != null) {
-            aggregateBinder.collectAggregateNodes(aggregates, true);
-        } else {
-            for (int i = 0, n = aggregateColumns.size(); i < n; i++) {
-                aggregateBinder.collectAggregateNodes(aggregateColumns.getQuick(i).getAst(), true);
-            }
+        for (int i = 0, n = aggregateColumns == null ? 0 : aggregateColumns.size(); i < n; i++) {
+            aggregateBinder.collectAggregateNodes(aggregateColumns.getQuick(i).getAst(), true);
         }
         bindScope.windowJoinAggregateSteps.clear();
         for (int i = 0, n = bindScope.aggregateNodes.size(); i < n; i++) {
@@ -1029,10 +1053,7 @@ final class TemporalJoinBinder {
                 if (!(bound instanceof FunctionExpression function) || !function.isAggregate()) {
                     throw SqlException.$(node.position, "expected aggregate function");
                 }
-                final int columnId = ctx.planNodes.nextColumnId();
-                step.getAggregates().add(function);
-                step.getAggregateColumnIds().add(columnId);
-                output.add(columnId, ctx.createOutputName(windowJoinAggregateName(node, model)), function.getDataType(), false);
+                addWindowJoinAggregate(plan, s, function, windowJoinAggregateName(node, model), node.position);
             }
         }
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
@@ -1051,7 +1072,7 @@ final class TemporalJoinBinder {
         if (source.getSampleBy() == null && hasBlockGrouping(model, source)) {
             throw SqlException.$(groupBy.size() > 0 ? groupBy.getQuick(0).position : groupingBlock.getGroupByPosition(), "GROUP BY cannot be used with WINDOW JOIN");
         }
-        final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), null, source, where, executionContext);
+        final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), source, where, executionContext);
         final OutputSchema output = plan.getOutput();
         final CharSequence masterAlias = plan.getSteps().getQuick(0).getMasterAlias();
         final ObjList<ColumnExpression> aggregateColumns = scope.substitutionColumns;
@@ -1123,6 +1144,19 @@ final class TemporalJoinBinder {
                     : orderBinder.designateTimestamp(project);
         }
         return isOrderBound ? orderBinder.bindLimit(result, model, executionContext) : result;
+    }
+
+    /**
+     * Adds {@code aggregate}, bound over the scope of step {@code step}, see {@link #windowJoinStepScope}, to the step and
+     * to the output of the WINDOW JOIN as a column named after {@code name}, and returns that column.
+     */
+    ColumnExpression addWindowJoinAggregate(WindowJoinPlan plan, int step, FunctionExpression aggregate, CharSequence name, int position) {
+        final WindowJoinStep target = plan.getSteps().getQuick(step);
+        final int columnId = ctx.planNodes.nextColumnId();
+        target.getAggregates().add(aggregate);
+        target.getAggregateColumnIds().add(columnId);
+        plan.getOutput().add(columnId, ctx.createOutputName(name), aggregate.getDataType(), false);
+        return ctx.planNodes.columns.next().of(columnId, aggregate.getDataType(), position);
     }
 
     void collectWindowJoinAggregateOccurrences(ExpressionNode node, WindowJoinPlan plan, ObjList<ExpressionNode> sources,

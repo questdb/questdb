@@ -316,6 +316,19 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
+     * Binds the SQL literal {@code token} at {@code position} as a constant node that spells it binds: a PIVOT reads the
+     * values its IN sub-query returns as the literals that spell them.
+     */
+    public ConstantExpression bindLiteral(CharSequence token, int position, SqlExecutionContext executionContext) throws SqlException {
+        final Function function = resolver.createConstant(position, token, executionContext);
+        try {
+            return literal(function, position, token);
+        } finally {
+            Misc.free(function);
+        }
+    }
+
+    /**
      * Binds a native-table predicate eligible for timestamp intrinsics. The
      * source filter parses direct literals at the designated column's
      * precision; projections and ordinary row filters use adaptive precision.
@@ -584,7 +597,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                             ? resolveCall(node, 0) : createColumn(node, index);
                 }
                 case ExpressionNode.BIND_VARIABLE -> createParameter(node);
-                case ExpressionNode.MEMBER_ACCESS -> captureConstant(new StrConstant(node.token), node.position, null);
+                case ExpressionNode.MEMBER_ACCESS -> captureConstant(new StrConstant(node.token), node.position, node.token);
                 case ExpressionNode.CONSTANT ->
                         captureConstant(resolver.createConstant(node.position, node.token, sqlExecutionContext), node.position, node.token);
                 case ExpressionNode.QUERY -> createCursorFunction(node, sqlExecutionContext);
@@ -1148,15 +1161,22 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 push(type(function, position), leafMark());
                 return function;
             }
-            final ConstantExpression constant = constant(function, position).markLiteral(null);
-            final int tag = ColumnType.tagOf(constant.getDataType());
-            push(token != null && (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT)
-                    ? constant.withLiteralText(Chars.toString(token)) : constant, leafMark());
+            push(literal(function, position, token), leafMark());
             return function;
         } catch (Throwable th) {
             Misc.free(function, th);
             throw th;
         }
+    }
+
+    /**
+     * The constant of a literal that {@code token} spells and {@code function} holds the value of; a DOUBLE or FLOAT
+     * keeps its spelling.
+     */
+    private ConstantExpression literal(Function function, int position, CharSequence token) {
+        final ConstantExpression constant = constant(function, position).markLiteral(null);
+        final int tag = ColumnType.tagOf(constant.getDataType());
+        return tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT ? constant.withLiteralText(Chars.toString(token)) : constant;
     }
 
     private Function captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) {
