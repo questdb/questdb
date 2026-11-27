@@ -5445,6 +5445,33 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToLong256ReadsHexLikeInsert() throws Exception {
+        // v holds what INSERT stored for the same text; both casts should agree with it
+        assertQuery("SELECT s, v, s::LONG256 str_cast, s::VARCHAR::LONG256 varchar_cast FROM t")
+                .ddl("CREATE TABLE t (s STRING, v LONG256)")
+                .mutateWith("INSERT INTO t VALUES ('12', '12'), ('0X12', '0X12'), ('0x2', '0x2')")
+                .expectSize()
+                .returns("""
+                        s\\tv\\tstr_cast\\tvarchar_cast
+                        12\\t0x12\\t0x12\\t0x12
+                        0X12\\t0x12\\t0x12\\t0x12
+                        0x2\\t0x02\\t0x02\\t0x02
+                        """);
+
+        assertQuery("SELECT sha256('alice')::LONG256 h")
+                .noLeakCheck()
+                .expectSize()
+                .sizeMayVary()
+                .returns("h\\n0x2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90\\n");
+
+        assertQuery("SELECT 'abc'::LONG256 x")
+                .noLeakCheck()
+                .expectSize()
+                .sizeMayVary()
+                .returns("x\\n\\n");
+    }
+
+    @Test
     public void testStrToLong256Sort() throws Exception {
         assertQuery("select cast(a as long256) x from tt order by x")
                 .ddl("create table tt as (select rnd_str('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))")
@@ -5993,6 +6020,20 @@ public class CastTest extends AbstractCairoTest {
                         null
                         null
                         100
+                        """);
+    }
+
+    @Test
+    public void testSymbolToLong256ReadsHexLikeInsert() throws Exception {
+        assertQuery("SELECT s, s::LONG256 symbol_cast FROM t")
+                .ddl("CREATE TABLE t (s SYMBOL)")
+                .mutateWith("INSERT INTO t VALUES ('12'), ('0X12'), ('0x2')")
+                .expectSize()
+                .returns("""
+                        s\\tsymbol_cast
+                        12\\t0x12
+                        0X12\\t0x12
+                        0x2\\t0x02
                         """);
     }
 
