@@ -67,6 +67,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private static final int REASON_TAIL_PROGRESS_POLL = -1;
     private static final int RING_VERSION_STRIDE_SHIFT = 3;
     private final BatchPolicy batchPolicy;
+    // The lane tasks that reducer fibers launched, see tryLaunchLaneTask().
+    private final AtomicLong laneLaunchCount = new AtomicLong();
     private final MessageBus messageBus;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
@@ -432,6 +434,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return taskPool.getCreatedCount();
     }
 
+    @TestOnly
+    public long getLaneLaunchCount() {
+        return laneLaunchCount.get();
+    }
+
     public long getProgressVersion() {
         return progressVersion.get();
     }
@@ -506,6 +513,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     @TestOnly
     public void setBatchRowBudgetForTesting(long batchRowBudget) {
         batchPolicy.setRowBudget(batchRowBudget);
+    }
+
+    // Runs once before the task pool makes its next task; a hook that throws fails that task.
+    @TestOnly
+    public void setBeforeNewTaskForTesting(@Nullable Runnable hook) {
+        taskPool.setBeforeNewTaskForTesting(hook);
     }
 
     @TestOnly
@@ -864,6 +877,41 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 continue;
             }
             return null;
+        }
+    }
+
+    // Launches a fiber for a lane task that a reducer fiber took after its batch was spent, see
+    // PageFrameSequence.stagedTasks: the runtime schedules the fiber with the rest of the work, and the lane goes on
+    // without the owner. Returns false when the dispatcher quiesces, no fiber or task is free or the task cannot be
+    // made, and the caller then reduces the lane task itself. Once launch() has the task, the fiber task ends it,
+    // whether the launch succeeds or not.
+    boolean tryLaunchLaneTask(int workerId, PageFrameSequence<?> frameSequence, PageFrameReduceTask laneTask) {
+        if (isQuiescing()) {
+            return false;
+        }
+        final Fiber fiber = runtime.tryReserveFiber();
+        if (fiber == null) {
+            return false;
+        }
+        final long reservationEpoch = fiber.getReservationEpoch();
+        try {
+            if (!taskPool.tryLease()) {
+                return false;
+            }
+            final PageFrameFiberTask fiberTask;
+            try {
+                fiberTask = taskPool.acquireLeased();
+            } catch (Throwable th) {
+                taskPool.releaseLease();
+                LOG.error().$("could not launch lane task [error=").$(th).$(", id=").$(frameSequence.getId()).I$();
+                return false;
+            }
+            fiberTask.ofLane(workerId, frameSequence, laneTask);
+            launch(fiber, reservationEpoch, fiberTask, false);
+            laneLaunchCount.incrementAndGet();
+            return true;
+        } finally {
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
         }
     }
 

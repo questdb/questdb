@@ -107,9 +107,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     // The span maps by lane. A frame aggregates the segments that span its bucket into the maps of its lane, frame
     // index modulo the lane count, whichever thread reduces it. The sequence reduces the frames of a lane one at a
     // time and in order, so a lane adds up the same rows in the same order on every run, and so does the merge of
-    // the lanes: floating-point sums come out the same however the workers share the frames. A lane has one frame in
-    // flight, and only the owner dispatches the next one, so there are twice as many lanes as threads that reduce
-    // frames, the workers and the owner: while the owner reduces a frame, the workers find frames of other lanes queued.
+    // the lanes: floating-point sums come out the same however the workers share the frames. There are as many lanes as
+    // threads that reduce frames, the workers and the owner. A worker that ends a frame reduces the next frame of its
+    // lane itself, see PageFrameSequence.stagedTasks, so a lane does not wait for the owner to dispatch its frames.
     private final ObjList<SpanMaps> spanMaps;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
@@ -189,9 +189,8 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
                 collectorMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
                         streamKeyIndex, keyFunctions, groupByFunctions, updater, ownerMap);
                 perWorkerMaps = new ObjList<>(workerCount);
-                final int laneCount = 2 * (workerCount + 1);
-                spanMaps = new ObjList<>(laneCount);
-                for (int i = 0; i < laneCount; i++) {
+                spanMaps = new ObjList<>(workerCount + 1);
+                for (int i = 0; i <= workerCount; i++) {
                     spanMaps.add(new SpanMaps(ownerMap));
                 }
                 for (int i = 0; i < workerCount; i++) {

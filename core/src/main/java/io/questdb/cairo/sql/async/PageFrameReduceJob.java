@@ -205,89 +205,40 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                final boolean isFiberSuspendable = SuspensionScope.isFiberMode() && Fiber.isMounted();
-                final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
-                        ? null
-                        : SuspensionScope.scope();
-                final SuspensionScope.Mode previousMode = isFiberSuspendable
-                        ? null
-                        : SuspensionScope.enterBlocking(suspensionScope);
-                final FiberCancellationSignal previousCancellationSignal = isFiberSuspendable
-                        ? SuspensionScope.getCancellationSignal()
-                        : null;
-                final long previousCancellationSignalGeneration = isFiberSuspendable
-                        ? SuspensionScope.getCancellationSignalGeneration()
-                        : CancellationBinding.NO_GENERATION;
-                final FiberCancellationSignal previousSupplementalCancellationSignal = isFiberSuspendable
-                        ? SuspensionScope.getSupplementalCancellationSignal()
-                        : null;
-                final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
-                        ? SuspensionScope.getSupplementalCancellationSignalGeneration()
-                        : CancellationBinding.NO_GENERATION;
-                try {
-                    if (isFiberSuspendable) {
-                        frameSequence.enterReducerCancellationScope();
-                    }
-                    LOG.debug()
-                            .$("reducing [shard=").$(frameSequence.getShard())
-                            .$(", id=").$(frameSequence.getId())
-                            .$(", taskType=").$(task.getTaskType())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (frameSequence.isActive()) {
-                        // always initialize the circuit breaker
-                        circuitBreaker.init(frameSequence.getCircuitBreaker());
-                        reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
-                    }
-                } catch (Throwable th) {
-                    if (frameSequence.isReducerFailureReportable(th)) {
-                        LOG.error()
-                                .$("reduce error [error=").$(th)
-                                .$(", id=").$(frameSequence.getId())
-                                .$(", taskType=").$(task.getTaskType())
-                                .$(", frameIndex=").$(task.getFrameIndex())
-                                .$(", frameCount=").$(frameSequence.getFrameCount())
-                                .I$();
-                        frameSequence.onReducerError(task, th);
-                    }
-                } finally {
-                    try {
-                        if (isFiberSuspendable) {
-                            SuspensionScope.restoreCancellationSignal(
-                                    previousCancellationSignal,
-                                    previousCancellationSignalGeneration
-                            );
-                            SuspensionScope.enterSupplementalCancellationSignal(
-                                    previousSupplementalCancellationSignal,
-                                    previousSupplementalCancellationSignalGeneration
-                            );
-                        } else {
-                            SuspensionScope.restoreMode(suspensionScope, previousMode);
-                        }
-                    } finally {
-                        try {
-                            MemoryTracker.detachResourceMemoryCurrentThread();
-                        } finally {
-                            final int shard = frameSequence.getShard();
-                            try {
-                                try {
-                                    frameSequence.onTaskReduced(task);
-                                } finally {
-                                    subSeq.done(cursor);
-                                }
-                            } finally {
-                                // Reduced counter has to be incremented only when we make
-                                // sure that the task is available for consumers.
-                                frameSequence.getReduceFinishedCounter().incrementAndGet();
-                                if (dispatcher != null) {
-                                    dispatcher.signalProgress(frameSequence, shard);
-                                }
-                            }
-                        }
-                    }
+                // The worker reduces the next tasks of the lane itself while their rows fit the row budget of a fiber
+                // batch, see PageFrameSequence.stagedTasks. Past it, the owner publishes the next task to the queue,
+                // where workers take the tasks of all queries in turn. A worker that steals for its own query goes
+                // back to it instead.
+                final long laneRowBudget = stealingFrameSequence == null && frameSequence.hasLanes()
+                        ? frameSequence.getLaneRowBudget()
+                        : 0;
+                long laneRows = laneRowBudget > 0 ? task.getTaskRowCount() : 0;
+                PageFrameReduceTask laneTask = reduceAndEnd(
+                        workerId,
+                        task,
+                        frameSequence,
+                        subSeq,
+                        cursor,
+                        record,
+                        circuitBreaker,
+                        stealingFrameSequence,
+                        dispatcher,
+                        laneRows < laneRowBudget
+                );
+                while (laneTask != null) {
+                    laneRows += laneTask.getTaskRowCount();
+                    laneTask = reduceAndEnd(
+                            workerId,
+                            laneTask,
+                            frameSequence,
+                            null,
+                            -1,
+                            record,
+                            circuitBreaker,
+                            null,
+                            dispatcher,
+                            laneRows < laneRowBudget
+                    );
                 }
                 return false;
             } else if (cursor == -1) {
@@ -297,6 +248,137 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             Os.pause();
         } while (true);
         return true;
+    }
+
+    // Marks a reduced task and frees its queue slot, if it holds one.
+    private static void endTask(
+            PageFrameReduceTask task,
+            PageFrameSequence<?> frameSequence,
+            @Nullable MCSequence subSeq,
+            long cursor,
+            @Nullable PageFrameReduceDispatcher dispatcher
+    ) {
+        final int shard = frameSequence.getShard();
+        try {
+            try {
+                frameSequence.onTaskReduced(task);
+            } finally {
+                if (subSeq != null) {
+                    subSeq.done(cursor);
+                }
+            }
+        } finally {
+            // Reduced counter has to be incremented only when we make
+            // sure that the task is available for consumers.
+            frameSequence.getReduceFinishedCounter().incrementAndGet();
+            if (dispatcher != null) {
+                dispatcher.signalProgress(frameSequence, shard);
+            }
+        }
+    }
+
+    // Reduces a task on a worker path and ends it. The task holds a queue slot when subSeq is not null; otherwise it is a
+    // lane task that the worker took with PageFrameSequence.claimLaneSuccessor() and reduces without one. Returns the
+    // next task of the lane when the worker takes it.
+    @Nullable
+    private static PageFrameReduceTask reduceAndEnd(
+            int workerId,
+            PageFrameReduceTask task,
+            PageFrameSequence<?> frameSequence,
+            @Nullable MCSequence subSeq,
+            long cursor,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreakerWrapper circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence,
+            @Nullable PageFrameReduceDispatcher dispatcher,
+            boolean isLaneClaimAllowed
+    ) {
+        PageFrameReduceTask laneTask = null;
+        final boolean isFiberSuspendable = SuspensionScope.isFiberMode() && Fiber.isMounted();
+        final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
+                ? null
+                : SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = isFiberSuspendable
+                ? null
+                : SuspensionScope.enterBlocking(suspensionScope);
+        final FiberCancellationSignal previousCancellationSignal = isFiberSuspendable
+                ? SuspensionScope.getCancellationSignal()
+                : null;
+        final long previousCancellationSignalGeneration = isFiberSuspendable
+                ? SuspensionScope.getCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
+        final FiberCancellationSignal previousSupplementalCancellationSignal = isFiberSuspendable
+                ? SuspensionScope.getSupplementalCancellationSignal()
+                : null;
+        final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
+                ? SuspensionScope.getSupplementalCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
+        try {
+            if (isFiberSuspendable) {
+                frameSequence.enterReducerCancellationScope();
+            }
+            LOG.debug()
+                    .$("reducing [shard=").$(frameSequence.getShard())
+                    .$(", id=").$(frameSequence.getId())
+                    .$(", taskType=").$(task.getTaskType())
+                    .$(", frameIndex=").$(task.getFrameIndex())
+                    .$(", frameCount=").$(frameSequence.getFrameCount())
+                    .$(", active=").$(frameSequence.isActive())
+                    .$(", cursor=").$(cursor)
+                    .I$();
+            if (frameSequence.isActive()) {
+                // always initialize the circuit breaker
+                circuitBreaker.init(frameSequence.getCircuitBreaker());
+                reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
+            }
+        } catch (Throwable th) {
+            if (frameSequence.isReducerFailureReportable(th)) {
+                LOG.error()
+                        .$("reduce error [error=").$(th)
+                        .$(", id=").$(frameSequence.getId())
+                        .$(", taskType=").$(task.getTaskType())
+                        .$(", frameIndex=").$(task.getFrameIndex())
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .I$();
+                frameSequence.onReducerError(task, th);
+            }
+        } finally {
+            try {
+                if (isFiberSuspendable) {
+                    SuspensionScope.restoreCancellationSignal(
+                            previousCancellationSignal,
+                            previousCancellationSignalGeneration
+                    );
+                    SuspensionScope.enterSupplementalCancellationSignal(
+                            previousSupplementalCancellationSignal,
+                            previousSupplementalCancellationSignalGeneration
+                    );
+                } else {
+                    SuspensionScope.restoreMode(suspensionScope, previousMode);
+                }
+            } finally {
+                try {
+                    MemoryTracker.detachResourceMemoryCurrentThread();
+                } finally {
+                    // Before the task is marked, see PageFrameSequence.claimLaneSuccessor().
+                    if (isLaneClaimAllowed) {
+                        laneTask = frameSequence.claimLaneSuccessor(task.getTaskIndex());
+                    }
+                    if (laneTask == null) {
+                        endTask(task, frameSequence, subSeq, cursor, dispatcher);
+                    } else {
+                        try {
+                            endTask(task, frameSequence, subSeq, cursor, dispatcher);
+                            PageFrameSequence.onLaneTaskClaimed();
+                        } catch (Throwable th) {
+                            frameSequence.failLaneTask(laneTask, th);
+                            throw th;
+                        }
+                    }
+                }
+            }
+        }
+        return laneTask;
     }
 
     static boolean consumeQueue(

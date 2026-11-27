@@ -141,6 +141,17 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedFrameSequence = frameSequence;
     }
 
+    // Binds a lane task that a reducer fiber took after its batch was spent, see
+    // PageFrameReduceDispatcher.tryLaunchLaneTask(). It holds no queue slot.
+    void ofLane(int workerId, PageFrameSequence<?> frameSequence, PageFrameReduceTask laneTask) {
+        this.workerId = workerId;
+        this.orderedQueue = null;
+        this.orderedSubSeq = null;
+        this.orderedCursor = -1;
+        this.orderedReduceTask = laneTask;
+        this.orderedFrameSequence = frameSequence;
+    }
+
     void ofUnordered(
             int workerId,
             RingQueue<UnorderedPageFrameReduceTask> queue,
@@ -198,8 +209,18 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         if (orderedFrameSequence != null) {
             final RingQueue<PageFrameReduceTask> queue = orderedQueue;
             final MCSequence subSeq = orderedSubSeq;
-            orderedFrameSequence.enterReducerCancellationScope();
-            reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, orderedFrameSequence);
+            final PageFrameSequence<?> firstFrameSequence = orderedFrameSequence;
+            firstFrameSequence.enterReducerCancellationScope();
+            if (orderedCursor < 0) {
+                // A lane task, see PageFrameReduceDispatcher.tryLaunchLaneTask(): the fiber goes on along the lane and
+                // takes no frame from the queue. reduceLane() binds the task again before anything can fail or park.
+                final PageFrameReduceTask laneTask = orderedReduceTask;
+                orderedReduceTask = null;
+                orderedFrameSequence = null;
+                reduceLane(laneTask, firstFrameSequence);
+                return true;
+            }
+            reduceLane(reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, firstFrameSequence), firstFrameSequence);
             while (!hasNoPendingTasks(subSeq) && batch.shouldContinue()) {
                 final long cursor;
                 while (true) {
@@ -220,7 +241,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 orderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
                 batch.switchTo(frameSequence.getDispatchContext());
-                reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence);
+                reduceLane(reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence), frameSequence);
             }
         } else if (unorderedFrameSequence != null) {
             final RingQueue<UnorderedPageFrameReduceTask> queue = unorderedQueue;
@@ -310,7 +331,10 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 try {
                     orderedFrameSequence.onTaskReduced(orderedReduceTask);
                 } finally {
-                    orderedSubSeq.done(orderedCursor);
+                    // A lane task holds no queue slot, see PageFrameSequence.claimLaneSuccessor().
+                    if (orderedCursor > -1) {
+                        orderedSubSeq.done(orderedCursor);
+                    }
                 }
             } finally {
                 orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
@@ -326,13 +350,17 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     }
 
     // The frame stays bound while the reducer runs, so a park freezes owning exactly this cursor;
-    // the cleared binding is what tells completeOwnership() the cursor is already done.
-    private void reduceOrderedFrame(
-            MCSequence subSeq,
+    // the cleared binding is what tells completeOwnership() the cursor is already done. A lane task that the fiber took
+    // with PageFrameSequence.claimLaneSuccessor() holds no cursor: subSeq is null and cursor -1. Returns the next task of
+    // the lane when the fiber takes it.
+    @Nullable
+    private PageFrameReduceTask reduceOrderedFrame(
+            @Nullable MCSequence subSeq,
             long cursor,
             PageFrameReduceTask reduceTask,
             PageFrameSequence<?> frameSequence
     ) {
+        PageFrameReduceTask laneTask = null;
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
@@ -363,18 +391,62 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             try {
                 MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                final int shard = frameSequence.getShard();
-                try {
+                // Before the task is marked, see PageFrameSequence.claimLaneSuccessor().
+                if (frameSequence.hasLanes()) {
+                    laneTask = frameSequence.claimLaneSuccessor(reduceTask.getTaskIndex());
+                }
+                if (laneTask == null) {
+                    endOrderedTask(subSeq, cursor, reduceTask, frameSequence);
+                } else {
                     try {
-                        frameSequence.onTaskReduced(reduceTask);
-                    } finally {
-                        subSeq.done(cursor);
+                        endOrderedTask(subSeq, cursor, reduceTask, frameSequence);
+                        PageFrameSequence.onLaneTaskClaimed();
+                    } catch (Throwable th) {
+                        frameSequence.failLaneTask(laneTask, th);
+                        throw th;
                     }
-                } finally {
-                    frameSequence.getReduceFinishedCounter().incrementAndGet();
-                    dispatcher.signalProgress(frameSequence, shard);
                 }
             }
+        }
+        return laneTask;
+    }
+
+    // Marks a reduced task and frees its queue slot, if it holds one.
+    private void endOrderedTask(
+            @Nullable MCSequence subSeq,
+            long cursor,
+            PageFrameReduceTask reduceTask,
+            PageFrameSequence<?> frameSequence
+    ) {
+        final int shard = frameSequence.getShard();
+        try {
+            try {
+                frameSequence.onTaskReduced(reduceTask);
+            } finally {
+                if (subSeq != null) {
+                    subSeq.done(cursor);
+                }
+            }
+        } finally {
+            frameSequence.getReduceFinishedCounter().incrementAndGet();
+            dispatcher.signalProgress(frameSequence, shard);
+        }
+    }
+
+    // Reduces the next tasks of the lane that the fiber took, see PageFrameSequence.stagedTasks, while the batch goes on.
+    // Once the batch is spent, the fiber launches a fiber for the next task, which the runtime schedules with the rest of
+    // the work, so the lane neither keeps this carrier nor waits for the owner.
+    private void reduceLane(@Nullable PageFrameReduceTask laneTask, PageFrameSequence<?> frameSequence) {
+        while (laneTask != null) {
+            if (!batch.shouldContinue() && dispatcher.tryLaunchLaneTask(workerId, frameSequence, laneTask)) {
+                return;
+            }
+            // The task stays bound while switchTo() may park or fail, as a queue frame does, so that onError() and
+            // completeOwnership() end it.
+            orderedReduceTask = laneTask;
+            orderedFrameSequence = frameSequence;
+            batch.switchTo(frameSequence.getDispatchContext());
+            laneTask = reduceOrderedFrame(null, -1, laneTask, frameSequence);
         }
     }
 

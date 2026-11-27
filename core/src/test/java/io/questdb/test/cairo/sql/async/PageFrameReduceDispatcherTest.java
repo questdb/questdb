@@ -79,6 +79,7 @@ import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.LongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -3171,6 +3172,64 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(queue);
             }
         });
+    }
+
+    // An owner that may not publish reduces a task it staged once the task's lane is free and no thread took it: the
+    // thread that ended the lane's previous task did not take it, here the owner itself, which stole that task, and no
+    // other thread ever will. With two lanes, the owner publishes tasks 0 and 1 and stages tasks 2 and 3, then steals
+    // task 0, whose reducer turns publication off.
+    @Test
+    public void testOwnerReducesStagedTaskItMayNotPublish() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        assertMemoryLeak(() -> TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE staged AS (SELECT x FROM long_sequence(6))", sqlExecutionContext);
+            final MessageBus messageBus = engine.getMessageBus();
+            final PageFrameReduceDispatcher previousDispatcher = messageBus.getPageFrameReduceDispatcher();
+            final AtomicReference<PageFrameSequence<StatefulAtom>> sequence = new AtomicReference<>();
+            // Only the owner reduces: there are no workers.
+            final IntList reducedFrames = new IntList();
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, task, _, _) -> {
+                        reducedFrames.add(task.getFrameIndex());
+                        if (task.getFrameIndex() == 0) {
+                            sequence.get().setPublicationRefusedForTesting(true);
+                        }
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            sequence.set(frameSequence);
+            frameSequence.setLaneCount(2);
+            final AtomicInteger collectedCount = new AtomicInteger();
+            messageBus.setPageFrameReduceDispatcher(null);
+            try (
+                    NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(sqlExecutionContext.getSecurityContext(), null, null, -1, breaker);
+                    RecordCursorFactory factory = compiler.compile("staged", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                frameSequence.of(factory, context, null, PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                collectWithDeadline(frameSequence, collectedCount);
+                Assert.assertEquals(6, collectedCount.get());
+                // The owner stole tasks 0 and 1 from the queue and reduced the staged tasks 2 and 3, and then tasks 4 and
+                // 5, which it never dispatched, itself.
+                Assert.assertEquals("[0,1,2,3,4,5]", reducedFrames.toString());
+                Assert.assertEquals(4, frameSequence.getLocalReduceCount());
+                frameSequence.await();
+            } finally {
+                messageBus.setPageFrameReduceDispatcher(previousDispatcher);
+                Misc.free(frameSequence);
+            }
+        }, configuration, LOG));
     }
 
     @Test

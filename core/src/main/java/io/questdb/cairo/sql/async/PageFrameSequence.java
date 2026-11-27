@@ -75,11 +75,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    // A lane that holds no staged task, see stagedTasks.
+    private static final int STAGED_NONE = -1;
     private static final FiberLocal<int[]> UNTRACKED_SCOPE_DEPTH = new FiberLocal<>(() -> new int[1]);
+    // Runs on a worker path right after the worker takes a lane task, see onLaneTaskClaimed().
+    private static volatile Runnable laneClaimHookForTesting;
+    private static volatile long laneRowBudgetForTesting = -1;
     private final MillisecondClock clock;
     // The first reducer error of a completion-tracked sequence, whose owner never reads the failed task.
     private final AsyncQueryErrorState errorState;
     private final LongList frameRowCounts = new LongList();
+    // The rows a worker reduces along a lane before it leaves the next task to the owner, see PageFrameReduceJob.
+    private final long laneRowBudget;
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
@@ -117,9 +124,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // the mark shows, until collect() releases it. The dispatch limit keeps at most as many tasks between the
     // collected and the dispatched ones as there are result slots.
     private boolean isCompletionTracked;
-    // With lanes, task i dispatches only once task i - laneCount is reduced, so the tasks of a lane, task index modulo
-    // the lane count, reduce one at a time and in order. A stream GROUP BY accumulates a lane's frames into the
-    // lane's span maps, which then add up the same rows in the same order on every run. 0 when the tasks have no lanes.
+    // Makes dispatchAhead() publish nothing, as an owner that may not publish does, see setPublicationRefusedForTesting().
+    private boolean isPublicationRefusedForTesting;
+    // With lanes, task i reduces only once task i - laneCount is reduced, so the tasks of a lane, task index modulo the
+    // lane count, reduce one at a time and in order. A stream GROUP BY accumulates a lane's frames into the lane's span
+    // maps, which then add up the same rows in the same order on every run. The owner publishes a task whose lane is
+    // free and stages the others, see stagedTasks. 0 when the tasks have no lanes.
     private int laneCount;
     private PageFrameMemoryRecord localRecord;
     private int localReduceCount;
@@ -130,6 +140,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
+    // The owner's own record of the tasks it staged, by lane: a task stays here until the owner learns that a thread
+    // took it, or publishes, reduces or ends it itself.
+    private int[] ownerStagedTasks = new int[0];
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     // reducedTasks[i] != 0 once task i of a completion-tracked sequence is reduced, failed or skipped; set with
@@ -138,6 +151,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private SqlExecutionContext registeredContext;
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
+    // By lane, the task bound to its result slot and counted as dispatched while the lane's previous task is in flight,
+    // or STAGED_NONE. The thread that ends the previous task on a worker path takes it and reduces it next, see
+    // claimLaneSuccessor(), so the lane goes on without the owner. That thread takes the task before it marks its own,
+    // so once the owner sees the lane free, a task still staged is the owner's: it publishes the task, reduces it itself
+    // when it may not publish, or ends it without reducing it when it stops, see ownedStagedTask().
+    private int[] stagedTasks = new int[0];
     private long startTime;
     // Number of tasks (row-group runs) to dispatch; the unit of the dispatch/collect protocol.
     private int taskCount;
@@ -170,6 +189,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             this.taskType = taskType;
             this.errorState = new AsyncQueryErrorState(PageFrameReduceTask.getUnexpectedErrorMessage(taskType));
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
+            this.laneRowBudget = configuration.getSqlPageFrameMaxRows();
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -186,6 +206,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public static void leaveUntrackedScope() {
         UNTRACKED_SCOPE_DEPTH.get()[0]--;
+    }
+
+    @TestOnly
+    public static void setLaneClaimHookForTesting(@Nullable Runnable hook) {
+        laneClaimHookForTesting = hook;
+    }
+
+    // Overrides the lane row budget of legacy workers, see getLaneRowBudget(); -1 restores the configured one.
+    @TestOnly
+    public static void setLaneRowBudgetForTesting(long budget) {
+        laneRowBudgetForTesting = budget;
     }
 
     public void await() {
@@ -327,9 +358,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return sqlExecutionContext.getCircuitBreaker();
     }
 
+    // The tasks handed to the reducers: the dispatched ones but those still staged, which no thread took yet.
     @TestOnly
     public int getDispatchedTaskCount() {
-        return dispatchStartTaskIndex;
+        int count = dispatchStartTaskIndex;
+        for (int lane = 0; lane < laneCount; lane++) {
+            if (Unsafe.arrayGetVolatile(stagedTasks, lane) != STAGED_NONE) {
+                count--;
+            }
+        }
+        return count;
     }
 
     @TestOnly
@@ -605,6 +643,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     public void reset() {
         // reset() must be called only if there are no tasks in progress for this page frame sequence
         assert taskCount == 0 || reduceFinishedCounter.get() == dispatchStartTaskIndex;
+        assert isNoTaskStaged();
         if (registeredContext != null) {
             registeredContext.unregisterPageFrameSequence(this);
             registeredContext = null;
@@ -702,6 +741,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     public void setLaneCount(int laneCount) {
         assert laneCount >= 0 && taskType == PageFrameReduceTask.TYPE_GROUP_BY;
         this.laneCount = laneCount;
+        stagedTasks = new int[laneCount];
+        Arrays.fill(stagedTasks, STAGED_NONE);
+        ownerStagedTasks = new int[laneCount];
+        Arrays.fill(ownerStagedTasks, STAGED_NONE);
+    }
+
+    // An owner that may not publish, such as a fiber that holds a CPU-limited grant, reduces the tasks itself. Tests
+    // turn publication off midway to reach the tasks that the owner staged while it still published.
+    @TestOnly
+    public void setPublicationRefusedForTesting(boolean isRefused) {
+        this.isPublicationRefusedForTesting = isRefused;
     }
 
     /**
@@ -768,6 +818,46 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    long getLaneRowBudget() {
+        final long budget = laneRowBudgetForTesting;
+        return budget > -1 ? budget : laneRowBudget;
+    }
+
+    boolean hasLanes() {
+        return laneCount > 0;
+    }
+
+    // Takes the staged next task of the reduced task's lane, see stagedTasks, for the thread to reduce it next. A worker
+    // path calls this before onTaskReduced() marks the task. The owner takes a staged task only once the mark shows the
+    // lane free, so it never takes the task from the thread; the thread's progress signal, which follows the mark,
+    // makes the owner publish or reduce a task that it staged after the thread looked. The task does not count as finished yet,
+    // so await() cannot end, nor the sequence move on to its next query, while the thread holds the next task.
+    @Nullable
+    PageFrameReduceTask claimLaneSuccessor(int taskIndex) {
+        assert laneCount > 0;
+        final int successor = taskIndex + laneCount;
+        return Unsafe.cas(stagedTasks, taskIndex % laneCount, successor, STAGED_NONE) ? getResultTask(successor) : null;
+    }
+
+    // Ends a lane task that a worker took when the worker fails before it reduces the task: await() waits for the task,
+    // so it ends here, failed, rather than never.
+    void failLaneTask(PageFrameReduceTask task, Throwable th) {
+        onReducerError(task, th);
+        try {
+            onTaskReduced(task);
+        } finally {
+            reduceFinishedCounter.incrementAndGet();
+        }
+    }
+
+    // A worker path calls this right after it takes a lane task, where a failure has to end the task, see failLaneTask().
+    static void onLaneTaskClaimed() {
+        final Runnable hook = laneClaimHookForTesting;
+        if (hook != null) {
+            hook.run();
+        }
+    }
+
     private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean isFiberSuspendable) {
         final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
@@ -791,6 +881,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
+            skipStagedTasks();
             if (reduceFinishedCounter.get() >= dispatchStartTaskIndex) {
                 break;
             }
@@ -1045,7 +1136,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // Publishes tasks up to the limit without stealing, so that the workers keep reducing while the owner works
     // through the tasks it collected.
     private void dispatchAhead(int dispatchLimit, boolean countOnly) {
-        if (!isActive()) {
+        if (!isActive() || isPublicationRefusedForTesting) {
             return;
         }
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
@@ -1061,18 +1152,28 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
             final int collectedTaskCount = collectedTaskIndex + 1;
             final int limit = Math.min(dispatchLimit, resultTasks.size());
-            while (dispatchStartTaskIndex < taskCount && dispatchStartTaskIndex - collectedTaskCount < limit
-                    && isLaneFree(dispatchStartTaskIndex)) {
-                // Binding the result slot may allocate, so it comes before the queue slot: a failure must not leave
-                // a claimed slot unpublished, which would stop every consumer of the shard.
-                prepareResultTask(dispatchStartTaskIndex, countOnly);
-                final long cursor = reducePubSeq.next();
-                if (cursor == -1) {
+            int lane = 0;
+            while (true) {
+                int taskIndex = STAGED_NONE;
+                // The staged tasks that the owner publishes go first: they are older than the tasks it dispatches.
+                while (taskIndex < 0 && lane < laneCount) {
+                    taskIndex = ownedStagedTask(lane++);
+                }
+                if (taskIndex < 0) {
+                    taskIndex = nextTaskToDispatch(collectedTaskCount, limit, countOnly);
+                    if (taskIndex < 0) {
+                        return;
+                    }
+                    // Binding the result slot may allocate, so it comes before the queue slot: a failure must not
+                    // leave a claimed slot unpublished, which would stop every consumer of the shard.
+                    prepareResultTask(taskIndex, countOnly);
+                }
+                if (!publishTask(taskIndex, getResultTask(taskIndex).isCountOnly(), reducePubSeq)) {
                     return;
                 }
-                if (cursor > -1) {
-                    reduceQueue.get(cursor).of(this, dispatchStartTaskIndex, countOnly);
-                    reducePubSeq.done(cursor);
+                if (taskIndex < dispatchStartTaskIndex) {
+                    unstageTask(taskIndex);
+                } else {
                     dispatchStartTaskIndex++;
                 }
             }
@@ -1122,6 +1223,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return taskIndex < laneCount || laneCount == 0 || Unsafe.arrayGetVolatile(reducedTasks, taskIndex - laneCount) != 0;
     }
 
+    private boolean isNoTaskStaged() {
+        for (int lane = 0; lane < laneCount; lane++) {
+            if (ownerStagedTasks[lane] != STAGED_NONE || Unsafe.arrayGetVolatile(stagedTasks, lane) != STAGED_NONE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // The completion-tracked part of next(): returns the next task in order once it is reduced. While it waits, the
     // owner publishes tasks up to the dispatch limit, steals work from its shard, reduces the task itself when the shard
     // has no room for it, or parks.
@@ -1152,6 +1262,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             if (Unsafe.arrayGetVolatile(reducedTasks, taskIndex) != 0) {
                 beginCollectTask(taskIndex, getResultTask(taskIndex));
                 return taskIndex;
+            }
+            if (laneCount > 0 && ownedStagedTask(taskIndex % laneCount) == taskIndex) {
+                // The task is staged, its lane is free and no thread took it, yet dispatchAhead() did not publish it:
+                // the owner may not publish, or the shard has no room. No thread but the owner reduces it now.
+                reduceStagedLocally(taskIndex);
+                continue;
             }
             if (taskIndex == dispatchStartTaskIndex) {
                 // The shard has no room for the task. Stealing frees a slot; with nothing to steal, reduce it here.
@@ -1189,6 +1305,50 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return task;
     }
 
+    // The next task to dispatch while its lane is free, or STAGED_NONE. Stages the tasks it passes whose lane's
+    // previous task is in flight, as long as their lanes hold no staged task.
+    private int nextTaskToDispatch(int collectedTaskCount, int limit, boolean countOnly) {
+        while (dispatchStartTaskIndex < taskCount && dispatchStartTaskIndex - collectedTaskCount < limit) {
+            if (isLaneFree(dispatchStartTaskIndex)) {
+                return dispatchStartTaskIndex;
+            }
+            if (!stageTask(dispatchStartTaskIndex, countOnly)) {
+                break;
+            }
+        }
+        return STAGED_NONE;
+    }
+
+    // The staged task of the lane when it is the owner's, or STAGED_NONE: the lane is free, so the thread that ended its
+    // previous task took the staged task before it marked its own, if at all. Forgets a task that the thread took.
+    private int ownedStagedTask(int lane) {
+        final int taskIndex = ownerStagedTasks[lane];
+        if (taskIndex == STAGED_NONE || !isLaneFree(taskIndex)) {
+            return STAGED_NONE;
+        }
+        if (Unsafe.arrayGetVolatile(stagedTasks, lane) != taskIndex) {
+            ownerStagedTasks[lane] = STAGED_NONE;
+            return STAGED_NONE;
+        }
+        return taskIndex;
+    }
+
+    // Publishes a task bound to its result slot. Returns false when the shard's queue has no room.
+    private boolean publishTask(int taskIndex, boolean countOnly, MPSequence reducePubSeq) {
+        while (true) {
+            final long cursor = reducePubSeq.next();
+            if (cursor > -1) {
+                reduceQueue.get(cursor).of(this, taskIndex, countOnly);
+                reducePubSeq.done(cursor);
+                return true;
+            }
+            if (cursor == -1) {
+                return false;
+            }
+            Os.pause();
+        }
+    }
+
     private void reduceLocally(boolean countOnly) {
         assert dispatchStartTaskIndex < taskCount;
 
@@ -1207,6 +1367,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
         // Counted once the task is bound, so that await() never waits for a task that failed to bind.
         dispatchStartTaskIndex++;
+        reduceLocally(task);
+    }
+
+    // Reduces a bound task on the owner's thread and ends it.
+    private void reduceLocally(PageFrameReduceTask task) {
         localReduceCount++;
 
         final boolean isFiberSuspendable = isFiberSuspendable();
@@ -1278,6 +1443,50 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 reduceFinishedCounter.incrementAndGet();
             }
         }
+    }
+
+    // Reduces the staged next task to collect on the owner's thread, see nextReduced(). The task holds its result slot
+    // and counts as dispatched since the owner staged it.
+    private void reduceStagedLocally(int taskIndex) {
+        unstageTask(taskIndex);
+        reduceLocally(getResultTask(taskIndex));
+    }
+
+    // Once the owner stops, it ends the staged tasks of the free lanes, which no thread took, without reducing them. A
+    // lane whose previous task is in flight waits for that task: its thread may still take the staged task.
+    private void skipStagedTasks() {
+        for (int lane = 0; lane < laneCount; lane++) {
+            final int taskIndex = ownedStagedTask(lane);
+            if (taskIndex > -1) {
+                unstageTask(taskIndex);
+                try {
+                    onTaskReduced(getResultTask(taskIndex));
+                } finally {
+                    reduceFinishedCounter.incrementAndGet();
+                }
+            }
+        }
+    }
+
+    // Stages a task whose lane's previous task is in flight, see stagedTasks. Returns false when the lane holds a staged
+    // task already.
+    private boolean stageTask(int taskIndex, boolean countOnly) {
+        final int lane = taskIndex % laneCount;
+        if (ownerStagedTasks[lane] != STAGED_NONE) {
+            return false;
+        }
+        prepareResultTask(taskIndex, countOnly);
+        // Publishes the bound result slot to the thread that takes the task.
+        Unsafe.arrayPutOrdered(stagedTasks, lane, taskIndex);
+        ownerStagedTasks[lane] = taskIndex;
+        dispatchStartTaskIndex++;
+        return true;
+    }
+
+    private void unstageTask(int taskIndex) {
+        final int lane = taskIndex % laneCount;
+        ownerStagedTasks[lane] = STAGED_NONE;
+        Unsafe.arrayPutOrdered(stagedTasks, lane, STAGED_NONE);
     }
 
     private boolean stealWork(
