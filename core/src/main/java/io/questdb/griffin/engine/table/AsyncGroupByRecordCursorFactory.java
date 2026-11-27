@@ -244,7 +244,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
         @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
 
@@ -260,6 +260,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             record.init(frameMemory);
 
             atom.resetLocalStats(slotId);
@@ -451,8 +453,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final int slotId = atom.maybeAcquire(workerId, stealingFrameSequence == frameSequence, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         try {
-            record = filterCtx.filter(record, frameSequence.getPageFrameAddressCache(), slotId, frameIndex,
-                    frameSequence.getFrameRowCount(frameIndex));
+            record = filterCtx.filter(record, frameSequence.getPageFrameAddressCache(), slotId, frameIndex);
             atom.resetLocalStats(slotId);
             final DirectLongList rows = filterCtx.getFilteredRows(slotId);
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);

@@ -55,6 +55,8 @@ final class ParquetPartitionConverter implements QuietCloseable {
     private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
     private final DirectUtf8Sink columnNames = new DirectUtf8Sink(256, true, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
     private final CairoConfiguration configuration;
+    // The column ids of the non-timestamp dedup keys, see TableUtils.collectDedupKeyIds()
+    private final DirectIntList dedupKeyIds = new DirectIntList(8, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
     private final FilesFacade ff;
     private final DirectLongList frameData = new DirectLongList(64, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
     private long rowCount;
@@ -69,6 +71,7 @@ final class ParquetPartitionConverter implements QuietCloseable {
         Misc.free(bloomFilterIndexes);
         Misc.free(columnMetadata);
         Misc.free(columnNames);
+        Misc.free(dedupKeyIds);
         Misc.free(frameData);
     }
 
@@ -120,6 +123,20 @@ final class ParquetPartitionConverter implements QuietCloseable {
             TableUtils.parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
         }
 
+        // One plain folder copies its rows in order, so the dedup key order it claims holds for every row group.
+        final int timestampColumn = metadata.getTimestampIndex();
+        final long dedupSortVersion = hi - lo == 1
+                && !txFile.isPartitionComposite(lo)
+                && timestampColumn > -1
+                && metadata.isDedupKey(timestampColumn)
+                && txFile.isPartitionDedupSorted(lo)
+                ? reader.getMetadata().getDedupVersion()
+                : ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+        dedupKeyIds.clear();
+        if (dedupSortVersion != ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET) {
+            TableUtils.collectDedupKeyIds(metadata, dedupKeyIds);
+        }
+
         long parquetMetaFd = -1;
         long writer = 0;
         try {
@@ -151,7 +168,10 @@ final class ParquetPartitionConverter implements QuietCloseable {
                     configuration.getPartitionEncoderParquetMinCompressionRatio(),
                     Files.toOsFd(parquetMetaFd),
                     -1L,
-                    seqTxn
+                    seqTxn,
+                    dedupSortVersion,
+                    dedupKeyIds.getAddress(),
+                    (int) dedupKeyIds.size()
             );
 
             rowCount = 0;

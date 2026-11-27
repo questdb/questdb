@@ -1607,7 +1607,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         Double.NaN,
                         parquetBloomFilterIndexes,
                         -1L,
-                        seqTxn
+                        seqTxn,
+                        // the copy keeps the rows and their order, so the dedup key order the partition claims holds
+                        reader.getMetadata().getTimestampIndex() > -1
+                                && reader.getMetadata().isDedupKey(reader.getMetadata().getTimestampIndex())
+                                && txFile.isPartitionDedupSorted(partitionIndex)
+                                ? reader.getMetadata().getDedupVersion()
+                                : ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET
                 );
                 command.ofParquetGeneration(
                         tableToken,

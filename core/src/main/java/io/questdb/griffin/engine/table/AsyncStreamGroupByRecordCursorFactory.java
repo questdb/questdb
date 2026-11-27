@@ -236,7 +236,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 record.init(task.populateFrameMemory());
                 rows = null;
             } else {
-                record = filterContext.filter(record, sequence.getPageFrameAddressCache(), slot, task.getFrameIndex(), task.getFrameRowCount());
+                record = filterContext.filter(record, sequence.getPageFrameAddressCache(), slot, task.getFrameIndex());
                 rows = filterContext.getFilteredRows(slot);
             }
             final boolean isDescending = atom.isDescending();

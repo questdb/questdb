@@ -3,6 +3,7 @@ use qdb_core::col_type::nulls;
 
 pub mod array;
 pub(crate) mod decimal;
+pub mod dedup_sort;
 pub(crate) mod encode;
 pub(crate) mod encoders;
 pub(crate) mod file;

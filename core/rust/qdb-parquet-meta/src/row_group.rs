@@ -28,7 +28,7 @@ use crate::column_chunk::ColumnChunkRaw;
 use crate::error::ParquetMetaErrorKind;
 use crate::error::ParquetMetaResult;
 use crate::parquet_meta_err;
-use crate::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE};
+use crate::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE, DEDUP_SORT_VERSION_UNSET};
 
 // ── RowGroupBlockReader (zero-copy) ────────────────────────────────────
 
@@ -117,6 +117,27 @@ impl<'a> RowGroupBlockReader<'a> {
 // ── RowGroupBlockBuilder ───────────────────────────────────────────────
 
 /// Builds a row group block into a `Vec<u8>`.
+/// One row group's dedup sort claim, as the `_pm` footer stores it: see
+/// [`RowGroupBlockBuilder::set_dedup_sort`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RowGroupDedupSort {
+    /// The dedup version whose keys sort the row group's rows within each designated
+    /// timestamp; `DEDUP_SORT_VERSION_UNSET` makes no claim.
+    pub version: i64,
+    /// The dedup keys of the first and the last row, in `qdb_core::dedup_key` encoding:
+    /// the non-timestamp keys of `version` in column id order. `None` when unknown, or
+    /// when the timestamp is the only key.
+    pub keys: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+impl RowGroupDedupSort {
+    /// No claim.
+    pub const UNSET: Self = Self {
+        version: DEDUP_SORT_VERSION_UNSET,
+        keys: None,
+    };
+}
+
 #[derive(Debug)]
 pub struct RowGroupBlockBuilder {
     pub(crate) num_rows: u64,
@@ -126,6 +147,11 @@ pub struct RowGroupBlockBuilder {
     bloom_filters: Vec<(usize, usize)>,
     /// (col_index, parquet_offset, parquet_length) for external bloom filters.
     external_bloom_filters: Vec<(usize, u64, u64)>,
+    /// Footer-side per-row-group entry, not part of the block bytes; see
+    /// `FooterFeatureFlags::DEDUP_SORT_VERSION_BIT`.
+    dedup_sort_version: i64,
+    /// Footer-side too: the dedup keys of the first and the last row, empty when unknown.
+    dedup_sort_keys: (Vec<u8>, Vec<u8>),
 }
 
 impl RowGroupBlockBuilder {
@@ -137,11 +163,47 @@ impl RowGroupBlockBuilder {
             out_of_line: Vec::new(),
             bloom_filters: Vec::new(),
             external_bloom_filters: Vec::new(),
+            dedup_sort_version: DEDUP_SORT_VERSION_UNSET,
+            dedup_sort_keys: (Vec::new(), Vec::new()),
         }
     }
 
     pub fn num_rows(&self) -> u64 {
         self.num_rows
+    }
+
+    /// The dedup version whose keys sort this row group's rows within each designated
+    /// timestamp; `DEDUP_SORT_VERSION_UNSET` makes no claim.
+    pub fn dedup_sort_version(&self) -> i64 {
+        self.dedup_sort_version
+    }
+
+    pub fn set_dedup_sort_version(&mut self, version: i64) -> &mut Self {
+        self.dedup_sort_version = version;
+        self
+    }
+
+    /// The dedup keys of the first and the last row, in the order of the dedup sort
+    /// version; empty when unknown.
+    pub fn dedup_sort_keys(&self) -> &(Vec<u8>, Vec<u8>) {
+        &self.dedup_sort_keys
+    }
+
+    /// Records the dedup sort version, with the keys of the first and the last row when
+    /// the claim has them.
+    pub fn set_dedup_sort(&mut self, sort: &RowGroupDedupSort) -> &mut Self {
+        self.dedup_sort_version = sort.version;
+        if let Some((first, last)) = &sort.keys {
+            self.dedup_sort_keys = (first.clone(), last.clone());
+        }
+        self
+    }
+
+    /// Records the dedup keys of the first and the last row. They mean something only
+    /// with a dedup sort version.
+    pub fn set_dedup_sort_keys(&mut self, first: Vec<u8>, last: Vec<u8>) -> &mut Self {
+        self.dedup_sort_keys = (first, last);
+        self
     }
 
     pub fn column_chunk_raw(&self, index: usize) -> &ColumnChunkRaw {

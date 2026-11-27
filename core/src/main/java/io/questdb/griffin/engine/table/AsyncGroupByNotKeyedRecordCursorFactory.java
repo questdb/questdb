@@ -319,7 +319,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
         @SuppressWarnings("unchecked") final AsyncGroupByNotKeyedAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom>) frameSequence).getAtom();
 
@@ -334,6 +334,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             record.init(frameMemory);
 
             record.setRowIndex(0);
@@ -383,7 +385,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
         @SuppressWarnings("unchecked") final AsyncGroupByNotKeyedAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom>) frameSequence).getAtom();
 
@@ -400,6 +402,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         // aggregate() for why a leaked slot is permanent.
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
@@ -504,7 +508,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
         @SuppressWarnings("unchecked") final AsyncGroupByNotKeyedAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom>) frameSequence).getAtom();
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence == frameSequence;
@@ -528,8 +532,12 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             } else {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             }
             record.init(frameMemory);
 

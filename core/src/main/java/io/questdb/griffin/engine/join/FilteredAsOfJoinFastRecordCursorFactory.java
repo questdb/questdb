@@ -307,15 +307,13 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                     // ops, we exhausted this frame, let's try the previous one
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield(); // check if we are still alive
 
-                    if (!slaveTimeFrameCursor.prev()) {
+                    if (!slaveTimeFrameCursor.openPrev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
                         // until we either exhaust the cursor or find a matching record
                         record.hasSlave(false);
                         break;
                     }
-
-                    slaveTimeFrameCursor.open();
                     int filteredFrameIndex = timeFrame.getFrameIndex();
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();

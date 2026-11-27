@@ -1352,7 +1352,13 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
 
         @Override
         public boolean prev() {
-            throw new UnsupportedOperationException();
+            final int frameIndex = timeFrame.getFrameIndex() - 1;
+            if (frameIndex >= 0) {
+                timeFrame.ofEstimate(frameIndex, frameRowOffsets[frameIndex], frameRowOffsets[frameIndex + 1]);
+                return true;
+            }
+            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+            return false;
         }
 
         @Override

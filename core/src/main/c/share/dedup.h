@@ -25,7 +25,9 @@
 #ifndef QUESTDB_DEDUP_H
 #define QUESTDB_DEDUP_H
 
+#include <cstdint>
 #include <cstring>
+#include <limits>
 
 // This struct represents repated pointers in dedup_column
 // Sometimes it's better to view dedup_column struct as if it has an array of 2 column_pointer(s)
@@ -155,5 +157,34 @@ inline bool operator<(const int256 &a, const int256 &b) {
 inline bool operator!=(const int256 &a, const int256 &b) {
     return a.hi != b.hi || a.lo != b.lo;
 }
+
+// A FLOAT or DOUBLE dedup key. It compares its bits as a signed integer, like the other fixed-size keys, but
+// every NaN compares as the one NaN: SQL reads each NaN as NULL, and parquet stores each NaN as NULL, which
+// decodes as the one NaN. So two keys that SQL sees as NULL are one key, and rows sorted in memory keep their
+// order after a parquet round trip.
+template<typename TBits, TBits Infinity, TBits Nan>
+struct nan_key {
+    TBits bits;
+
+    [[nodiscard]] inline TBits value() const {
+        // The sign bit does not take part: a NaN with the sign bit set is a NaN too.
+        return (bits & std::numeric_limits<TBits>::max()) > Infinity ? Nan : bits;
+    }
+};
+
+template<typename TBits, TBits Infinity, TBits Nan>
+inline bool operator>(const nan_key<TBits, Infinity, Nan> &a, const nan_key<TBits, Infinity, Nan> &b) {
+    return a.value() > b.value();
+}
+
+template<typename TBits, TBits Infinity, TBits Nan>
+inline bool operator<(const nan_key<TBits, Infinity, Nan> &a, const nan_key<TBits, Infinity, Nan> &b) {
+    return a.value() < b.value();
+}
+
+using float_key = nan_key<int32_t, 0x7f800000, 0x7fc00000>;
+using double_key = nan_key<int64_t, 0x7ff0000000000000LL, 0x7ff8000000000000LL>;
+static_assert(sizeof(float_key) == sizeof(float), "float_key must read a FLOAT value in place");
+static_assert(sizeof(double_key) == sizeof(double), "double_key must read a DOUBLE value in place");
 
 #endif //QUESTDB_DEDUP_H

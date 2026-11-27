@@ -261,14 +261,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
                     // ops, we exhausted this frame, let's try the previous one
-                    if (!slaveTimeFrameCursor.prev()) {
+                    if (!slaveTimeFrameCursor.openPrev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
                         // until we either exhaust the cursor or find a matching key.
                         record.hasSlave(false);
                         break;
                     }
-                    slaveTimeFrameCursor.open();
 
                     keyedFrameIndex = slaveTimeFrame.getFrameIndex();
                     keyedRowId = slaveTimeFrame.getRowHi() - 1;

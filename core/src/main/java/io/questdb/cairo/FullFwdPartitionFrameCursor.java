@@ -34,16 +34,10 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
+        // Metadata counts exact partitions without opening them, including size-0 partitions
+        // that have no directory; only inexact windows decode their timestamps and dedup keys.
         while (partitionIndex < partitionScanHi) {
-            // Skip empty partitions without opening them, exactly as next() and the interval cursors
-            // do. A size-0 partition (e.g. one a backup left out of the restore) has no directory on
-            // disk, so openPartition() would throw "partition does not exist" instead of contributing
-            // 0 rows.
-            if (reader.getPartitionRowCountFromMetadata(partitionIndex) > 0
-                    || reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
-                final long hi = reader.openPartition(partitionIndex);
-                counter.add(getLogicalPartitionRowCount(partitionIndex, hi));
-            }
+            counter.add(reader.getResolvedPartitionRowCount(partitionIndex));
             partitionIndex++;
         }
     }

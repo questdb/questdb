@@ -1563,8 +1563,9 @@ public interface CairoConfiguration {
     /**
      * Whether this start prepares the database for an older release
      * ({@code cairo.commit.mode.adaptive.downgrade}); the server accepts it under {@link CommitMode#NOSYNC} only.
-     * When {@code true}, the start removes the {@code _cv} checksum trailers and the downgrade lock from every
-     * table ({@code RecoveryCoordinator.unlockTablesForDowngrade}), and the instance writes neither while it
+     * When {@code true}, the start removes the {@code _cv} checksum trailers, the dedup sorted bits in
+     * {@code _txn} ({@link TxReader#PARTITION_DEDUP_SORTED_BIT}) and the downgrade lock from every table
+     * ({@code RecoveryCoordinator.unlockTablesForDowngrade}), and the instance writes none of them while it
      * runs. When {@code false}, the default, every commit mode stores the trailers and locks the tables it
      * writes in {@code _meta} ({@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
      */

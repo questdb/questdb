@@ -39,6 +39,7 @@ use qdb_parquet_meta::convert::{build_row_group_block, BloomFilterSource};
 use qdb_parquet_meta::error::{ParquetMetaErrorKind, ParquetMetaResult};
 use qdb_parquet_meta::types::SeqTxn;
 use qdb_parquet_meta::writer::RowGroupSlot;
+pub use qdb_parquet_meta::RowGroupDedupSort;
 
 pub use qdb_parquet_meta::convert::{
     convert_from_parquet, detect_designated_timestamp, extract_sorting_columns,
@@ -127,7 +128,8 @@ pub struct ParquetMetaUpdateResult {
 /// thrift row groups, inlining the bloom bitsets captured during the parquet
 /// write. `origins`, when given, is parallel to `thrift_row_groups` and maps
 /// each final row group to its bitset (see [`VecBloomFilterSource`]); `None`
-/// means write order is final order, as for a file written from scratch.
+/// means write order is final order, as for a file written from scratch. No
+/// row group claims a dedup sort version.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_parquet_metadata(
     columns: &[ParquetMetaColumnInfo<'_>],
@@ -141,6 +143,41 @@ pub fn generate_parquet_metadata(
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
+) -> ParquetResult<(Vec<u8>, u64)> {
+    generate_parquet_metadata_with_dedup_sorts(
+        columns,
+        thrift_row_groups,
+        designated_timestamp,
+        sorting_columns,
+        parquet_footer_offset,
+        parquet_footer_length,
+        bloom_bitsets,
+        origins,
+        unused_bytes,
+        squash_tracker,
+        seq_txn,
+        &[],
+    )
+}
+
+/// [`generate_parquet_metadata`] with `dedup_sorts[i]` as the dedup sort claim
+/// of row group `i`: the dedup version whose keys order its rows within each
+/// timestamp, `DEDUP_SORT_VERSION_UNSET` for no claim, and the keys of its first
+/// and last rows. A row group past the end of the slice makes no claim.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_parquet_metadata_with_dedup_sorts(
+    columns: &[ParquetMetaColumnInfo<'_>],
+    thrift_row_groups: &[RowGroup],
+    designated_timestamp: i32,
+    sorting_columns: &[u32],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+    bloom_bitsets: &[Vec<Option<Vec<u8>>>],
+    origins: Option<&[RowGroupOrigin]>,
+    unused_bytes: u64,
+    squash_tracker: i64,
+    seq_txn: SeqTxn,
+    dedup_sorts: &[RowGroupDedupSort],
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let bloom_source = match origins {
         Some(origins) => VecBloomFilterSource::with_origins(bloom_bitsets, origins),
@@ -156,6 +193,7 @@ pub fn generate_parquet_metadata(
         unused_bytes,
         squash_tracker,
         seq_txn,
+        dedup_sorts,
         &bloom_source,
     )
     .map_err(ParquetError::from)
@@ -183,6 +221,13 @@ pub fn generate_parquet_metadata(
 ///
 /// `is_index_row_map_dropped` writes the identity index row map, for a table
 /// with no symbol index (see `ParquetMetaUpdateWriter::drop_index_row_map`).
+///
+/// `dedup_sorts[i]` is the dedup sort claim of row group `i` when the update
+/// wrote it: the dedup version whose keys order its rows within each
+/// timestamp, `DEDUP_SORT_VERSION_UNSET` for no claim, and the keys of its
+/// first and last rows. A written row group past the end of the slice makes no
+/// claim. A row group the update kept, in place or shifted, keeps its committed
+/// claim whatever the slice holds for it.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
@@ -196,6 +241,7 @@ pub fn update_parquet_metadata(
     unused_bytes: u64,
     seq_txn: SeqTxn,
     is_index_row_map_dropped: bool,
+    dedup_sorts: &[RowGroupDedupSort],
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     if origins.len() != thrift_row_groups.len() {
         return Err(parquet_meta_err!(
@@ -275,11 +321,11 @@ pub fn update_parquet_metadata(
                 continue;
             }
         }
-        slots.push(RowGroupSlot::New(build_row_group_block(
-            thrift_rg,
-            i,
-            &bloom_source,
-        )?));
+        let mut block = build_row_group_block(thrift_rg, i, &bloom_source)?;
+        if let Some(sort) = dedup_sorts.get(i) {
+            block.set_dedup_sort(sort);
+        }
+        slots.push(RowGroupSlot::New(block));
     }
     updater.set_row_groups(slots)?;
 
@@ -1744,6 +1790,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
         )
         .unwrap();
 
@@ -1763,6 +1810,206 @@ mod tests {
 
         let old_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    fn sorts(versions: &[i64]) -> Vec<RowGroupDedupSort> {
+        versions
+            .iter()
+            .map(|&version| RowGroupDedupSort {
+                version,
+                keys: (version >= 0).then(|| (vec![version as u8], vec![version as u8, 1])),
+            })
+            .collect()
+    }
+
+    fn dedup_sort_keys_of(parquet_meta: &[u8], file_size: u64) -> Vec<Option<(Vec<u8>, Vec<u8>)>> {
+        let reader = ParquetMetaReader::from_file_size(parquet_meta, file_size).unwrap();
+        (0..reader.row_group_count() as usize)
+            .map(|i| {
+                reader
+                    .footer()
+                    .row_group_dedup_sort_keys(i)
+                    .unwrap()
+                    .map(|(first, last)| (first.to_vec(), last.to_vec()))
+            })
+            .collect()
+    }
+
+    fn dedup_sort_versions_of(parquet_meta: &[u8], file_size: u64) -> Vec<i64> {
+        let reader = ParquetMetaReader::from_file_size(parquet_meta, file_size).unwrap();
+        assert!(reader.verify_checksum().is_ok());
+        (0..reader.row_group_count() as usize)
+            .map(|i| reader.footer().row_group_dedup_sort_version(i).unwrap())
+            .collect()
+    }
+
+    fn apply_update(initial_pm: &[u8], result: &ParquetMetaUpdateResult) -> Vec<u8> {
+        let mut full_file = initial_pm.to_vec();
+        full_file.extend_from_slice(&result.bytes);
+        full_file[qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&result.new_file_size.to_le_bytes());
+        full_file
+    }
+
+    #[test]
+    fn dedup_sort_versions_follow_written_row_groups() {
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+        let col_infos = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
+
+        // a row group written at another offset of the parquet file
+        let written_rg = |offset_delta: i64| {
+            let mut rg = thrift_meta.row_groups[0].clone();
+            for col in &mut rg.columns {
+                if let Some(ref mut meta) = col.meta_data {
+                    meta.data_page_offset += offset_delta;
+                }
+            }
+            rg
+        };
+
+        // a full create without versions makes no claim
+        let (unclaimed_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            None,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )
+        .unwrap();
+        assert_eq!(
+            dedup_sort_versions_of(&unclaimed_pm, unclaimed_pm.len() as u64),
+            vec![-1]
+        );
+
+        // a full create gives each row group its version, and none to a row group past the slice
+        let created_rgs = vec![
+            thrift_meta.row_groups[0].clone(),
+            written_rg(10_000),
+            written_rg(20_000),
+        ];
+        let (created_pm, _) = generate_parquet_metadata_with_dedup_sorts(
+            &col_infos,
+            &created_rgs,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            None,
+            0,
+            -1,
+            SeqTxn::UNSET,
+            &sorts(&[7, -1]),
+        )
+        .unwrap();
+        let created_size = created_pm.len() as u64;
+        assert_eq!(
+            dedup_sort_versions_of(&created_pm, created_size),
+            vec![7, -1, -1]
+        );
+        assert_eq!(
+            dedup_sort_keys_of(&created_pm, created_size),
+            vec![Some((vec![7], vec![7, 1])), None, None]
+        );
+
+        // An update: a row group inserted in front claims 9. The kept row groups shift by one and keep 7 and
+        // no claim, whatever the slice holds for them. A replaced row group and an appended one take their
+        // versions from the slice, and the appended one past its end makes no claim.
+        let updated_rgs = vec![
+            written_rg(30_000),
+            created_rgs[0].clone(),
+            created_rgs[1].clone(),
+            written_rg(40_000),
+            written_rg(50_000),
+        ];
+        let result = update_parquet_metadata(
+            &created_pm,
+            created_size,
+            created_size,
+            &updated_rgs,
+            &[
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Existing { orig_idx: 1 },
+                RowGroupOrigin::Written(1),
+                RowGroupOrigin::Written(2),
+            ],
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            &sorts(&[9, 3, 3, 8]),
+        )
+        .unwrap();
+        let updated_pm = apply_update(&created_pm, &result);
+        assert_eq!(
+            dedup_sort_versions_of(&updated_pm, result.new_file_size),
+            vec![9, 7, -1, 8, -1]
+        );
+        // the kept row group keeps its keys, the written ones take theirs from the slice
+        assert_eq!(
+            dedup_sort_keys_of(&updated_pm, result.new_file_size),
+            vec![
+                Some((vec![9], vec![9, 1])),
+                Some((vec![7], vec![7, 1])),
+                None,
+                Some((vec![8], vec![8, 1])),
+                None
+            ]
+        );
+        // the committed snapshot still reads its own versions
+        assert_eq!(
+            dedup_sort_versions_of(&updated_pm, created_size),
+            vec![7, -1, -1]
+        );
+
+        // an update that replaces the claiming row group without a version drops the claim
+        let replaced_rgs = vec![
+            written_rg(60_000),
+            created_rgs[1].clone(),
+            created_rgs[2].clone(),
+        ];
+        let result = update_parquet_metadata(
+            &created_pm,
+            created_size,
+            created_size,
+            &replaced_rgs,
+            &[
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Existing { orig_idx: 1 },
+                RowGroupOrigin::Existing { orig_idx: 2 },
+            ],
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            &[],
+        )
+        .unwrap();
+        let replaced_pm = apply_update(&created_pm, &result);
+        assert_eq!(
+            dedup_sort_versions_of(&replaced_pm, result.new_file_size),
+            vec![-1, -1, -1]
+        );
     }
 
     #[test]
@@ -1823,6 +2070,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1857,6 +2105,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             true,
+            &[],
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1942,6 +2191,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
         )
         .unwrap();
 
@@ -2056,6 +2306,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
         );
         let err = match result {
             Ok(_) => panic!("origin count mismatch must be rejected"),
@@ -2089,6 +2340,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
         );
         let err = match result {
             Ok(_) => panic!("a written group without column metadata must be rejected"),
@@ -2116,6 +2368,7 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
         )
         .unwrap();
         let mut full = initial_pm.clone();
@@ -2199,6 +2452,7 @@ mod tests {
                 0,
                 SeqTxn::UNSET,
                 false,
+                &[],
             );
             let err = match result {
                 Ok(_) => panic!("append base {bad_base} must be rejected"),

@@ -528,6 +528,13 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             if (bookmarkedFrameIndex == -1) {
                 final long nativeTargetTimestamp = slaveTsScale == 1 ? targetTimestamp : targetTimestamp / slaveTsScale;
                 timeFrameCursor.seekEstimate(nativeTargetTimestamp);
+                // The seeked frame and every frame before it end at or below the target. When it
+                // decodes empty, e.g. when dedup on read leaves it no rows, the last earlier frame
+                // with rows holds the best candidate; with none, the walk below starts from the
+                // first frame.
+                if (timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() == 0) {
+                    timeFrameCursor.openPrev();
+                }
             }
             if (timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
                 final long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);

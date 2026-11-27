@@ -79,7 +79,35 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
+    /**
+     * Finds the first partition row in {@code (rowLo, rowHi]} that has the timestamp of the row before it and a
+     * smaller dedup key, or returns -1 when the rows of every timestamp in {@code [rowLo, rowHi]} are in key order.
+     * The key columns are described by {@code dedupColBuffs}, as for
+     * {@link #mergeDedupTimestampWithLongIndexIntKeys}; only their partition side is read.
+     */
+    public static native long dedupColumnFindKeyDisorder(
+            long srcTimestampAddr,
+            long rowLo,
+            long rowHi,
+            int dedupKeyCount,
+            long dedupColBuffs
+    );
+
     public static native long dedupMergeArrayColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
+
+    /**
+     * Checks the merge index {@link #mergeDedupTimestampWithLongIndexIntKeys} built against the dedup key order:
+     * returns the number of timestamps whose rows are not in key order and, when {@code isSort} is set, puts the
+     * rows of each such timestamp in key order. Rows with equal keys keep the order the merge gave them.
+     * {@code dedupColBuffs} must still describe the columns the merge read.
+     */
+    public static native long dedupMergeIndexSortKeys(
+            long mergeIndexAddr,
+            long mergeIndexCount,
+            int dedupKeyCount,
+            long dedupColBuffs,
+            boolean isSort
+    );
 
     public static native long dedupMergeStrBinColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 

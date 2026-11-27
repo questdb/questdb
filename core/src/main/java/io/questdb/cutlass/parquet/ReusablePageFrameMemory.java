@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -46,6 +47,7 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     private final DirectLongList pageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private int columnCount;
     private boolean hasColumnTops;
+    private long rowCount;
     private long rowIdOffset;
 
     @Override
@@ -126,6 +128,11 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     @Override
+    public long getRowCount() {
+        return rowCount;
+    }
+
+    @Override
     public long getRowIdOffset() {
         return rowIdOffset;
     }
@@ -146,7 +153,13 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     public void of(PageFrame frame) {
+        if (!frame.isExactRowCount()) {
+            // This memory exposes the frame's mmapped native vectors as is; it never decodes,
+            // so it cannot learn an actual count that differs from the declared span.
+            throw CairoException.critical(0).put("native page frame memory requires an exact row count");
+        }
         this.columnCount = frame.getColumnCount();
+        this.rowCount = frame.getRowCountHi();
         this.rowIdOffset = frame.getPartitionLo();
 
         pageAddresses.clear();

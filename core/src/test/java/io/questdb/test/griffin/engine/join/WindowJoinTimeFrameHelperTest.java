@@ -127,6 +127,25 @@ public class WindowJoinTimeFrameHelperTest {
     }
 
     @Test
+    public void testFindRowLoBookmarkOnEmptyFrame() {
+        // The middle frame decodes empty, as dedup on read can leave a frame. An interval in the gap
+        // before it leaves the bookmark there, unopened.
+        FrameData frame1 = frame(new long[]{10, 20}, 10, 21);
+        FrameData empty = frame(new long[0], 30, 40);
+        FrameData frame3 = frame(new long[]{50, 53}, 50, 54);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, empty, frame3), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+        Assert.assertEquals(Long.MIN_VALUE, helper.findRowLo(22, 25));
+        Assert.assertEquals(1, helper.getBookmarkedFrameIndex());
+        long row = helper.findRowLo(52, 55);
+        helper.recordAtRowIndex(row);
+
+        Assert.assertEquals(1, row);
+        Assert.assertEquals(53, helper.getRecord().getTimestamp(0));
+    }
+
+    @Test
     public void testFindRowLoBookmarkResetOnBackwardTimestampLo() {
         // Verifies bookmark resets when timestampLo jumps backward (non-monotonic dynamic bounds).
         long[] timestamps = new long[10];
@@ -376,6 +395,20 @@ public class WindowJoinTimeFrameHelperTest {
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
         Assert.assertEquals(-1, helper.getPrevailingFrameIndex());
         Assert.assertEquals(Long.MIN_VALUE, helper.getPrevailingRowIndex());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateSeekToEmptyFrame() {
+        // The middle frame decodes empty, as dedup on read can leave a frame; a seek to the gap lands on it.
+        FrameData frame1 = frame(new long[]{10, 20}, 10, 21);
+        FrameData empty = frame(new long[0], 21, 30);
+        FrameData frame3 = frame(new long[]{100, 200}, 100, 201);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, empty, frame3), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+        Assert.assertEquals(Long.MIN_VALUE, helper.findRowLo(50, 60, true));
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(1, helper.getPrevailingRowIndex());
     }
 
     @Test
@@ -801,6 +834,22 @@ public class WindowJoinTimeFrameHelperTest {
     }
 
     @Test
+    public void testFindRowLoWithPrevailingSeekToEmptyFrame() {
+        // The middle frame decodes empty, as dedup on read can leave a frame; a seek to the gap lands on it.
+        FrameData frame1 = frame(new long[]{10, 20}, 10, 21);
+        FrameData empty = frame(new long[0], 21, 30);
+        FrameData frame3 = frame(new long[]{100, 200}, 100, 201);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, empty, frame3), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+        long row = helper.findRowLoWithPrevailing(50, 60);
+        helper.recordAtRowIndex(row);
+
+        Assert.assertEquals(1, row);
+        Assert.assertEquals(20, helper.getRecord().getTimestamp(0));
+    }
+
+    @Test
     public void testNextFrameUsesTimestampHighBoundary() {
         MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(10, 20, 30)), 0);
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(1, 1);
@@ -848,8 +897,9 @@ public class WindowJoinTimeFrameHelperTest {
             this.timestamps = timestamps;
             this.estimateLo = estimateLo;
             this.estimateHi = estimateHi;
-            this.actualLo = timestamps[0];
-            this.actualHi = timestamps[timestamps.length - 1] + 1;
+            // An empty frame opens with its estimate, as the table-backed cursors do.
+            this.actualLo = timestamps.length > 0 ? timestamps[0] : estimateLo;
+            this.actualHi = timestamps.length > 0 ? timestamps[timestamps.length - 1] + 1 : estimateHi;
         }
     }
 
@@ -955,7 +1005,15 @@ public class WindowJoinTimeFrameHelperTest {
 
         @Override
         public boolean prev() {
-            throw new UnsupportedOperationException();
+            int frameIndex = timeFrame.getFrameIndex() - 1;
+            if (frameIndex >= 0) {
+                currentFrame = frameIndex;
+                loadEstimate(frameIndex);
+                return true;
+            }
+            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+            currentFrame = -1;
+            return false;
         }
 
         @Override

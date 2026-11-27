@@ -125,6 +125,16 @@ public interface PageFrameMemory {
     PageFrameMemoryPool getPool();
 
     /**
+     * Returns the exact number of rows this frame holds once materialized, including
+     * zero. Every loop over the frame's column buffers must bound itself by this value.
+     * <p>
+     * It equals the declared span ({@link PageFrame#getRowCountHi()}) when the frame's
+     * count is exact ({@link PageFrame#isExactRowCount()}); otherwise it is whatever the
+     * decoder actually produced, which is only known after decode.
+     */
+    long getRowCount();
+
+    /**
      * Returns row ID offset used to compute real row IDs.
      */
     long getRowIdOffset();

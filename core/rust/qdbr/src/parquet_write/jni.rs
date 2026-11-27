@@ -1,6 +1,8 @@
 use super::{compression_from_i64, version_from_i32};
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
-use crate::parquet_metadata::types::SeqTxn;
+use crate::parquet_metadata::convert::RowGroupDedupSort;
+use crate::parquet_metadata::jni::reader::JniParquetMetaReader;
+use crate::parquet_metadata::types::{SeqTxn, DEDUP_SORT_VERSION_UNSET};
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
 };
@@ -27,6 +29,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *mut ParquetUpdater,
     rg_index: jint,
+    dedup_sort_version: jlong,
+    source_parquet_meta_reader: *const JniParquetMetaReader,
 ) {
     let env = &mut env;
     if updater.is_null() {
@@ -36,7 +40,33 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 
     let parquet_updater = unsafe { &mut *updater };
-    match parquet_updater.copy_row_group(rg_index) {
+    let mut copy = || -> ParquetResult<()> {
+        parquet_updater.copy_row_group(rg_index)?;
+        // The copy keeps the rows, and with them the keys of the first and last row the source
+        // `_pm` holds for the claim.
+        let keys = if dedup_sort_version == DEDUP_SORT_VERSION_UNSET
+            || source_parquet_meta_reader.is_null()
+        {
+            None
+        } else {
+            // SAFETY: Java passes the native reader of the source `_pm`, alive for the call.
+            let source = unsafe { &*source_parquet_meta_reader }.reader();
+            usize::try_from(rg_index)
+                .ok()
+                .filter(|&rg| rg < source.row_group_count() as usize)
+                .filter(|&rg| {
+                    source.footer().row_group_dedup_sort_version(rg).ok()
+                        == Some(dedup_sort_version)
+                })
+                .map(|rg| source.footer().row_group_dedup_sort_keys(rg))
+                .transpose()?
+                .flatten()
+                .map(|(first, last)| (first.to_vec(), last.to_vec()))
+        };
+        parquet_updater
+            .set_last_row_group_dedup_sort(RowGroupDedupSort { version: dedup_sort_version, keys })
+    };
+    match copy() {
         Ok(_) => (),
         Err(mut err) => {
             err.add_context(format!("could not copy row group {rg_index}"));
@@ -440,6 +470,53 @@ fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
         .map_err(|_| fmt_err!(InvalidLayout, "negative row_offset: {}", row_offset))
 }
 
+fn row_count_from(row_count: jlong) -> ParquetResult<usize> {
+    usize::try_from(row_count)
+        .map_err(|_| fmt_err!(InvalidLayout, "negative row_count: {}", row_count))
+}
+
+/// The ids of the dedup key columns Java passes, see `PartitionUpdater.setDedupKeyColumns`.
+fn dedup_key_ids_from(ids_ptr: *const jint, count: jint) -> ParquetResult<Vec<i32>> {
+    let count = usize::try_from(count)
+        .map_err(|_| fmt_err!(InvalidLayout, "negative dedup key count: {}", count))?;
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if ids_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "null dedup key ids for {} keys",
+            count
+        ));
+    }
+    // SAFETY: Java passes `count` ints, alive for the call.
+    Ok(unsafe { slice::from_raw_parts(ids_ptr, count) }.to_vec())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setDedupKeyColumns(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    ids_ptr: *const jint,
+    count: jint,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.setDedupKeyColumns");
+        return err.into_cairo_exception().throw(env);
+    }
+    let parquet_updater = unsafe { &mut *updater };
+    match dedup_key_ids_from(ids_ptr, count) {
+        Ok(ids) => parquet_updater.set_dedup_key_ids(ids),
+        Err(mut err) => {
+            err.add_context("error in PartitionUpdater.setDedupKeyColumns");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_isRowGroupRewriteUnchanged(
     mut env: JNIEnv,
@@ -528,6 +605,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     timestamp_index: jint,
     row_count: jlong,
+    dedup_sort_version: jlong,
 ) {
     let env = &mut env;
     if parquet_updater.is_null() {
@@ -552,7 +630,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.replace_row_group(&partition, row_group_id, row_offset_from(row_offset)?)
+        parquet_updater.replace_row_group(
+            &partition,
+            row_group_id,
+            row_offset_from(row_offset)?,
+        )?;
+        let sort = parquet_updater.row_group_dedup_sort(
+            dedup_sort_version,
+            &partition,
+            row_count_from(row_count)?,
+        )?;
+        parquet_updater.set_last_row_group_dedup_sort(sort)
     };
 
     match update() {
@@ -589,6 +677,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     timestamp_index: jint,
     row_count: jlong,
+    dedup_sort_version: jlong,
 ) {
     let env = &mut env;
     if parquet_updater.is_null() {
@@ -610,7 +699,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)
+        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)?;
+        let sort = parquet_updater.row_group_dedup_sort(
+            dedup_sort_version,
+            &partition,
+            row_count_from(row_count)?,
+        )?;
+        parquet_updater.set_last_row_group_dedup_sort(sort)
     };
 
     match insert() {
@@ -657,6 +752,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     parquet_meta_fd: jint,
     squash_tracker: jlong,
     seq_txn: jlong,
+    dedup_sort_version: jlong,
+    dedup_key_ids_ptr: *const jint,
+    dedup_key_count: jint,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
@@ -784,8 +882,28 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .map(|i| i as i32)
             .unwrap_or(-1);
 
+        // The caller vouches that every row is in the key order of the dedup version, so every row group is.
+        let dedup_sorts = if dedup_sort_version == DEDUP_SORT_VERSION_UNSET {
+            Vec::new()
+        } else {
+            let key_ids = dedup_key_ids_from(dedup_key_ids_ptr, dedup_key_count)?;
+            let mut sorts = Vec::with_capacity(chunked.row_groups().len());
+            let mut row_lo = 0usize;
+            for row_group in chunked.row_groups() {
+                let row_hi = row_lo + row_group.num_rows.max(0) as usize;
+                sorts.push(super::dedup_sort::row_group_dedup_sort(
+                    dedup_sort_version,
+                    &partition,
+                    &key_ids,
+                    row_lo,
+                    row_hi,
+                )?);
+                row_lo = row_hi;
+            }
+            sorts
+        };
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-            crate::parquet_metadata::generate_parquet_metadata(
+            crate::parquet_metadata::convert::generate_parquet_metadata_with_dedup_sorts(
                 &col_infos,
                 chunked.row_groups(),
                 designated_ts,
@@ -797,6 +915,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 0,    // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                &dedup_sorts,
             )
             .context("generate_parquet_metadata failed")?;
 
@@ -1461,6 +1580,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
     parquet_meta_fd: jint,
     squash_tracker: jlong,
     seq_txn: jlong,
+    dedup_sort_version: jlong,
+    dedup_key_ids_ptr: *const jint,
+    dedup_key_count: jint,
 ) -> *mut PartitionFrameWriter {
     let env = &mut env;
     let create = || -> ParquetResult<PartitionFrameWriter> {
@@ -1538,7 +1660,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
             .with_seq_txn(seq_txn)
             .chunked_with_compressions(schema, encodings, compressions)?;
 
-        Ok(PartitionFrameWriter::new(
+        let mut writer = PartitionFrameWriter::new(
             template,
             sync_handle,
             chunked_writer,
@@ -1548,7 +1670,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionFra
             parquet_meta_fd,
             squash_tracker,
             seq_txn,
-        ))
+        );
+        if dedup_sort_version != DEDUP_SORT_VERSION_UNSET {
+            writer.set_dedup_sort(
+                dedup_sort_version,
+                dedup_key_ids_from(dedup_key_ids_ptr, dedup_key_count)?,
+            );
+        }
+        Ok(writer)
     };
 
     match create() {

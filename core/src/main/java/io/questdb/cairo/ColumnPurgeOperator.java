@@ -26,9 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -167,6 +169,33 @@ public class ColumnPurgeOperator implements Closeable {
         txReader = tableReader.getTxFile();
         txnScoreboard = tableReader.getTxnScoreboard();
         return purge0(task);
+    }
+
+    // Only a catalog-bound snapshot can rule out historical keys. Names alone are not identities:
+    // a dropped column can be re-added with the same name and a different file version.
+    static boolean isHistoricalKeyFile(TableReader reader, long partitionTimestamp, long partitionNameTxn, CharSequence columnName, long columnVersion) {
+        final int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+        if (partitionIndex < 0
+                || reader.getPartitionTimestampByIndex(partitionIndex) != partitionTimestamp
+                || reader.getTxFile().getPartitionNameTxn(partitionIndex) != partitionNameTxn) {
+            return true;
+        }
+        final long state = reader.getOrOpenPartitionFrameState(partitionIndex);
+        if (state == 0) {
+            return true;
+        }
+        final TableReaderMetadata metadata = reader.getMetadata();
+        for (int key = 0, n = PartitionFrameState.getDedupKeyCount(state); key < n; key++) {
+            final int writerIndex = metadata.getHistoricalWriterIndex(
+                    PartitionFrameState.getDedupKeyColumnId(state, key),
+                    PartitionFrameState.getDedupKeyType(state, key)
+            );
+            if (Chars.equals(metadata.getWriterColumnName(writerIndex), columnName)
+                    && reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, writerIndex) == columnVersion) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean couldNotRemove(FilesFacade ff, LPSZ path) {
@@ -358,7 +387,9 @@ public class ColumnPurgeOperator implements Closeable {
 
                 path.trimTo(pathTableLen).concat(TXN_FILE_NAME);
                 txReader.ofRO(path.$(), task.getTimestampType(), task.getPartitionBy());
-                txReader.unsafeLoadAll();
+                if (!txReader.unsafeLoadAll()) {
+                    return TABLE_STATE_RETRY;
+                }
                 if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
                     return TABLE_STATE_TRUNCATE_REFUSED;
@@ -390,6 +421,7 @@ public class ColumnPurgeOperator implements Closeable {
             long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
             boolean allDone = true;
             boolean setupScoreboard = scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE;
+            TableReader deltaReader = null;
 
             try {
                 completedRowIds.clear();
@@ -585,6 +617,22 @@ public class ColumnPurgeOperator implements Closeable {
                         continue;
                     }
 
+                    // A queued note can predate the Delta switch. Prove key reachability from a
+                    // coherent reader at this exact transaction, never from current dedup flags.
+                    if (txReader.isPartitionDeltaActiveByPartitionTimestamp(partitionTimestamp)) {
+                        if (deltaReader == null) {
+                            deltaReader = engine.getReader(task.getTableToken());
+                        }
+                        if (deltaReader.getTxn() != txReader.getTxn()) {
+                            allDone = false;
+                            continue;
+                        }
+                        if (isHistoricalKeyFile(deltaReader, partitionTimestamp, partitionTxnName, columnName, columnVersion)) {
+                            completedRowIds.add(updateRowId);
+                            continue;
+                        }
+                    }
+
                     if (columnVersion < minUnlockedTxnRangeStarts) {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
@@ -665,6 +713,7 @@ public class ColumnPurgeOperator implements Closeable {
                     completedRowIds.add(updateRowId);
                 }
             } finally {
+                Misc.free(deltaReader);
                 if (scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE) {
                     txnScoreboard = Misc.free(txnScoreboard);
                     // txReader is a reusable object, do not NULL it

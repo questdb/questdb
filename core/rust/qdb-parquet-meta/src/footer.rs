@@ -28,9 +28,9 @@ use crate::error::ParquetMetaErrorKind;
 use crate::error::ParquetMetaResult;
 use crate::parquet_meta_err;
 use crate::types::{
-    BlockAlignedOffset, FooterFeatureFlags, SeqTxn, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE,
-    FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE, MAX_SCRATCHPAD_SIZE, ROW_GROUP_ENTRY_SIZE,
-    SUPPORTED_FOOTER_SECTIONS,
+    BlockAlignedOffset, FooterFeatureFlags, SeqTxn, BLOCK_ALIGNMENT_SHIFT,
+    DEDUP_SORT_VERSION_UNSET, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE,
+    MAX_SCRATCHPAD_SIZE, ROW_GROUP_ENTRY_SIZE, SUPPORTED_FOOTER_SECTIONS,
 };
 
 /// Index of the `SEQ_TXN_BIT` section in the footer-flag offsets array.
@@ -41,9 +41,69 @@ const _: () = assert!(SEQ_TXN_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 pub const SCRATCHPAD_SECTION_IDX: usize = 1;
 const _: () = assert!(SCRATCHPAD_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 
+/// Index of the `DEDUP_SORT_VERSION_BIT` section in the footer-flag offsets array.
+pub const DEDUP_SORT_VERSION_SECTION_IDX: usize = 2;
+const _: () = assert!(DEDUP_SORT_VERSION_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
+
 /// Index of the `INDEX_ROW_MAP_BIT` section in the footer-flag offsets array.
-pub const INDEX_ROW_MAP_SECTION_IDX: usize = 2;
+pub const INDEX_ROW_MAP_SECTION_IDX: usize = 3;
 const _: () = assert!(INDEX_ROW_MAP_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
+
+/// On-disk size of the dedup sort version array that ends the dedup sort section:
+/// `[i64; row_group_count]`.
+pub fn dedup_sort_version_section_size(row_group_count: u32) -> usize {
+    8 * row_group_count as usize
+}
+
+/// On-disk size of the key end table that opens the dedup sort section:
+/// `[u32; 2 * row_group_count]`.
+fn dedup_sort_key_ends_size(row_group_count: u32) -> usize {
+    8 * row_group_count as usize
+}
+
+/// Parses the dedup sort section at `cursor` and returns its size. The section is
+/// `[u32 key_end; 2 * row_group_count][u8 keys][i64 version; row_group_count]`: the key ends
+/// are cumulative, the first then the last key of each row group. The versions end the
+/// section, so a reader that locates them from the footer end needs no key parsing.
+fn parse_dedup_sort_section_size(
+    data: &[u8],
+    cursor: usize,
+    row_group_count: u32,
+    end: usize,
+) -> ParquetMetaResult<usize> {
+    let ends_size = dedup_sort_key_ends_size(row_group_count);
+    if cursor + ends_size > end {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "dedup sort key ends exceed CRC offset {}",
+            end
+        ));
+    }
+    let mut previous = 0u32;
+    for index in 0..2 * row_group_count as usize {
+        let at = cursor + index * 4;
+        let key_end = u32::from_le_bytes(data[at..at + 4].try_into().unwrap());
+        if key_end < previous {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "dedup sort key end {} at {} is below the previous end {}",
+                key_end,
+                index,
+                previous
+            ));
+        }
+        previous = key_end;
+    }
+    let size = ends_size + previous as usize + dedup_sort_version_section_size(row_group_count);
+    if cursor + size > end {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "dedup sort section exceeds CRC offset {}",
+            end
+        ));
+    }
+    Ok(size)
+}
 
 /// On-disk size of the index row map section for `row_group_count` row groups:
 /// `[u64 index_row_count][u64 index_row_lo; row_group_count]`.
@@ -80,6 +140,10 @@ pub fn compute_section_offsets(
     if feature_flags.has_scratchpad() {
         offsets[SCRATCHPAD_SECTION_IDX] = cursor as u32;
         cursor += parse_scratchpad_size(data, cursor, end)?;
+    }
+    if feature_flags.has_dedup_sort_version() {
+        offsets[DEDUP_SORT_VERSION_SECTION_IDX] = cursor as u32;
+        cursor += parse_dedup_sort_section_size(data, cursor, row_group_count, end)?;
     }
     if feature_flags.has_index_row_map() {
         offsets[INDEX_ROW_MAP_SECTION_IDX] = cursor as u32;
@@ -452,6 +516,79 @@ impl<'a> Footer<'a> {
             .map(|(_, content)| content)
     }
 
+    /// The dedup version whose keys sort row group `index` within each designated timestamp;
+    /// `DEDUP_SORT_VERSION_UNSET` when the footer makes no claim for it.
+    pub fn row_group_dedup_sort_version(&self, index: usize) -> ParquetMetaResult<i64> {
+        if index >= self.raw.row_group_count as usize {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row group index {} out of range [0, {})",
+                index,
+                self.raw.row_group_count
+            ));
+        }
+        if !self.raw.feature_flags.has_dedup_sort_version() {
+            return Ok(DEDUP_SORT_VERSION_UNSET);
+        }
+        let off = self.dedup_sort_versions_offset() + index * 8;
+        // Unwrap: Footer::new validated the section against the CRC offset.
+        Ok(i64::from_le_bytes(
+            self.data[off..off + 8].try_into().unwrap(),
+        ))
+    }
+
+    /// The dedup keys of the first and the last row of row group `index`, or `None` when the
+    /// footer stores none for it. They are in the order of the row group's dedup sort version:
+    /// the non-timestamp keys in column id order, each as bytes that compare like the keys.
+    pub fn row_group_dedup_sort_keys(
+        &self,
+        index: usize,
+    ) -> ParquetMetaResult<Option<(&'a [u8], &'a [u8])>> {
+        if index >= self.raw.row_group_count as usize {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row group index {} out of range [0, {})",
+                index,
+                self.raw.row_group_count
+            ));
+        }
+        if !self.raw.feature_flags.has_dedup_sort_version() {
+            return Ok(None);
+        }
+        let ends = self.section_offsets[DEDUP_SORT_VERSION_SECTION_IDX] as usize;
+        let keys = ends + dedup_sort_key_ends_size(self.raw.row_group_count);
+        // Unwraps: Footer::new validated the key ends and their extent.
+        let key_end = |slot: usize| {
+            if slot == 0 {
+                return 0;
+            }
+            let at = ends + (slot - 1) * 4;
+            u32::from_le_bytes(self.data[at..at + 4].try_into().unwrap()) as usize
+        };
+        let first = key_end(2 * index)..key_end(2 * index + 1);
+        let last = key_end(2 * index + 1)..key_end(2 * index + 2);
+        if first.is_empty() || last.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((
+            &self.data[keys + first.start..keys + first.end],
+            &self.data[keys + last.start..keys + last.end],
+        )))
+    }
+
+    fn dedup_sort_versions_offset(&self) -> usize {
+        let ends = self.section_offsets[DEDUP_SORT_VERSION_SECTION_IDX] as usize;
+        let ends_size = dedup_sort_key_ends_size(self.raw.row_group_count);
+        let keys_size = if self.raw.row_group_count == 0 {
+            0
+        } else {
+            let at = ends + ends_size - 4;
+            // Unwrap: Footer::new validated the key ends.
+            u32::from_le_bytes(self.data[at..at + 4].try_into().unwrap()) as usize
+        };
+        ends + ends_size + keys_size
+    }
+
     /// Index rows the symbol indexes cover, dead included; `None` for the identity map.
     pub fn index_row_count(&self) -> Option<u64> {
         if !self.raw.feature_flags.has_index_row_map() {
@@ -544,6 +681,10 @@ pub struct FooterBuilder {
     bloom_filter_section: Vec<u8>,
     seq_txn: Option<SeqTxn>,
     scratchpad: Vec<(u32, Vec<u8>)>,
+    /// One entry per row group; omitted when every entry is unset.
+    dedup_sort_versions: Vec<i64>,
+    /// The first and the last dedup key of each row group; empty when none has keys.
+    dedup_sort_keys: Vec<(Vec<u8>, Vec<u8>)>,
     index_row_map: Option<(u64, Vec<u64>)>,
 }
 
@@ -559,6 +700,8 @@ impl FooterBuilder {
             bloom_filter_section: Vec::new(),
             seq_txn: None,
             scratchpad: Vec::new(),
+            dedup_sort_versions: Vec::new(),
+            dedup_sort_keys: Vec::new(),
             index_row_map: None,
         }
     }
@@ -566,6 +709,62 @@ impl FooterBuilder {
     pub fn set_index_row_map(&mut self, map: Option<(u64, Vec<u64>)>) -> &mut Self {
         self.index_row_map = map;
         self
+    }
+
+    /// Sets the per-row-group dedup sort versions. The section is omitted when every
+    /// entry is `DEDUP_SORT_VERSION_UNSET`, so older readers see the same footer.
+    pub fn set_dedup_sort_versions(&mut self, versions: Vec<i64>) -> &mut Self {
+        self.dedup_sort_versions = versions;
+        self
+    }
+
+    /// Sets the first and the last dedup key of each row group, written with the versions.
+    /// A row group with empty keys stores none.
+    pub fn set_dedup_sort_keys(&mut self, keys: Vec<(Vec<u8>, Vec<u8>)>) -> &mut Self {
+        self.dedup_sort_keys = keys;
+        self
+    }
+
+    fn writes_dedup_sort_versions(&self) -> bool {
+        self.dedup_sort_versions
+            .iter()
+            .any(|&version| version != DEDUP_SORT_VERSION_UNSET)
+    }
+
+    pub fn validate_dedup_sort_versions(&self) -> ParquetMetaResult<()> {
+        if self.writes_dedup_sort_versions()
+            && self.dedup_sort_versions.len() != self.row_group_offsets.len()
+        {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "dedup sort versions have {} entries for {} row groups",
+                self.dedup_sort_versions.len(),
+                self.row_group_offsets.len()
+            ));
+        }
+        if !self.dedup_sort_keys.is_empty()
+            && self.dedup_sort_keys.len() != self.row_group_offsets.len()
+        {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "dedup sort keys have {} entries for {} row groups",
+                self.dedup_sort_keys.len(),
+                self.row_group_offsets.len()
+            ));
+        }
+        let key_bytes = self
+            .dedup_sort_keys
+            .iter()
+            .map(|(first, last)| first.len() + last.len())
+            .sum::<usize>();
+        if key_bytes > u32::MAX as usize {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "dedup sort keys take {} bytes",
+                key_bytes
+            ));
+        }
+        Ok(())
     }
 
     pub fn validate_index_row_map(&self) -> ParquetMetaResult<()> {
@@ -671,6 +870,7 @@ impl FooterBuilder {
         // feature_flags() can't desync from the actual payload.
         let known_section_bits = FooterFeatureFlags::SEQ_TXN_BIT
             | FooterFeatureFlags::SCRATCHPAD_BIT
+            | FooterFeatureFlags::DEDUP_SORT_VERSION_BIT
             | FooterFeatureFlags::INDEX_ROW_MAP_BIT;
         let mut effective_flags = FooterFeatureFlags(self.feature_flags.0 & !known_section_bits);
         if self.seq_txn.is_some() {
@@ -678,6 +878,14 @@ impl FooterBuilder {
         }
         if !self.scratchpad.is_empty() {
             effective_flags = effective_flags.with_scratchpad();
+        }
+        debug_assert!(
+            self.validate_dedup_sort_versions().is_ok(),
+            "dedup sort version count differs from the row group count"
+        );
+        let writes_dedup_sort_versions = self.writes_dedup_sort_versions();
+        if writes_dedup_sort_versions {
+            effective_flags = effective_flags.with_dedup_sort_version();
         }
         debug_assert!(
             self.validate_index_row_map().is_ok(),
@@ -699,8 +907,9 @@ impl FooterBuilder {
             buf.extend_from_slice(&stored.to_le_bytes());
         }
 
-        // Header-flag sections first (bloom), then footer-flag sections
-        // in ascending bit order: seq_txn (bit 0), scratchpad (bit 1), index row map (bit 32).
+        // Header-flag sections first (bloom), then footer-flag sections in ascending bit
+        // order: seq_txn (bit 0), scratchpad (bit 1), dedup sort versions (bit 2),
+        // index row map (bit 32).
         if !self.bloom_filter_section.is_empty() {
             buf.extend_from_slice(&self.bloom_filter_section);
         }
@@ -724,6 +933,26 @@ impl FooterBuilder {
                 buf.extend_from_slice(&code.to_le_bytes());
                 buf.extend_from_slice(&(content.len() as u32).to_le_bytes());
                 buf.extend_from_slice(content);
+            }
+        }
+        if writes_dedup_sort_versions {
+            let mut key_end = 0u32;
+            for index in 0..self.row_group_offsets.len() {
+                let (first, last) = self
+                    .dedup_sort_keys
+                    .get(index)
+                    .map_or((0, 0), |(first, last)| (first.len(), last.len()));
+                key_end += first as u32;
+                buf.extend_from_slice(&key_end.to_le_bytes());
+                key_end += last as u32;
+                buf.extend_from_slice(&key_end.to_le_bytes());
+            }
+            for (first, last) in &self.dedup_sort_keys {
+                buf.extend_from_slice(first);
+                buf.extend_from_slice(last);
+            }
+            for version in &self.dedup_sort_versions {
+                buf.extend_from_slice(&version.to_le_bytes());
             }
         }
         if let Some((index_row_count, lows)) = &self.index_row_map {

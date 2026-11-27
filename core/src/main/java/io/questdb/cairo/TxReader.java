@@ -51,6 +51,13 @@ public class TxReader implements Closeable, Mutable {
     @TestOnly
     static volatile long bodyChecksumFallbackCount = 0;
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    // Bit 57 of the offset-3 word: within each designated timestamp the partition's rows are in the order of the
+    // table's CURRENT dedup keys - the non-timestamp keys in column order, compared as WAL apply compares them. One
+    // bit and no version: every change of the dedup setting clears it on all partitions (TxWriter
+    // #clearPartitionsDedupSorted), and so does any write that does not prove the order - a seqTxn stamp, a format
+    // flip, a geometry pointer. Meaningful for a plain native partition only: a composite partition carries the
+    // claim per piece in _geometry, a parquet one per row group in _pm.
+    public static final long PARTITION_DEDUP_SORTED_BIT = 1L << 57;
     // bit 60 within the offset-3 reserved flag region: delta-write mode
     public static final long PARTITION_DELTA_WRITE_BIT = 1L << 60;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
@@ -106,9 +113,9 @@ public class TxReader implements Closeable, Mutable {
     // the last long (PARTITION_VERSION_OFFSET) holds, for a parquet partition the parquet file
     // size, for a native one its last-modifying seqTxn:
     //
-    // | remote | valid | composite | delta-write | has_delta | seal stamp | reserved | parquet size / native seqTxn |
-    // +--------+-------+-----------+-------------+-----------+------------+----------+------------------------------+
-    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |   1 bit   |   1 bit    |  2 bits  |           56 bits            |
+    // | remote | valid | composite | delta-write | has_delta | seal stamp | dedup sorted | reserved | parquet size / native seqTxn |
+    // +--------+-------+-----------+-------------+-----------+------------+--------------+----------+------------------------------+
+    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |   1 bit   |   1 bit    |    1 bit     |  1 bit   |           56 bits            |
     //
     // remote is cleared by the value writes that supersede the bytes (setPartitionParquetFileSize, setPartitionSeqTxn),
     // so it can't outlive them; setPartitionFormat preserves it, leaving REMOTE to caller discipline on a format flip.
@@ -121,6 +128,9 @@ public class TxReader implements Closeable, Mutable {
     // Value writes preserve both flags across file-size/seqTxn rewrites.
     // seal stamp (PARTITION_SEAL_STAMP_BIT, bit 58) marks a stamp a PARTITION_SEAL wrote: the copy holds exactly the
     // rows at that seqTxn. A seqTxn stamp, a flip to native and a new record clear it; file-size writes keep it.
+    // dedup sorted (PARTITION_DEDUP_SORTED_BIT, bit 57) says the rows of each timestamp are in the current dedup key
+    // order. A seqTxn stamp, a format flip, a geometry pointer and a new record clear it; the writes that keep the
+    // order set it again after the stamp.
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_VERSION_OFFSET = 3;
@@ -699,6 +709,23 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    /**
+     * Whether the rows of each designated timestamp of this plain native partition are in the order of the table's
+     * current dedup keys, see {@link #PARTITION_DEDUP_SORTED_BIT}. Always false for a parquet or composite partition.
+     */
+    public boolean isPartitionDedupSorted(int i) {
+        return isPartitionDedupSortedByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionDedupSortedByRawIndex(int indexRaw) {
+        if (isPartitionParquetByRawIndex(indexRaw)) {
+            return false;
+        }
+        // getPartitionOffset3 folds the legacy all-ones word, which has bit 57 set, to 0.
+        final long word = getPartitionOffset3(indexRaw);
+        return (word & PARTITION_DEDUP_SORTED_BIT) != 0 && (word & PARTITION_COMPOSITE_FLAG) == 0;
     }
 
     public boolean isPartitionDeltaActive(int i) {

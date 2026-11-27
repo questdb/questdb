@@ -41,10 +41,10 @@ public class PartitionGeometry implements Closeable, Mutable {
     public static final int NO_PARTITION = -1;
     private static final long FLAG_DIRTY = 1L;
     /**
-     * Stride of {@link #pieces}: the six longs of the on-disk piece entry, then the piece's cumulative row -
+     * Stride of {@link #pieces}: the seven longs of the on-disk piece entry, then the piece's cumulative row -
      * the running sum of the row counts before it.
      */
-    private static final int LONGS_PER_PIECE = 7;
+    private static final int LONGS_PER_PIECE = 8;
     private static final int MIN_PIECE_HOLES = 1024;
     private static final int MIN_RESOLVED_BEFORE_EVICT = 256;
     /**
@@ -52,7 +52,8 @@ public class PartitionGeometry implements Closeable, Mutable {
      * change for a directory - unlike a partition index, which shifts whenever a partition is inserted or removed.
      */
     private static final int LONGS_PER_RESOLVED = 12;
-    private static final int PIECE_CUMULATIVE_LO = 6;
+    private static final int PIECE_CUMULATIVE_LO = 7;
+    private static final int PIECE_DEDUP_SORT_VERSION = 6;
     private static final int PIECE_LAST_WRITE_MICROS = 5;
     private static final int PIECE_ROW_COUNT = 3;
     private static final int PIECE_ROW_OFFSET = 2;
@@ -248,6 +249,20 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
+     * The table dedup version whose keys sort the piece's rows within each designated timestamp, or
+     * {@link PartitionGeometryFile#DEDUP_SORT_VERSION_UNSET} when nothing claims that order. Unset for a plain
+     * partition too: it records the claim as {@link TxReader#PARTITION_DEDUP_SORTED_BIT}, which stands for the
+     * current dedup version.
+     */
+    public long getPieceDedupSortVersion(int partitionIndex, int ordinal) {
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET;
+        }
+        return pieceLong(res, ordinal, PIECE_DEDUP_SORT_VERSION);
+    }
+
+    /**
      * When this piece's bytes last moved. Unlike {@link #getLastWriteMicros(int)}, which every commit
      * refreshes for the whole partition, this stays put while the piece does.
      */
@@ -414,7 +429,19 @@ public class PartitionGeometry implements Closeable, Mutable {
         pendingRec = NO_PARTITION;
     }
 
-    public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros) {
+    /**
+     * @param dedupSortVersion the dedup version whose keys sort the piece's rows within each designated timestamp,
+     *                         or {@link PartitionGeometryFile#DEDUP_SORT_VERSION_UNSET}
+     */
+    public void addPiece(
+            long tsLo,
+            long tsHi,
+            long rowOffset,
+            long rowCount,
+            long writerTxn,
+            long lastWriteMicros,
+            long dedupSortVersion
+    ) {
         assert pendingRec != NO_PARTITION : "addPiece outside beginUpdate/commitUpdate";
         // Pieces are looked up by tsLo, so two pieces starting on one timestamp would be ambiguous to readers.
         // A hard check, not an assert: publishing such a list in production would corrupt reads silently.
@@ -435,8 +462,7 @@ public class PartitionGeometry implements Closeable, Mutable {
                 : pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_CUMULATIVE_LO)
                   + pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_ROW_COUNT);
         pending.add(tsLo, tsHi, rowOffset, rowCount);
-        pending.add(writerTxn, lastWriteMicros);
-        pending.add(cumulativeLo);
+        pending.add(writerTxn, lastWriteMicros, dedupSortVersion, cumulativeLo);
     }
 
     /**
@@ -446,7 +472,9 @@ public class PartitionGeometry implements Closeable, Mutable {
      * runs, kept here so callers that build a pending list (the squash publish branch) commit the folded shape every
      * other publish path already holds. The survivor keeps the earlier piece's {@code tsLo}, {@code rowOffset} and
      * cumulative row, takes the run's last non-empty {@code tsHi}, sums the row counts, and carries the freshest
-     * {@code writerTxn}/{@code lastWriteMicros} pair. Zero-GC: rewrites {@link #pending} in place.
+     * {@code writerTxn}/{@code lastWriteMicros} pair. The dedup sort version survives only when every folded piece
+     * carries the same one: a fold joins the pieces' rows, and a boundary timestamp shared by two pieces is then one
+     * equal-timestamp run that only their common order keeps sorted. Zero-GC: rewrites {@link #pending} in place.
      */
     public void foldPending() {
         assert pendingRec != NO_PARTITION : "foldPending outside beginUpdate/commitUpdate";
@@ -462,6 +490,7 @@ public class PartitionGeometry implements Closeable, Mutable {
             final long rowCount = pending.getQuick(r + PIECE_ROW_COUNT);
             final long writerTxn = pending.getQuick(r + PIECE_WRITER_TXN);
             final long lastWriteMicros = pending.getQuick(r + PIECE_LAST_WRITE_MICROS);
+            final long dedupSortVersion = pending.getQuick(r + PIECE_DEDUP_SORT_VERSION);
             final long cumulativeLo = pending.getQuick(r + PIECE_CUMULATIVE_LO);
             if (w > 0
                     && rowOffset == pending.getQuick(w - LONGS_PER_PIECE + PIECE_ROW_OFFSET)
@@ -471,6 +500,14 @@ public class PartitionGeometry implements Closeable, Mutable {
                     // cut short makes the transaction clusterer stop the survivor's range early.
                     pending.setQuick(w - LONGS_PER_PIECE + PIECE_TS_HI, tsHi);
                 }
+                pending.setQuick(w - LONGS_PER_PIECE + PIECE_DEDUP_SORT_VERSION, foldedDedupSortVersion(
+                        pending.getQuick(w - LONGS_PER_PIECE + PIECE_DEDUP_SORT_VERSION),
+                        pending.getQuick(w - LONGS_PER_PIECE + PIECE_ROW_COUNT),
+                        pending.getQuick(w - LONGS_PER_PIECE + PIECE_TS_HI),
+                        dedupSortVersion,
+                        rowCount,
+                        tsLo
+                ));
                 pending.setQuick(w - LONGS_PER_PIECE + PIECE_ROW_COUNT,
                         pending.getQuick(w - LONGS_PER_PIECE + PIECE_ROW_COUNT) + rowCount);
                 // A fold is as recent as its freshest input.
@@ -489,11 +526,38 @@ public class PartitionGeometry implements Closeable, Mutable {
                 pending.setQuick(w + PIECE_ROW_COUNT, rowCount);
                 pending.setQuick(w + PIECE_WRITER_TXN, writerTxn);
                 pending.setQuick(w + PIECE_LAST_WRITE_MICROS, lastWriteMicros);
+                pending.setQuick(w + PIECE_DEDUP_SORT_VERSION, dedupSortVersion);
                 pending.setQuick(w + PIECE_CUMULATIVE_LO, cumulativeLo);
             }
             w += LONGS_PER_PIECE;
         }
         pending.setPos(w);
+    }
+
+    /**
+     * The dedup sort version of a piece that absorbs the piece after it. An empty piece brings no rows and so no
+     * claim of its own; the other piece's claim stands. Otherwise the claim survives only when both pieces carry the
+     * same version AND share no timestamp: two sorted runs at one boundary timestamp joined back to back are one
+     * unsorted run. Pieces ascend, so a shared timestamp means {@code survivorTsHi == absorbedTsLo}.
+     */
+    public static long foldedDedupSortVersion(
+            long survivor,
+            long survivorRowCount,
+            long survivorTsHi,
+            long absorbed,
+            long absorbedRowCount,
+            long absorbedTsLo
+    ) {
+        if (absorbedRowCount == 0) {
+            return survivor;
+        }
+        if (survivorRowCount == 0) {
+            return absorbed;
+        }
+        if (survivor == absorbed && survivorTsHi < absorbedTsLo) {
+            return survivor;
+        }
+        return PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET;
     }
 
     /**
@@ -570,7 +634,8 @@ public class PartitionGeometry implements Closeable, Mutable {
                     pieces.getQuick(at + PIECE_ROW_OFFSET),
                     pieces.getQuick(at + PIECE_ROW_COUNT),
                     pieces.getQuick(at + PIECE_WRITER_TXN),
-                    pieces.getQuick(at + PIECE_LAST_WRITE_MICROS)
+                    pieces.getQuick(at + PIECE_LAST_WRITE_MICROS),
+                    pieces.getQuick(at + PIECE_DEDUP_SORT_VERSION)
             );
             liveRows += pieces.getQuick(at + PIECE_ROW_COUNT);
         }
@@ -736,7 +801,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         try {
             for (int generation = from; generation <= TxReader.PARTITION_GEOMETRY_MAX_GENERATION; generation++) {
                 // -1 when there is no file at all, which is the ordinary case.
-                if (ff.length(PartitionGeometryFile.geometryFileName(partitionDir, generation)) < PartitionGeometryFile.recordSize(1)) {
+                if (ff.length(PartitionGeometryFile.geometryFileName(partitionDir, generation)) < PartitionGeometryFile.MIN_RECORD_SIZE) {
                     return generation;
                 }
                 partitionDir.trimTo(dirLen);
@@ -839,6 +904,7 @@ public class PartitionGeometry implements Closeable, Mutable {
             pieces.setQuick(at + PIECE_ROW_COUNT, geometryFile.getPieceRowCount(p));
             pieces.setQuick(at + PIECE_WRITER_TXN, geometryFile.getPieceWriterTxn(p));
             pieces.setQuick(at + PIECE_LAST_WRITE_MICROS, geometryFile.getPieceLastWriteMicros(p));
+            pieces.setQuick(at + PIECE_DEDUP_SORT_VERSION, geometryFile.getPieceDedupSortVersion(p));
             pieces.setQuick(at + PIECE_CUMULATIVE_LO, cumulativeLo);
             cumulativeLo += geometryFile.getPieceRowCount(p);
         }
@@ -851,7 +917,9 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_LAST_WRITE_MICROS, geometryFile.getLastWriteMicros());
         resolved.setQuick(slot + RES_WRITER_TXN, geometryFile.getWriterTxn());
         resolved.setQuick(slot + RES_SEQ_TXN, geometryFile.getSeqTxn());
-        resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, PartitionGeometryFile.recordSize(count));
+        // The on-disk size: a legacy record is narrower than the current layout, and the next record appends
+        // right after it.
+        resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, geometryFile.getReadRecordSize());
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
         resolved.setQuick(slot + RES_FLAGS, 0);
         resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());

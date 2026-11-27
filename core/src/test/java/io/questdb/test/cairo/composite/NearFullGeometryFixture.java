@@ -114,12 +114,13 @@ final class NearFullGeometryFixture {
                     final long rowCount = committed.getPieceRowCount(p);
                     final long writerTxn = committed.getPieceWriterTxn(p);
                     final long lastWriteMicros = committed.getPieceLastWriteMicros(p);
+                    final long dedupSortVersion = committed.getPieceDedupSortVersion(p);
                     if (cutRow == 0) {
-                        planted.addPiece(committed.getPieceTimestampLo(p), committed.getPieceTimestampHi(p), rowOffset, rowCount, writerTxn, lastWriteMicros);
+                        planted.addPiece(committed.getPieceTimestampLo(p), committed.getPieceTimestampHi(p), rowOffset, rowCount, writerTxn, lastWriteMicros, dedupSortVersion);
                     } else {
                         Assert.assertTrue("the cut leaves a half empty", cutRow < rowCount);
-                        planted.addPiece(committed.getPieceTimestampLo(p), headTsHi, rowOffset, cutRow, writerTxn, lastWriteMicros);
-                        planted.addPiece(tailTsLo, committed.getPieceTimestampHi(p), rowOffset + cutRow, rowCount - cutRow, writerTxn, lastWriteMicros);
+                        planted.addPiece(committed.getPieceTimestampLo(p), headTsHi, rowOffset, cutRow, writerTxn, lastWriteMicros, dedupSortVersion);
+                        planted.addPiece(tailTsLo, committed.getPieceTimestampHi(p), rowOffset + cutRow, rowCount - cutRow, writerTxn, lastWriteMicros, dedupSortVersion);
                     }
                 }
                 planted.setPhysicalRows(isDeadSpaceDropped ? committed.getLiveRows() : committed.getPhysicalRows());

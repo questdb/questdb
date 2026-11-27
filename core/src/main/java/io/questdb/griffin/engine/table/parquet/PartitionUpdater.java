@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -39,10 +41,23 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
-     * Inserts a row group at {@code position}; {@code rowOffset} is the output row where it starts,
-     * see {@link #setColumnTopRowLimit(long)}.
+     * Inserts a row group at {@code position}, which makes no claim about dedup key order, see
+     * {@link #addRowGroup(int, long, PartitionDescriptor, long)}.
      */
     public void addRowGroup(int position, long rowOffset, PartitionDescriptor descriptor) {
+        addRowGroup(position, rowOffset, descriptor, ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET);
+    }
+
+    /**
+     * Inserts a row group at {@code position}; {@code rowOffset} is the output row where it starts,
+     * see {@link #setColumnTopRowLimit(long)}.
+     *
+     * @param dedupSortVersion the dedup version that {@code _pm} records for the row group, see
+     *                         {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: the caller vouches
+     *                         that the rows of the descriptor are in that order.
+     *                         {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim.
+     */
+    public void addRowGroup(int position, long rowOffset, PartitionDescriptor descriptor, long dedupSortVersion) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -60,7 +75,8 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.getColumnDataPtr(),
                     descriptor.getColumnDataLen(),
                     timestampIndex,
-                    rowCount
+                    rowCount,
+                    dedupSortVersion
             );
         } finally {
             descriptor.clear();
@@ -87,9 +103,31 @@ public class PartitionUpdater implements QuietCloseable {
         commitParquetMeta(ptr, sync);
     }
 
+    /**
+     * Copies row group {@code rowGroupIndex} of the source file as it is, which makes no claim about dedup key order,
+     * see {@link #copyRowGroup(int, ParquetMetaFileReader)}.
+     */
     public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
-        copyRowGroup(ptr, rowGroupIndex);
+        copyRowGroup(ptr, rowGroupIndex, ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET, 0);
+    }
+
+    /**
+     * Copies row group {@code rowGroupIndex} of the source file as it is. The copy keeps the rows and their order, so
+     * {@code _pm} records for it the dedup sort claim of the source row group, see
+     * {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: its version, and the keys of its first and last rows.
+     *
+     * @param source the {@code _pm} of the source file
+     */
+    public void copyRowGroup(int rowGroupIndex, ParquetMetaFileReader source) {
+        assert ptr != 0;
+        final long dedupSortVersion = source.getRowGroupDedupSortVersion(rowGroupIndex);
+        copyRowGroup(
+                ptr,
+                rowGroupIndex,
+                dedupSortVersion,
+                dedupSortVersion == ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET ? 0 : source.getOrCreateNativeReaderPtr()
+        );
     }
 
     /**
@@ -252,6 +290,16 @@ public class PartitionUpdater implements QuietCloseable {
      *                   schema (column names, IDs, types). Data pointers are
      *                   not required — only schema metadata is used.
      */
+    /**
+     * Sets the descriptor column ids of the non-timestamp dedup keys, in column id order, see
+     * {@link io.questdb.cairo.TableUtils#collectDedupKeyIds}: a row group written with a dedup sort claim records in
+     * {@code _pm} the keys of its first and last rows.
+     */
+    public void setDedupKeyColumns(DirectIntList ids) {
+        assert ptr != 0;
+        setDedupKeyColumns(ptr, ids.getAddress(), (int) ids.size());
+    }
+
     public void setTargetSchema(PartitionDescriptor descriptor) {
         assert ptr != 0;
         setTargetSchema(
@@ -276,10 +324,24 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
-     * Replaces row group {@code rowGroupId}; {@code rowOffset} is the output row where the new row
-     * group starts, see {@link #setColumnTopRowLimit(long)}.
+     * Replaces row group {@code rowGroupId} with one that makes no claim about dedup key order, see
+     * {@link #updateRowGroup(int, long, PartitionDescriptor, long)}.
      */
     public void updateRowGroup(int rowGroupId, long rowOffset, PartitionDescriptor descriptor) {
+        updateRowGroup(rowGroupId, rowOffset, descriptor, ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET);
+    }
+
+    /**
+     * Replaces row group {@code rowGroupId}; {@code rowOffset} is the output row where the new row
+     * group starts, see {@link #setColumnTopRowLimit(long)}.
+     *
+     * @param dedupSortVersion the dedup version that {@code _pm} records for the new row group, see
+     *                         {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}: the caller vouches
+     *                         that the rows of the descriptor are in that order. The version of the row
+     *                         group it replaces does not carry over.
+     *                         {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim.
+     */
+    public void updateRowGroup(int rowGroupId, long rowOffset, PartitionDescriptor descriptor, long dedupSortVersion) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -297,7 +359,8 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.getColumnDataPtr(),
                     descriptor.getColumnDataLen(),
                     timestampIndex,
-                    rowCount
+                    rowCount,
+                    dedupSortVersion
             );
         } finally {
             descriptor.clear();
@@ -308,7 +371,9 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void copyRowGroup(
             long impl,
-            int rowGroupIndex
+            int rowGroupIndex,
+            long dedupSortVersion,
+            long sourceParquetMetaReaderPtr
     ) throws CairoException;
 
     private static native void copyRowGroupWithNullColumns(
@@ -361,7 +426,8 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataPtr,
             long columnDataSize,
             int timestampIndex,
-            long rowCount
+            long rowCount,
+            long dedupSortVersion
     ) throws CairoException;
 
     private static native boolean isRowGroupRewriteUnchanged(long impl, int rowGroupLo, int rowGroupHi, long rowOffset) throws CairoException;
@@ -386,6 +452,8 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private static native void setColumnTopRowLimit(long impl, long limit) throws CairoException;
+
+    private static native void setDedupKeyColumns(long impl, long idsAddr, int count) throws CairoException;
 
     private static native void setTargetSchema(
             long impl,
@@ -414,7 +482,8 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataPtr,
             long columnDataSize,
             int timestampIndex,
-            long rowCount
+            long rowCount,
+            long dedupSortVersion
     ) throws CairoException;
 
     private void destroy() {

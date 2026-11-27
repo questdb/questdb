@@ -165,6 +165,7 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_EXPIRE_ROWS = 3;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_DEDUP_VERSION = 64; // LONG, last dedup-setting metadata version
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
     public static final long META_OFFSET_METADATA_VERSION = 32; // LONG
     public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
@@ -803,6 +804,30 @@ public final class TableUtils {
             }
         } catch (Throwable e) {
             log.error().$("error during temp directory cleanup [path=").$(dir).$(" error=").$(e).$(']').$();
+        }
+    }
+
+    /**
+     * Collects into {@code ids} the column ids (original writer indexes) of the non-timestamp dedup keys, in column id
+     * order. A {@code _pm} dedup sort claim records the keys of these columns for the first and last row of a row
+     * group, see {@link ParquetMetaFileReader#getRowGroupDedupSortVersion}. The parquet encoders take the column id as
+     * the descriptor id of a column.
+     */
+    public static void collectDedupKeyIds(RecordMetadata metadata, DirectIntList ids) {
+        ids.clear();
+        final int timestampIndex = metadata.getTimestampIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i == timestampIndex || metadata.getColumnType(i) <= 0 || !metadata.isDedupKey(i)) {
+                continue;
+            }
+            final int id = metadata.getColumnMetadata(i).getOriginalWriterIndex();
+            long at = ids.size();
+            ids.add(id);
+            while (at > 0 && ids.get(at - 1) > id) {
+                ids.set(at, ids.get(at - 1));
+                at--;
+            }
+            ids.set(at, id);
         }
     }
 
@@ -2483,6 +2508,10 @@ public final class TableUtils {
      *                            callers should keep a single instance and pass it on every call to avoid
      *                            per-invocation allocation. The function clears it on entry and leaves the
      *                            allocation for the caller to free.
+     * @param dedupSortVersion    the dedup version whose keys sort the native rows within each timestamp, see
+     *                            {@link TxReader#isPartitionDedupSorted}: every row group of the Parquet file claims it,
+     *                            with the keys of its first and last rows.
+     *                            {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} makes no claim.
      * @return The length of the produced Parquet file
      */
     public static long produceParquetFromNative(
@@ -2503,7 +2532,8 @@ public final class TableUtils {
             double bloomFilterFpp,
             DirectIntList bloomFilterIndexes,
             long squashTracker,
-            long seqTxn
+            long seqTxn,
+            long dedupSortVersion
     ) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), metadata.getTimestampType(), metadata.getPartitionBy(), partitionTimestamp, parquetNameTxn);
@@ -2524,7 +2554,8 @@ public final class TableUtils {
                     bloomFilterFpp,
                     bloomFilterIndexes,
                     squashTracker,
-                    seqTxn
+                    seqTxn,
+                    dedupSortVersion
             );
         } finally {
             other.trimTo(pathSize);
@@ -2551,7 +2582,8 @@ public final class TableUtils {
             double bloomFilterFpp,
             DirectIntList bloomFilterIndexes,
             long squashTracker,
-            long seqTxn
+            long seqTxn,
+            long dedupSortVersion
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
@@ -2755,23 +2787,31 @@ public final class TableUtils {
                 // Restore parquet file path for encoding.
                 other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
 
-                PartitionEncoder.encodeWithOptions(
-                        partitionDescriptor,
-                        other,
-                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                        statisticsEnabled,
-                        rawArrayEncoding,
-                        rowGroupSize,
-                        dataPageSize,
-                        parquetVersion,
-                        bloomFilterColumnIndexesPtr,
-                        bloomFilterColumnCount,
-                        fpp,
-                        minCompressionRatio,
-                        Files.toOsFd(parquetMetaFd),
-                        squashTracker,
-                        seqTxn
-                );
+                try (DirectIntList dedupKeyIds = new DirectIntList(8, MemoryTag.NATIVE_DEFAULT)) {
+                    if (dedupSortVersion != ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET) {
+                        collectDedupKeyIds(metadata, dedupKeyIds);
+                    }
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            other,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion,
+                            bloomFilterColumnIndexesPtr,
+                            bloomFilterColumnCount,
+                            fpp,
+                            minCompressionRatio,
+                            Files.toOsFd(parquetMetaFd),
+                            squashTracker,
+                            seqTxn,
+                            dedupSortVersion,
+                            dedupKeyIds.getAddress(),
+                            (int) dedupKeyIds.size()
+                    );
+                }
                 // Persist _pm before the caller commits _txn. _txn field 3 will reference
                 // a parquet_meta_file_size that resolves only if the _pm bytes survive a
                 // crash. fsync the parent dir too because _pm is a brand-new file in a
@@ -3599,6 +3639,8 @@ public final class TableUtils {
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
         mem.putInt(tableStruct.getDedupMode());
+        mem.jumpTo(META_OFFSET_DEDUP_VERSION);
+        mem.putLong(0);
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;

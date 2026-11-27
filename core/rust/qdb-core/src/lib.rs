@@ -25,6 +25,7 @@ pub mod byte_util;
 pub mod cairo;
 pub mod col_driver;
 pub mod col_type;
+pub mod dedup_key;
 pub mod error;
 pub mod memory_tracker;
 pub mod types;

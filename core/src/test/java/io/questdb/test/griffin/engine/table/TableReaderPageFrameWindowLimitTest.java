@@ -54,7 +54,7 @@ import org.junit.Test;
  * one window of {@link #WINDOW_LOGICAL_ROWS} rows over a small real partition.
  */
 public class TableReaderPageFrameWindowLimitTest extends AbstractCairoTest {
-    private static final int HEADER_LONGS = 6;
+    private static final int HEADER_LONGS = (int) (PartitionFrameState.HEADER_BYTES / Long.BYTES);
     private static final long PAST_INT_MAX = (1L << 31) + 1;
     private static final long PAST_UINT_MAX = (1L << 32) + 1;
     private static final long STATE_SIZE = (HEADER_LONGS + PartitionFrameState.SUMMARY_LONGS) * Long.BYTES;
@@ -160,7 +160,8 @@ public class TableReaderPageFrameWindowLimitTest extends AbstractCairoTest {
             if (parquet) {
                 execute("alter table x convert partition to parquet list '2020-01-01'");
             }
-            final long state = Unsafe.malloc(STATE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            // Zeroed, so the header cells the test does not set read as absent.
+            final long state = Unsafe.calloc(STATE_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
                     TableReader reader = engine.getReader("x");
                     TablePageFrameCursor cursor = newPageFrameCursor(reader, forward)

@@ -41,12 +41,17 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private static final long REBASE_AUX_ARENA_PAGE_SIZE = 16 * 1024;
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private DirectIntList bloomFilterColumns;
+    // The column ids of the non-timestamp dedup keys, see TableUtils.collectDedupKeyIds()
+    private DirectIntList dedupKeyIds;
     // Non-owning descriptor for the O3-only writers (writeFreshParquetFromO3 +
     // copyO3ToRowGroup). Column pointers reference already-sorted/deduped O3
     // source buffers — and the merge index for the designated timestamp — so
     // nothing in this descriptor needs to be freed by the descriptor itself.
     private PartitionDescriptor freshPartitionDescriptor;
     private LongList gapO3Ranges;
+    // Whether the merge index waits for the pass that puts the rows of each timestamp in dedup key order, see
+    // setMergeKeySortPending()
+    private boolean isMergeKeySortPending;
     // Whether the first stage of the merge that keepRowGroupMerge() kept prepared the designated timestamp and
     // the dedup key columns only
     private boolean isPreparedMergeKeyColumnsOnly;
@@ -64,6 +69,9 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private int mergeActiveColCount;
     private IntList mergeActiveColIndices;
     private IntList mergeActiveToDecodeIdx;
+    // the dedup version whose keys order the rows of the merge index within each timestamp, see
+    // setMergeDedupSortVersion()
+    private long mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
     private LongList mergeDstBufs;
     // the columns that the first stage of the row group merge decoded
     private int mergeFirstStageDecodedColumnCount;
@@ -91,6 +99,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         super(MemoryTag.NATIVE_O3);
         actionsBuf = new ObjList<>();
         bloomFilterColumns = new DirectIntList(16, MemoryTag.NATIVE_O3);
+        dedupKeyIds = new DirectIntList(8, MemoryTag.NATIVE_O3);
         freshPartitionDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
         keyRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
@@ -110,6 +119,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     public void clear() {
         super.clear();
         bloomFilterColumns.clear();
+        dedupKeyIds.clear();
         freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
@@ -128,6 +138,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     public void close() {
         actionsBuf = null;
         bloomFilterColumns = Misc.free(bloomFilterColumns);
+        dedupKeyIds = Misc.free(dedupKeyIds);
         freshPartitionDescriptor = Misc.free(freshPartitionDescriptor);
         gapO3Ranges = null;
         keyRowGroupBuffers = Misc.free(keyRowGroupBuffers);
@@ -164,6 +175,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = 0;
         mergeActiveColCount = 0;
+        mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+        isMergeKeySortPending = false;
         mergeFirstStageDecodedColumnCount = 0;
         mergeTimestampDataAddr = 0;
         preparedMergeActionIndex = -1;
@@ -175,6 +188,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public DirectIntList getBloomFilterColumns() {
         return bloomFilterColumns;
+    }
+
+    public DirectIntList getDedupKeyIds() {
+        return dedupKeyIds;
     }
 
     public PartitionDescriptor getFreshPartitionDescriptor() {
@@ -205,6 +222,11 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public IntList getMergeActiveToDecodeIdx() {
         return mergeActiveToDecodeIdx;
+    }
+
+    // the dedup version that the row groups the merge writes claim, see setMergeDedupSortVersion()
+    public long getMergeDedupSortVersion() {
+        return mergeDedupSortVersion;
     }
 
     public LongList getMergeDstBufs(int colCount) {
@@ -284,6 +306,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         return srcPtrs;
     }
 
+    public boolean isMergeKeySortPending() {
+        return isMergeKeySortPending;
+    }
+
     public boolean isPreparedMergeKeyColumnsOnly() {
         return isPreparedMergeKeyColumnsOnly;
     }
@@ -330,6 +356,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         mergeActiveColIndices.setPos(columnCount);
         mergeActiveToDecodeIdx.setPos(columnCount);
         mergeActiveColCount = 0;
+        mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+        isMergeKeySortPending = false;
     }
 
     /**
@@ -369,6 +397,17 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     }
 
     /**
+     * Records the dedup version whose keys order the rows of the merge index within each timestamp, in column id
+     * order as WAL apply compares them, or {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} when the index
+     * is not known to have such an order. The row groups that the merge writes hold the rows in the order of the
+     * index and claim this version in {@code _pm}. Whoever builds or rebuilds the merge index sets it:
+     * {@link #ofRowGroupMerge(int)} and {@link #freeRowGroupMerge()} reset it to no claim.
+     */
+    public void setMergeDedupSortVersion(long dedupSortVersion) {
+        mergeDedupSortVersion = dedupSortVersion;
+    }
+
+    /**
      * Records what the first stage of a row group merge decoded: the address of the stored designated
      * timestamps of its row groups, in the decode buffers of the stage, and the number of columns it
      * decoded. The address stays valid until the next decode into those buffers; the buffers of a stage
@@ -377,6 +416,17 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     public void setMergeFirstStage(long timestampDataAddr, int decodedColumnCount) {
         mergeTimestampDataAddr = timestampDataAddr;
         mergeFirstStageDecodedColumnCount = decodedColumnCount;
+    }
+
+    /**
+     * Records whether the merge index waits for the pass that puts the rows of each timestamp in dedup key order. The
+     * first stage of an UPSERT merge of the keys only leaves the pass to {@code O3PartitionJob.sortPendingMergeKeys()}:
+     * the UPSERT identity check compares the merge index with the stored rows by position, see
+     * {@code O3PartitionJob.isUpsertIdenticalUpToPartitionMax()}. {@link #ofRowGroupMerge(int)} and
+     * {@link #freeRowGroupMerge()} reset it.
+     */
+    public void setMergeKeySortPending(boolean isMergeKeySortPending) {
+        this.isMergeKeySortPending = isMergeKeySortPending;
     }
 
     /**

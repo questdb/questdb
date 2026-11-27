@@ -199,7 +199,7 @@ public class AsyncFilterContext implements Closeable {
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
-    public PageFrameMemoryRecord filter(PageFrameMemoryRecord record, PageFrameAddressCache addressCache, int slotId, int frameIndex, long rowCount) {
+    public PageFrameMemoryRecord filter(PageFrameMemoryRecord record, PageFrameAddressCache addressCache, int slotId, int frameIndex) {
         final DirectLongList rows = getFilteredRows(slotId);
         rows.clear();
         final boolean isParquet = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
@@ -208,6 +208,8 @@ public class AsyncFilterContext implements Closeable {
         final PageFrameMemory memory = isLateMaterialization
                 ? pool.navigateTo(frameIndex, filterUsedColumnIndexes) : pool.navigateTo(frameIndex);
         record.init(memory);
+        // A frame whose row count is inexact reports its decoded count once decoded.
+        final long rowCount = memory.getRowCount();
         if (compiledFilter == null || memory.hasColumnTops() || memory.hasColumnTypeCasts()) {
             AsyncFilterUtils.applyFilter(getFilter(slotId), rows, record, rowCount);
         } else {

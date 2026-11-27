@@ -1386,7 +1386,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // than marking the table for CheckWalTransactionsJob, which walks every table off disk
                         // and paces itself - the table would sit un-applied for a whole scan interval.
                         //
-                        // Another WAL apply needs neither: it re-notifies on its own way out, below.
+                        // Another WAL apply needs neither: it re-notifies on its own way out, below, also for a
+                        // save point request made after its check for one.
                         engine.notifyWalTxnCommitted(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
@@ -1413,6 +1414,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     } else {
                         engine.notifyWalTxnCommitted(tableToken);
                     }
+                } else if (queueDriven && txnTracker.isIdleEpochRequested()) {
+                    // A save point request made after this run checked for one came with a notification that
+                    // another apply worker may have taken and dropped on the busy writer. The writer is free now,
+                    // so a caught-up table gets its run for the request. A direct caller is a live view, whose
+                    // refresh worker takes the save point itself.
+                    engine.notifyWalTxnCommitted(tableToken);
                 }
             }
         } catch (Throwable ex) {

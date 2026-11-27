@@ -63,6 +63,8 @@ import org.jetbrains.annotations.NotNull;
 public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameCursor {
     private final PageFrameMemoryPool frameMemoryPool;
     // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...]
+    // Per-frame cache entries: [timestampLo, timestampHi, decoded row count].
+    private static final int FRAME_CACHE_LONGS = 3;
     private final DirectLongList frameTimestampCache;
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
@@ -168,9 +170,11 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         frameMemoryPool.setMemoryTracker(sharedState.getMemoryTracker());
         frameMemoryPool.of(sharedState.getAddressCache());
         record.of(frameCursor);
-        // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
+        // Initialize the per-frame cache (3 entries per frame: tsLo, tsHi, decoded row count).
+        // The shared row counts are declared spans; a frame whose count is inexact settles
+        // its decoded count here, on first open, since the shared state must stay immutable.
         final int frameCount = sharedState.getFrameCount();
-        final int cacheSize = 2 * frameCount;
+        final int cacheSize = FRAME_CACHE_LONGS * frameCount;
         if (cacheSize > 0) {
             frameTimestampCache.setCapacity(cacheSize);
             frameTimestampCache.clear();
@@ -193,9 +197,17 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
         ensurePartitionOpened(partitionIndex);
 
-        final long rowCount = sharedState.getFrameRowCounts().get(frameIndex);
+        final int cacheOffset = frameIndex * FRAME_CACHE_LONGS;
+        long rowCount = frameTimestampCache.get(cacheOffset + 2);
+        if (rowCount == Numbers.LONG_NULL) {
+            rowCount = sharedState.getFrameRowCounts().get(frameIndex);
+            if (rowCount > 0 && !sharedState.getAddressCache().isFrameRowCountExact(frameIndex)) {
+                // The declared span is only an upper bound; decode once to settle the count.
+                rowCount = frameMemoryPool.navigateTo(frameIndex).getRowCount();
+            }
+            frameTimestampCache.set(cacheOffset + 2, rowCount);
+        }
         if (rowCount > 0) {
-            final int cacheOffset = frameIndex * 2;
             long timestampLo = frameTimestampCache.get(cacheOffset);
             long timestampHi;
             if (timestampLo != Numbers.LONG_NULL) {

@@ -53,7 +53,10 @@ public class PartitionFrameEncoder {
             double minCompressionRatio,
             int parquetMetaFd,
             long squashTracker,
-            long seqTxn
+            long seqTxn,
+            long dedupSortVersion,
+            long dedupKeyIdsPtr,
+            int dedupKeyCount
     ) throws CairoException;
 
     public static native void destroy(long writerPtr);

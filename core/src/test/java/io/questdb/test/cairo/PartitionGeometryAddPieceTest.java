@@ -51,10 +51,10 @@ public class PartitionGeometryAddPieceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> withCompositeDay((geometry, partitionIndex) -> {
             final long e = geometry.getE(partitionIndex);
             geometry.beginUpdate(partitionIndex);
-            geometry.addPiece(10, 20, 0, 5, 1, 1);
+            geometry.addPiece(10, 20, 0, 5, 1, 1, -1);
             // Touching pieces are legal: only the start timestamps must ascend.
-            geometry.addPiece(20, 30, 5, 5, 1, 1);
-            geometry.addPiece(31, 40, 10, 5, 1, 1);
+            geometry.addPiece(20, 30, 5, 5, 1, 1, -1);
+            geometry.addPiece(31, 40, 10, 5, 1, 1, -1);
             geometry.commitUpdate(partitionIndex, e);
 
             Assert.assertEquals(3, geometry.getPieceCount(partitionIndex));
@@ -87,9 +87,9 @@ public class PartitionGeometryAddPieceTest extends AbstractCairoTest {
             final long e = geometry.getE(partitionIndex);
 
             geometry.beginUpdate(partitionIndex);
-            geometry.addPiece(10, 20, 0, 5, 1, 1);
+            geometry.addPiece(10, 20, 0, 5, 1, 1, -1);
             try {
-                geometry.addPiece(secondTsLo, 30, 5, 5, 1, 1);
+                geometry.addPiece(secondTsLo, 30, 5, 5, 1, 1, -1);
                 Assert.fail("a piece starting at " + secondTsLo + " after one starting at 10 was accepted");
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.isCritical());
