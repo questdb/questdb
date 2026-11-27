@@ -492,10 +492,21 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
             final String sql = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)";
             assertAddIndexFailsAtMetadataSwap(ff, sql);
             engine.releaseAllWriters();
+            final long headSealTxn = readPostingSealTxn("2024-01-01");
+            Assert.assertTrue("fixture: the build must have sealed", headSealTxn > 0);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x")).concat("2024-01-01");
+                Assert.assertTrue(configuration.getFilesFacade().touch(valueFileName(path, "s", -1, headSealTxn - 1)));
+            }
             isCounting.set(true);
             execute(sql);
             isCounting.set(false);
             Assert.assertEquals("retry must not scan the completed historical partition", 0, symbolBytesRead.get());
+            Assert.assertEquals("retry must reuse the completed build", headSealTxn, readPostingSealTxn("2024-01-01"));
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x")).concat("2024-01-01");
+                Assert.assertFalse(configuration.getFilesFacade().exists(valueFileName(path, "s", -1, headSealTxn - 1)));
+            }
             assertQuery("SELECT count(), sum(v) FROM x WHERE s = 'a'")
                     .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("CoveringIndex")
                     .returns("count\tsum\n10000\t100010000\n");

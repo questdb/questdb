@@ -117,7 +117,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         forcePostingSpill(rnd);
         // Parquet rewrite: O3PartitionJob.updateParquetIndexes runs on the workers
-        // and each calls back into TableWriter.deferParquetPostingSealPurges under
+        // and each calls back into TableWriter.deferPostingSealPurges under
         // parquetSealPurgeLock; several partitions in flight contend on the shared
         // deferredPostingSealPurges list + task pool. The PostingSealPurgeJob on the
         // pool then reclaims the superseded .pv/.pc, scoreboard-gated.

@@ -29,22 +29,19 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 
 /**
- * Deletes the sealed generations of one posting index that its live head superseded - the files a build in a
- * compaction staging directory started from. On a published partition that is the purge job's, once no reader can
- * still pin them; in a staging directory nobody reads yet, so they go straight away instead of being published into
- * the partition. Not thread-safe.
+ * Deletes the sealed generations of one posting index that its live head superseded - the files a build started from.
+ * On an index readers can open that is the purge job's, once no reader can still pin them. A build removes them
+ * straight away where it owns the index outright: in a compaction staging directory nobody reads yet, in an index
+ * ADD INDEX has not committed, and in one IndexBuilder rebuilds in place for REINDEX, UPDATE or ATTACH after removing
+ * the files of the index it replaces. Not thread-safe.
  */
 final class PostingSupersededFileRemover implements PostingIndexUtils.SealedFileVisitor {
-    private final FilesFacade ff;
     private CharSequence columnName;
     private long columnNameTxn;
     private Path dir;
     private int dirLen;
+    private FilesFacade ff;
     private long liveSealTxn;
-
-    PostingSupersededFileRemover(FilesFacade ff) {
-        this.ff = ff;
-    }
 
     // scanSealedFiles() reports the files of the instance columnNameTxn only
     @Override
@@ -64,19 +61,21 @@ final class PostingSupersededFileRemover implements PostingIndexUtils.SealedFile
         }
     }
 
-    void remove(Path dir, int dirLen, CharSequence columnName, long columnNameTxn) {
+    void remove(FilesFacade ff, Path dir, int dirLen, CharSequence columnName, long columnNameTxn) {
         try {
             liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(ff, PostingIndexUtils.keyFileName(dir.trimTo(dirLen), columnName, columnNameTxn));
             if (liveSealTxn < 0) {
                 // No readable head: keep everything rather than guess which generation is live.
                 return;
             }
+            this.ff = ff;
             this.dir = dir;
             this.dirLen = dirLen;
             this.columnName = columnName;
             this.columnNameTxn = columnNameTxn;
             PostingIndexUtils.scanSealedFiles(ff, dir, dirLen, columnName, columnNameTxn, this);
         } finally {
+            this.ff = null;
             this.dir = null;
             this.columnName = null;
             dir.trimTo(dirLen);

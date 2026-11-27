@@ -42,6 +42,7 @@ import io.questdb.cairo.idx.PostingIndexBuildValidator;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.idx.PostingSealPurgeSink;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -179,7 +180,7 @@ import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
+public class TableWriter implements TableWriterAPI, MetadataService, PostingSealPurgeSink, Closeable {
     // Sink slot 8 when the write left the partition's geometry alone.
     public static final long NO_GEOMETRY_REF = 0L;
     public static final int O3_BLOCK_DATA = 2;
@@ -433,6 +434,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // removePartitionDirAfterSavePoint().
     private final LongList partitionRemovalsAfterSavePoint = new LongList();
     private final LongList partitionRemoveCandidates = new LongList();
+    private final PostingIndexUtils.SealedFileTxns postingSealedFileTxns = new PostingIndexUtils.SealedFileTxns();
+    private final PostingSupersededFileRemover postingSupersededFileRemover = new PostingSupersededFileRemover();
     // indexed columns a FORCE REINDEX rebuilds in a partition
     private final IntList reindexColumnIndexes = new IntList();
     // (partition timestamp, replaced name txn) of the partitions a reindex replaced: the stale parquet ones an ADD
@@ -3043,6 +3046,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         return true;
+    }
+
+    // Takes the seal purges of an index writer whose owner frees it before the commit lands (the O3 copy, the frame
+    // columns of a composite partition write or compaction, the in-place covering append, the parquet index rebuild):
+    // the writer hands them over at each commit. They join the deferred path the native reseal uses, so the
+    // post-commit publishDeferredPostingSealPurges and the scoreboard-gated PostingSealPurgeJob reclaim the superseded
+    // files when no reader is pinned in their [from, to) txn window. Called on O3 worker threads: publishPendingPurges
+    // only touches the thread-safe global queue and the writer's own outbox (lock-free); drainPendingFuturePurges
+    // mutates the shared deferredPostingSealPurges list and task pool under parquetSealPurgeLock -- the same lock every
+    // writer-side list/pool access now also takes.
+    @Override
+    public void deferPostingSealPurges(IndexWriter writer) {
+        final long currentTableTxn = txWriter.getTxn();
+        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+        synchronized (parquetSealPurgeLock) {
+            writer.drainPendingFuturePurges(
+                    deferredPostingSealPurges,
+                    getDeferredPostingSealPurgeTaskPool(),
+                    tableToken,
+                    partitionBy,
+                    timestampType,
+                    currentTableTxn
+            );
+        }
     }
 
     public void destroy() {
@@ -8837,6 +8864,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // With no external ColumnTopSink the frame tracks its own tops and publishes them below, so
             // the source's lookups keep seeing the old directory's untouched state until then.
             targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter, 0);
+            targetFrame.setPostingSealPurgeSink(this, newNameTxn);
             // Every piece below appends to the same column files: open each once for the whole REWRITE rather than
             // once per piece, so what a column learnt about its file - its length, its mapping - carries over.
             targetFrame.setKeepColumnsOpen(true);
@@ -9557,6 +9585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force, boolean allowDestructiveRecovery) {
         try {
             keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+            long sealTxn = 0;
 
             if (IndexType.isPosting(indexType)) {
                 // POSTING preserves chain history across the partition's
@@ -9586,11 +9615,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, path.$())) {
                         return;
                     }
-                    removeExistingOrFail(ff, path.$());
                 } else {
                     if (ff.exists(path.$())) {
                         return;
                     }
+                }
+                sealTxn = PostingIndexUtils.newChainSealTxn(ff, path, plen, columnName, columnNameTxn, postingSealedFileTxns);
+                keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+                if (allowDestructiveRecovery) {
+                    removeExistingOrFail(ff, path.$());
                 }
             } else if (!force && ff.exists(path.$())) {
                 return;
@@ -9602,7 +9635,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 ddlMem.truncate();
-                IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+                if (IndexType.isPosting(indexType)) {
+                    PostingIndexWriter.initKeyMemory(ddlMem, sealTxn);
+                } else {
+                    IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+                }
             } catch (CairoException e) {
                 // looks like we could not create the key file properly;
                 // let's not leave a half-baked file sitting around
@@ -9622,7 +9659,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ddlMem.close();
             }
             // A fresh key file needs a fresh value file, not one an older version may share through a hard link
-            final LPSZ valueFile = valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L);
+            final LPSZ valueFile = valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, sealTxn);
             removeExistingOrFail(ff, valueFile);
             if (!ff.touch(valueFile)) {
                 LOG.error().$("could not create index [name=").$(path)
@@ -10446,7 +10483,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void deferPendingPostingSealPurges(ColumnIndexer indexer, long currentTableTxn) {
-        // The native (writer-thread) reseal twin of deferParquetPostingSealPurges,
+        // The native (writer-thread) reseal twin of deferPostingSealPurges,
         // which is the O3-worker path. This one runs only post-join, so -- unlike the
         // parquet path -- no O3 worker is concurrently stashing into the list.
         assert o3PartitionUpdRemaining.get() == 0 : "native posting seal-purge defer ran with O3 partition workers in flight";
@@ -13146,10 +13183,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@code .pk}/{@code .pv.<colTxn>.<sealTxn>} plus the {@code .pci} sidecar
      * and per-column {@code .pc<N>.{colTxn}.{sealTxn}} files for the live
      * generation. {@code sealTxn} is resolved from the live chain head in
-     * {@code .pk}; the pre-seal empty-chain case falls back to {@code 0L}
-     * because live data sits in {@code .pv.<colTxn>.0} then. Throws
-     * {@link CairoException} if either the key or value file is missing in
-     * the source.
+     * {@code .pk}. A chain with no visible head names no value file:
+     * {@link #linkPostingIndexAuxFiles} links the pre-seal {@code .pv.<colTxn>.0}
+     * when there is one, as a RENAME does. Throws {@link CairoException} if the
+     * key file, or the value file the head names, is missing in the source.
      */
     private void linkColumnIndexFiles(
             int srcDirLen,
@@ -13162,18 +13199,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         long linkSealTxn = columnNameTxn;
         long liveSealTxn = -1L;
+        boolean isValueFileNamed = true;
         if (IndexType.isPosting(indexType)) {
             liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
-            linkSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
+            linkSealTxn = liveSealTxn;
+            isValueFileNamed = liveSealTxn >= 0;
         }
         if (
                 !linkFile(ff,
                         keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
                         keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
-                ) || !linkFile(ff,
+                ) || (isValueFileNamed && !linkFile(ff,
                         valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
                         valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
-                )) {
+                ))) {
             throw CairoException.critical(0)
                     .put("index files do not exist [path=")
                     .put(path.trimTo(srcDirLen))
@@ -20093,6 +20132,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void removeSupersededPostingFiles(CharSequence columnName, int columnIndex, byte indexType) {
+        if (!IndexType.isPosting(indexType)) {
+            return;
+        }
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            final long timestamp = txWriter.getLastPartitionTimestamp();
+            removeSupersededPostingFilesInPartition(columnName, columnIndex, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+            return;
+        }
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            removeSupersededPostingFilesInPartition(columnName, columnIndex, txWriter.getPartitionTimestampByIndex(i), txWriter.getPartitionNameTxn(i));
+        }
+    }
+
+    private void removeSupersededPostingFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            postingSupersededFileRemover.remove(ff, path, path.size(), columnName, columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex));
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
         // Symbol map files (.o, .c, .k, .v) in table root always use SYMBOL index format; sealTxn is BITMAP-ignored.
         try {
@@ -23661,6 +23723,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // create index in last partition
                     indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize, indexType);
                 }
+                removeSupersededPostingFiles(columnName, columnIndex, indexType);
             } finally {
                 path.trimTo(pathSize);
             }
@@ -24003,30 +24066,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     void closeActivePartition(long size) {
         closeActivePartition(size, false);
-    }
-
-    // Routes a parquet index rebuild's seal-purges into the same deferred path
-    // the native reseal uses, so the post-commit publishDeferredPostingSealPurges
-    // and the scoreboard-gated PostingSealPurgeJob reclaim the superseded .pv when
-    // no reader is pinned in its [from, to) txn window. Unlike the native reseal,
-    // updateParquetIndexes runs on parallel O3 workers and frees its pooled writer
-    // before the commit -- without this its outbox is discarded by close().
-    // publishPendingPurges only touches the thread-safe global queue and the
-    // writer's own outbox (lock-free); drainPendingFuturePurges mutates the shared
-    // deferredPostingSealPurges list and task pool under parquetSealPurgeLock -- the
-    // same lock every writer-side list/pool access now also takes.
-    void deferParquetPostingSealPurges(IndexWriter writer, long currentTableTxn) {
-        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
-        synchronized (parquetSealPurgeLock) {
-            writer.drainPendingFuturePurges(
-                    deferredPostingSealPurges,
-                    getDeferredPostingSealPurgeTaskPool(),
-                    tableToken,
-                    partitionBy,
-                    timestampType,
-                    currentTableTxn
-            );
-        }
     }
 
     long getColumnTop(int columnIndex) {

@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1391,6 +1392,67 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * The sealTxn a new chain of the posting column instance starts at. A seal purge may still be queued for a file
+     * of an earlier chain, so the new chain starts past every sealTxn its key file counted and every sealed file of
+     * the instance. A file at sealTxn 0 does not count: only a new chain starts there, and a seal past it counts a
+     * later sealTxn or leaves a later file. Collects the sealTxns of the sealed files below the returned one into
+     * {@code earlierSealTxns}, ascending and once each.
+     */
+    public static long newChainSealTxn(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            SealedFileTxns earlierSealTxns
+    ) {
+        try {
+            earlierSealTxns.clear();
+            scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, earlierSealTxns);
+            earlierSealTxns.sort();
+            final long highestFileSealTxn = earlierSealTxns.size() > 0 ? earlierSealTxns.get(earlierSealTxns.size() - 1) : 0;
+            final long sealTxn = Math.max(
+                    readKeyFileGenCounter(ff, path, pathTrimTo, columnName, postingColumnNameTxn) + 1,
+                    highestFileSealTxn > 0 ? highestFileSealTxn + 1 : 0
+            );
+            if (sealTxn == 0) {
+                earlierSealTxns.clear();
+            }
+            return sealTxn;
+        } finally {
+            path.trimTo(pathTrimTo);
+        }
+    }
+
+    /**
+     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
+     */
+    static long readKeyFileGenCounter(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        long genCounter = -1;
+        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
+        if (fd > -1) {
+            try {
+                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
+                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
+                    if (sequence > 0 && (sequence & 1L) == 0
+                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
+                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
+                    }
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        return genCounter;
+    }
+
+    /**
      * Walks the v2 chain via fd-based reads and returns the head entry's
      * {@code SEAL_TXN}. Useful when the caller has just opened the .pk file
      * (e.g. snapshot restore, seal-purge job) and would otherwise pay an
@@ -2130,34 +2192,6 @@ public final class PostingIndexUtils {
         }
     }
 
-    /**
-     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
-     */
-    private static long readKeyFileGenCounter(
-            FilesFacade ff,
-            Path path,
-            int pathTrimTo,
-            CharSequence columnName,
-            long postingColumnNameTxn
-    ) {
-        long genCounter = -1;
-        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
-        if (fd > -1) {
-            try {
-                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
-                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
-                    if (sequence > 0 && (sequence & 1L) == 0
-                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
-                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
-                    }
-                }
-            } finally {
-                ff.close(fd);
-            }
-        }
-        return genCounter;
-    }
-
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {
         final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
         if (high <= 0) {
@@ -2469,6 +2503,45 @@ public final class PostingIndexUtils {
 
         private void onDirEntry(long pUtf8NameZ, int type) {
             parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, this);
+        }
+    }
+
+    /**
+     * The sealTxns of the sealed files of a posting column instance, ascending and once each after {@link #sort()}.
+     */
+    public static final class SealedFileTxns implements SealedFileVisitor {
+        private final LongList sealTxns = new LongList();
+
+        public void clear() {
+            sealTxns.clear();
+        }
+
+        public long get(int index) {
+            return sealTxns.getQuick(index);
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            add(sealTxn);
+        }
+
+        @Override
+        public void onValueFile(long sealTxn) {
+            add(sealTxn);
+        }
+
+        public int size() {
+            return sealTxns.size();
+        }
+
+        public void sort() {
+            sealTxns.sort();
+        }
+
+        private void add(long sealTxn) {
+            if (sealTxns.indexOf(sealTxn) < 0) {
+                sealTxns.add(sealTxn);
+            }
         }
     }
 

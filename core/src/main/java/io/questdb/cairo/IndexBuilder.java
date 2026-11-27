@@ -55,6 +55,7 @@ public class IndexBuilder extends RebuildColumnBase {
     private final LongList coveringTops = new LongList();
     private final IntList coveringTypes = new IntList();
     private final MemoryMAR ddlMem;
+    private final PostingSupersededFileRemover supersededFileRemover = new PostingSupersededFileRemover();
     private byte indexType = IndexType.BITMAP;
     private SymbolColumnIndexer indexer;
 
@@ -209,6 +210,9 @@ public class IndexBuilder extends RebuildColumnBase {
                             configureCoveringIfNeeded(metadata, columnIndex, columnVersionReader, partitionTimestamp);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);
                             indexer.seal();
+                            if (IndexType.isPosting(this.indexType)) {
+                                supersededFileRemover.remove(ff, path, plen, columnName, columnNameTxn);
+                            }
                         } finally {
                             ff.close(columnDataFd);
                             indexer.clear();

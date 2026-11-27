@@ -42,6 +42,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
+import io.questdb.cairo.idx.PostingSealPurgeSink;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.log.Log;
@@ -125,6 +126,8 @@ public class FrameImpl implements Frame {
     private long offset = 0;
     private Path partitionPath = new Path();
     private long partitionTimestamp;
+    private long postingSealPurgeNameTxn = -1;
+    private PostingSealPurgeSink postingSealPurgeSink;
     private long rowCount;
     private long timestampIndexAddr;
     // The logical row window shift() points this frame at, [windowLo, windowHi). Long.MAX_VALUE: no window.
@@ -195,6 +198,8 @@ public class FrameImpl implements Frame {
         // open gets it as a frame that indexes every column, whatever the previous one asked for.
         this.deferCoveredIndexing = false;
         this.deferPostingIndexing = false;
+        this.postingSealPurgeSink = null;
+        this.postingSealPurgeNameTxn = -1;
         if (frameRecycleBin != null && !frameRecycleBin.isClosed()) {
             frameRecycleBin.put(this);
         } else {
@@ -602,6 +607,12 @@ public class FrameImpl implements Frame {
     }
 
     @Override
+    public void setPostingSealPurgeSink(PostingSealPurgeSink sink, long partitionNameTxn) {
+        this.postingSealPurgeSink = sink;
+        this.postingSealPurgeNameTxn = partitionNameTxn;
+    }
+
+    @Override
     public void setRowCount(long rowCount) {
         this.rowCount = rowCount;
     }
@@ -724,6 +735,7 @@ public class FrameImpl implements Frame {
         try {
             final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
             targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+            targetColumn.setPostingSealPurgeSink(postingSealPurgeSink, partitionTimestamp, postingSealPurgeNameTxn);
             // rowCount is this frame's own tail; getLiveRowCount() is how much of it rows still point at.
             FrameAlgebra.appendColumn(targetColumn, rowCount, getLiveRowCount(), source1Columns.getQuick(columnIndex), sourceLo, sourceHi, commitMode);
         } catch (Throwable th) {
@@ -750,6 +762,7 @@ public class FrameImpl implements Frame {
         try {
             final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
             targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+            targetColumn.setPostingSealPurgeSink(postingSealPurgeSink, partitionTimestamp, postingSealPurgeNameTxn);
             targetColumn.merge(
                     rowCount,
                     source1Columns.getQuick(columnIndex),

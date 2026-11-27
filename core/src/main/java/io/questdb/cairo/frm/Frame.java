@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.idx.PostingSealPurgeSink;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.Nullable;
 
@@ -179,6 +180,13 @@ public interface Frame extends Closeable {
     void setLiveRowCount(long liveRowCount);
 
     void setOffset(long offset);
+
+    /**
+     * Has the POSTING index writers of this writable frame's columns hand the seal purges they record to {@code sink},
+     * addressed to the partition directory of name txn {@code partitionNameTxn}, the one the frame writes. Without a
+     * sink, closing a writer drops them. Scoped to the open that set it: {@link #close()} drops it.
+     */
+    void setPostingSealPurgeSink(PostingSealPurgeSink sink, long partitionNameTxn);
 
     void setRowCount(long rowCount);
 

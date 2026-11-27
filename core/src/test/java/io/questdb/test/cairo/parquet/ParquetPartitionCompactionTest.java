@@ -38,6 +38,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
@@ -624,7 +625,12 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 final int partitionIndex = findParquetPartitionIndex(reader);
                 TableUtils.setPathForNativePartition(partitionPath, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(),
                         reader.getTxFile().getPartitionTimestampByIndex(partitionIndex), reader.getTxFile().getPartitionNameTxn(partitionIndex));
-                valueFile = new File(partitionPath.toString(), "s.pv.0");
+                final int plen = partitionPath.size();
+                final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                        configuration.getFilesFacade(),
+                        PostingIndexUtils.keyFileName(partitionPath, "s", TableUtils.COLUMN_NAME_TXN_NONE)
+                );
+                valueFile = new File(partitionPath.trimTo(plen).toString(), "s.pv." + sealTxn);
             }
             engine.clear();
             Assert.assertTrue(valueFile.delete());

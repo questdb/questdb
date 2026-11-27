@@ -66,7 +66,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     private final LongList rowGroupIndexRowLos = new LongList();
     private final IntList rowGroupOrder = new IntList();
-    private final PostingSupersededFileRemover supersededFileRemover;
+    private final PostingSupersededFileRemover supersededFileRemover = new PostingSupersededFileRemover();
     private int commitMode = CommitMode.NOSYNC;
     private DirectIntList decodeColumns;
     private SymbolColumnIndexer indexer;
@@ -77,7 +77,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
         this.ff = ff;
         this.ddlMem = Vm.getPMARInstance(configuration);
         this.decoder = configuration.newParquetPartitionDecoder();
-        this.supersededFileRemover = new PostingSupersededFileRemover(ff);
     }
 
     /**
@@ -307,7 +306,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             partitionDir.trimTo(dirLen);
         }
         if (IndexType.isPosting(indexType)) {
-            supersededFileRemover.remove(partitionDir, dirLen, columnName, columnNameTxn);
+            supersededFileRemover.remove(ff, partitionDir, dirLen, columnName, columnNameTxn);
         }
     }
 

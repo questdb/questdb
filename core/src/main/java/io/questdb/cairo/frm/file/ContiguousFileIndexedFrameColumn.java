@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingSealPurgeSink;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -170,6 +171,11 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         closed = false;
         super.close();
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setPostingSealPurgeSink(PostingSealPurgeSink sink, long partitionTimestamp, long partitionNameTxn) {
+        indexWriter.setPartitionContext(partitionTimestamp, partitionNameTxn, sink);
     }
 
     @Override

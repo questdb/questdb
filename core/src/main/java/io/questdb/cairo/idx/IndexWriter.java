@@ -36,6 +36,7 @@ import io.questdb.std.ObjectStackPool;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.tasks.PostingSealPurgeTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -396,12 +397,14 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Records the partition timestamp and name-txn on the writer so a deferred
-     * seal-purge task can reconstruct the value-file directory after the writer
-     * is freed. The path-based of(...) overloads used by the parquet rebuild do
-     * not carry these. No-op for writers without a seal-purge outbox (e.g. BITMAP).
+     * Addresses the seal purges the writer records to the value-file directory of the partition at
+     * {@code partitionTimestamp} and {@code partitionNameTxn}, which the path-based of(...) overloads do not carry,
+     * and has every commit hand them to {@code purgeSink}: the owner may free the writer before the table commit lands,
+     * and {@link #close()} drops an outbox it still holds. A null sink leaves them for the owner to publish. The
+     * context outlives of() and close(), so an owner sets it whenever it points the writer at a directory. No-op for
+     * writers without a seal-purge outbox (e.g. BITMAP).
      */
-    default void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
+    default void setPartitionContext(long partitionTimestamp, long partitionNameTxn, @Nullable PostingSealPurgeSink purgeSink) {
     }
 
     /**

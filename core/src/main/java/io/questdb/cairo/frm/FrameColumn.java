@@ -25,6 +25,7 @@
 package io.questdb.cairo.frm;
 
 import io.questdb.cairo.frm.file.RecycleBin;
+import io.questdb.cairo.idx.PostingSealPurgeSink;
 
 import java.io.Closeable;
 
@@ -132,6 +133,14 @@ public interface FrameColumn extends Closeable {
      *                  the reservation was sized from, so a var-size column grows past it instead of failing
      */
     default void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
+    }
+
+    /**
+     * Posting-index hook: has the column's index writer address the seal purges it records to the partition directory
+     * of {@code partitionTimestamp} and {@code partitionNameTxn}, and hand them to {@code sink} at each commit. A null
+     * sink leaves them to be dropped as the writer closes. No-op for column types that do not own an index writer.
+     */
+    default void setPostingSealPurgeSink(PostingSealPurgeSink sink, long partitionTimestamp, long partitionNameTxn) {
     }
 
     /**
