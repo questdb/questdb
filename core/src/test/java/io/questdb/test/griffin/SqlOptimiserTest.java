@@ -709,10 +709,34 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [k] l256, k, i from (select [k] from w timestamp (ts))) where b = 'c')",
                     3
             );
-            // the first column when every column varies in size
+            // when every column varies in size, a VARCHAR before a STRING, a BINARY and an array
             assertOneColumnScan(
-                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, v, s, bin FROM w)) WHERE b = 'c'",
-                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [arr] arr, v, s, bin from (select [arr] from w timestamp (ts))) where b = 'c')",
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, bin, s, v FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [v] arr, bin, s, v from (select [v] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // a STRING before a BINARY and an array
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, bin, s FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [s] arr, bin, s from (select [s] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // a BINARY before an array
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT arr, bin FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [bin] arr, bin from (select [bin] from w timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the output is named like the VARCHAR, which the scan reads rather than the array before it
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' v FROM (SELECT arr, v FROM w)) WHERE v = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' v] 'c' v from (select-choose [v] arr, v from (select [v] from w timestamp (ts))) where v = 'c')",
+                    3
+            );
+            // the expression of the VARCHAR, rather than that of the array before it
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT array_sum(arr) a2, length(v) b FROM w)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual [length(v) b] array_sum(arr) a2, length(v) b from (select [v] from w timestamp (ts))) where b = 'c')",
                     3
             );
             // the designated timestamp when the sub-query selects it, even over a narrower column

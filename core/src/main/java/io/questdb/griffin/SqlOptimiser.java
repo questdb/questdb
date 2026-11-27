@@ -682,7 +682,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Adds the bytes of each row of a column, more, to bytes, see scannedBytesPerRowOfLiterals(): -1 stands for no
-    // column, and the sum stops at Integer.MAX_VALUE, which stands for a column whose values vary in size.
+    // column, and the sum stops at Integer.MAX_VALUE, which stands for an array, a type the optimiser has not resolved,
+    // or more than one column whose values vary in size, see scannedBytesPerRow().
     private static long addScannedBytes(long bytes, long more) {
         if (more < 0) {
             return bytes;
@@ -1409,12 +1410,25 @@ public class SqlOptimiser implements Mutable {
         return column.getAst().type == LITERAL ? column.getAst().token : null;
     }
 
-    // The bytes a scan reads for each row of a column of the type, see addRowColumnIfNoTopDownColumns(), and
-    // Integer.MAX_VALUE for a type whose values vary in size, such as VARCHAR, STRING, BINARY or an array, or for a
-    // type the optimiser has not resolved.
+    // The bytes a scan reads for each row of a column of the type, see addRowColumnIfNoTopDownColumns(). A value of a
+    // type whose values vary in size can take any number of bytes, so such a type costs at least 2^30, more than any set
+    // of columns of a fixed size, and the types rank by what a value of each typically costs: a VARCHAR keeps a short
+    // value in its index entry, a STRING takes two bytes for each character, a BINARY value can be a blob of any size,
+    // and an array value holds any number of elements, which a parquet partition decodes one by one. An array costs
+    // Integer.MAX_VALUE, as a type the optimiser has not resolved does.
     private static int scannedBytesPerRow(int columnType) {
-        final int bytes = columnType < 0 || ColumnType.isVarSize(columnType) ? 0 : ColumnType.sizeOf(columnType);
-        return bytes > 0 ? bytes : Integer.MAX_VALUE;
+        if (columnType < 0) {
+            return Integer.MAX_VALUE;
+        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> 1 << 30;
+            case ColumnType.STRING -> (1 << 30) + (1 << 28);
+            case ColumnType.BINARY -> (1 << 30) + (1 << 29);
+            default -> {
+                final int bytes = ColumnType.isVarSize(columnType) ? 0 : ColumnType.sizeOf(columnType);
+                yield bytes > 0 ? bytes : Integer.MAX_VALUE;
+            }
+        };
     }
 
     /**
