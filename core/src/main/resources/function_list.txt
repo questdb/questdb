@@ -707,6 +707,7 @@ io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionF
 io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountDistinctBooleanGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory
 
 # 'approx_count_distinct' group by function

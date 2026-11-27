@@ -111,6 +111,8 @@ import static io.questdb.cairo.wal.seq.TableSequencer.FENCE_REJECTED;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter extends WalWriterBase implements TableWriterAPI {
+    // A transaction that depends on no particular table structure, see getSequencerTxn()
+    private static final long ANY_STRUCTURE_VERSION = -1L;
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
@@ -1297,14 +1299,26 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // window: another writer may fdatasync the sequencer while this writer's batch is pending, and the
             // sequencer must not name an _event.i entry that a crash can lose.
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
-            final long seqTxn = getSequencerTxn();
-            // W>0: start a pending batch for this txn, as commit0 does. The callers, apply(AlterOperation) and
-            // apply(UpdateOperation), have already flushed earlier pending data commits. Without the batch, the
-            // frontier of a table that goes idle after a SQL txn would never pass it.
-            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
-                recordPendingDurable(seqTxn);
+            // The check above passes against this writer's own structure version. Another WAL writer can commit a
+            // structural change after it, which this writer takes while sequencing, so an operation compiled
+            // against the structure has to be checked again there.
+            final long seqTxn = getSequencerTxn(Long.MAX_VALUE, verifyStructureVersion ? op.getTableVersion() : ANY_STRUCTURE_VERSION);
+            if (seqTxn != NO_TXN) {
+                // W>0: start a pending batch for this txn, as commit0 does. The callers, apply(AlterOperation) and
+                // apply(UpdateOperation), have already flushed earlier pending data commits. Without the batch, the
+                // frontier of a table that goes idle after a SQL txn would never pass it.
+                if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
+                    recordPendingDurable(seqTxn);
+                }
+                return seqTxn;
             }
-            return seqTxn;
+            // The structure changed under the operation. Sequenced after the change, the record would name
+            // columns the table no longer has, and its apply would fail and suspend the table. Drop the record
+            // unsequenced. The event file takes no record after a rollback, so the writer moves to a new segment,
+            // as after a rejected conditional commit.
+            events.rollback();
+            lastSegmentTxn--;
+            openNewSegment();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
@@ -1314,6 +1328,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
             throw th;
         }
+        // The caller compiles the statement again against the structure this writer now has.
+        throw TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), op.getTableId(), getColumnStructureVersion(), op.getTableVersion());
     }
 
     private long applyStructural(AlterOperation alterOp) {
@@ -2133,15 +2149,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private long getSequencerTxn() {
-        return getSequencerTxn(Long.MAX_VALUE);
+        return getSequencerTxn(Long.MAX_VALUE, ANY_STRUCTURE_VERSION);
+    }
+
+    private long getSequencerTxn(long expectedSeqTxn) {
+        return getSequencerTxn(expectedSeqTxn, ANY_STRUCTURE_VERSION);
     }
 
     /**
      * Sequences the pending transaction. {@code Long.MAX_VALUE} sequences it unconditionally; any other
      * {@code expectedSeqTxn} sequences it only while that is still the table's latest txn, and returns
      * {@code FENCE_REJECTED} otherwise.
+     * <p>
+     * When the table's structure is ahead of this writer's, the writer applies the structural changes and tries
+     * again. A {@code requiredStructureVersion} other than {@link #ANY_STRUCTURE_VERSION} names the structure the
+     * transaction depends on: once the writer has moved past it, the transaction stays unsequenced and the method
+     * returns {@code NO_TXN}.
      */
-    private long getSequencerTxn(long expectedSeqTxn) {
+    private long getSequencerTxn(long expectedSeqTxn, long requiredStructureVersion) {
         try {
             long seqTxn;
             do {
@@ -2151,6 +2176,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         : nextSeqTxnIfLastTxn(expectedSeqTxn, getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, txnRowCount);
                 if (seqTxn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
+                    if (requiredStructureVersion != ANY_STRUCTURE_VERSION) {
+                        // The sequencer refuses a txn only for a structure version behind its own. The caller
+                        // checked the required version against this writer's before the record, so the
+                        // writer has moved past it now.
+                        assert getColumnStructureVersion() != requiredStructureVersion;
+                        return NO_TXN;
+                    }
                 }
             } while (seqTxn == NO_TXN);
             return seqTxn == FENCE_REJECTED ? seqTxn : (lastSeqTxn = seqTxn);

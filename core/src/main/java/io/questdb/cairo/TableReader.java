@@ -2455,12 +2455,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             int writerIndex = metadata.getWriterIndex(columnIndex);
             final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
             final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0;
-            long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1;
-            if (columnTxn == -1) {
-                // When a column is added, a column version will have txn number for the partition
-                // where it's added. It will also have the txn number in the [default] partition
-                columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
-            }
+            // A record of the partition names the version of the column's files there, -1 included: the files of a
+            // column from CREATE TABLE carry no column name txn. Without a record, the partition holds the column's
+            // default version, as the writer resolves it too.
+            final long columnTxn = versionRecordIndex > -1
+                    ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex)
+                    : columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             final long columnRowCount = partitionRowCount - columnTop;
 
             // When column is added mid-table existence, the top record is only

@@ -88,6 +88,11 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyToSansUnsupported(metadata, true);
+                // sorting_columns orders the rows of each row group, but says nothing about the order of the row groups.
+                if (metadata.getTimestampIndex() != -1
+                        && !decoder.areRowGroupsInTimestampOrder(decoder.metadata().getTimestampIndex())) {
+                    metadata.setTimestampIndex(-1);
+                }
                 if (metadata.getColumnCount() == 0) {
                     throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
                 }

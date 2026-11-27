@@ -78,14 +78,10 @@ public class CaseFunctionFactory implements FunctionFactory {
 
             vars.add(bool);
             vars.add(value);
-
-            argsToPoke.add(bool);
-            argsToPoke.add(value);
         }
 
         if (elseBranch != null) {
             returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, "CASE values cannot be bind variables");
-            argsToPoke.add(elseBranch);
         }
 
         // next calculate cast functions
@@ -101,6 +97,14 @@ public class CaseFunctionFactory implements FunctionFactory {
 
         if (elseBranch != null) {
             elseBranch = CaseCommon.getCastToCommonTypeFunction(elseBranch, elseBranchPosition, returnType, configuration, sqlExecutionContext);
+        }
+
+        // args() holds what the picker evaluates, the casts to the common type rather than the
+        // values they wrap: isThreadSafe(), init() and close() read it, and a decimal cast is
+        // not thread-safe.
+        argsToPoke.addAll(vars);
+        if (elseBranch != null) {
+            argsToPoke.add(elseBranch);
         }
 
         final int argsLen = vars.size();

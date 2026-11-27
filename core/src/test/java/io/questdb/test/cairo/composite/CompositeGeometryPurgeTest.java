@@ -40,7 +40,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
@@ -49,7 +48,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
@@ -370,11 +368,10 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
      * partition it failed on - it does NOT silently overwrite one. Emptying a single generation's file is enough for
      * the very same publish to succeed, which is what keeps a stray file from costing a generation permanently.
      * <p>
-     * The exception is the last resort for a publish site that cannot rewrite the directory - the compaction, squash
-     * and trim sites in {@code TableWriter}, none of which can start a chain, so only a size-cap rotation reaches it
-     * there. The COMMIT path no longer does: see
-     * {@link #testEveryGenerationHoldingARecordRewritesTheDayIntoAFreshVersion}. So the publish is driven directly,
-     * off the same fixture, rather than through an apply that now recovers.
+     * The exception is the last resort for a publish whose caller did not ask first. The commit path asks, see
+     * {@link #testEveryGenerationHoldingARecordRewritesTheDayIntoAFreshVersion}, and so do the compaction, squash and
+     * split removal sites in {@code TableWriter}. So the publish is driven directly, off the same fixture, rather than
+     * through an apply that now recovers.
      */
     @Test
     public void testEveryGenerationHoldingARecordFailsAPublishThatCannotRewriteTheDirectory() throws Exception {
@@ -922,7 +919,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                     reader.getTxFile().isPartitionComposite(reader.getTxFile().getPartitionIndex(DAY_03))
             );
         }
-        plantFakeGeometryRecordNearFileLimit("x", DAY_03, 0);
+        NearFullGeometryFixture.plantCommittedRecord(engine, "x", DAY_03, 0);
         return tt;
     }
 
@@ -1232,38 +1229,6 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
         final File emptyGeneration = geometryFileOfDay(generation);
         Assert.assertTrue("generation " + generation + " already has a file", emptyGeneration.createNewFile());
         Assert.assertEquals("planted generation " + generation + " is not empty", 0, emptyGeneration.length());
-    }
-
-    /**
-     * Plants a byte-identical copy of the day's currently-committed {@code _geometry} record 8 bytes short of {@link
-     * PartitionGeometryFile#MAX_FILE_SIZE} - a sparse write, not 100MB of real I/O - and re-points {@code _txn}'s
-     * geometry ref at that copy, so the next commit sees a genuinely near-full generation. Same fake-up as {@code
-     * O3PartitionPreSplitTest.plantFakeGeometryRecordNearFileLimit}.
-     */
-    private static void plantFakeGeometryRecordNearFileLimit(String tableName, long partitionTs, int fakeGeneration) throws Exception {
-        try (TableWriter writer = getWriter(tableName)) {
-            final TxWriter tx = writer.getTxWriter();
-            final int partitionIndex = tx.getPartitionIndex(partitionTs);
-            final long committedRef = tx.getGeometryRef(partitionIndex);
-            Assert.assertTrue("partition is not composite ahead of the fake-up", tx.isPartitionComposite(partitionIndex));
-            final int realGeneration = TxReader.geometryGeneration(committedRef);
-            final long realOffset = TxReader.geometryOffset(committedRef);
-            final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-            final long fakeOffset = PartitionGeometryFile.MAX_FILE_SIZE - 8;
-            final FilesFacade geometryFf = configuration.getFilesFacade();
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(writer.getTableToken());
-                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_WRITER)) {
-                    geometryFile.read(geometryFf, path, realGeneration, realOffset);
-                    geometryFile.append(geometryFf, path, fakeGeneration, fakeOffset, configuration.getCommitMode());
-                }
-            }
-
-            writer.setPartitionGeometryRefForTest(partitionTs, TxReader.packGeometryRef(fakeGeneration, fakeOffset));
-            tx.commit(new ObjList<>());
-        }
     }
 
     /**

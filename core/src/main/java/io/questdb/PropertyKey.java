@@ -142,6 +142,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS("cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION("cairo.sql.parallel.hash.join.groupby.build.rows.per.partition"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED("cairo.sql.parallel.hash.join.groupby.enabled"),
+    CAIRO_SQL_STREAM_GROUPBY_ENABLED("cairo.sql.stream.groupby.enabled"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio"),
@@ -240,6 +241,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
     CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT("cairo.mat.view.refresh.busy.retry.timeout"),
     CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT("cairo.mat.view.refresh.busy.retry.limit"),
+    CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT("cairo.view.compile.busy.retry.timeout"),
     CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST("cairo.mat.view.refresh.block.list"),
     // Deprecated no-op: superseded by cairo.mat.view.refresh.busy.retry.timeout. Retained so that an
     // existing server.conf carrying this key still validates and starts, including under strict
@@ -334,6 +336,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_ENABLED("http.min.enabled"),
     HTTP_USER("http.user"),
     HTTP_PASSWORD("http.password", true),
+    HTTP_ALLOWED_HOSTS("http.allowed.hosts"),
+    HTTP_BROWSER_ALLOWED_ORIGINS("http.browser.allowed.origins"),
+    BROWSER_TLS_TERMINATION_ENABLED("browser.tls.termination.enabled"),
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
     HTTP_MIN_WORKER_NAP_THRESHOLD("http.min.worker.nap.threshold"),

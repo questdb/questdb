@@ -47,6 +47,28 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_removeRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jint,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.removeRowGroup");
+        return err.into_cairo_exception().throw(env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    if let Err(mut err) = parquet_updater.remove_row_group(rg_index) {
+        err.add_context(format!("could not remove row group {rg_index}"));
+        err.add_context("error in PartitionUpdater.removeRowGroup");
+        err.into_cairo_exception().throw(env)
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setTargetSchema(
     mut env: JNIEnv,
     _class: JClass,
@@ -771,7 +793,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 footer_offset,
                 footer_length,
                 chunked.bloom_bitsets(),
-                0, // unused_bytes: new file, no dead space
+                None, // written from scratch: write order is final order
+                0,    // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
             )
@@ -1149,10 +1172,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    dense_symbol_dictionary: jboolean,
 ) -> *mut StreamingParquetWriter {
     let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
-        let partition_template = create_partition_template(
+        let mut partition_template = create_partition_template(
             col_count,
             col_names_ptr,
             col_names_len,
@@ -1160,6 +1184,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             timestamp_index,
             timestamp_descending,
         )?;
+        if dense_symbol_dictionary != 0 {
+            // The frames clone the template's columns, so every row group of a Symbol
+            // column gets a dictionary of only the symbols it uses.
+            for column in partition_template.columns.iter_mut() {
+                if column.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
+                    column.dense_symbol_dictionary = true;
+                }
+            }
+        }
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let row_group_size_opt = if row_group_size > 0 {
@@ -2207,6 +2240,7 @@ mod validation_tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             }],
         }
     }

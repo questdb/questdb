@@ -116,6 +116,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -167,6 +172,9 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         double interpolatedGapDistance = (gapSize * distance) / (ts2 - ts1);
         // save
         saveDistance(result, interpolatedGapDistance);
+        // An extrapolation can start from this cell.
+        saveFirstItem(result, getLastLatitude(value1), getLastLongitude(value1), ts1);
+        saveLastItem(result, getLastLatitude(value1), getLastLongitude(value1), ts1);
     }
 
     @Override
@@ -197,6 +205,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     @Override
     public boolean supportsParallelism() {
         return false;
+    }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
     }
 
     private double calculateHaversineDistance(MapValue value1, MapValue value2) {

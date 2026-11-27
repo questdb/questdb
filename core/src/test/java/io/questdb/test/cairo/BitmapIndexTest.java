@@ -1474,9 +1474,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
                 assertTrue("Value file should grow in size", newMemSize > initialMemSize);
 
-                // The reader should stop at the last known valueMem size boundary now.
+                // The reader should stop at the last known valueMem size boundary now. It maps
+                // 5 blocks of 128 values, and the writer filled all 640 cells before extending
+                // the file, so the reader returns every one of them.
                 assertForwardCursorLimit(reader, 0, N, tmp, 528, 0);
-                assertForwardCursorLimit(reader, 0, N + newKeysN, tmp, 639, 0);
+                assertForwardCursorLimit(reader, 0, N + newKeysN, tmp, 640, 0);
                 Assert.assertFalse(reader.getCursor(0, N + newKeysN, Long.MAX_VALUE).hasNext());
                 Assert.assertFalse(reader.getCursor(0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
             }
@@ -2692,6 +2694,50 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
             assertWriterConstructorFail("Key count");
+        });
+    }
+
+    @Test
+    public void testWriterOpenKeepsKeyFileWhenLengthFails() throws Exception {
+        // A failed length() maps an existing key file as empty. The open then rejects it as too
+        // short, and its close must not truncate the file, or every later open fails the same way.
+        final AtomicBoolean isFailingKeyLength = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long length(LPSZ name) {
+                if (isFailingKeyLength.get() && Utf8s.endsWithAscii(name, ".k")) {
+                    return -1;
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final LongList list = new LongList();
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 1000);
+                writer.add(64, 10);
+                writer.add(64, 987);
+            }
+            final long keyFileLength = ff.length(BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE));
+            Assert.assertTrue(keyFileLength >= BitmapIndexUtils.KEY_FILE_RESERVED);
+
+            isFailingKeyLength.set(true);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                writer.of(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Index file too short");
+            } finally {
+                isFailingKeyLength.set(false);
+            }
+
+            // the failed open may grow the file to its mapping size, but must not shrink it
+            Assert.assertTrue(ff.length(BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) >= keyFileLength);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                assertThat("[987,10]", writer.getCursor(64), list);
+                assertThat("[1000]", writer.getCursor(0), list);
+            }
         });
     }
 

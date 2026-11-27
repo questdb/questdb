@@ -319,7 +319,7 @@ public class PostingSealPurgeLogBackoffTest extends AbstractCairoTest {
                 assertEquals(0, job.getErrorCountForTesting());
                 assertQuery("SELECT ts, count(), count(completed) FROM '" + logToken.getTableName() + "' ORDER BY ts")
                         .noLeakCheck()
-                        .expectSize()
+                        .noRandomAccess()
                         .timestamp("ts")
                         .returns("ts\tcount\tcount1\n"
                                 + "1970-01-01T00:00:00.000010Z\t" + rowsPerPage + "\t" + rowsPerPage + "\n"

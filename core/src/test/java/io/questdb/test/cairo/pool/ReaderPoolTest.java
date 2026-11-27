@@ -45,6 +45,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -60,6 +61,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1233,6 +1235,129 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedCloseReleasesReader() throws Exception {
+        execute("CREATE TABLE fp AS (SELECT timestamp_sequence('2024-01-01', 3_600_000_000L) ts, x v FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY DAY");
+        final TableToken tableToken = engine.verifyTableName("fp");
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                if (isArmed.compareAndSet(true, false)) {
+                    throw CairoException.critical(0).put("injected munmap failure");
+                }
+                super.munmap(address, size, memoryTag);
+            }
+        };
+        assertWithPool(pool -> {
+            final ReaderPool.R reader = pool.get(tableToken);
+            Assert.assertEquals(2, reader.getPartitionCount());
+            reader.openPartition(0);
+            reader.openPartition(1);
+            isArmed.set(true);
+            try {
+                reader.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
+            }
+            Assert.assertFalse(reader.isOpen());
+            Assert.assertEquals(0, pool.getBusyCount());
+
+            final ReaderPool.R detached = pool.get(tableToken);
+            Assert.assertNotSame(reader, detached);
+            Assert.assertEquals(48, detached.size());
+            pool.detach(detached);
+            detached.incrementDetachedRefCount();
+            detached.openPartition(0);
+            detached.openPartition(1);
+            isArmed.set(true);
+            try {
+                detached.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
+            }
+            Assert.assertEquals(0, detached.getDetachedRefCount());
+            pool.attach(detached);
+            detached.close();
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public int getInactiveReaderMaxOpenPartitions() {
+                return 1;
+            }
+        });
+    }
+
+    @Test
+    public void testFailedCloseRetryKeepsOtherBorrowerSlot() throws Exception {
+        execute("CREATE TABLE fp AS (SELECT timestamp_sequence('2024-01-01', 3_600_000_000L) ts, x v FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY DAY");
+        final TableToken tableToken = engine.verifyTableName("fp");
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                if (isFailing.get()) {
+                    throw CairoException.critical(0).put("injected munmap failure");
+                }
+                super.munmap(address, size, memoryTag);
+            }
+        };
+        assertWithPool(pool -> {
+            final ReaderPool.R failed = pool.get(tableToken);
+            failed.openPartition(0);
+            failed.openPartition(1);
+            isFailing.set(true);
+            try {
+                failed.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
+                Assert.assertEquals(1, e.getSuppressed().length);
+            } finally {
+                isFailing.set(false);
+            }
+            Assert.assertTrue(failed.isOpen());
+            Assert.assertEquals(0, pool.getBusyCount());
+
+            final ReaderPool.R borrowed = pool.get(tableToken);
+            Assert.assertNotSame(failed, borrowed);
+            Assert.assertEquals(failed.getIndex(), borrowed.getIndex());
+            Assert.assertEquals(1, pool.getBusyCount());
+
+            failed.close();
+            Assert.assertFalse(failed.isOpen());
+            Assert.assertEquals(1, pool.getBusyCount());
+
+            final ReaderPool.R next = pool.get(tableToken);
+            Assert.assertNotSame(borrowed, next);
+            Assert.assertNotSame(failed, next);
+            Assert.assertEquals(2, pool.getBusyCount());
+            Assert.assertEquals(48, borrowed.size());
+            Assert.assertEquals(48, next.size());
+            next.close();
+            borrowed.close();
+            Assert.assertTrue(borrowed.isOpen());
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public int getInactiveReaderMaxOpenPartitions() {
+                return 1;
+            }
+        });
+    }
+
+    @Test
     public void testFailedLockFreesSlotsForGetAndLock() throws Exception {
         // A lock that meets a busy reader hands back the slot it took before it: get() can use every slot again, and
         // another thread can lock once the reader is closed.
@@ -1362,6 +1487,90 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 reader.close();
             }
         });
+    }
+
+    @Test
+    public void testGetOwnerThreads() throws Exception {
+        // getOwnerThreads() lists the thread that holds each slot of a table, in every segment of the
+        // pool, and takes no slot. It lists a reader that the calling thread holds, and leaves out the
+        // slots of a lock() that the calling thread holds, which lock() on the thread passes over. A
+        // failed lock() of the calling thread keeps no slot.
+        final CairoConfiguration poolConfig = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getPoolSegmentSize() {
+                return 2;
+            }
+        };
+        assertWithPool(pool -> {
+            final LongList owners = new LongList();
+            final long thread = Thread.currentThread().threadId();
+            // the pool has no entry for the table
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+
+            // the first slot holds a reader that no thread holds
+            pool.get(uTableToken).close();
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+
+            // this thread holds the reader in the first slot, and another thread the second slot
+            final TableReader firstReader = pool.get(uTableToken);
+            final CountDownLatch isHolding = new CountDownLatch(1);
+            final CountDownLatch isReleased = new CountDownLatch(1);
+            final AtomicLong otherThread = new AtomicLong();
+            final AtomicReference<Throwable> holderError = new AtomicReference<>();
+            final Thread holder = new Thread(() -> {
+                try (TableReader ignore = pool.get(uTableToken)) {
+                    otherThread.set(Thread.currentThread().threadId());
+                    isHolding.countDown();
+                    isReleased.await();
+                } catch (Throwable th) {
+                    holderError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            holder.start();
+            try {
+                Assert.assertTrue(isHolding.await(30, TimeUnit.SECONDS));
+                pool.getOwnerThreads(uTableToken, owners);
+                Assert.assertEquals("[" + thread + "," + otherThread.get() + "]", owners.toString());
+                owners.clear();
+
+                // a lock attempt of this thread takes the first slot, fails at the second, and frees
+                // the first slot again
+                firstReader.close();
+                Assert.assertFalse(pool.lock(uTableToken));
+                pool.getOwnerThreads(uTableToken, owners);
+                Assert.assertEquals("[" + otherThread.get() + "]", owners.toString());
+                owners.clear();
+
+                // the failed lock attempt kept no slot, so this thread's next reader takes the first
+                // slot again
+                try (TableReader ignore = pool.get(uTableToken)) {
+                    pool.getOwnerThreads(uTableToken, owners);
+                    Assert.assertEquals("[" + thread + "," + otherThread.get() + "]", owners.toString());
+                    owners.clear();
+                }
+            } finally {
+                isReleased.countDown();
+                holder.join();
+            }
+            Assert.assertNull(holderError.get());
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+
+            // the lock of this thread holds every slot with no tenant
+            Assert.assertTrue(pool.lock(uTableToken));
+            try {
+                pool.getOwnerThreads(uTableToken, owners);
+                Assert.assertEquals("[]", owners.toString());
+            } finally {
+                pool.unlock(uTableToken);
+            }
+            pool.getOwnerThreads(uTableToken, owners);
+            Assert.assertEquals("[]", owners.toString());
+        }, poolConfig);
     }
 
     @Test

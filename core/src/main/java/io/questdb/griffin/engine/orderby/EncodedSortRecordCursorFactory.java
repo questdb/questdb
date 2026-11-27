@@ -47,7 +47,8 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
             RecordMetadata metadata,
             RecordCursorFactory base,
             RecordSink recordSink,
-            ListColumnFilter sortColumnFilter
+            ListColumnFilter sortColumnFilter,
+            long valueMaxBytes
     ) {
         super(metadata);
         this.base = base;
@@ -55,7 +56,8 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
                 configuration,
                 metadata,
                 sortColumnFilter,
-                recordSink
+                recordSink,
+                valueMaxBytes
         );
         this.sortColumnFilter = sortColumnFilter;
     }
@@ -80,6 +82,11 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public int getScanDirection() {
         return SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
+    }
+
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return SortedRecordCursorFactory.hasTableScanTimestamp(getMetadata(), sortColumnFilter, base);
     }
 
     @Override

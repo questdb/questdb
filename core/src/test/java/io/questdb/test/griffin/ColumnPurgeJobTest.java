@@ -6054,7 +6054,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery("SELECT table_name, ts, count(), count(completed), min(completed), max(completed) FROM '" + purgeJob.getLogTableName() + "' ORDER BY ts")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .expectSize()
+                        .noRandomAccess()
                         .returns("""
                                 table_name\tts\tcount\tcount1\tmin\tmax
                                 up_many~\t1970-01-01T00:00:00.000010Z\t1000\t0\t\t
@@ -6246,7 +6246,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery("SELECT table_name, ts, count() FROM '" + purgeJob.getLogTableName() + "' ORDER BY ts")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .expectSize()
+                        .noRandomAccess()
                         .returns("table_name\tts\tcount\n"
                                 + "gone_1\t1970-01-01T00:00:00.000010Z\t" + rowsPerPage + "\n"
                                 + "gone_2\t1970-01-01T00:00:00.000030Z\t" + rowsPerPage + "\n");
