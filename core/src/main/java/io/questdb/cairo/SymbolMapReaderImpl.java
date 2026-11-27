@@ -112,6 +112,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         of(configuration, pathToTableDir, columnName, columnNameTxn, symbolCount, cachePool, truncateVersion);
     }
 
+    /**
+     * Returns the reader whose dictionary a view from {@link #newSymbolTableView()} reads, or null when the symbol
+     * table is no such view.
+     */
+    public static @Nullable SymbolMapReaderImpl getViewedReader(SymbolTable symbolTable) {
+        return symbolTable instanceof SymbolTableView view ? view.getReader() : null;
+    }
+
     @Override
     public void close() {
         Misc.free(indexReader);
@@ -527,6 +535,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 view.key = key;
             }
             return value;
+        }
+
+        private SymbolMapReaderImpl getReader() {
+            return SymbolMapReaderImpl.this;
         }
 
         /**

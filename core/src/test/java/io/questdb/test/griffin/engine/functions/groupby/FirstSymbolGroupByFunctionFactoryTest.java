@@ -77,7 +77,7 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 assertQuery("SELECT ts, nullif(first(s), last(s)) n FROM tab SAMPLE BY 1d")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .expectSize()
+                        .noRandomAccess()
                         .returns("""
                                 ts\tn
                                 2024-01-01T00:00:00.000000Z\tabc
