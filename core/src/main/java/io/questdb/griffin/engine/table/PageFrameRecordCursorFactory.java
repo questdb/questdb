@@ -150,6 +150,18 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        if (!rowCursorFactory.isStableWithinExecution()) {
+            return false;
+        }
+        final Function filter = this.filter;
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return partitionFrameCursorFactory.isStableWithinExecution();
+    }
+
+    @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
             PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, order);

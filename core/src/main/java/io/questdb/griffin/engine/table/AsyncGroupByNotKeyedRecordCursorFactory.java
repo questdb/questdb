@@ -200,6 +200,20 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor.isOpenedByShared()) {
             cursor.setOpenedByShared(false);

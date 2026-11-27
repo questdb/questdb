@@ -66,7 +66,7 @@ public interface LegacyRecordCursorFactory extends RecordCursorFactory {
     }
 
     static boolean isStableWithinExecution(RecordCursorFactory factory) {
-        return factory instanceof LegacyRecordCursorFactory legacy ? legacy.isStableWithinExecution() : !factory.isNonDeterministic();
+        return factory.isStableWithinExecution();
     }
 
     static RecordCursorFactory rewrapOverTopK(RecordCursorFactory factory, RecordCursorFactory topK, RecordMetadata orderedMetadata) {
@@ -102,10 +102,6 @@ public interface LegacyRecordCursorFactory extends RecordCursorFactory {
     }
 
     default void halfClose() {
-    }
-
-    default boolean isStableWithinExecution() {
-        return !isNonDeterministic();
     }
 
     default RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {

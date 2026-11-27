@@ -48,5 +48,9 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
         return true;
     }
 
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     boolean isStatic();
 }

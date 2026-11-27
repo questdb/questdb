@@ -99,6 +99,11 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return intervalModel.isStableWithinExecution();
+    }
+
+    @Override
     public boolean isIntervalScan() {
         return true;
     }

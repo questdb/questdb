@@ -163,6 +163,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         return false;
     }
 
+    @Override
     public boolean isStableWithinExecution() {
         if (isStatic()) {
             return true;

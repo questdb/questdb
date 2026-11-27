@@ -145,6 +145,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return symbol == null || symbol.isStableWithinExecution();
+    }
+
+    @Override
     public boolean isUsingIndex() {
         return true;
     }

@@ -74,6 +74,14 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
     }
 
     /**
+     * The row cursor's part of {@link RecordCursorFactory#isStableWithinExecution()}. An unknown row cursor reports
+     * false.
+     */
+    default boolean isStableWithinExecution() {
+        return false;
+    }
+
+    /**
      * Indicates if the factory uses index
      *
      * @return true if the returned RowCursor is using an index, false otherwise

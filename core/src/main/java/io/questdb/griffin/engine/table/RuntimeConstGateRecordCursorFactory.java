@@ -193,6 +193,11 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return filter.isStableWithinExecution() && base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

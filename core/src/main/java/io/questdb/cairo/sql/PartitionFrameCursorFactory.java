@@ -96,6 +96,10 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return true;
     }
 
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     /**
      * The table the factory reads, at the metadata version of its scan; a column index is a position among its columns.
      */
