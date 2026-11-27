@@ -20,8 +20,9 @@ parameters:
   # legs of one stage, or the macOS and Windows halves of the hosted jobs). Name those jobs
   # here, space-separated, and select-test-commit-mode.yml puts half of them on NOSYNC and half
   # on ADAPTIVE, swapping them on the branch's next run. Empty leaves the suite default
-  # (ADAPTIVE) in place: the fuzz and adaptive-soak pipelines rely on that, and the coverage
-  # legs of a PR build, which run each shard once, get it too.
+  # (ADAPTIVE) in place, which the fuzz and adaptive-soak pipelines rely on. The coverage legs
+  # of a PR build name no group either: they run each shard once, always on NOSYNC (see
+  # TEST_COMMIT_MODE_OPT below).
   - name: testCommitModeGroup
     type: string
     default: ""
@@ -62,10 +63,18 @@ steps:
         # Direct-to-Central path: keep historical behaviour (no connection reuse).
         echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]-Dhttp.keepAlive=false"
       fi
-      # Empty unless select-test-commit-mode.yml picks a mode for this job. Defined here because
-      # this step runs in every job, and "Run tests" would otherwise pass the undefined macro to
-      # Maven as literal text.
-      echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
+      # The test commit mode. Defined here because this step runs in every job, and the test
+      # tasks would otherwise pass the undefined macro to Maven as literal text.
+      #   - The coverage legs of a PR build run NOSYNC, the mode a table commits in unless it
+      #     is configured otherwise. ADAPTIVE is tested on master, where the platform legs
+      #     alternate the two modes, and by the fuzz pipelines.
+      #   - Empty everywhere else, which leaves the suite default (ADAPTIVE) in place.
+      # select-test-commit-mode.yml runs later and overrides this for a job in a group.
+      if [ "$(Build.Reason)" = "PullRequest" ] && [[ "$(testset)" == coverage* ]]; then
+        echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]-Dquestdb.test.commit.mode=nosync"
+      else
+        echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
+      fi
       # Empty unless the Windows-only step before the tests moves the test root. Defined here for the
       # same reason.
       echo "##vso[task.setvariable variable=TEST_TMPDIR_OPT]"
@@ -432,7 +441,7 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -P jacoco,qdbr-coverage,build-web-console
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
