@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.MatViewSqlValidator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -67,7 +68,10 @@ import org.jetbrains.annotations.Nullable;
  * <ol>
  *     <li>it does nothing on a valid view;</li>
  *     <li>it waits until the view's own WAL is applied, without holding the view latch and within the statement
- *     timeout, so that it can follow a view column change directly, and refuses a view whose WAL is suspended;</li>
+ *     timeout, so that it can follow a view column change directly, and refuses a view whose WAL is suspended, and with
+ *     "retry later" when a role switch waits for the role-switch read lock that the statement holds. A WAL tracker of
+ *     the view that no WAL check has initialised since the start of the node it initialises itself, as the check
+ *     does;</li>
  *     <li>it refuses at once while a FULL refresh is pending, which recovers the view itself; otherwise it takes the
  *     view latch, polling it within the statement timeout while another holder has it, and refuses with "retry
  *     later" when the timeout expires first, or when a role switch waits for the role-switch read lock that the
@@ -156,7 +160,8 @@ public final class MatViewResume {
             TableToken viewToken,
             int viewNamePosition
     ) throws SqlException {
-        final long targetSeqTxn = viewSeqTracker.getSeqTxn();
+        // read from the tracker once it is initialised, see initViewTxnTracker()
+        long targetSeqTxn = -1;
         while (true) {
             if (viewSeqTracker.isSuspended()) {
                 throw SqlException.$(viewNamePosition, "materialized view WAL is suspended, run ALTER MATERIALIZED VIEW ")
@@ -165,9 +170,18 @@ public final class MatViewResume {
             if (viewSeqTracker.isDropped()) {
                 throw SqlException.matViewDoesNotExist(viewNamePosition, viewToken.getTableName());
             }
+            if (!viewSeqTracker.isInitialised()) {
+                initViewTxnTracker(engine, viewToken);
+            }
+            // The seqTxn of an initialised tracker is valid. A republish resets only its writer txn, which then reads -1
+            // until the next WAL check, or the next pass of this loop, initialises the tracker again.
+            if (targetSeqTxn == -1) {
+                targetSeqTxn = viewSeqTracker.getSeqTxn();
+            }
             if (viewSeqTracker.getWriterTxn() >= targetSeqTxn) {
                 return;
             }
+            MatViewAlter.refuseOnRoleSwitch(engine, viewToken, viewNamePosition);
             viewState.runResumeWalWaitSeamForTesting();
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             pauseWait(engine);
@@ -179,11 +193,6 @@ public final class MatViewResume {
                 .put("]; RESUME cannot catch up on base changes made while the view was invalid. Run REFRESH MATERIALIZED VIEW ")
                 .put(viewToken.getTableName())
                 .put(" RESUME SKIP BACKLOG, then REFRESH ... RANGE over the gap");
-    }
-
-    private static SqlException busy(TableToken viewToken, int viewNamePosition) {
-        return SqlException.$(viewNamePosition, "materialized view is busy, retry later [view=")
-                .put(viewToken.getTableName()).put(']');
     }
 
     // Consumes the invalidation that was pending when RESUME took the latch, once RESUME has made the view valid, when
@@ -294,6 +303,22 @@ public final class MatViewResume {
 
     private static boolean hasUnappliedViewWal(SeqTxnTracker viewSeqTracker) {
         return viewSeqTracker.getWriterTxn() < viewSeqTracker.getSeqTxn();
+    }
+
+    // A tracker reads -1 for both its txns from the start of the node until the first WAL check initialises it, and -1
+    // for its writer txn after a republish until the next check. Its comparison would then tell RESUME that the view's
+    // WAL is applied, and RESUME would read a definition that a WAL transaction still replaces, so RESUME initialises the
+    // tracker as the check does: from the seqTxn that the view's table applied and the sequencer's last txn, and
+    // notifies the WAL apply job when the view's WAL holds transactions to apply.
+    private static void initViewTxnTracker(CairoEngine engine, TableToken viewToken) {
+        final long appliedSeqTxn;
+        try (TableReader viewReader = engine.getReader(viewToken)) {
+            appliedSeqTxn = viewReader.getSeqTxn();
+        }
+        final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+        if (tableSequencerAPI.initTxnTracker(viewToken, appliedSeqTxn, tableSequencerAPI.lastTxn(viewToken))) {
+            engine.notifyWalTxnCommitted(viewToken);
+        }
     }
 
     // Returns false when the fiber cannot park; throws when its runtime or the engine's timers shut down.
@@ -596,6 +621,13 @@ public final class MatViewResume {
                     .put(']');
         }
         viewState.setColumnMappingSummary(MatViewColumnMapping.summarize(queryMetadata, viewMetadata, isPositional));
+    }
+
+    // The refusal of a statement that stops waiting for the view: its latch stayed busy past the statement timeout, or a
+    // role switch waits for the statement's role-switch read hold, see lockView() and MatViewAlter.refuseOnRoleSwitch().
+    static SqlException busy(TableToken viewToken, int viewNamePosition) {
+        return SqlException.$(viewNamePosition, "materialized view is busy, retry later [view=")
+                .put(viewToken.getTableName()).put(']');
     }
 
     // Takes the view latch, waiting while another holder has it. Every other holder of an invalid view's latch is

@@ -123,13 +123,18 @@ public final class MatViewAlter {
      * AS}, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a REFRESH issued right after the statement
      * runs the new SQL. Returns at once with no such statement pending, and when the view's WAL is suspended or
      * dropped, which leaves REFRESH as it was before the statement. Honours the statement timeout and cancellation, as
-     * RESUME's wait for the view's WAL does.
+     * RESUME's wait for the view's WAL does, and refuses with "retry later" once a role switch waits for the
+     * statement's role-switch read hold, see {@link #refuseOnRoleSwitch}.
+     *
+     * @param viewNamePosition the position of the view name in the statement, where the refusal points
+     * @throws SqlException a role switch waits for the statement
      */
     public static void awaitPendingDefinition(
             @NotNull CairoEngine engine,
             @NotNull SqlExecutionContext executionContext,
-            @NotNull TableToken viewToken
-    ) {
+            @NotNull TableToken viewToken,
+            int viewNamePosition
+    ) throws SqlException {
         final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
         if (viewState == null) {
             return;
@@ -140,13 +145,15 @@ public final class MatViewAlter {
         }
         final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        while (viewSeqTracker.getWriterTxn() < pendingSeqTxn) {
+        // The applied record, not the tracker's writer txn, which a republish resets long after the event applied.
+        while (!viewState.hasAppliedDefinition(pendingSeqTxn)) {
             if (viewSeqTracker.isSuspended() || viewSeqTracker.isDropped()) {
                 LOG.info().$("materialized view WAL is suspended, not waiting for its new definition [view=").$(viewToken)
                         .$(", definitionSeqTxn=").$(pendingSeqTxn)
                         .I$();
                 return;
             }
+            refuseOnRoleSwitch(engine, viewToken, viewNamePosition);
             viewState.runDefinitionWaitSeamForTesting();
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             MatViewResume.pauseWait(engine);
@@ -163,10 +170,12 @@ public final class MatViewAlter {
      * {@link MatViewBacklog#isViewWalSuspended(CairoEngine, TableToken, SeqTxnTracker)}: the WAL then reaches the event
      * only after a user acts, and the definition the statement would run against is unknown until then. A RANGE refuses
      * since its bounds cannot wait in the refresh job the way an incremental or FULL refresh does there. Honours the
-     * statement timeout and cancellation, as REFRESH's wait does.
+     * statement timeout and cancellation, as REFRESH's wait does, and refuses with "retry later" once a role switch
+     * waits for the statement's role-switch read hold, see {@link #refuseOnRoleSwitch}.
      *
      * @param viewNamePosition the position of the view name in the statement, where refusals point
-     * @throws SqlException a dropped view, or a view WAL whose apply is suspended
+     * @throws SqlException a dropped view, a view WAL whose apply is suspended, or a role switch that waits for the
+     *                      statement
      */
     public static void awaitPendingDefinitionOrRefuse(
             @NotNull CairoEngine engine,
@@ -186,9 +195,10 @@ public final class MatViewAlter {
         // the loop reads every state from this tracker, see MatViewBacklog.isViewWalSuspended()
         final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        // The record never resets, so the applied event counts first, whatever the WAL's state is now: a suspension
-        // that came after the event applied stops no statement.
-        while (viewSeqTracker.getWriterTxn() < pendingSeqTxn) {
+        // The applied record never resets, unlike the tracker's writer txn, which a republish resets long after the
+        // event applied, so the applied event counts first, whatever the WAL's state is now: a suspension that came
+        // after the event applied stops no statement.
+        while (!viewState.hasAppliedDefinition(pendingSeqTxn)) {
             // a dropped view does not exist, whatever stops the apply of its WAL
             if (viewSeqTracker.isDropped()) {
                 throw SqlException.matViewDoesNotExist(viewNamePosition, viewToken.getTableName());
@@ -196,6 +206,7 @@ public final class MatViewAlter {
             if (MatViewBacklog.isViewWalSuspended(engine, viewToken, viewSeqTracker)) {
                 throw definitionNotApplied(engine, viewToken, viewNamePosition);
             }
+            refuseOnRoleSwitch(engine, viewToken, viewNamePosition);
             viewState.runDefinitionWaitSeamForTesting();
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             MatViewResume.pauseWait(engine);
@@ -276,5 +287,16 @@ public final class MatViewAlter {
     private static SqlException fullRefreshPending(TableToken viewToken, int viewNamePosition) {
         return SqlException.$(viewNamePosition, "materialized view full refresh is pending, retry later [view=")
                 .put(viewToken.getTableName()).put(']');
+    }
+
+    // pg-wire re-executes a prepared statement under the role-switch read lock (PGPipelineEntry.executeFenced()). A role
+    // switch, such as a demote, waits for that read hold, and every fenced commit that starts meanwhile waits behind it,
+    // so a statement that waits for the view's WAL there would hold them all until the WAL applies or the statement
+    // times out. The statement stops waiting with "retry later" instead, as RESUME does on a busy latch, see
+    // MatViewResume.lockView().
+    static void refuseOnRoleSwitch(CairoEngine engine, TableToken viewToken, int viewNamePosition) throws SqlException {
+        if (engine.isRoleSwitchWaitingForCurrentReadHold()) {
+            throw MatViewResume.busy(viewToken, viewNamePosition);
+        }
     }
 }

@@ -5630,11 +5630,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // FULL, INCREMENTAL and RANGE run the view's SQL as its WAL applied it, so one issued right after
                 // ALTER MATERIALIZED VIEW ... AS waits for the statement's definition event to apply. While the WAL
                 // apply of the view is suspended short of the event, FULL and INCREMENTAL go to the refresh job, which
-                // waits for the event there, and RANGE refuses: its bounds cannot wait in the refresh job.
+                // waits for the event there, and RANGE refuses: its bounds cannot wait in the refresh job. Each refuses
+                // with "retry later" when a role switch waits for the statement meanwhile.
                 if (from != Numbers.LONG_NULL) {
                     MatViewAlter.awaitPendingDefinitionOrRefuse(engine, executionContext, matViewToken, matViewNamePosition);
                 } else {
-                    MatViewAlter.awaitPendingDefinition(engine, executionContext, matViewToken);
+                    MatViewAlter.awaitPendingDefinition(engine, executionContext, matViewToken, matViewNamePosition);
                 }
             }
             if (!isStatsReset && !fullRefresh) {

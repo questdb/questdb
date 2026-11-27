@@ -57,7 +57,10 @@ import java.util.concurrent.locks.Lock;
  * is unbounded here as with {@code query.timeout=0}, is no bound on a demote, and every fenced commit on the node
  * waits behind the pending writer meanwhile.
  * <p>
- * Each test plays the latch holder and the writer on two threads and orders them with latches. The holder stands for
+ * A re-executed REFRESH that waits for the view's WAL to apply a pending ALTER ... AS holds the same read lock, and must
+ * not hold the writer off either.
+ * <p>
+ * Each latch test plays the latch holder and the writer on two threads and orders them with latches. The holder stands for
  * a refresh job's backlog update or data commit: it holds the latch, takes the commit fence once the writer is
  * pending, and releases the latch after it. The writer waits up to {@link #DEMOTE_BOUND_SECONDS}, which only a stall
  * reaches; when it gives up, the cycle unwinds and the test reports the stall.
@@ -66,6 +69,8 @@ public class PGMatViewRoleSwitchTest extends BasePGTest {
     private static final String ALTER_WITH_BASE2_SQL = "ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h)";
     private static final long DEMOTE_BOUND_SECONDS = 30;
     private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
+    // ten times the hourly last price, a SQL whose rows tell it from the view's own
+    private static final String TEN_TIMES_SQL = "SELECT ts, sym, last(price) * 10 AS price FROM base SAMPLE BY 1h";
     private static final String VIEW_ROWS = """
             ts\tsym\tprice
             2024-01-01T00:00:00.000000Z\ta\t1.0
@@ -101,6 +106,45 @@ public class PGMatViewRoleSwitchTest extends BasePGTest {
                     TestUtils.assertContains(error, "materialized view is busy, retry later [view=price_1h]");
                     Assert.assertEquals("base", viewDefinition().getBaseTableName());
                 }
+            }
+            assertConnectionUsable(connection);
+        });
+    }
+
+    @Test
+    public void testDemoteDoesNotWaitForReExecutedRefreshWaitingForDefinition() throws Exception {
+        // The re-executed REFRESH waits for the view's WAL to apply a pending ALTER ... AS under the role-switch read
+        // lock, and stops waiting with "retry later" once the role-switch writer is pending. Nothing applies the view's
+        // WAL meanwhile, so only the refusal lets the writer through.
+        assertWithPgServer(Mode.EXTENDED, true, -1, (connection, _, _, _) -> {
+            createBaseWithRefreshedView();
+            try (PreparedStatement refresh = connection.prepareStatement("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL")) {
+                // the first execution runs at parse time, outside the demote fence
+                refresh.execute();
+                drainWalAndMatViewQueues();
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("ALTER MATERIALIZED VIEW price_1h AS (" + TEN_TIMES_SQL + ")");
+                }
+                execute("INSERT INTO base VALUES ('a', 3.0, '2024-01-01T00:20:00.000000Z')");
+
+                final String error = executeWhileDefinitionWaitAndDemoteRace(refresh);
+                TestUtils.assertContains(error, "materialized view is busy, retry later [view=price_1h]");
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(TEN_TIMES_SQL, viewDefinition().getMatViewSql());
+                // the IMMEDIATE view refreshed the bucket of the new base row with the new SQL
+                final String rows = """
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t30.0
+                        2024-01-01T01:00:00.000000Z\tb\t2.0
+                        """;
+                assertViewRows(rows);
+                assertViewStatus("valid", "");
+
+                // the statement runs once the definition applied
+                refresh.execute();
+                drainWalAndMatViewQueues();
+                assertViewRows(rows);
+                assertViewStatus("valid", "");
             }
             assertConnectionUsable(connection);
         });
@@ -227,6 +271,59 @@ public class PGMatViewRoleSwitchTest extends BasePGTest {
         );
         Assert.assertTrue(isFenceAcquired.get());
         Assert.assertFalse(state.isLocked());
+        Assert.assertEquals(0, engine.getRoleSwitchReadLockCount());
+        return error;
+    }
+
+    // Re-executes the prepared statement while it waits for the view's WAL to apply a pending definition, and a
+    // role-switch writer arrives once it waits. Returns the statement's error, and asserts that the writer got through.
+    // A statement that keeps waiting holds the writer off until the writer gives up and applies the view's WAL, which
+    // ends the wait, so the test fails instead of hanging.
+    private static String executeWhileDefinitionWaitAndDemoteRace(PreparedStatement preparedStatement) throws Exception {
+        final MatViewState state = viewState();
+        final CountDownLatch isWaiting = new CountDownLatch(1);
+        final AtomicBoolean isWriterLocked = new AtomicBoolean();
+        final AtomicReference<Throwable> helperError = new AtomicReference<>();
+
+        state.setOnDefinitionWaitForTesting(isWaiting::countDown);
+        final Thread writer = new Thread(() -> {
+            try {
+                if (!isWaiting.await(DEMOTE_BOUND_SECONDS, TimeUnit.SECONDS)) {
+                    throw new AssertionError("the statement did not wait for the pending definition");
+                }
+                final Lock writeLock = engine.getRoleSwitchWriteLock();
+                if (writeLock.tryLock(DEMOTE_BOUND_SECONDS, TimeUnit.SECONDS)) {
+                    isWriterLocked.set(true);
+                    writeLock.unlock();
+                } else {
+                    drainWalQueue();
+                }
+            } catch (Throwable th) {
+                helperError.compareAndSet(null, th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "role-switch-writer");
+        writer.start();
+
+        String error = null;
+        try {
+            preparedStatement.execute();
+        } catch (PSQLException e) {
+            error = e.getMessage();
+        } finally {
+            isWaiting.countDown();
+            writer.join();
+            state.setOnDefinitionWaitForTesting(null);
+        }
+        if (helperError.get() != null) {
+            throw new AssertionError(helperError.get());
+        }
+        Assert.assertTrue(
+                "the role-switch writer waited " + DEMOTE_BOUND_SECONDS + "s for a prepared statement that waited for the view's WAL"
+                        + " [statementError=" + error + ']',
+                isWriterLocked.get()
+        );
         Assert.assertEquals(0, engine.getRoleSwitchReadLockCount());
         return error;
     }

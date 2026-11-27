@@ -1091,6 +1091,15 @@ public class MatViewState implements QuietCloseable {
         return viewDefinition;
     }
 
+    /**
+     * Returns true once this node's WAL apply of the view has applied or skipped every definition event up to the
+     * sequencer txn, see {@link #recordAppliedDefinitionSeqTxn(long)}. Unlike the writer txn of the view's
+     * SeqTxnTracker, which a republish resets to -1 until the next WAL check, the answer never turns back to false.
+     */
+    public boolean hasAppliedDefinition(long seqTxn) {
+        return appliedDefinitionSeqTxn >= seqTxn;
+    }
+
     @TestOnly
     public boolean hasPendingFullRefreshHandoffForTesting() {
         return pendingFullRefreshHandoff.get();
