@@ -1835,11 +1835,12 @@ public class CopyExportTest extends AbstractCairoTest {
             assertCursorExportEncodesKeys("SELECT v, first(w) fw FROM kt", "async", 0);
             assertCursorExportEncodesKeys("SELECT v AS vk, first(w) fw FROM kt", "async_alias", 0);
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("async_alias"), ff, 1);
-            // a key on the designated timestamp passes ts through, unlike the bucket timestamp of SAMPLE BY below
+            // the stream GROUP BY: a key on the designated timestamp passes ts through, unlike the bucket timestamp of
+            // SAMPLE BY below
             final String timestampKeyQuery = "SELECT ts, first(w) fw FROM kt";
             assertQuery(timestampKeyQuery)
                     .noLeakCheck()
-                    .assertsPlanContaining("Async Group By");
+                    .assertsPlanContaining("Async Stream Group By");
             assertCursorExportEncodesKeys(timestampKeyQuery, "async_ts", 0);
             assertCursorExportEncodesKeys("SELECT DISTINCT v FROM kt", "distinct", 0);
             assertCursorExportEncodesKeys("SELECT v, count() c FROM kt GROUP BY ROLLUP (v)", "rollup", 0);

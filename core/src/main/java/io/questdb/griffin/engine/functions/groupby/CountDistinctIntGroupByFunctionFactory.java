@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -51,8 +52,12 @@ public class CountDistinctIntGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
+        final Function arg = args.getQuick(0);
+        if (arg.getType() == ColumnType.BYTE || arg.getType() == ColumnType.BOOLEAN) {
+            return new CountDistinctByteGroupByFunction(arg, "count_distinct");
+        }
         return new CountDistinctIntGroupByFunction(
-                args.getQuick(0),
+                arg,
                 configuration.getCountDistinctCapacity(),
                 configuration.getCountDistinctLoadFactor()
         );
