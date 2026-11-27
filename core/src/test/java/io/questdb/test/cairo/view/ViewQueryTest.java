@@ -564,16 +564,14 @@ public class ViewQueryTest extends AbstractViewTest {
                             QUERY PLAN
                             VirtualRecord
                               functions: [ts,1,2*v_max]
-                                VirtualRecord
-                                  functions: [ts,1,2*v_max]
-                                    Filter filter: 6<v_max
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [max(v)]
-                                          filter: 5<v
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: table1
+                                Filter filter: 6<v_max
+                                    Async Stream Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(v)]
+                                      filter: 5<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
                             """,
                     VIEW1
             );
@@ -2335,17 +2333,18 @@ public class ViewQueryTest extends AbstractViewTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: t2.v=v1.v_max
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table2
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: 4<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
                                     Hash
-                                        Async Group By workers: 1
-                                          keys: [ts,k]
-                                          values: [max(v)]
-                                          filter: 4<v
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: table1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table2
                             """,
                     VIEW1
             );

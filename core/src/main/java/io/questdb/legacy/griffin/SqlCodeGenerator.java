@@ -304,6 +304,8 @@ import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -371,11 +373,11 @@ import io.questdb.legacy.griffin.engine.table.FilterOnExcludedValuesRecordCursor
 import io.questdb.legacy.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
+import io.questdb.legacy.griffin.engine.table.LegacySelectedRecordCursorFactory;
+import io.questdb.legacy.griffin.engine.table.LegacyVirtualRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.legacy.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
-import io.questdb.legacy.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
-import io.questdb.legacy.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.union.MergeUnionAllRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.union.MergeUnionAllRecordCursorFactoryBuilder;
@@ -6122,7 +6124,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 columnCrossIndex.add(i);
             }
-            return new SelectedRecordCursorFactory(GenericRecordMetadata.copyOfNew(metadata, columnCount), columnCrossIndex, factory);
+            return new LegacySelectedRecordCursorFactory(GenericRecordMetadata.copyOfNew(metadata, columnCount), columnCrossIndex, factory);
         } catch (Throwable th) {
             Misc.free(factory, th);
             throw th;
@@ -8120,7 +8122,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                                     }
                                                 }
-                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex,
+                                                factory = new LegacySelectedRecordCursorFactory(outerProjectionMetadata, columnIndex,
                                                         new ExtraNullColumnCursorFactory(metadata, splitIndex, master, emptyValues, spliceEmptyValueTypes));
                                             }
                                         } else {
@@ -11760,7 +11762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnCrossIndex.add(timestampIndex);
             }
 
-            return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
+            return new LegacySelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -13028,7 +13030,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            return new VirtualRecordCursorFactory(
+            return new LegacyVirtualRecordCursorFactory(
                     virtualMetadata,
                     priorityMetadata,
                     functions,

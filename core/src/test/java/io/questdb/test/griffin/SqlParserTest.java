@@ -2575,7 +2575,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                GroupBy vectorized: false
+                                Stream Group By
                                   keys: [x]
                                   values: [count(*)]
                                     long_sequence count: 10
@@ -2590,7 +2590,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select x, count(2*x) from long_sequence(10)")
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
+                            Stream Group By
                               keys: [x]
                               values: [count(2*x)]
                                 long_sequence count: 10
@@ -8022,10 +8022,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             GroupBy vectorized: false
                               values: [min(s),max(s),avg(s)]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
                                   keys: [ts]
                                   values: [sum(value)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: erdem_x
@@ -8301,6 +8300,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             // model with sample by - simple
             assertQuery("select /*+ HINT*/ timestamp, count(*) from trades sample by 1d")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .withPlan("""
                             Encode sort light
@@ -12376,6 +12376,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             WHEN col5 < '4045' FILL -3754167527262084558\s
                           END
                         FROM t1\s
+                        ORDER BY col1,,col2;""", 77,
+                "'then' expected"
+        );
+
+        // the same statement with THEN in place of the stray FILL
+        assertSyntaxError(
+                """
+                        SELECT  a,
+                          CASE\s
+                            WHEN col10 > '3975' THEN col7\s
+                            WHEN col5 < '4045' THEN -3754167527262084558\s
+                          END
+                        FROM t1\s
                         ORDER BY col1,,col2;""", 133,
                 "literal or expression expected"
         );
@@ -12490,15 +12503,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
         )
                 .withPlan("""
                         SelectedRecord
-                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                                Encode sort
-                                  keys: [age desc]
-                                    VirtualRecord
-                                      functions: [locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath,waitstart,0L]
-                                        Union All
+                            Encode sort lo: 1
+                              keys: [age desc]
+                                VirtualRecord
+                                  functions: [locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath,waitstart,0L]
+                                    Union All
+                                        Empty table
+                                        Filter filter: transactionid!=null
                                             Empty table
-                                            Filter filter: transactionid!=null
-                                                Empty table
                         """)
                 .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
     }
@@ -12757,6 +12769,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .returns("day\tisin\tlast\n");
             assertQuery("select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to calendar")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
                                 Encode sort light
@@ -13935,11 +13948,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a")
                     .noLeakCheck()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [a]
                                 SelectedRecord
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('2m',t)
                                       keys: [a,t]
+                                      keyFunctions: [timestamp_floor_utc('2m',t)]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -14061,8 +14076,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [a]
                                   values: [sum(b)]
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('10m',t)
                                       keys: [a,t]
+                                      keyFunctions: [timestamp_floor_utc('10m',t)]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -15328,7 +15345,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             GroupBy vectorized: false
-                              values: [first_not_null(case([(year=2000 and country='NL'),sum(population),null])),first_not_null(case([(year=2000 and country='US'),sum(population),null])),first_not_null(case([(year=2010 and country='NL'),sum(population),null])),first_not_null(case([(year=2010 and country='US'),sum(population),null]))]
+                              values: [first_not_null(case([(year=2000 and country='NL'),sum(population),nullL])),first_not_null(case([(year=2000 and country='US'),sum(population),nullL])),first_not_null(case([(year=2010 and country='NL'),sum(population),nullL])),first_not_null(case([(year=2010 and country='US'),sum(population),nullL]))]
                                 Async Group By workers: 1
                                   keys: [year,country]
                                   values: [sum(population)]
@@ -16271,16 +16288,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    Async Group By workers: 1
-                                      keys: [x,timestamp]
-                                      keyFunctions: [timestamp_floor_utc('2m',timestamp)]
-                                      values: [sum(y)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('2m',timestamp)
+                                  keys: [x,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('2m',timestamp)]
+                                  values: [sum(y)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
             assertQuery("select x,sum(y) from tab sample by 2m align to calendar")
                     .noLeakCheck()
@@ -16318,16 +16333,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    Async Group By workers: 1
-                                      keys: [x,timestamp]
-                                      keyFunctions: [timestamp_floor_utc('2U',timestamp)]
-                                      values: [sum(y)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('2U',timestamp)
+                                  keys: [x,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('2U',timestamp)]
+                                  values: [sum(y)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
             assertQuery("select x,sum(y) from tab sample by 2U align to calendar")
                     .noLeakCheck()
@@ -16366,17 +16379,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k,timestamp]
-                                          keyFunctions: [timestamp_floor_utc('3h',timestamp)]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('3h',timestamp)
+                                      keys: [b,k,timestamp]
+                                      keyFunctions: [timestamp_floor_utc('3h',timestamp)]
+                                      values: [sum(a)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
             assertQuery("select b, sum(a), k, k from x y sample by 3h align to calendar")
                     .noLeakCheck()
@@ -16507,16 +16518,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('15m',ts)]
-                                      values: [first(ts)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t1
+                                  keyFunctions: [timestamp_floor_utc('15m',ts)]
+                                  values: [first(ts)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
                             """);
             assertQuery("SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR;")
                     .noLeakCheck()
@@ -16554,16 +16562,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('15m',ts)]
-                                      values: [first(ts)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t1
+                                  keyFunctions: [timestamp_floor_utc('15m',ts)]
+                                  values: [first(ts)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
                             """);
             assertQuery("SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR")
                     .noLeakCheck()
@@ -16866,17 +16871,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }
@@ -16888,17 +16890,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }
@@ -16910,17 +16909,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
                             """);
         });
     }
@@ -16932,17 +16928,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000Z","MAX")]
                             """);
         });
     }
@@ -17078,16 +17071,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T01:15:00.000Z')]
-                                      values: [avg(price)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tbl
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T01:15:00.000Z')]
+                                  values: [avg(price)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tbl
                             """);
         });
     }
@@ -17144,16 +17134,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('5m',ts,null,'00:00','Europe/Berlin')]
-                                      values: [avg(price)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tbl
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,null,'00:00','Europe/Berlin')]
+                                  values: [avg(price)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tbl
                             """);
         });
     }
@@ -17284,17 +17271,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
             assertQuery("SELECT ts, avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,null,'00:00','Europe/Berlin')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tbl
+                              keyFunctions: [timestamp_floor_utc('5m',ts,null,'00:00','Europe/Berlin')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl
                             """);
         });
     }
@@ -17493,17 +17478,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }
@@ -17515,17 +17497,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts)]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("MIN","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }
@@ -17642,29 +17621,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               functions: [b::symbol,sum,k1,k]
                                 Union All
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [timestamp]
-                                            SelectedRecord
-                                                Async Group By workers: 1
-                                                  keys: [b,k1,timestamp]
-                                                  keyFunctions: [timestamp_floor_utc('3h',timestamp)]
-                                                  values: [sum(a)]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
+                                        SelectedRecord
+                                            Async Stream Group By workers: 1
+                                              segmentKey: timestamp_floor_utc('3h',timestamp)
+                                              keys: [b,k1,timestamp]
+                                              keyFunctions: [timestamp_floor_utc('3h',timestamp)]
+                                              values: [sum(a)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [timestamp]
-                                            SelectedRecord
-                                                Async Group By workers: 1
-                                                  keys: [b,k1,timestamp]
-                                                  keyFunctions: [timestamp_floor_utc('3h',timestamp)]
-                                                  values: [sum(a)]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
+                                        SelectedRecord
+                                            Async Stream Group By workers: 1
+                                              segmentKey: timestamp_floor_utc('3h',timestamp)
+                                              keys: [b,k1,timestamp]
+                                              keyFunctions: [timestamp_floor_utc('3h',timestamp)]
+                                              values: [sum(a)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                             """);
             assertQuery("select b, sum(a), k k1, k from x y sample by 3h" +
                     " union all " +
@@ -17733,16 +17708,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("SELECT ts, avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE 'UTC' WITH OFFSET '00:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tbl
+                              keyFunctions: [timestamp_floor_utc('5m',ts)]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl
                             """);
         });
     }
@@ -20206,7 +20178,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
                         "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
                         "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
-                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 222,
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 112,
+                "'then' expected"
+        );
+        // the same statement with 'qocvwy' in place of the stray qocvwy
+        assertSyntaxError("SELECT ts, col6 AS a1, CASE WHEN col5 <> '192.168.150.217' THEN 754326 WHEN col1 = false THEN '' " +
+                        "WHEN ts <= 'qocvwy' THEN col4 ELSE sym END, col4, -109639495026, '1986-05-10T21:39:17Z', '" +
+                        "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
+                        "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
+                        "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 216,
                 "unexpected token [)]"
         );
 
@@ -20667,8 +20648,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                 Frame forward scan on: b
                                         VirtualRecord
                                           functions: ['a',max]
-                                            GroupBy vectorized: false
+                                            Stream Group By
                                               keys: [t]
+                                              keyFunctions: [timestamp_floor_utc('6h',t)]
                                               values: [max(t)]
                                                 Encode sort light
                                                   keys: [t]

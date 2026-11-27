@@ -7898,14 +7898,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [min]
                                 SelectedRecord
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('15s',timestamp)
                                       keys: [timestamp,timestamp1]
                                       keyFunctions: [timestamp_floor_utc('15s',timestamp)]
                                       values: [min(x)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: test1

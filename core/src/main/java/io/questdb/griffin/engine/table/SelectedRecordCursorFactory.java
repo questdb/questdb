@@ -52,7 +52,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
+public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final SelectedRecordCursor cursor;

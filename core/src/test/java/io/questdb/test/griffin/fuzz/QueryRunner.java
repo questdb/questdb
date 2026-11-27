@@ -149,6 +149,14 @@ import java.util.regex.Pattern;
  *       when both queries run: the rewrite exists to check the rows grouping sets return, not
  *       which queries they accept. Catches wrong subtotals, a lost or duplicated grouping set and
  *       a wrong GROUPING_ID, which every other axis would reproduce on both of its sides.</li>
+ *   <li>the spelling axis runs a query's {@link GeneratedQuery#spellingSql()}, the same query
+ *       with {@code CASE WHEN x = 1}, {@code extract('day', ts)} and {@code ::TYPE} in place of
+ *       {@code CASE x WHEN 1}, {@code extract(day FROM ts)} and {@code cast(x AS TYPE)}, on the
+ *       primary at JIT-off and compares it with the pivot. Unlike the reference axis it also
+ *       fails when only one of the two compiles: the parser must read both spellings the same
+ *       way, so a keyword form it rejects is a parser bug, not a rejected query. Catches CASE
+ *       parsing bugs such as FROM in {@code extract(day FROM ts)} read as a CASE keyword, which
+ *       the crash-only oracle would take for an ordinary SqlException.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on,
@@ -269,6 +277,8 @@ public class QueryRunner {
     private final Pattern[] primaryPatterns;
     // Comparisons the reference axis ran, i.e. queries whose rewrite and pivot both ran.
     private int referenceAxisRuns;
+    // Comparisons the spelling axis ran in which both spellings ran.
+    private int spellingAxisRuns;
     // Worker-thread name prefix of the query pool, used to scope a parallel FILE
     // fault to the query execution (test thread + query workers). See runFault.
     private final String queryWorkerNamePrefix;
@@ -408,6 +418,13 @@ public class QueryRunner {
      */
     public int getReferenceAxisRuns() {
         return referenceAxisRuns;
+    }
+
+    /**
+     * Comparisons the spelling axis ran in which both spellings compiled and ran to completion.
+     */
+    public int getSpellingAxisRuns() {
+        return spellingAxisRuns;
     }
 
     /**
@@ -2059,7 +2076,7 @@ public class QueryRunner {
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
         if (!diffJit && !diffShadow && !diffStream && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
-                && query.fencedSql() == null && query.referenceSql() == null) {
+                && query.fencedSql() == null && query.referenceSql() == null && query.spellingSql() == null) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
@@ -2155,6 +2172,16 @@ public class QueryRunner {
                 Result referenceResult = runReferenceVariant(query, bJ);
                 if (referenceResult != null && referenceResult.isFailed()) {
                     return referenceResult;
+                }
+            }
+
+            if (query.spellingSql() != null) {
+                Result spellingResult = runSpellingVariant(query, bJ);
+                if (spellingResult.isFailed()) {
+                    return spellingResult;
+                }
+                if (spellingResult.isSkipped()) {
+                    skippedResult = spellingResult;
                 }
             }
 
@@ -2276,6 +2303,30 @@ public class QueryRunner {
                 "grouping sets reference divergence",
                 "grouping sets",
                 "union all    "
+        );
+    }
+
+    /**
+     * Runs the query's plain spelling on the primary at JIT-off into {@code rowsG} and
+     * reconciles it against the pivot {@code bJ}. Unlike {@link #runReferenceVariant}, the
+     * comparison counts when only one side compiles: both are the same query to the parser.
+     */
+    private Result runSpellingVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        Outcome spelling = runOnce(query.spellingSql(), rowsG, primaryHasAnyParquet, query.deterministic());
+        if (bJ.failure == null && spelling.failure == null) {
+            spellingAxisRuns++;
+        }
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                spelling,
+                rowsB,
+                rowsG,
+                query.deterministic(),
+                "keyword vs plain spelling divergence, plain spelling: " + query.spellingSql(),
+                "keyword ",
+                "plain   "
         );
     }
 

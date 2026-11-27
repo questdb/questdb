@@ -3255,6 +3255,60 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderPreservingCallOfTheKeyNeedsNoSort() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t VALUES ('2024-01-01T00:00', 1), ('2024-01-01T00:05', 2), ('2024-01-01T00:20', 3), ('2024-01-02T00:00', 4)", context);
+            assertQuery("SELECT dateadd('d', 1, ts) ts, dateadd('h', -2, ts) earlier, count() c, sum(v) s FROM t SAMPLE BY 10m")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").noRandomAccess()
+                    .withPlanContaining("Stream Group By").withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            ts\tearlier\tc\ts
+                            2024-01-02T00:00:00.000000Z\t2023-12-31T22:00:00.000000Z\t2\t3
+                            2024-01-02T00:20:00.000000Z\t2023-12-31T22:20:00.000000Z\t1\t3
+                            2024-01-03T00:00:00.000000Z\t2024-01-01T22:00:00.000000Z\t1\t4
+                            """);
+            assertQuery("SELECT ts::TIMESTAMP k, count() c FROM t ORDER BY k")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("k").noRandomAccess()
+                    .withPlanContaining("Stream Group By").withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            k\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:05:00.000000Z\t1
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT coalesce(ts, ts) ts, count() c FROM t SAMPLE BY 10m")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts")
+                    .withPlanContaining("sort")
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t2
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLongSequenceOfNoReadColumnUsesHash() throws Exception {
+        run((engine, compiler, context) -> {
+            // DISTINCT keeps its constant keys, and the aggregate reads no column of long_sequence(), so no input column
+            // orders its keys
+            final String sql = "SELECT DISTINCT 1 k, 'a' s FROM long_sequence(5)";
+            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                assertStream(factory, false);
+                Assert.assertEquals("k\ts\n1\ta\n", read(factory, context));
+            }
+            final String arraySql = "SELECT DISTINCT ARRAY[ARRAY[0.5]] a, 'b' s FROM long_sequence(16)";
+            try (RecordCursorFactory factory = compiler.compile(arraySql, context).getRecordCursorFactory()) {
+                assertStream(factory, false);
+                Assert.assertEquals("a\ts\n[[0.5]]\tb\n", read(factory, context));
+            }
+        });
+    }
+
+    @Test
     public void testLongSequence() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE hash_input AS (SELECT x FROM long_sequence(101))", context);

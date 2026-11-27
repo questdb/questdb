@@ -1154,8 +1154,9 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
-     * Resolves a CAST that needs no factory: one to the argument's own type returns the argument, and one of a
-     * floating-point literal, spelled {@code literal}, to DECIMAL returns the exact DECIMAL constant. An untyped
+     * Resolves a CAST that needs no factory: one to the argument's own type returns the argument, one of a NULL
+     * constant to a text type returns that type's NULL, and one of a floating-point literal, spelled {@code literal},
+     * to DECIMAL returns the exact DECIMAL constant. An untyped
      * bind variable CAST to a text, numeric, array or DECIMAL type takes a default type first, so it does not take
      * whatever the first CAST overload accepts; when that type is the target, the argument is returned. Returns null
      * when the call is not such a CAST. Argument ownership stays with the caller.
@@ -1175,6 +1176,12 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         final int castToType = args.getQuick(1).getType();
         if (fromType == castToType) {
             return arg0;
+        }
+
+        // A NULL constant casts to a NULL string, as a NULL value does at runtime. The casts to text fold a constant
+        // by formatting it, which would turn the NULL into its sentinel's text, such as 'NaN'.
+        if (arg0.isConstant() && arg0.isNullConstant() && ColumnType.isSymbolOrStringOrVarchar(castToType)) {
+            return Constants.getNullConstant(castToType);
         }
 
         // We manually handle the float/double to decimal cast here to avoid precision loss

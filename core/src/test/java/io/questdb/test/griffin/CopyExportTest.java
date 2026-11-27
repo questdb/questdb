@@ -1831,6 +1831,43 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyLegacyPlannerProjectionExportsAsTheNewPlannerDoes() throws Exception {
+        assertMemoryLeak(() -> {
+            ParquetTestUtils.createTableWithParquetSettingPerType(engine, sqlExecutionContext, "ty");
+            final FilesFacade ff = configuration.getFilesFacade();
+            // query, export mode, file, whether the file keeps the query's row order: a COPY of a fresh plan reads the
+            // page frames of its table forward
+            final String[][] exports = {
+                    {"SELECT b, i, l, d, s, vc, sym, ts, i + 1 x FROM ty", "PAGE_FRAME_BACKED", "forward", "true"},
+                    {"SELECT b, i, l, d, s, vc, sym, ts, i + 1 x FROM ty ORDER BY ts DESC", "PAGE_FRAME_BACKED", "backward", "false"}
+            };
+            for (String[] export : exports) {
+                final String query = export[0];
+                assertExportMode(query, ParquetExportMode.valueOf(export[1]));
+                copyToParquet("COPY (" + query + ") TO 'new_" + export[2] + "' WITH FORMAT PARQUET");
+                setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+                try {
+                    assertExportMode(query, ParquetExportMode.valueOf(export[1]));
+                    copyToParquet("COPY (" + query + ") TO 'legacy_" + export[2] + "' WITH FORMAT PARQUET");
+                } finally {
+                    setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "false");
+                }
+                if (Boolean.parseBoolean(export[3])) {
+                    assertParquetMatchesQuery(query, parquetPath("legacy_" + export[2]));
+                }
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM read_parquet('" + parquetPath("new_" + export[2]) + "')",
+                        "SELECT * FROM read_parquet('" + parquetPath("legacy_" + export[2]) + "')",
+                        LOG
+                );
+                ParquetTestUtils.assertColumnEncodingsMatch(parquetPath("new_" + export[2]), parquetPath("legacy_" + export[2]), ff);
+            }
+        });
+    }
+
+    @Test
     public void testCopyGroupByKeysKeepParquetSettingsOfEveryType() throws Exception {
         // A GROUP BY key passes its column through, so it keeps the column's PARQUET(...) setting, whatever its type.
         // The DIRECT export of the same columns is the reference. BINARY and arrays cannot be GROUP BY keys.

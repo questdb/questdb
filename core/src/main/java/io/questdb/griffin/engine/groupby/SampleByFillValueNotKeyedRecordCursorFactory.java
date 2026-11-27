@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -40,6 +41,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
+    private final Function nullTimestamp;
     private SampleByFillValueNotKeyedRecordCursor cursor;
     private ObjList<Function> fillValues;
     private SimpleMapValue value;
@@ -72,6 +74,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             char samplingIntervalUnit
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
+        this.nullTimestamp = ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
         this.fillValues = fillValues;
         try {
             this.value = new SimpleMapValue(valueCount);
@@ -110,8 +113,8 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("value");
-        if (cursor.sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL
-                || cursor.sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
+        if (cursor.sampleFromFunc != nullTimestamp
+                || cursor.sampleToFunc != nullTimestamp) {
             sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         }
         sink.optAttr("values", cursor.groupByFunctions, true);

@@ -488,6 +488,29 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceWithoutNullClosesOtherArgs() throws Exception {
+        // coalesce() supports no NULL for BOOLEAN, SHORT, BYTE and CHAR: it returns the first argument
+        // and closes the others
+        assertQuery("""
+                SELECT
+                    coalesce(x > 1, trim(v) = 'a') b2,
+                    coalesce(x::SHORT, length(trim(v))::SHORT) s,
+                    coalesce(x::BYTE, length(trim(v))::BYTE) y,
+                    coalesce('c', left(trim(v), 1)::CHAR) c,
+                    coalesce(x > 1, trim(v) = 'a', trim(v) = 'b') b3
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, (' v' || x)::VARCHAR v FROM long_sequence(3))")
+                .expectSize()
+                .returns("""
+                        b2\ts\ty\tc\tb3
+                        false\t1\t1\tc\tfalse
+                        true\t2\t2\tc\ttrue
+                        true\t3\t3\tc\ttrue
+                        """);
+    }
+
+    @Test
     public void testDateCoalesce() throws Exception {
         assertQuery("select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, x \n" +
                 "from alex")

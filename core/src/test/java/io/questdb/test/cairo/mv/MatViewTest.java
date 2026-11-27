@@ -1037,7 +1037,10 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh limit 2 months;");
 
             // period refresh should respect the refresh limit,
-            // so only the 2023-12-31 rows should be aggregated in the view
+            // so only the 2023-12-31 rows should be aggregated in the view;
+            // the view was created on the real clock, and the clock now steps
+            // back into the 24h period [2024-01-01, 2024-01-02), so the last
+            // complete period ends at 2024-01-01T00:00
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
             drainQueues();
 

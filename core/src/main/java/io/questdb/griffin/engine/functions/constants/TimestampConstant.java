@@ -56,6 +56,11 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.valISODate(timestampDriver, value);
+        if (value != Numbers.LONG_NULL) {
+            sink.valISODate(timestampDriver, value);
+        } else {
+            // an ISO date has no text for NULL; a long prints it as null, as DateConstant does
+            sink.val(value);
+        }
     }
 }

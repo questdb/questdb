@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.std.DoubleList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class SwitchFunctionFactoryTest extends AbstractCairoTest {
@@ -119,6 +123,20 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(124, "too many branches");
+    }
+
+    @Test
+    public void testBooleanIgnoredElseIsClosed() throws Exception {
+        // WHEN true and WHEN false leave the ELSE nothing to match, and switch() frees it
+        assertQuery("SELECT b, CASE b WHEN true THEN 'yes' WHEN false THEN 'no' ELSE trim(v) END k FROM t")
+                .ddl("CREATE TABLE t AS (SELECT x % 2 = 0 b, (' v' || x)::VARCHAR v FROM long_sequence(3))")
+                .expectSize()
+                .returns("""
+                        b\tk
+                        false\tno
+                        true\tyes
+                        false\tno
+                        """);
     }
 
     @Test
@@ -806,10 +824,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when -431.0d then c
                         when -616.0d then 350
                         when null then 1
-                        when 'Infinity' then 2
-                        when '-Infinity' then 3
                         when 0.0 then 4
-                        when -0.0 then 5
                     end k
                 from tanc""")
                 .ddl("create table tanc as (" +
@@ -881,28 +896,140 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDoubleKeyMatchesExactly() throws Exception {
+    public void testDoubleDuplicateBranchUnderEquals() throws Exception {
+        // a key that '=' finds equal to an earlier one could never match: -0.0 equals 0.0,
+        // Infinity reads as NULL, and keys within 1e-10 of each other are equal
+        assertQuery("SELECT CASE x::DOUBLE WHEN 0.0 THEN 1 WHEN -0.0 THEN 2 END FROM long_sequence(1)")
+                .fails(43, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN null THEN 1 WHEN 'Infinity' THEN 2 END FROM long_sequence(1)")
+                .fails(44, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN 0.3 THEN 1 WHEN 0.30000000000000004 THEN 2 END FROM long_sequence(1)")
+                .fails(43, "duplicate branch");
+        // more keys than switch() compares one by one, so it finds the earlier key by hash
+        assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 5 THEN 5 WHEN 2.00000000005 THEN 6 END FROM long_sequence(1)")
+                .fails(97, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 1_073_741_824 THEN 5 WHEN 1073741824.0 THEN 6 END FROM long_sequence(1)")
+                .fails(109, "duplicate branch");
+    }
+
+    @Test
+    public void testDoubleKeysMatchAsSearchedForm() throws Exception {
+        // The reference spells each key as 'v - k = 0': the tolerance of '=' in a searched CASE,
+        // which the parser does not turn into switch(). Keys come close to each other, reach 2^30
+        // and beyond, and outnumber the keys switch() compares one by one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, f FLOAT)");
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final DoubleList keys = new DoubleList();
+            final StringBuilder sql = new StringBuilder();
+            for (int iteration = 0; iteration < 10; iteration++) {
+                keys.clear();
+                for (int i = 0, n = 1 + rnd.nextInt(40); i < n; i++) {
+                    final double key = switch (rnd.nextInt(4)) {
+                        case 0 -> rnd.nextInt(20) - 10;
+                        case 1 -> (rnd.nextInt(20) - 10) / 4.0 + rnd.nextInt(3) * 0.75e-10;
+                        case 2 -> (1L << 30) + rnd.nextInt(8) * 0.25;
+                        default -> rnd.nextInt(1_000_000) / 1000.0;
+                    };
+                    boolean isDuplicate = false;
+                    for (int j = 0, m = keys.size(); j < m; j++) {
+                        isDuplicate |= Numbers.equals(keys.getQuick(j), key);
+                    }
+                    if (!isDuplicate) {
+                        keys.add(key);
+                    }
+                }
+                sql.setLength(0);
+                sql.append("INSERT INTO t VALUES (NULL, NULL)");
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    for (double offset : new double[]{0, 0.5, -0.5, 1.5, -1.5}) {
+                        final double value = keys.getQuick(i) + offset * Numbers.DOUBLE_TOLERANCE;
+                        sql.append(", (").append(value).append(", ").append(value).append(')');
+                    }
+                }
+                execute(sql);
+                final boolean hasNullKey = rnd.nextBoolean();
+                for (String column : new String[]{"d", "f"}) {
+                    sql.setLength(0);
+                    sql.append("SELECT d, f, CASE ").append(column);
+                    for (int i = 0, n = keys.size(); i < n; i++) {
+                        sql.append(" WHEN ").append(keys.getQuick(i)).append(" THEN ").append(i);
+                    }
+                    if (hasNullKey) {
+                        sql.append(" WHEN null THEN -1");
+                    }
+                    final String actual = sql.append(" ELSE -2 END r FROM t").toString();
+                    sql.setLength(0);
+                    sql.append("SELECT d, f, CASE");
+                    for (int i = 0, n = keys.size(); i < n; i++) {
+                        sql.append(" WHEN ").append(column).append(" - ").append(keys.getQuick(i)).append(" = 0 THEN ").append(i);
+                    }
+                    if (hasNullKey) {
+                        sql.append(" WHEN ").append(column).append(" = null THEN -1");
+                    }
+                    assertSqlCursors(sql.append(" ELSE -2 END r FROM t"), actual);
+                }
+                execute("TRUNCATE TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleManyKeys() throws Exception {
+        // more keys than switch() compares one by one; from 2^30 up it matches the bits
         assertQuery("""
-                SELECT d, CASE d
-                    WHEN 1.0 THEN 'one'
-                    WHEN 1.00000000001 THEN 'near'
-                    WHEN 0.0 THEN 'zero'
-                    WHEN -0.0 THEN 'negative zero'
-                    WHEN 2 THEN 'two'
-                    WHEN null THEN 'null'
+                SELECT x, CASE d
+                    WHEN 0 THEN 'zero' WHEN 1 THEN 'one' WHEN 2 THEN 'two' WHEN 3 THEN 'three'
+                    WHEN 1_073_741_824 THEN '2^30' WHEN 1073741824.5 THEN '2^30 + 0.5' WHEN null THEN 'null'
+                    ELSE 'other'
                 END k
-                FROM t""")
-                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN 1.0 WHEN 2 THEN 1.00000000001 WHEN 3 THEN 1.5 WHEN 4 THEN -0.0 WHEN 5 THEN 0.0 WHEN 6 THEN 2.0 END d FROM long_sequence(7))")
+                FROM t
+                """)
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT x, CASE x
+                                WHEN 1 THEN 0.0 WHEN 2 THEN -0.0 WHEN 3 THEN 3.0 WHEN 4 THEN 3.00000000005
+                                WHEN 5 THEN 1073741824.0 WHEN 6 THEN 1073741824.5 WHEN 7 THEN 7.5
+                            END d
+                            FROM long_sequence(8)
+                        )
+                        """)
                 .expectSize()
                 .returns("""
-                        d\tk
-                        1.0\tone
-                        1.00000000001\tnear
-                        1.5\t
-                        -0.0\tzero
-                        0.0\tzero
-                        2.0\ttwo
-                        null\tnull
+                        x\tk
+                        1\tzero
+                        2\tzero
+                        3\tthree
+                        4\tthree
+                        5\t2^30
+                        6\t2^30 + 0.5
+                        7\tother
+                        8\tnull
+                        """);
+    }
+
+    @Test
+    public void testDoubleMatchesAsEquals() throws Exception {
+        // A DOUBLE key matches as '=' does, in both forms of CASE: -0.0 equals 0, as in
+        // PostgreSQL, values within 1e-10 of each other are equal, and NULL equals NULL.
+        assertQuery("""
+                SELECT
+                    d,
+                    d = 0 eq_zero,
+                    d = 0.3 eq_point_three,
+                    CASE d WHEN 0 THEN 'zero' WHEN 0.3 THEN 'point three' WHEN null THEN 'null' ELSE 'other' END simple,
+                    CASE WHEN d = 0 THEN 'zero' WHEN d = 0.3 THEN 'point three' WHEN d = null THEN 'null' ELSE 'other' END searched
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN 0.0 WHEN 2 THEN -0.0 WHEN 3 THEN 0.1 + 0.2 WHEN 4 THEN 0.3 + 1e-9 END d FROM long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        d\teq_zero\teq_point_three\tsimple\tsearched
+                        0.0\ttrue\tfalse\tzero\tzero
+                        -0.0\ttrue\tfalse\tzero\tzero
+                        0.30000000000000004\tfalse\ttrue\tpoint three\tpoint three
+                        0.300000001\tfalse\tfalse\tother\tother
+                        null\tfalse\tfalse\tnull\tnull
                         """);
     }
 
@@ -919,10 +1046,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when -431.0 then c
                         when -616.0 then 350
                         when null then 1
-                        when 'Infinity' then 2
-                        when '-Infinity' then 3
                         when 0.0 then 4
-                        when -0.0 then 5
                         else b
                     end k
                 from tanc""")
@@ -966,6 +1090,26 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
                         -0.0\t-1533414895\t-1787109293\t-66297136\t4
+                        """);
+    }
+
+    @Test
+    public void testDoubleTieTakesFirstBranch() throws Exception {
+        // 0.75e-10 equals both 0 and 1.5e-10 under '=', which do not equal each other. The first
+        // WHEN wins, as in the searched form, with few keys and with many.
+        assertQuery("""
+                SELECT
+                    CASE d WHEN 0 THEN 'a' WHEN 1.5e-10 THEN 'b' END ab,
+                    CASE d WHEN 1.5e-10 THEN 'b' WHEN 0 THEN 'a' END ba,
+                    CASE d WHEN 0 THEN 'a' WHEN 1.5e-10 THEN 'b' WHEN 1 THEN 'c' WHEN 2 THEN 'c' WHEN 3 THEN 'c' END ab_many,
+                    CASE d WHEN 1 THEN 'c' WHEN 2 THEN 'c' WHEN 3 THEN 'c' WHEN 1.5e-10 THEN 'b' WHEN 0 THEN 'a' END ba_many
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT 0.75e-10 d FROM long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        ab\tba\tab_many\tba_many
+                        a\tb\ta\tb
                         """);
     }
 
@@ -1038,7 +1182,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when 685.0f then 350
                         when cast(null as float) then 1
                         when cast(0.0 as float) then 4
-                        when cast(-0.0 as float) then 5
                     end k
                 from tanc""")
                 .ddl("create table tanc as (" +
@@ -1098,6 +1241,64 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatDuplicateBranchUnderEquals() throws Exception {
+        assertQuery("SELECT CASE x::FLOAT4 WHEN 0.0 THEN 1 WHEN -0.0 THEN 2 END FROM long_sequence(1)")
+                .fails(43, "duplicate branch");
+    }
+
+    @Test
+    public void testFloatManyKeys() throws Exception {
+        // more keys than switch() compares one by one; a FLOAT operand compares at DOUBLE width
+        assertQuery("""
+                SELECT x, CASE f
+                    WHEN 0.5 THEN 'half' WHEN 0.1 THEN 'double 0.1' WHEN 0.1::FLOAT4 THEN 'float 0.1'
+                    WHEN 1 THEN 'one' WHEN 2 THEN 'two' WHEN null THEN 'null'
+                    ELSE 'other'
+                END k
+                FROM t
+                """)
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT x, CASE x WHEN 1 THEN 0.5::FLOAT4 WHEN 2 THEN 0.1::FLOAT4 WHEN 3 THEN 2.0::FLOAT4 WHEN 4 THEN 3.0::FLOAT4 END f
+                            FROM long_sequence(5)
+                        )
+                        """)
+                .expectSize()
+                .returns("""
+                        x\tk
+                        1\thalf
+                        2\tfloat 0.1
+                        3\ttwo
+                        4\tother
+                        5\tnull
+                        """);
+    }
+
+    @Test
+    public void testFloatMatchesAsEquals() throws Exception {
+        // A FLOAT operand compares at DOUBLE width, as '=' and PostgreSQL compare it, so FLOAT
+        // 0.1 is not the DOUBLE key 0.1 but is the FLOAT key 0.1::FLOAT4. -0.0 equals 0.
+        assertQuery("""
+                SELECT
+                    f,
+                    f = 0.1 eq_point_one,
+                    CASE f WHEN 0 THEN 'zero' WHEN 0.1 THEN 'point one' WHEN null THEN 'null' ELSE 'other' END simple,
+                    CASE WHEN f = 0 THEN 'zero' WHEN f = 0.1 THEN 'point one' WHEN f = null THEN 'null' ELSE 'other' END searched,
+                    CASE f WHEN 0.1::FLOAT4 THEN 'float point one' ELSE 'other' END float_key
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN 0.0::FLOAT4 WHEN 2 THEN (-0.0)::FLOAT4 WHEN 3 THEN 0.1::FLOAT4 END f FROM long_sequence(4))")
+                .expectSize()
+                .returns("""
+                        f\teq_point_one\tsimple\tsearched\tfloat_key
+                        0.0\tfalse\tzero\tzero\tother
+                        -0.0\tfalse\tzero\tzero\tother
+                        0.1\tfalse\tother\tother\tfloat point one
+                        null\tfalse\tnull\tnull\tother
+                        """);
+    }
+
+    @Test
     public void testFloatOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -1111,7 +1312,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when 685.0f then 350
                         when cast(null as float) then 1
                         when cast(0.0 as float) then 4
-                        when cast(-0.0 as float) then 5
                         else b \
                     end k
                 from tanc""")
@@ -1651,6 +1851,93 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """);
         });
+    }
+
+    @Test
+    public void testMinusOneKey() throws Exception {
+        // The int and long hash maps behind switch() mark empty slots with -1 by default. The
+        // keys -1 and -2 make the map pick -3, which the first row checks takes the ELSE branch.
+        assertQuery("""
+                SELECT
+                    v,
+                    CASE v::byte WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END b,
+                    CASE v::short WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END s,
+                    CASE v::int WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END i,
+                    CASE (v::int)::ipv4 WHEN '255.255.255.255'::ipv4 THEN 'm1' WHEN '255.255.255.254'::ipv4 THEN 'm2' ELSE 'other' END ip,
+                    CASE v WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END l,
+                    CASE v::date WHEN (-1)::date THEN 'm1' WHEN (-2)::date THEN 'm2' ELSE 'other' END d,
+                    CASE v::timestamp WHEN (-1)::timestamp THEN 'm1' WHEN (-2)::timestamp THEN 'm2' ELSE 'other' END ts,
+                    CASE v::timestamp_ns WHEN (-1)::timestamp_ns THEN 'm1' WHEN (-2)::timestamp_ns THEN 'm2' ELSE 'other' END ts_ns
+                FROM (SELECT x - 4 v FROM long_sequence(4))
+                """)
+                .expectSize()
+                .returns("""
+                        v\tb\ts\ti\tip\tl\td\tts\tts_ns
+                        -3\tother\tother\tother\tother\tother\tother\tother\tother
+                        -2\tm2\tm2\tm2\tm2\tm2\tm2\tm2\tm2
+                        -1\tm1\tm1\tm1\tm1\tm1\tm1\tm1\tm1
+                        0\tother\tother\tother\tother\tother\tother\tother\tother
+                        """);
+    }
+
+    @Test
+    public void testMinusOneKeyDuplicateBranch() throws Exception {
+        assertQuery("select case x::int when -1 then 'a' when -1 then 'b' end from long_sequence(1)")
+                .fails(41, "duplicate branch");
+        assertQuery("select case x when -1 then 'a' when -1 then 'b' end from long_sequence(1)")
+                .fails(36, "duplicate branch");
+    }
+
+    @Test
+    public void testNullOperand() throws Exception {
+        // A NULL operand matches only a NULL key, as 'null = null' does, and otherwise takes the
+        // ELSE branch. No key matches it by value: not IPv4 128.0.0.0, whose bits are INT's NULL,
+        // nor false or 0, which BOOLEAN, BYTE and SHORT read NULL as.
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE null WHEN 1 THEN 'one' ELSE 'other' END a,
+                    CASE null WHEN 1 THEN 'one' WHEN null THEN 'null' END b,
+                    CASE (CASE WHEN x > 1 THEN null END) WHEN -2 THEN 'minus two' ELSE 'other' END c,
+                    CASE null WHEN 'x' THEN 1 ELSE 2 END d,
+                    CASE null WHEN '2024-01-01'::TIMESTAMP THEN 1 ELSE 2 END e,
+                    CASE (CASE WHEN x > 1 THEN null END) WHEN '128.0.0.0'::IPv4 THEN 'hit' ELSE 'miss' END f,
+                    CASE null WHEN '1.1.1.1'::IPv4 THEN 'a' WHEN null THEN 'n' ELSE 'e' END g,
+                    CASE null WHEN false THEN 'f' ELSE 'e' END h,
+                    CASE null WHEN 0::BYTE THEN 'z' ELSE 'e' END i,
+                    CASE null WHEN 0::SHORT THEN 'z' ELSE 'e' END j,
+                    CASE null WHEN null THEN 'n' WHEN 1 THEN 'one' END k,
+                    CASE null WHEN null THEN 'n' END l
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl
+                        1\tother\tnull\tother\t2\t2\tmiss\tn\te\te\te\tn\tn
+                        2\tother\tnull\tother\t2\t2\tmiss\tn\te\te\te\tn\tn
+                        """);
+        // without a key there is no type to read the NULL as; switch() takes an ELSE value with it, since it rejects a lone
+        // operand, see testTooFewArguments
+        assertQuery("SELECT switch(null, 1) FROM long_sequence(1)")
+                .fails(14, "type NULL is not supported in 'switch' type of 'case' statement");
+    }
+
+    @Test
+    public void testNullOperandArrayKeyIsClosed() throws Exception {
+        // A NULL operand picks its branch at compile time and leaves the keys unused. switch()
+        // must still free them: an array key holds native memory.
+        assertQuery("""
+                SELECT
+                    CASE null WHEN ARRAY[1.0, 2.0] THEN 1 ELSE 3 END a,
+                    CASE (CASE WHEN x > 1 THEN null END) WHEN ARRAY[[1.0], [2.0]] THEN 1 ELSE 3 END b,
+                    CASE null WHEN null THEN 2 WHEN ARRAY[1.0] THEN 1 END c
+                FROM long_sequence(1)
+                """)
+                .expectSize()
+                .returns("""
+                        a\tb\tc
+                        3\t3\t2
+                        """);
     }
 
     @Test

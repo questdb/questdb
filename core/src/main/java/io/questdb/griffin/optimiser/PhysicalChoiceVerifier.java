@@ -25,6 +25,8 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -851,12 +853,20 @@ final class PhysicalChoiceVerifier {
                 ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
+    private static boolean isTimestampCallOrdered(SortPlan sort) {
+        try {
+            return OperatorPlanning.isTimestampCallOrdered(sort, new MonotonicTimestampFunctionFactory.ConstantArguments());
+        } catch (SqlException e) {
+            return false;
+        }
+    }
+
     static String sort(SortPlan sort, boolean isPlanned) {
         final SortPlan.Algorithm algorithm = sort.getAlgorithm();
         if (algorithm == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        if (algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION && !sort.isMarkoutHorizon()
+        if (algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION && !sort.isMarkoutHorizon() && !isTimestampCallOrdered(sort)
                 || isBounded(algorithm) && !sort.isLimited()
                 || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && PlanToFactoryRules.stolenFilter(PlanToFactoryRules.parallelTopKSource(sort)) == null) {
             return PlanVerifier.SORT_ALGORITHM;

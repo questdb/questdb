@@ -48,10 +48,24 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 public class LegacyPlannerTest extends AbstractCairoTest {
     private static final String LEGACY_PLAN = """
@@ -71,6 +85,8 @@ public class LegacyPlannerTest extends AbstractCairoTest {
             """;
     private static final CountingSqlCompilerFactory COMPILER_FACTORY = new CountingSqlCompilerFactory();
     private static final String PLAN_SQL = "EXPLAIN SELECT t.x + 1 FROM t JOIN u ON t.x = u.v";
+    // only the new planner builds an outer cross join
+    private static final Set<String> TYPE_CHECKS_OF_NEW_PLANNER_OBJECTS = Set.of("griffin/engine/join/OuterCrossJoinRecordCursorFactory.java#RightOuterJoinRecord");
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -377,6 +393,65 @@ public class LegacyPlannerTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "false");
             assertLegacy(false);
         });
+    }
+
+    @Test
+    public void testSharedCodeTypeChecksNoForkedClass() throws Exception {
+        // A class the legacy planner forks has a legacy copy of another type, so a type check on the shared class in
+        // code both planners reach misses what the legacy planner builds. The new planner's own packages, and shared
+        // code the legacy planner forks as well, only meet the shared class.
+        final Path root = Paths.get("src", "main", "java", "io", "questdb");
+        final Path legacy = root.resolve("legacy");
+        Assume.assumeTrue(Files.isDirectory(legacy));
+        final Map<String, String> forkedByFqn = new HashMap<>();
+        final Map<String, List<String>> forkedByPackage = new HashMap<>();
+        final Set<String> forkedPaths = new HashSet<>();
+        try (Stream<Path> files = Files.walk(legacy)) {
+            for (Path file : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".java"))::iterator) {
+                final String path = legacy.relativize(file).toString().replace(File.separatorChar, '/');
+                if (Files.exists(root.resolve(path))) {
+                    forkedPaths.add(path);
+                    final String name = path.substring(path.lastIndexOf('/') + 1, path.length() - ".java".length());
+                    final String pkg = "io.questdb." + path.substring(0, path.lastIndexOf('/')).replace('/', '.');
+                    forkedByFqn.put(pkg + '.' + name, name);
+                    forkedByPackage.computeIfAbsent(pkg, k -> new ArrayList<>()).add(name);
+                }
+            }
+        }
+        final Pattern imports = Pattern.compile("^import (io\\.questdb\\.[\\w.]+);", Pattern.MULTILINE);
+        final Pattern comments = Pattern.compile("/\\*.*?\\*/|//[^\n]*", Pattern.DOTALL);
+        final StringSink violations = new StringSink();
+        try (Stream<Path> files = Files.walk(root)) {
+            for (Path file : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".java") && !f.startsWith(legacy))::iterator) {
+                final String path = root.relativize(file).toString().replace(File.separatorChar, '/');
+                if (forkedPaths.contains(path) || path.startsWith("griffin/bind/") || path.startsWith("griffin/codegen/")
+                        || path.startsWith("griffin/optimiser/") || path.startsWith("griffin/plan/")) {
+                    continue;
+                }
+                final String source = comments.matcher(Files.readString(file)).replaceAll("");
+                final List<String> names = new ArrayList<>();
+                final int slash = path.lastIndexOf('/');
+                final List<String> samePackage = forkedByPackage.get("io.questdb" + (slash < 0 ? "" : '.' + path.substring(0, slash).replace('/', '.')));
+                if (samePackage != null) {
+                    names.addAll(samePackage);
+                }
+                final Matcher imported = imports.matcher(source);
+                while (imported.find()) {
+                    final String name = forkedByFqn.get(imported.group(1));
+                    if (name != null) {
+                        names.add(name);
+                    }
+                }
+                for (int i = 0, n = names.size(); i < n; i++) {
+                    final String name = names.get(i);
+                    if (Pattern.compile("instanceof\\s+" + name + "\\b|\\(\\s*" + name + "\\s*\\)\\s*[\\w(]").matcher(source).find()
+                            && !TYPE_CHECKS_OF_NEW_PLANNER_OBJECTS.contains(path + '#' + name)) {
+                        violations.put(path).put(" checks ").put(name).put('\n');
+                    }
+                }
+            }
+        }
+        TestUtils.assertEquals("", violations);
     }
 
     @Test

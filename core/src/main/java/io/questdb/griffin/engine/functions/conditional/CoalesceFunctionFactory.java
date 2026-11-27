@@ -64,6 +64,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -156,9 +157,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case GEOINT -> new GeoIntCoalesceFunction(returnType, ownArgs(args), argsSize);
             case GEOLONG -> new GeoLongCoalesceFunction(returnType, ownArgs(args), argsSize);
             case INTERVAL -> new IntervalCoalesceFunction(returnType, ownArgs(args), argsSize);
-            case BOOLEAN, SHORT, BYTE, CHAR ->
-                // Null on these data types not supported
-                    args.getQuick(0);
+            case BOOLEAN, SHORT, BYTE, CHAR -> {
+                // coalesce() supports no NULL for these types and returns the first argument; close
+                // the others, which nothing reads
+                for (int i = 1; i < argsSize; i++) {
+                    args.setQuick(i, Misc.free(args.getQuick(i)));
+                }
+                yield args.getQuick(0);
+            }
             case DECIMAL8 ->
                     argsSize == 2 ? new TwoDecimal8CoalesceFunction(returnType, args) : new Decimal8CoalesceFunction(returnType, args, argsSize);
             case DECIMAL16 ->

@@ -4583,7 +4583,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                   fill: prev
                                     Sample By
                                       fill: none
-                                      range: (,)
                                       values: [first(v)]
                                         PageFrame
                                             Row forward scan
@@ -6970,12 +6969,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("Sample By Fill\n" +
-                            "  range: (timestamp_floor('day',now()),)\n" +
+                            "  range: (timestamp_floor('day',now()),null)\n" +
                             "  stride: '1m'\n" +
                             "  fill: null\n" +
                             "    Sample By\n" +
                             "      fill: none\n" +
-                            "      range: (timestamp_floor('day',now()),)\n" +
+                            "      range: (timestamp_floor('day',now()),null)\n" +
                             "      values: [count(*)]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +

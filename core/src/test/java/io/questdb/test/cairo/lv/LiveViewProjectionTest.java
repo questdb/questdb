@@ -334,6 +334,65 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testLegacyPlannerCreatesAViewWithProjectionsAroundTheWindow() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, px * 2 - avg(px * 2) OVER (" + FRAME + ") AS c FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc
+                            2026-08-07T12:00:00.000000Z\tA\t0.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t24.0
+                            2026-08-07T12:00:04.000000Z\tB\t4.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
+    public void testLegacyPlannerRecompilesAViewWithProjectionsAroundTheWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase();
+            final String viewSql = "SELECT ts, sym, px * 2 - avg(px * 2) OVER (" + FRAME + ") AS c FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            insertRowsWithExactAverages();
+            refresh();
+
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:05.000000Z','A',26.0)");
+            refresh();
+
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc
+                            2026-08-07T12:00:00.000000Z\tA\t0.0
+                            2026-08-07T12:00:01.000000Z\tA\t4.0
+                            2026-08-07T12:00:02.000000Z\tB\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\t24.0
+                            2026-08-07T12:00:04.000000Z\tB\t4.0
+                            2026-08-07T12:00:05.000000Z\tA\t12.0
+                            """);
+            assertMatchesRecompute(viewSql);
+        });
+    }
+
+    @Test
     public void testMemoizedProjectionColumnSurvivesCheckpointRestore() throws Exception {
         // The two memoized replay tests cover the O3 paths; this one covers the restore. What
         // it adds is coverage rather than a proof: the restore recompiles, so its memoizers are

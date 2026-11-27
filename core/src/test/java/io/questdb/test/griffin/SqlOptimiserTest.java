@@ -2516,7 +2516,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """);
             assertQuery(query)
                     .noLeakCheck()
-                    .expectSize()
                     .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
@@ -2766,7 +2765,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """);
             assertQuery(query)
                     .noLeakCheck()
-                    .expectSize()
                     .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
@@ -3223,17 +3221,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       symbolKeyJoin: true
                                         PageFrame
                                             Row forward scan
-                                            Interval forward scan on: t1
-                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                            Frame forward scan on: t2
                                         Hash
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: t2
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: t1
-                                                      intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                                Interval forward scan on: t1
+                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -5856,14 +5849,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Long Top K lo: 6
-                              keys: [ts asc]
+                            Limit value: 6 skip-rows-max: 0 take-rows-max: 6
                                 SelectedRecord
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')
                                       keys: [ts,s]
                                       keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
                                       values: [count(*)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: fromto
@@ -6079,7 +6071,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: (,'2018-01-31')
+                              range: (null,'2018-01-31')
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -6119,7 +6111,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2017-12-20',)
+                              range: ('2017-12-20',null)
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -6607,7 +6599,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2017-12-20',)
+                              range: ('2017-12-20',null)
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -6629,7 +6621,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2017-12-20',)
+                              range: ('2017-12-20',null)
                               stride: '5d'
                               fill: null
                                 Async Stream Group By workers: 1
@@ -6964,18 +6956,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR""")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [timestamp]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [symbol,timestamp]
-                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
-                                      values: [last(price)]
-                                      filter: symbol ~ BTC-USD [state-shared]
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: trades
-                                              intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',timestamp)
+                                  keys: [symbol,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
+                                  values: [last(price)]
+                                  filter: symbol ~ BTC-USD [state-shared]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
                             """);
         });
     }
