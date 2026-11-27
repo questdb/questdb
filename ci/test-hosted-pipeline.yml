@@ -131,9 +131,8 @@ stages:
   # weekly master schedule declared at the top of this file, so it runs at
   # most once per PR rather than on every push. Master CI
   # (test-master-pipeline.yml) runs the same stage on master every two hours.
-  # The self-hosted boxes carry the Rust
-  # toolchain, a C compiler, and Docker; the stage is independent of the hosted
-  # macOS/Windows test jobs above.
+  # The self-hosted boxes carry the Rust toolchain, a C compiler, and Docker;
+  # the stage is independent of the hosted macOS/Windows test jobs above.
   - stage: BinarySmokeTest
     displayName: "Binary smoke test"
     dependsOn: []

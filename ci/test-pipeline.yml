@@ -12,6 +12,13 @@ trigger:
     include:
       - gh-readonly-queue/*
 
+pr:
+  branches:
+    include:
+      - master
+      - rd_cold_s18
+  drafts: false
+
 variables:
   # Supplies GIT_GITHUB_TOKEN, which the fetch steps feed to ci/git-auth-env.sh
   # (as GH_TOKEN) so github.com fetches do not go out anonymously. Fork PRs
