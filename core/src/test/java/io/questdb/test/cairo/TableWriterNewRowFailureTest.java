@@ -48,17 +48,13 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -69,23 +65,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * committed rows as they are. A failed out-of-order start leaves the writer usable; a failed partition switch
  * distresses it. After a failed partition switch, the tests send the writer rows of the new partition only.
  */
-@RunWith(Parameterized.class)
 public class TableWriterNewRowFailureTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
-    // The type of column s of the tables of createStringTables(). The first out-of-order row of a transaction
-    // allocates the O3 buffer of a STRING column in o3OpenColumns(), and none for a VARCHAR column before the O3
-    // buffer of the designated timestamp. The tests that do not use createStringTables() do not depend on it.
-    private final String stringColumnType;
-
-    public TableWriterNewRowFailureTest(String stringColumnType) {
-        this.stringColumnType = stringColumnType;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{"STRING"}, {"VARCHAR"}});
-    }
+    // The type of column s of the tables of createStringTables(), which picks STRING or VARCHAR at random. The first
+    // out-of-order row of a transaction allocates the O3 buffer of a STRING column in o3OpenColumns(), and none for a
+    // VARCHAR column before the O3 buffer of the designated timestamp.
+    private String stringColumnType;
 
     @Test
     public void testO3StartFailureAfterAbandonedRow() throws Exception {
@@ -827,8 +813,10 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
         return createStringTables(10);
     }
 
-    // tab and ref with rows ts = x, s = 's' || x for x = 1..n, written by INSERT; s is of stringColumnType
+    // tab and ref with rows ts = x, s = 's' || x for x = 1..n, written by INSERT; s is STRING or VARCHAR at random
     private StringRows createStringTables(int n) throws Exception {
+        stringColumnType = TestUtils.generateRandom(LOG).nextBoolean() ? "STRING" : "VARCHAR";
+        LOG.info().$("column s is ").$(stringColumnType).$();
         execute("CREATE TABLE tab (ts TIMESTAMP, s " + stringColumnType + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("CREATE TABLE ref (ts TIMESTAMP, s " + stringColumnType + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("INSERT INTO tab SELECT x::TIMESTAMP, 's' || x, x FROM long_sequence(" + n + ")");
@@ -894,7 +882,7 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
     }
 
     /**
-     * The rows of a table (ts TIMESTAMP, s STRING, x LONG): x at ts with s = 's' || x, in timestamp order.
+     * The rows of a table (ts TIMESTAMP, s STRING or VARCHAR, x LONG): x at ts with s = 's' || x, in timestamp order.
      */
     private static class StringRows {
         private final ArrayList<long[]> rows = new ArrayList<>();
