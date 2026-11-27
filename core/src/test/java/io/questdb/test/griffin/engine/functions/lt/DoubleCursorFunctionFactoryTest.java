@@ -224,14 +224,14 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             assertQuery(query)
                     .withContext(ctx)
                     .noLeakCheck()
-                    .assertsPlanContaining("Async Group By workers: 4");
+                    .assertsPlanContaining("Async Stream Group By workers: 4");
 
             // threshold = 5000; 1h buckets hold prices 1..3600, 3601..7200, 7201..10000,
             // so prices above the threshold count 0, 2200 and 2800 per bucket
             assertQuery(query)
                     .withContext(ctx)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             s
                             0

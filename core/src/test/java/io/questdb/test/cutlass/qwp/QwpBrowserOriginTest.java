@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
+import io.questdb.cutlass.http.BrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpBrowserAuthorization;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -73,8 +73,35 @@ public class QwpBrowserOriginTest {
                 "http://10.0.0.255", "https://[::1]:8443", "https://[2001:db8::1]", "http://[::ffff:7f00:1]:3000",
                 "http://[2001:db8:0:1:1:1:1:1]", "http://[2001:db8::1:0:0:1]", "http://[1::]"
         }) {
-            QwpBrowserAllowedOrigins allowed = QwpBrowserAllowedOrigins.parse(value);
+            BrowserAllowedOrigins allowed = BrowserAllowedOrigins.parse(value);
             Assert.assertTrue(value, allowed.isAllowed(new Utf8String(value)));
+        }
+    }
+
+    @Test
+    public void testAllowedOriginsConfigurationListsOnlyHttpOrigins() {
+        // the connection tells the operator whether listing an Origin could ever admit it
+        for (String origin : new String[]{
+                "http://localhost:3000", "https://app.example.com", "https://[::1]:8443", "http://127.0.0.1:3000"
+        }) {
+            Assert.assertTrue(origin, BrowserAllowedOrigins.hasHttpScheme(new Utf8String(origin)));
+            Assert.assertTrue(origin, BrowserAllowedOrigins.parse(origin).isAllowed(new Utf8String(origin)));
+        }
+        for (String origin : new String[]{
+                // file: pages, sandboxed frames, data: documents and requests redirected across origins
+                "null",
+                // file: pages in older browsers, extensions and apps with schemes of their own
+                "file://", "chrome-extension://abcdefghijklmnopabcdefghijklmnop", "capacitor://localhost", "tauri://localhost",
+                // written differently from what a browser sends
+                "HTTP://localhost:3000", "Https://app.example.com", "http:/localhost:3000", "http:localhost",
+                "ws://localhost:3000", "httpx://localhost", ""
+        }) {
+            Assert.assertFalse(origin, BrowserAllowedOrigins.hasHttpScheme(new Utf8String(origin)));
+            try {
+                Assert.assertFalse(origin, BrowserAllowedOrigins.parse(origin).isAllowed(new Utf8String(origin)));
+            } catch (IllegalArgumentException expected) {
+                // the configuration refuses to list it
+            }
         }
     }
 
@@ -86,6 +113,9 @@ public class QwpBrowserOriginTest {
         assertRejectedWith("http://[0:0:0:0:0:0:0:1]:3000", "browsers send [::1]");
         assertRejectedWith("https://[2001:DB8::1]", "browsers send [2001:db8::1]");
         assertRejectedWith("http://127.000.000.001:3000", "not in canonical dotted-decimal form");
+        // a host whose last label is a hexadecimal number, in either case, is an IPv4 address too
+        assertRejectedWith("http://app.0x1:3000", "not in canonical dotted-decimal form");
+        assertRejectedWith("http://APP.0X1:3000", "not in canonical dotted-decimal form");
         assertRejectedWith("https://app.example.com,", "empty entry, check for a stray comma");
         assertRejectedWith("https://a.example.com, ,https://b.example.com", "empty entry, check for a stray comma");
     }
@@ -112,14 +142,14 @@ public class QwpBrowserOriginTest {
                 "https://app..example.com", "https://.app.example.com", "https://[::1", "https://[::1]x"
         }) {
             try {
-                QwpBrowserAllowedOrigins.parse(value);
+                BrowserAllowedOrigins.parse(value);
                 Assert.fail("accepted invalid browser origin config: " + value);
             } catch (IllegalArgumentException expected) {
                 // A bad entry must fail the entire configuration, not silently widen the policy.
             }
         }
-        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse(""));
-        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse("  "));
+        Assert.assertSame(BrowserAllowedOrigins.EMPTY, BrowserAllowedOrigins.parse(""));
+        Assert.assertSame(BrowserAllowedOrigins.EMPTY, BrowserAllowedOrigins.parse("  "));
     }
 
     @Test
@@ -290,7 +320,7 @@ public class QwpBrowserOriginTest {
 
     private static void assertRejectedWith(String value, String expectedReason) {
         try {
-            QwpBrowserAllowedOrigins.parse(value);
+            BrowserAllowedOrigins.parse(value);
             Assert.fail("accepted invalid browser origin config: " + value);
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains(expectedReason));

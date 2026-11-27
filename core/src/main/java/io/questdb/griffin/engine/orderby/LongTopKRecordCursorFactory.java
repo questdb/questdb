@@ -94,6 +94,16 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         return ascending ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
+    // A top K orders its rows by its one key itself, in the direction it reports.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return timestampIndex > -1
+                && columnIndex == timestampIndex
+                && timestampIndex == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean implementsLimit() {
         return true;
