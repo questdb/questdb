@@ -46,6 +46,7 @@ pub use qdb_parquet_meta::{
 };
 
 pub use convert::{
-    generate_parquet_metadata, physical_type_to_u8, update_parquet_metadata, ParquetMetaColumnInfo,
+    generate_parquet_metadata, generate_parquet_metadata_with_chunk_ascii, physical_type_to_u8,
+    row_group_first_page_offset, update_parquet_metadata, ParquetMetaColumnInfo,
     ParquetMetaUpdateResult,
 };

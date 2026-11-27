@@ -218,6 +218,13 @@ and its partition versions are kept until the next save point overwrites it (sec
 The posting index reseal takes no save point of its own: the next periodic one covers the superseded files, which
 the save point's partition pin keeps until then.
 
+Nor does a reseal of the commit being applied flush the value and cover files it writes: it flushes the key file
+alone and leaves the others to that save point (`TableWriter.isPostingSealCoveredBySavePoint`). That holds once the
+table holds a save point, where `syncfs` flushes the whole filesystem (Linux), and while the WAL on disk holds a
+transaction after the save point, the condition of recovery step 14 (section 8); a reseal that finds none flushes
+the sequencer log first, at most once per save point. An index build (ADD INDEX, a column type change, REINDEX),
+the first apply batch of a new table and a replica flush every file of a seal.
+
 ## 6. Publishing a save point
 
 `TableWriter.advanceDurableEpoch`:

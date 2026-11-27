@@ -383,6 +383,12 @@ pub struct ParquetMetaUpdateWriter<'a> {
     prior_index_row_count: u64,
     /// Set by [`Self::drop_index_row_map`]: the new footer carries the identity map.
     is_index_row_map_dropped: bool,
+    /// Caller's answer for the new footer, see [`Self::header_ascii_valid`].
+    is_header_ascii_valid: Option<bool>,
+    /// Whether the header's `IS_ASCII` column flags hold for the committed snapshot.
+    is_prior_header_ascii_valid: bool,
+    /// Whether the header flags any column ASCII: without one the new footer needs no bit.
+    has_header_ascii: bool,
 }
 
 enum RowGroupEntry {
@@ -474,6 +480,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             .scratchpad_entries()
             .map(|(code, content)| (code, content.to_vec()))
             .collect();
+        let mut has_header_ascii = false;
+        for i in 0..reader.column_count() as usize {
+            has_header_ascii |= reader.column_descriptor(i)?.flags().is_ascii();
+        }
 
         Ok(Self {
             existing,
@@ -499,7 +509,20 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_index_row_lo,
             prior_index_row_count,
             is_index_row_map_dropped: false,
+            is_header_ascii_valid: None,
+            is_prior_header_ascii_valid: reader.is_header_ascii_valid(),
+            has_header_ascii,
         })
+    }
+
+    /// Says whether the header's `IS_ASCII` column flags hold for every row group of the new
+    /// snapshot, see [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`]. A caller that adds or replaces
+    /// row groups must call it: without the call such a footer leaves the flags unproven and
+    /// readers ignore them. A footer that only keeps committed row groups inherits the answer of
+    /// the footer before it.
+    pub fn header_ascii_valid(&mut self, is_valid: bool) -> &mut Self {
+        self.is_header_ascii_valid = Some(is_valid);
+        self
     }
 
     /// Writes the identity index row map whatever the row groups do: index rows start over as partition rows.
@@ -851,12 +874,24 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         // walking back derives the old footer location from the trailer
         // at `existing_parquet_meta_file_size - 4`.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
-        fb.feature_flags(footer_flags(
-            self.is_written_by_questdb
-                .unwrap_or(self.prior_is_written_by_questdb),
-        ));
         fb.unused_bytes(self.unused_bytes);
         fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size);
+        let has_new_row_groups = self
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, RowGroupEntry::New(_)));
+        let is_header_ascii_valid = self
+            .is_header_ascii_valid
+            .unwrap_or(!has_new_row_groups && self.is_prior_header_ascii_valid);
+        let feature_flags = footer_flags(
+            self.is_written_by_questdb
+                .unwrap_or(self.prior_is_written_by_questdb),
+        );
+        fb.feature_flags(if self.has_header_ascii && is_header_ascii_valid {
+            feature_flags.with_header_ascii_valid()
+        } else {
+            feature_flags
+        });
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
         }
@@ -1981,5 +2016,185 @@ mod tests {
             ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
                 .unwrap();
         assert_eq!(prior_footer.seq_txn(), Some(SeqTxn::new(10)));
+    }
+
+    /// Columns: `ts`, `a` flagged ASCII, `b` not flagged; `row_groups` row groups.
+    fn make_ascii_file(row_groups: usize, is_a_ascii: bool) -> (Vec<u8>, u64) {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        let a_flags = if is_a_ascii {
+            ColumnFlags::new().with_ascii()
+        } else {
+            ColumnFlags::new()
+        };
+        w.add_column("a", 1, 26, a_flags, 0, 0, 0, 0);
+        w.add_column("b", 2, 26, ColumnFlags::new(), 0, 0, 0, 0);
+        for _ in 0..row_groups {
+            w.add_row_group(make_ascii_row_group(false));
+        }
+        w.parquet_footer(4096, 256);
+        w.finish().unwrap()
+    }
+
+    fn make_ascii_row_group(is_a_ascii: bool) -> RowGroupBlockBuilder {
+        let mut rg = RowGroupBlockBuilder::new(3);
+        rg.set_num_rows(10);
+        for col in 0..3 {
+            let mut chunk = ColumnChunkRaw::zeroed();
+            chunk.num_values = 10;
+            rg.set_column_chunk(col, chunk).unwrap();
+        }
+        if is_a_ascii {
+            rg.set_column_chunk_ascii(1).unwrap();
+        }
+        rg
+    }
+
+    /// Appends the footer `update` prepares and publishes it, as the Java writer does.
+    fn append_footer(
+        original: &[u8],
+        size: u64,
+        update: impl FnOnce(&mut ParquetMetaUpdateWriter),
+    ) -> (Vec<u8>, u64) {
+        let mut updater = ParquetMetaUpdateWriter::new(original, size).unwrap();
+        update(&mut updater);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+        let mut full = original[..size as usize].to_vec();
+        full.extend_from_slice(&append_bytes);
+        full[HEADER_PARQUET_META_FILE_SIZE_OFF..HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        reader.verify_checksum().unwrap();
+        (full, new_size)
+    }
+
+    fn is_chunk_ascii(reader: &ParquetMetaReader, row_group: usize, column: usize) -> bool {
+        let chunk = reader
+            .row_group(row_group)
+            .unwrap()
+            .column_chunk(column)
+            .unwrap();
+        chunk.flags().is_ascii()
+    }
+
+    #[test]
+    fn create_flags_only_the_chunks_the_caller_flags() {
+        // `a` is flagged in the header, but a header flag describes the whole column and flags
+        // no chunk: row group 0 is flagged by its writer, row group 1 is not
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("a", 1, 26, ColumnFlags::new().with_ascii(), 0, 0, 0, 0);
+        w.add_column("b", 2, 26, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_row_group(make_ascii_row_group(true));
+        w.add_row_group(make_ascii_row_group(false));
+        w.parquet_footer(4096, 256);
+        let (bytes, size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert!(reader.is_header_ascii_valid());
+        assert!(!reader.footer_feature_flags().has_header_ascii_valid());
+        assert!(is_chunk_ascii(&reader, 0, 1));
+        assert!(!is_chunk_ascii(&reader, 1, 1));
+        for row_group in 0..2 {
+            assert!(!is_chunk_ascii(&reader, row_group, 0));
+            assert!(!is_chunk_ascii(&reader, row_group, 2));
+        }
+    }
+
+    #[test]
+    fn update_that_keeps_row_groups_inherits_header_ascii_validity() {
+        let (original, size) = make_ascii_file(2, true);
+
+        // first footer -> valid, by the bit from now on
+        let (second, second_size) = append_footer(&original, size, |updater| {
+            updater.parquet_footer(8192, 256);
+        });
+        let reader = ParquetMetaReader::from_file_size(&second, second_size).unwrap();
+        assert!(reader.footer_feature_flags().has_header_ascii_valid());
+        assert!(reader.is_header_ascii_valid());
+
+        // a footer with the bit -> valid
+        let (third, third_size) = append_footer(&second, second_size, |updater| {
+            updater.reuse_row_group(0, 1).unwrap();
+            updater.reuse_row_group(1, 0).unwrap();
+        });
+        let reader = ParquetMetaReader::from_file_size(&third, third_size).unwrap();
+        assert!(reader.is_header_ascii_valid());
+
+        // a footer without the bit -> stays unproven
+        let (unproven, unproven_size) = append_footer(&third, third_size, |updater| {
+            updater.header_ascii_valid(false);
+        });
+        let reader = ParquetMetaReader::from_file_size(&unproven, unproven_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_header_ascii_valid());
+        assert!(!reader.is_header_ascii_valid());
+        let (last, last_size) = append_footer(&unproven, unproven_size, |updater| {
+            updater.parquet_footer(16384, 256);
+        });
+        let reader = ParquetMetaReader::from_file_size(&last, last_size).unwrap();
+        assert!(!reader.is_header_ascii_valid());
+    }
+
+    #[test]
+    fn update_that_adds_row_group_leaves_header_ascii_unproven_unless_told() {
+        let (original, size) = make_ascii_file(1, true);
+
+        let (appended, appended_size) = append_footer(&original, size, |updater| {
+            updater.add_row_group(make_ascii_row_group(false));
+        });
+        let reader = ParquetMetaReader::from_file_size(&appended, appended_size).unwrap();
+        assert!(!reader.is_header_ascii_valid());
+        // neither block is flagged: the header flag flags no chunk, the added block is not ASCII
+        assert!(!is_chunk_ascii(&reader, 0, 1));
+        assert!(!is_chunk_ascii(&reader, 1, 1));
+        // the snapshot before the update still reads its flags
+        let before = ParquetMetaReader::from_file_size(&appended, size).unwrap();
+        assert!(before.is_header_ascii_valid());
+
+        let (told, told_size) = append_footer(&original, size, |updater| {
+            updater.add_row_group(make_ascii_row_group(true));
+            updater.header_ascii_valid(true);
+        });
+        let reader = ParquetMetaReader::from_file_size(&told, told_size).unwrap();
+        assert!(reader.is_header_ascii_valid());
+        assert!(is_chunk_ascii(&reader, 1, 1));
+    }
+
+    #[test]
+    fn update_that_replaces_row_group_leaves_header_ascii_unproven_unless_told() {
+        let (original, size) = make_ascii_file(2, true);
+
+        let (replaced, replaced_size) = append_footer(&original, size, |updater| {
+            updater
+                .replace_row_group(0, make_ascii_row_group(false))
+                .unwrap();
+        });
+        let reader = ParquetMetaReader::from_file_size(&replaced, replaced_size).unwrap();
+        assert!(!reader.is_header_ascii_valid());
+        // the replacement is not ASCII, and the kept block has no flag of its own
+        assert!(!is_chunk_ascii(&reader, 0, 1));
+        assert!(!is_chunk_ascii(&reader, 1, 1));
+
+        // an update of the unproven snapshot can prove the flags again
+        let (proven, proven_size) = append_footer(&replaced, replaced_size, |updater| {
+            updater
+                .replace_row_group(0, make_ascii_row_group(true))
+                .unwrap();
+            updater.header_ascii_valid(true);
+        });
+        let reader = ParquetMetaReader::from_file_size(&proven, proven_size).unwrap();
+        assert!(reader.is_header_ascii_valid());
+    }
+
+    #[test]
+    fn update_sets_no_bit_when_header_flags_no_column_ascii() {
+        let (original, size) = make_ascii_file(1, false);
+        let (appended, appended_size) = append_footer(&original, size, |updater| {
+            updater.add_row_group(make_ascii_row_group(false));
+            updater.header_ascii_valid(true);
+        });
+        let reader = ParquetMetaReader::from_file_size(&appended, appended_size).unwrap();
+        assert_eq!(reader.footer_feature_flags(), FooterFeatureFlags::new());
     }
 }
