@@ -109,8 +109,9 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
         }
 
         /**
-         * Quotes the varchar.
-         * Surrogate pairs are NOT handled. Surrogate pairs will be converted to `0` ie `NUL`.
+         * Quotes the varchar. Characters are checked the same way as the STRING overload;
+         * a character outside the BMP (a surrogate pair in UTF-16) is not a letter or digit,
+         * so it makes the identifier quoted. Bytes are copied as they are, with quotes doubled.
          *
          * @param sink    output varchar sink
          * @param utf8Str input varchar
@@ -124,14 +125,14 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             sink.clear();
 
             boolean needsQuoting = false;
-            int len = Utf8s.length(utf8Str);
+            final int size = utf8Str.size();
 
-            for (int i = 0, n; i < len; i += n) {
+            for (int i = 0, n; i < size; i += n) {
                 final int pc = Utf8s.utf8CharDecode(utf8Str, i); // current tuple packed char
                 n = Numbers.decodeLowShort(pc); // number of decoded bytes
                 final char c = (char) Numbers.decodeHighShort(pc); // utf16 char
 
-                if (!(Character.isLetter(c) ||
+                if (n == 0 || !(Character.isLetter(c) ||
                         Character.isDigit(c) ||
                         c == '_' ||
                         c == '$')) {
@@ -143,18 +144,15 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             if (!needsQuoting) {
                 sink.put(utf8Str);
             } else {
-                sink.put('"');
-                for (int i = 0, n; i < len; i += n) {
-                    final int pc = Utf8s.utf8CharDecode(utf8Str, i); // current tuple packed char
-                    n = Numbers.decodeLowShort(pc); // number of decoded bytes
-                    final char c = (char) Numbers.decodeHighShort(pc); // utf16 char
-                    if (c != '"') {
-                        sink.put(c);
-                    } else {
-                        sink.put('"').put('"');
+                sink.putAscii('"');
+                for (int i = 0; i < size; i++) {
+                    final byte b = utf8Str.byteAt(i);
+                    if (b == '"') {
+                        sink.putAscii('"');
                     }
+                    sink.putAny(b);
                 }
-                sink.put('"');
+                sink.putAscii('"');
             }
 
             return sink;
