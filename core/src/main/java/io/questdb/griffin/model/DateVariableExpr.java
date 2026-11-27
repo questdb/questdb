@@ -190,6 +190,23 @@ public class DateVariableExpr {
             throw SqlException.$(errorPos + unitStart + 1 - lo, "Unexpected characters after unit");
         }
 
+        switch (unitChar) {
+            case 'y':
+            case 'M':
+            case 'w':
+            case 'd':
+            case 'D':
+            case 'h':
+            case 'm':
+            case 's':
+            case 'T':
+            case 'u':
+            case 'n':
+                break;
+            default:
+                throw SqlException.$(errorPos + unitStart - lo, "Invalid time unit: ").put(unitChar);
+        }
+
         return encode(varType, unitChar, offsetValue, false);
     }
 
