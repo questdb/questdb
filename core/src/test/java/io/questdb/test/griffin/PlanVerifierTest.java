@@ -1532,6 +1532,10 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertFalse(sort.getAlgorithm().isInputOrder());
                 sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
             }, PlanVerifier.SORT_ALGORITHM);
+            assertAlgorithmContradicts("SELECT * FROM ((SELECT * FROM unordered) TIMESTAMP(k)) ORDER BY k", SortPlan.class, sort -> {
+                Assert.assertFalse(sort.getAlgorithm().isInputOrder());
+                sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
+            }, PlanVerifier.SORT_ALGORITHM);
         });
     }
 

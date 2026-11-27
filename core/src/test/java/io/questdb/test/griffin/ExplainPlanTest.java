@@ -5230,7 +5230,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts2 partition by s")
                 .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestBy light order_by_timestamp: true
+                        LatestBy light order_by_timestamp: false
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a2

@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -1028,13 +1029,15 @@ final class PhysicalChoiceVerifier {
         final boolean isAdviceFollowed = PhysicalProperties.followsOrderAdvice(input) == PhysicalProperties.Capability.YES
                 && PlanToFactoryRules.hasAdvisedInput(input);
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
+        final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(input);
         final PhysicalProperties.ScanDirection timestampOrder = PhysicalProperties.orderOf(input, timestampIndex);
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             final WindowSpec spec = window.getSpecs().getQuick(i);
             final IntList order = spec.getOrderByColumnIds();
             if (spec.isOrderDelivered() && !(isAdviceFollowed && spec.isOrderedByQueryOrder(window.getQueryOrder())
                     || order.size() == 1 && timestampIndex > -1 && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex
-                    && timestampOrder == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0)))) {
+                    && (spec.getFramingMode() == WindowExpression.FRAMING_RANGE ? direction : timestampOrder)
+                    == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0)))) {
                 return PlanVerifier.WINDOW_ORDER;
             }
         }

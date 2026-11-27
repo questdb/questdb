@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
@@ -1522,6 +1523,7 @@ final class OperatorPlanning implements Mutable {
         final SortKeys queryOrder = window.getQueryOrder();
         final boolean isAdviceFollowed = isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input);
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
+        final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(input);
         final PhysicalProperties.ScanDirection timestampOrder = PhysicalProperties.orderOf(input, timestampIndex);
         boolean isDirectionRead = false;
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
@@ -1530,8 +1532,8 @@ final class OperatorPlanning implements Mutable {
             final boolean isTimestampKey = order.size() == 1
                     && (queryOrder.size() < 2 || (window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0)
                     && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex;
-            final boolean isOrderDelivered = isAdviceFollowed && spec.isOrderedByQueryOrder(queryOrder)
-                    || isTimestampKey && timestampOrder == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0));
+            final boolean isOrderDelivered = isAdviceFollowed && spec.isOrderedByQueryOrder(queryOrder) || isTimestampKey
+                    && (spec.getFramingMode() == WindowExpression.FRAMING_RANGE ? direction : timestampOrder) == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0));
             spec.setOrderDelivered(isOrderDelivered);
             isDirectionRead |= isTimestampKey || isOrderDelivered;
         }

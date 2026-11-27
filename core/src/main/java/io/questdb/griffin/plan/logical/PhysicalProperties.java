@@ -146,27 +146,26 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The order the factory emits the values of the column at {@code columnIndex} in, as the plan proves it or the query
-     * declares it: {@link ScanDirection#FORWARD} when they never decrease, {@link ScanDirection#BACKWARD} when they never
-     * increase and {@link ScanDirection#OTHER} otherwise. A designated timestamp the query declares, which the user
-     * guarantees the rows follow, a table's designated timestamp, a column a source function declares ordered, each in
-     * the direction its plan reports, the key of a stream GROUP BY, the first key of a sort that sorts and the column a
-     * UNION ALL merges by start an order. A LATEST BY that reads a table keeps the order of the table's timestamp, one
-     * that reads its input again the input's order, and one that reads it by row id, in map order, none. A SAMPLE BY
-     * bucket and a fill that does not sort keep the order of their timestamp, a projection the order of the column its
-     * calls keep the order of, see {@link LogicalPlans#orderSourceColumnId}, and any other plan the order of its ordered
-     * input, see {@link #orderedInput}.
+     * The order the factory emits the values of the column at {@code columnIndex} in, as the plan proves it:
+     * {@link ScanDirection#FORWARD} when they never decrease, {@link ScanDirection#BACKWARD} when they never increase and
+     * {@link ScanDirection#OTHER} otherwise. A table's own designated timestamp, in the direction the scan reports for
+     * it, a column a source function declares ordered, the key of a stream GROUP BY, the first key of a sort that sorts
+     * and the column a UNION ALL merges by start an order. A LATEST BY that reads a table keeps the order of the table's
+     * timestamp, one that reads its input again the input's order, and one that reads it by row id, in map order, none. A
+     * SAMPLE BY bucket and a fill that does not sort keep the order of their timestamp, a projection the order of the column its calls keep the order of, see
+     * {@link LogicalPlans#orderSourceColumnId}, and any other plan the order of its ordered input, see
+     * {@link #orderedInput}. A TIMESTAMP clause starts none: it only designates the column.
      */
     public static ScanDirection orderOf(LogicalPlan plan, int columnIndex) {
         while (columnIndex >= 0) {
             final LogicalPlan input;
             switch (plan) {
                 case ScanPlan scan -> {
-                    return columnIndex == scanTimestampIndex(scan) ? ordered(scanDirection(scan)) : ScanDirection.OTHER;
+                    return columnIndex == scanTimestampIndex(scan) && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()
+                            ? ordered(scanDirection(scan)) : ScanDirection.OTHER;
                 }
                 case FunctionSourcePlan source -> {
-                    return source.getRecordName() == null && (columnIndex == source.getOutput().getTimestampIndex()
-                            || source.getSourceColumnIndexes().getQuick(columnIndex) == source.getOrderedColumnIndex())
+                    return source.getRecordName() == null && source.getSourceColumnIndexes().getQuick(columnIndex) == source.getOrderedColumnIndex()
                             ? ordered(source.getScanDirection()) : ScanDirection.OTHER;
                 }
                 case AggregatePlan aggregate -> {
@@ -216,9 +215,6 @@ public final class PhysicalProperties {
                     columnIndex = bucketIndex;
                 }
                 case ProjectPlan project -> {
-                    if (project.hasTimestampDeclaration() && columnIndex == project.getOutput().getTimestampIndex()) {
-                        return ordered(scanDirection(project));
-                    }
                     input = project.getChild();
                     columnIndex = input.getOutput().getColumnIndexById(LogicalPlans.orderSourceColumnId(project, project.getOutput().getColumnId(columnIndex)));
                 }
