@@ -554,6 +554,41 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testSelectFirstLastTimestampAfterColDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE tab (a LONG, ts TIMESTAMP, b LONG) TIMESTAMP(ts) PARTITION BY DAY");
+                statement.execute("INSERT INTO tab SELECT x, timestamp_sequence('2022-02-24', 1_000_000L), x * 1_000 FROM long_sequence(10)");
+            }
+            mayDrainWalQueue();
+
+            final String maxTs = "max[TIMESTAMP]\n2022-02-24 00:00:09.0\n";
+            final String firstTs = "first[TIMESTAMP]\n2022-02-24 00:00:00.0\n";
+            final String lastTs = "last[TIMESTAMP]\n2022-02-24 00:00:09.0\n";
+            try (
+                    PreparedStatement max = connection.prepareStatement("SELECT max(ts) FROM tab");
+                    PreparedStatement first = connection.prepareStatement("SELECT first(ts) FROM tab");
+                    Statement statement = connection.createStatement()
+            ) {
+                for (int i = 0; i < 2; i++) {
+                    assertFirstLastTimestamp(maxTs, max.executeQuery());
+                    assertFirstLastTimestamp(firstTs, first.executeQuery());
+                    assertFirstLastTimestamp(lastTs, statement.executeQuery("SELECT last(ts) FROM tab"));
+                }
+
+                statement.executeUpdate("ALTER TABLE tab DROP COLUMN a");
+                mayDrainWalQueue();
+
+                for (int i = 0; i < 2; i++) {
+                    assertFirstLastTimestamp(maxTs, max.executeQuery());
+                    assertFirstLastTimestamp(firstTs, first.executeQuery());
+                    assertFirstLastTimestamp(lastTs, statement.executeQuery("SELECT last(ts) FROM tab"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSelectPreparedStatementAfterCoveringIndexReAddedWithoutInclude() throws Exception {
         // The statement compiles to a covering index scan. After DROP INDEX and ADD INDEX of the same
         // type without INCLUDE, the server recompiles it over the reloaded pooled reader, which must
@@ -1443,6 +1478,13 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                                         s.executeUpdate("UPDATE tango SET y = 42");
                                     }
                                 }));
+    }
+
+    private void assertFirstLastTimestamp(String expected, ResultSet rs) throws SQLException {
+        try (rs) {
+            sink.clear();
+            assertResultSet(expected, sink, rs);
+        }
     }
 
     private void assertMessageMatches(Exception e, String expectedRegex) {

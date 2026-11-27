@@ -36,6 +36,7 @@ public final class FiberMetrics implements Target, Mutable {
     private static final String CREATED_NAME = "worker_pool_fiber_created";
     private static final String FINALIZING_NAME = "worker_pool_fiber_finalizing";
     private static final String INLINE_SUSPEND_VIOLATION_NAME = "worker_pool_fiber_inline_suspend_violation";
+    private static final String LABEL_GROUP = "group";
     private static final String LABEL_RESULT = "result";
     private static final String LABEL_ROUTE = "route";
     private static final String LABEL_SOURCE = "source";
@@ -66,12 +67,22 @@ public final class FiberMetrics implements Target, Mutable {
     }
 
     public synchronized void register(String poolName, FiberRuntime runtime) {
+        register(poolName, -1, runtime);
+    }
+
+    /**
+     * Registers the runtime of worker group {@code group} of a pool split into groups, or of the
+     * whole pool when {@code group} is -1. A group's samples carry a {@code group} label next to
+     * {@code worker_pool}, so summing by {@code worker_pool} gives the pool's totals. Snapshots,
+     * which carry at most two label values, name the group in the pool label instead.
+     */
+    public synchronized void register(String poolName, int group, FiberRuntime runtime) {
         for (int i = 0, n = entries.size(); i < n; i++) {
             if (entries.getQuick(i).runtime == runtime) {
                 return;
             }
         }
-        entries.add(new Entry(poolName, runtime));
+        entries.add(new Entry(poolName, group, runtime));
     }
 
     @Override
@@ -83,56 +94,56 @@ public final class FiberMetrics implements Target, Mutable {
         appendGaugeType(sink, LIVE_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, LIVE_NAME, entry.poolName, entry.runtime.getLiveFiberCount());
+            appendGaugeSample(sink, LIVE_NAME, entry, entry.runtime.getLiveFiberCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, MAX_LIVE_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, MAX_LIVE_NAME, entry.poolName, entry.runtime.getMaxLiveFiberCount());
+            appendGaugeSample(sink, MAX_LIVE_NAME, entry, entry.runtime.getMaxLiveFiberCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, OUTSTANDING_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, OUTSTANDING_NAME, entry.poolName, entry.runtime.getOutstandingTaskCount());
+            appendGaugeSample(sink, OUTSTANDING_NAME, entry, entry.runtime.getOutstandingTaskCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, QUEUED_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, QUEUED_NAME, entry.poolName, entry.runtime.getQueuedCount());
+            appendGaugeSample(sink, QUEUED_NAME, entry, entry.runtime.getQueuedCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, MOUNTED_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, MOUNTED_NAME, entry.poolName, entry.runtime.getMountedCount());
+            appendGaugeSample(sink, MOUNTED_NAME, entry, entry.runtime.getMountedCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, FINALIZING_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, FINALIZING_NAME, entry.poolName, entry.runtime.getFinalizerCount());
+            appendGaugeSample(sink, FINALIZING_NAME, entry, entry.runtime.getFinalizerCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, PARKED_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, PARKED_NAME, entry.poolName, entry.runtime.getParkedFiberCount());
+            appendGaugeSample(sink, PARKED_NAME, entry, entry.runtime.getParkedFiberCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
         appendGaugeType(sink, RETAINED_NAME);
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
-            appendGaugeSample(sink, RETAINED_NAME, entry.poolName, entry.runtime.getRetainedFiberCount());
+            appendGaugeSample(sink, RETAINED_NAME, entry, entry.runtime.getRetainedFiberCount());
         }
         PrometheusFormatUtils.appendNewLine(sink);
 
@@ -142,7 +153,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     CREATED_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getCreatedFiberCount() - entry.createdBaseline
             );
         }
@@ -154,7 +165,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     RETIRED_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getRetiredFiberCount() - entry.retiredBaseline
             );
         }
@@ -166,7 +177,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     MOUNT_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getMountCount() - entry.mountBaseline
             );
         }
@@ -178,7 +189,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     SATURATION_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getSaturationCount() - entry.saturationBaseline
             );
         }
@@ -190,7 +201,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     BUDGET_EXHAUSTION_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getBudgetExhaustionCount() - entry.budgetExhaustionBaseline
             );
         }
@@ -202,7 +213,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     INLINE_SUSPEND_VIOLATION_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getInlineSuspendViolationCount() - entry.inlineSuspendViolationBaseline
             );
         }
@@ -214,7 +225,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendLabeledCounterSample(
                     sink,
                     SCHEDULER_PUBLICATION_NAME,
-                    entry.poolName,
+                    entry,
                     LABEL_ROUTE,
                     "owner_local",
                     entry.runtime.getLocalPublicationCount() - entry.localPublicationBaseline
@@ -222,7 +233,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendLabeledCounterSample(
                     sink,
                     SCHEDULER_PUBLICATION_NAME,
-                    entry.poolName,
+                    entry,
                     LABEL_ROUTE,
                     "global",
                     entry.runtime.getGlobalPublicationCount() - entry.globalPublicationBaseline
@@ -230,7 +241,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendLabeledCounterSample(
                     sink,
                     SCHEDULER_PUBLICATION_NAME,
-                    entry.poolName,
+                    entry,
                     LABEL_ROUTE,
                     "local_fallback",
                     entry.runtime.getLocalFallbackPublicationCount() - entry.localFallbackPublicationBaseline
@@ -244,7 +255,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendLabeledCounterSample(
                     sink,
                     SCHEDULER_SELECTION_NAME,
-                    entry.poolName,
+                    entry,
                     LABEL_SOURCE,
                     "owner_local",
                     entry.runtime.getLocalSelectionCount() - entry.localSelectionBaseline
@@ -252,7 +263,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendLabeledCounterSample(
                     sink,
                     SCHEDULER_SELECTION_NAME,
-                    entry.poolName,
+                    entry,
                     LABEL_SOURCE,
                     "global",
                     entry.runtime.getGlobalSelectionCount() - entry.globalSelectionBaseline
@@ -260,7 +271,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendLabeledCounterSample(
                     sink,
                     SCHEDULER_SELECTION_NAME,
-                    entry.poolName,
+                    entry,
                     LABEL_SOURCE,
                     "stolen_local",
                     entry.runtime.getStolenSelectionCount() - entry.stolenSelectionBaseline
@@ -274,7 +285,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     WAKE_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getWakeClaimCount() - entry.wakeBaseline
             );
         }
@@ -286,7 +297,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     ORPHANED_SHARD_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getOrphanedShardTransitionCount() - entry.orphanedShardBaseline
             );
         }
@@ -298,7 +309,7 @@ public final class FiberMetrics implements Target, Mutable {
             appendCounterSample(
                     sink,
                     ORPHAN_RECOVERY_NAME,
-                    entry.poolName,
+                    entry,
                     entry.runtime.getOrphanedEntryRecoveryCount() - entry.orphanRecoveryBaseline
             );
         }
@@ -311,7 +322,7 @@ public final class FiberMetrics implements Target, Mutable {
                 final LaunchResult result = LaunchResult.get(resultIndex);
                 appendLaunchCounterSample(
                         sink,
-                        entry.poolName,
+                        entry,
                         result.getMetricLabel(),
                         entry.runtime.getLaunchCount(result) - entry.launchBaselines[resultIndex]
                 );
@@ -325,7 +336,7 @@ public final class FiberMetrics implements Target, Mutable {
         for (int i = 0, n = entries.size(); i < n; i++) {
             final Entry entry = entries.getQuick(i);
             final FiberRuntime runtime = entry.runtime;
-            final String poolName = entry.poolName;
+            final String poolName = entry.snapshotLabel;
             visitor.visitLong(LIVE_NAME, MetricType.LONG_GAUGE, poolName, runtime.getLiveFiberCount());
             visitor.visitLong(MAX_LIVE_NAME, MetricType.LONG_GAUGE, poolName, runtime.getMaxLiveFiberCount());
             visitor.visitLong(OUTSTANDING_NAME, MetricType.LONG_GAUGE, poolName, runtime.getOutstandingTaskCount());
@@ -374,23 +385,23 @@ public final class FiberMetrics implements Target, Mutable {
     private static void appendCounterSample(
             BorrowableUtf8Sink sink,
             CharSequence name,
-            CharSequence poolName,
+            Entry entry,
             long value
     ) {
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        appendPoolLabel(sink, poolName);
+        appendPoolLabel(sink, entry);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
     }
 
     private static void appendGaugeSample(
             BorrowableUtf8Sink sink,
             CharSequence name,
-            CharSequence poolName,
+            Entry entry,
             long value
     ) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.putAscii(name);
-        appendPoolLabel(sink, poolName);
+        appendPoolLabel(sink, entry);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
     }
 
@@ -402,13 +413,13 @@ public final class FiberMetrics implements Target, Mutable {
 
     private static void appendLaunchCounterSample(
             BorrowableUtf8Sink sink,
-            CharSequence poolName,
+            Entry entry,
             CharSequence result,
             long value
     ) {
         PrometheusFormatUtils.appendCounterNamePrefix(LAUNCH_NAME, sink);
         sink.putAscii('{');
-        PrometheusFormatUtils.appendLabel(sink, LABEL_WORKER_POOL, poolName);
+        appendPoolLabels(sink, entry);
         sink.putAscii(',');
         PrometheusFormatUtils.appendLabel(sink, LABEL_RESULT, result);
         sink.putAscii('}');
@@ -418,24 +429,32 @@ public final class FiberMetrics implements Target, Mutable {
     private static void appendLabeledCounterSample(
             BorrowableUtf8Sink sink,
             CharSequence name,
-            CharSequence poolName,
+            Entry entry,
             CharSequence labelName,
             CharSequence labelValue,
             long value
     ) {
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
         sink.putAscii('{');
-        PrometheusFormatUtils.appendLabel(sink, LABEL_WORKER_POOL, poolName);
+        appendPoolLabels(sink, entry);
         sink.putAscii(',');
         PrometheusFormatUtils.appendLabel(sink, labelName, labelValue);
         sink.putAscii('}');
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
     }
 
-    private static void appendPoolLabel(BorrowableUtf8Sink sink, CharSequence poolName) {
+    private static void appendPoolLabel(BorrowableUtf8Sink sink, Entry entry) {
         sink.putAscii('{');
-        PrometheusFormatUtils.appendLabel(sink, LABEL_WORKER_POOL, poolName);
+        appendPoolLabels(sink, entry);
         sink.putAscii('}');
+    }
+
+    private static void appendPoolLabels(BorrowableUtf8Sink sink, Entry entry) {
+        PrometheusFormatUtils.appendLabel(sink, LABEL_WORKER_POOL, entry.poolName);
+        if (entry.groupLabel != null) {
+            sink.putAscii(',');
+            PrometheusFormatUtils.appendLabel(sink, LABEL_GROUP, entry.groupLabel);
+        }
     }
 
     private static final class Entry {
@@ -443,6 +462,8 @@ public final class FiberMetrics implements Target, Mutable {
         private long createdBaseline;
         private long globalPublicationBaseline;
         private long globalSelectionBaseline;
+        // the group label's value, or null for a pool with one runtime
+        private final String groupLabel;
         private long inlineSuspendViolationBaseline;
         private final long[] launchBaselines = new long[LaunchResult.COUNT];
         private long localFallbackPublicationBaseline;
@@ -455,11 +476,14 @@ public final class FiberMetrics implements Target, Mutable {
         private long retiredBaseline;
         private final FiberRuntime runtime;
         private long saturationBaseline;
+        private final String snapshotLabel;
         private long stolenSelectionBaseline;
         private long wakeBaseline;
 
-        private Entry(String poolName, FiberRuntime runtime) {
+        private Entry(String poolName, int group, FiberRuntime runtime) {
             this.poolName = poolName;
+            this.groupLabel = group < 0 ? null : Integer.toString(group);
+            this.snapshotLabel = group < 0 ? poolName : poolName + "_g" + group;
             this.runtime = runtime;
             resetBaselines();
         }

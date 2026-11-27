@@ -53,6 +53,7 @@ public class CommonUtils {
     public static final int HOUR_PM = 1;
     // "2261-12-31 23:59:59.999999999" for nano timestamp
     public static final long MAX_TIMESTAMP = 9214646399999999999L;
+    public static final String MINUTE_PATTERN = "yyyy-MM-ddTHHmm";
     public static final long MINUTE_SECONDS = 60;
     public static final String MONTH_PATTERN = "yyyy-MM";
     public static final String NSEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz";

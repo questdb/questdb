@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -39,6 +40,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
@@ -52,6 +54,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -206,6 +209,37 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             newRunner().applyNonWal(transactions, "t", new Rnd());
 
             assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testApplyNonWalRecoversFromFailureAtEveryCallOfReopen() throws Exception {
+        // A pooled reader that fails to go passive in close() is closed and dropped from the pool. Fail each file
+        // call in turn, from the point the runner's readers hold an old txn to the end of the reopen that closes them.
+        final FuzzRunner runner = newRunner();
+        final FailureFileFacade ff = runner.getFileFacade();
+        final AtomicInteger expelledReaders = new AtomicInteger();
+        assertMemoryLeak(ff, () -> {
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_READER && event == PoolListener.EV_OUT_OF_POOL_CLOSE) {
+                    expelledReaders.incrementAndGet();
+                }
+            });
+            try {
+                final AtomicBoolean isFired = new AtomicBoolean();
+                int failAfter = 0;
+                do {
+                    failAfter++;
+                    execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute("INSERT INTO t VALUES (0, '1970-01-01')");
+                    runner.applyNonWal(reopenAfterReadersFallBehind(ff, failAfter, isFired), "t", newLaggingReloadRnd());
+                    assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+                    execute("DROP TABLE t");
+                } while (isFired.get());
+            } finally {
+                engine.setPoolListener(null);
+            }
+            Assert.assertTrue("no failure closed a reader", expelledReaders.get() > 0);
         });
     }
 
@@ -686,10 +720,64 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         return retryingFuzzer;
     }
 
+    // reload probability 0.25: the readers keep their txn after the first transaction and reload after every later one
+    private static Rnd newLaggingReloadRnd() {
+        return new Rnd() {
+            private int doubleDraws;
+
+            @Override
+            public boolean nextBoolean() {
+                return true;
+            }
+
+            @Override
+            public double nextDouble() {
+                return doubleDraws++ == 0 ? 0.9 : 0.0;
+            }
+        };
+    }
+
     private FuzzRunner newRunner() {
         final FuzzRunner runner = new FuzzRunner();
         runner.withDb(engine, sqlExecutionContext);
         return runner;
+    }
+
+    // The first transaction adds partitions and reads its own txn, so closing the runner's readers of the older txn
+    // extends their _txn mapping, then arms the failure. The second reopens the table. The last one reports whether
+    // the failure fired before it and disarms it.
+    private static ObjList<FuzzTransaction> reopenAfterReadersFallBehind(FailureFileFacade ff, int failAfter, AtomicBoolean isFired) {
+        final ObjList<FuzzTransaction> transactions = new ObjList<>();
+        final FuzzTransaction growTransaction = new FuzzTransaction();
+        // a failure in the commit after the operation runs the transaction again
+        final AtomicBoolean isGrown = new AtomicBoolean();
+        growTransaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+            if (isGrown.compareAndSet(false, true)) {
+                for (int day = 1; day <= 4; day++) {
+                    final TableWriter.Row row = writer.newRow(day * Micros.DAY_MICROS);
+                    row.putInt(0, day);
+                    row.append();
+                }
+                writer.commit();
+                try (TableReader reader = cairoEngine.getReader("t")) {
+                    Assert.assertEquals(5, reader.size());
+                }
+                ff.setToFailAfterOnCurrentThread(failAfter);
+            }
+            return false;
+        });
+        transactions.add(growTransaction);
+        final FuzzTransaction reopenTransaction = new FuzzTransaction();
+        reopenTransaction.reopenTable = true;
+        transactions.add(reopenTransaction);
+        final FuzzTransaction endTransaction = new FuzzTransaction();
+        endTransaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+            isFired.set(ff.getOsCallsCount() <= 0);
+            ff.setToFailAfterOnCurrentThread(Integer.MAX_VALUE);
+            return false;
+        });
+        transactions.add(endTransaction);
+        return transactions;
     }
 
     // Counts every open the harness routes through the retry helper, along with the policy each caller

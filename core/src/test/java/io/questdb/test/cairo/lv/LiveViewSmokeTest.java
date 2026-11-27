@@ -21361,8 +21361,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRejectPartitionByInvalidUnit() throws Exception {
-        // PARTITION BY accepts only HOUR/DAY/WEEK/MONTH/YEAR; any other unit (here
-        // MINUTE) is rejected at parse time before the LV table is created.
+        // PARTITION BY accepts only HOUR/DAY/WEEK/MONTH/YEAR or <n> MINUTES; any other
+        // unit (here a bare MINUTE) is rejected at parse time before the LV table is created.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
@@ -21372,7 +21372,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         "wrong message [msg=" + e.getFlyweightMessage() + ']',
-                        Chars.contains(e.getFlyweightMessage(), "or 'YEAR' expected")
+                        Chars.contains(e.getFlyweightMessage(), "'YEAR' or '<n> MINUTES' expected")
                 );
             }
         });

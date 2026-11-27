@@ -24,11 +24,17 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -55,6 +61,61 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 AssertionError.class,
                 () -> TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true))
         );
+    }
+
+    @Test
+    public void testAssertEqualsOfCursorsChecksAsciiFlagOfVarchar() {
+        final byte[] nonAscii = {(byte) 0xc3, (byte) 0xa9};
+        final GenericRecordMetadata varchar = new GenericRecordMetadata();
+        varchar.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+        final GenericRecordMetadata string = new GenericRecordMetadata();
+        string.add(new TableColumnMetadata("v", ColumnType.STRING));
+
+        // equal bytes, flagged right on both sides
+        TestUtils.assertEquals(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, false), varchar, false);
+        // equal bytes, the expected side or the actual side flagged ASCII
+        assertAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, varcharCursor(nonAscii, false), varchar, false);
+        assertAsciiFlagRejected(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, true), varchar, false);
+        // against a STRING column, on either side
+        assertAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, stringCursor(), string, true);
+        assertAsciiFlagRejected(stringCursor(), string, varcharCursor(nonAscii, true), varchar, true);
+        TestUtils.assertEquals(varcharCursor(nonAscii, false), varchar, stringCursor(), string, true);
+    }
+
+    @Test
+    public void testAssertEqualsExactOrderChecksAsciiFlagOfVarchar() {
+        final byte[] nonAscii = {(byte) 0xc3, (byte) 0xa9};
+        final GenericRecordMetadata varchar = new GenericRecordMetadata();
+        varchar.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+        final GenericRecordMetadata string = new GenericRecordMetadata();
+        string.add(new TableColumnMetadata("v", ColumnType.STRING));
+
+        TestUtils.assertEqualsExactOrder(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, false), varchar, false);
+        // the expected side or the actual side flagged ASCII, against VARCHAR or STRING
+        assertExactOrderAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, varcharCursor(nonAscii, false), varchar, false);
+        assertExactOrderAsciiFlagRejected(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, true), varchar, false);
+        assertExactOrderAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, stringCursor(), string, true);
+        assertExactOrderAsciiFlagRejected(stringCursor(), string, varcharCursor(nonAscii, true), varchar, true);
+    }
+
+    @Test
+    public void testAssertEqualsOfTimestampedCursorsChecksAsciiFlagOfVarchar() {
+        final Utf8String nonAscii = new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, false);
+        final Utf8String nonAsciiFlaggedAscii = new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true);
+        final Utf8String ascii = new Utf8String(new byte[]{'a'}, true);
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+        metadata.setTimestampIndex(0);
+
+        // the comparison forgives another order of rows of one timestamp, not a wrong flag
+        TestUtils.assertEquals(timestampedCursor(nonAscii), metadata, timestampedCursor(nonAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAscii), metadata, timestampedCursor(nonAsciiFlaggedAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAsciiFlaggedAscii), metadata, timestampedCursor(nonAscii), metadata, false);
+        // two rows of one timestamp in another order: the comparison stashes them
+        TestUtils.assertEquals(timestampedCursor(nonAscii, ascii), metadata, timestampedCursor(ascii, nonAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAscii, ascii), metadata, timestampedCursor(ascii, nonAsciiFlaggedAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAsciiFlaggedAscii, ascii), metadata, timestampedCursor(ascii, nonAscii), metadata, false);
     }
 
     @Test
@@ -304,12 +365,179 @@ public final class TestUtilsTest extends AbstractCairoTest {
         Assert.assertEquals("worker failure", error.getCause().getMessage());
     }
 
+    private static void assertAsciiFlagRejected(
+            RecordCursor expected,
+            RecordMetadata expectedMetadata,
+            RecordCursor actual,
+            RecordMetadata actualMetadata,
+            boolean genericStringMatch
+    ) {
+        try {
+            TestUtils.assertEquals(expected, expectedMetadata, actual, actualMetadata, genericStringMatch);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), "ascii flag set to 'true' for non-ASCII value 'é'");
+            return;
+        }
+        Assert.fail("a non-ASCII value flagged ASCII must fail the comparison");
+    }
+
+    private static void assertExactOrderAsciiFlagRejected(
+            RecordCursor expected,
+            RecordMetadata expectedMetadata,
+            RecordCursor actual,
+            RecordMetadata actualMetadata,
+            boolean genericStringMatch
+    ) {
+        try {
+            TestUtils.assertEqualsExactOrder(expected, expectedMetadata, actual, actualMetadata, genericStringMatch);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), "ascii flag set to 'true' for non-ASCII value 'é'");
+            return;
+        }
+        Assert.fail("a non-ASCII value flagged ASCII must fail the comparison");
+    }
+
+    // one row of the STRING "é"
+    private static RecordCursor stringCursor() {
+        return new SingleRowCursor(new Record() {
+            @Override
+            public CharSequence getStrA(int col) {
+                return "é";
+            }
+        });
+    }
+
+    // rows of the timestamp 1 and the VARCHAR values, one row per value
+    private static RecordCursor timestampedCursor(Utf8String... values) {
+        return new TimestampedRowsCursor(values);
+    }
+
+    // one row of a VARCHAR of the bytes, flagged as told
+    private static RecordCursor varcharCursor(byte[] bytes, boolean isAscii) {
+        final Utf8String value = new Utf8String(bytes, isAscii);
+        return new SingleRowCursor(new Record() {
+            @Override
+            public Utf8Sequence getVarcharA(int col) {
+                return value;
+            }
+        });
+    }
+
     private static void addAllRecordsToMap(String query, Map<String, Integer> map) throws SqlException {
         try (
                 RecordCursorFactory factory = select(query);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             TestUtils.addAllRecordsToMap(sink, cursor, factory.getMetadata(), map);
+        }
+    }
+
+    private static class SingleRowCursor implements RecordCursor {
+        private final Record record;
+        private boolean hasNext = true;
+
+        private SingleRowCursor(Record record) {
+            this.record = record;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            final boolean result = hasNext;
+            hasNext = false;
+            return result;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            hasNext = true;
+        }
+    }
+
+    private static class TimestampedRowsCursor implements RecordCursor {
+        private final Utf8String[] values;
+        private int row = -1;
+        private final Record record = new Record() {
+            @Override
+            public long getTimestamp(int col) {
+                return 1;
+            }
+
+            @Override
+            public Utf8Sequence getVarcharA(int col) {
+                return values[row];
+            }
+        };
+
+        private TimestampedRowsCursor(Utf8String[] values) {
+            this.values = values;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return ++row < values.length;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return values.length;
+        }
+
+        @Override
+        public void toTop() {
+            row = -1;
         }
     }
 }

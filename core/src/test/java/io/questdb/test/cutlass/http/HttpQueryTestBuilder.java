@@ -63,6 +63,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -78,6 +79,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
+    private MillisecondClock circuitBreakerClock;
     private String copyExportRoot;
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
@@ -157,6 +159,11 @@ public class HttpQueryTestBuilder {
                 @Override
                 public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                     return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                        @Override
+                        public @NotNull MillisecondClock getClock() {
+                            return circuitBreakerClock != null ? circuitBreakerClock : super.getClock();
+                        }
+
                         @Override
                         public long getQueryTimeout() {
                             return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
@@ -364,6 +371,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withAlterTableStartWaitTimeout(long startWriterWaitTimeout) {
         this.startWriterWaitTimeout = startWriterWaitTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withCircuitBreakerClock(MillisecondClock circuitBreakerClock) {
+        this.circuitBreakerClock = circuitBreakerClock;
         return this;
     }
 

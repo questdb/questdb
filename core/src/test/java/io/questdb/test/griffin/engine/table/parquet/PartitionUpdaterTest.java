@@ -146,6 +146,33 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 TestUtils.assertContains(
                         negativeLimitExc.getMessage(),
                         "negative column top row limit: -1");
+                // A source _pm that is not mapped, and one that is no _pm
+                final CairoException unmappedSourceMetaExc = Assert.assertThrows(
+                        CairoException.class,
+                        () -> updater.setSourceParquetMeta(0, 0));
+                TestUtils.assertContains(
+                        unmappedSourceMetaExc.getMessage(),
+                        "invalid source _pm [addr=0x0, size=0]");
+                final long notParquetMetaSize = 3;
+                final long notParquetMeta = Unsafe.calloc(notParquetMetaSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    final CairoException notSourceMetaExc = Assert.assertThrows(
+                            CairoException.class,
+                            () -> updater.setSourceParquetMeta(notParquetMeta, notParquetMetaSize));
+                    TestUtils.assertContains(
+                            notSourceMetaExc.getMessage(),
+                            "file too small for footer trailer: 3 bytes");
+                    TestUtils.assertContains(
+                            notSourceMetaExc.getMessage(),
+                            "error in PartitionUpdater.setSourceParquetMeta");
+                    final CairoException emptySourceMetaExc = Assert.assertThrows(
+                            CairoException.class,
+                            () -> updater.setSourceParquetMeta(notParquetMeta, 0));
+                    TestUtils.assertContains(emptySourceMetaExc.getMessage(), "invalid source _pm [addr=0x");
+                    TestUtils.assertContains(emptySourceMetaExc.getMessage(), ", size=0]");
+                } finally {
+                    Unsafe.free(notParquetMeta, notParquetMetaSize, MemoryTag.NATIVE_DEFAULT);
+                }
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 final CairoException negativeUpdateOffsetExc = Assert.assertThrows(
                         CairoException.class,

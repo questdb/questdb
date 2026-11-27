@@ -477,6 +477,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     int index;
                     if (pgIndex < 0) {
                         index = pgIndex + dimLen; // This automatically accounts for 1-based indexing
+                        if (index < 0) {
+                            derivedArray.ofNull();
+                            return derivedArray;
+                        }
                     } else {
                         // Decrement the index in the argument because Postgres uses 1-based array indexing
                         index = pgIndex - 1;

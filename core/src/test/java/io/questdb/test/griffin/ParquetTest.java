@@ -27,7 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -35,6 +37,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -140,6 +144,7 @@ public class ParquetTest extends AbstractCairoTest {
             "    ]" +
             "  ]" +
             "]";
+    private static final String FORMAT_PARQUET_VARCHAR_QUERY = "SELECT ts, v1, length(v1) len1, upper(v1) up1, v2, length(v2) len2, upper(v2) up2 FROM ";
 
     @Test
     public void test1dArray() throws Exception {
@@ -3255,20 +3260,9 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharAsciiFlagAfterRewriteWithNonAsciiAppend() throws Exception {
-        // Regression test: VARCHAR column-level ascii flag must not stay stale
-        // across a parquet rewrite that adds non-ASCII bytes.
-        //
-        // When the partition is converted to parquet while the column is
-        // all-ASCII, to_parquet_schema records ascii=Some(true) in the
-        // parquet file's QDB metadata. A later O3 insert with non-ASCII data
-        // triggers processParquetPartition, which goes through
-        // ParquetUpdater::end. Without the fix, end() reuses the old
-        // qdb_meta and preserves the stale ascii=Some(true). The new parquet
-        // file then claims the column is ASCII, and on read every aux header
-        // gets HEADER_FLAG_ASCII set, so isAscii() returns true for bytes
-        // that are not ASCII. TestUtils.println calls assertAsciiCompliance
-        // per VARCHAR row, so the assertSql below fails on the non-ASCII row
-        // without the fix.
+        // The partition converts while the column is all-ASCII; a backdated insert with a non-ASCII
+        // value then rewrites it. The row group that holds the new value must not read as ASCII:
+        // returns() checks the ASCII flag of every VARCHAR value it prints.
         assertMemoryLeak(() -> {
             execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
             execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
@@ -3278,8 +3272,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x convert partition to parquet list '2020-01-01';");
             drainWalQueue();
 
-            // Backdated insert forces an O3 rewrite through ParquetUpdater::end.
-            // 'héllo' has a non-ASCII codepoint (e-acute, U+00E9).
+            // a backdated insert rewrites the partition; 'héllo' has U+00E9
             execute("insert into x values ('héllo', '2020-01-01T06:00:00.000Z');");
             drainWalQueue();
 
@@ -3298,13 +3291,9 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharAsciiFlagOnAddColumnDowngrade() throws Exception {
-        // ADD COLUMN seeds the new VARCHAR column as `true` in the all-ASCII
-        // tracker (existing rows backfill with nulls, which is_column_ascii
-        // skips). track_new_data_ascii must still observe a non-ASCII byte
-        // in a later write and flip the tracker to `false`, so end() emits
-        // Some(false) and the read path does not falsely claim ASCII-ness.
-        // assertSql -> assertAsciiCompliance per VARCHAR row fails if the
-        // column-level flag wrongly forces isAscii() = true on non-ASCII bytes.
+        // ADD COLUMN gives the existing rows NULLs in the new VARCHAR column; a later write of a
+        // non-ASCII value into it must not read as ASCII. returns() checks the ASCII flag of every
+        // VARCHAR value it prints.
         assertMemoryLeak(() -> {
             execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
             execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
@@ -3316,9 +3305,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x add column s2 varchar;");
             drainWalQueue();
 
-            // Backdated insert with non-ASCII in the new column forces an
-            // O3 rewrite through ParquetUpdater::end and must downgrade
-            // the seeded `true` to `false`. 'héllo' has U+00E9.
+            // a backdated insert rewrites the partition; 'héllo' has U+00E9
             execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T06:00:00.000Z', 'héllo');");
             drainWalQueue();
 
@@ -3336,17 +3323,8 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharAsciiFlagOnAddColumnFastPath() throws Exception {
-        // ADD COLUMN VARCHAR with only ASCII data written into the new
-        // column must keep the column-level ascii flag set to `true` so
-        // the read fast path stays active. Existing rows backfill with
-        // nulls (skipped by is_column_ascii), so the seed in
-        // ParquetUpdater::set_target_schema starts the tracker at `true`
-        // and no scan flips it. end() emits Some(true), and the parquet
-        // reader sets HEADER_FLAG_ASCII on every non-null aux header.
-        //
-        // Without the seed, the new column has no tracker entry, end()
-        // falls back to Some(false) via unwrap_or(false), and isAscii()
-        // returns false on every value.
+        // ADD COLUMN VARCHAR, then only ASCII values written into the new column: the row groups
+        // that hold them must keep the ASCII flag, so that scans keep the fast path.
         assertMemoryLeak(() -> {
             execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
             execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
@@ -3358,8 +3336,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x add column s2 varchar;");
             drainWalQueue();
 
-            // Backdated inserts route through ParquetUpdater::end. All s2
-            // values are ASCII so the column-level flag should stay true.
+            // backdated inserts rewrite the partition; every s2 value is ASCII
             execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T03:00:00.000Z', 'first');");
             execute("insert into x (s, ts, s2) values ('bb', '2020-01-01T06:00:00.000Z', 'second');");
             drainWalQueue();
@@ -3373,7 +3350,7 @@ public class ParquetTest extends AbstractCairoTest {
                         Assert.assertNotNull(v);
                         Assert.assertTrue(
                                 "expected isAscii() = true on ASCII value '" + v
-                                        + "'; ADD COLUMN VARCHAR lost the column-level ascii fast path",
+                                        + "'; ADD COLUMN VARCHAR lost the ASCII fast path",
                                 v.isAscii()
                         );
                         nonNullCount++;
@@ -3381,6 +3358,120 @@ public class ParquetTest extends AbstractCairoTest {
                     Assert.assertEquals(2, nonNullCount);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
+            execute("CREATE TABLE x (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x, CASE WHEN x = 15 THEN 'ü' || x ELSE 'b' || x END FROM long_sequence(30)");
+            execute("INSERT INTO x VALUES ('2022-02-26', 'n', 'n')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
+            drainWalQueue();
+
+            assertQuery("SELECT ts, v2, length(v2) len, upper(v2) up FROM x WHERE ts = '2022-02-25T00:14:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv2\tlen\tup
+                            2022-02-25T00:14:00.000000Z\tü15\t3\tÜ15
+                            """);
+            // rows 1-12, 13-24 and 25-30 make the row groups, and each is flagged by its own values: v2 holds a
+            // non-ASCII value in the second only
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x WHERE ts < '2022-02-26'", 30, 18);
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnInPlaceAppendToAddedColumn() throws Exception {
+        testVarcharAsciiFlagOnInPlaceAppendToAddedColumn("WAL", "'ü' || x");
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnInPlaceAppendToAddedColumnMixedValues() throws Exception {
+        // the appended row groups hold ASCII and non-ASCII values, the first of them ASCII
+        testVarcharAsciiFlagOnInPlaceAppendToAddedColumn("WAL", "CASE WHEN x % 3 = 0 THEN 'ü' || x ELSE 'def' || x END");
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnInPlaceAppendToAddedColumnNonWal() throws Exception {
+        testVarcharAsciiFlagOnInPlaceAppendToAddedColumn("BYPASS WAL", "'ü' || x");
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnBackgroundCompactionAfterInPlaceAppend() throws Exception {
+        // The idle sweep copies the partition into a new file. The row groups keep the ASCII flags of their
+        // chunks: the Parquet footer alone has one flag per column, and would cost v2 all of them.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            final long nameTxn = createFormatParquetTableWithNonAsciiAppendInPlace();
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 85, 45);
+
+            engine.releaseInactive();
+            final Clock twoHoursAhead = () -> configuration.getMicrosecondClock().getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), twoHoursAhead)) {
+                job.run();
+            }
+            Assert.assertNotEquals("the sweep must compact the partition", nameTxn, getPartitionNameTxn("x"));
+
+            assertSqlCursors(FORMAT_PARQUET_VARCHAR_QUERY + "y", FORMAT_PARQUET_VARCHAR_QUERY + "x");
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 85, 45);
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnInPlaceAppendToFormatParquetTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final long nameTxn = createFormatParquetTableWithNonAsciiAppendInPlace();
+
+            final String query = FORMAT_PARQUET_VARCHAR_QUERY;
+            assertSqlCursors(query + "y", query + "x");
+            assertQuery(query + "x WHERE ts IN ('2022-02-25T01:39:00', '2022-02-25T02:00:00', '2022-02-25T02:39:00')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv1\tlen1\tup1\tv2\tlen2\tup2
+                            2022-02-25T01:39:00.000000Z\tc40\t3\tC40\td40\t3\tD40
+                            2022-02-25T02:00:00.000000Z\te1\t2\tE1\tü1\t2\tÜ1
+                            2022-02-25T02:39:00.000000Z\te40\t3\tE40\tü40\t3\tÜ40
+                            """);
+            // The update costs no value its ASCII fast path that it need not: v1 keeps it in every row
+            // group, v2 in the 45 values of the row groups written before the first non-ASCII one.
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 85, 45);
+
+            // The next update rewrites the file. The row groups it copies keep the flags of their chunks,
+            // and the row groups it writes get their own: v2 is ASCII there.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, 0);
+            executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25T03:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'g' || x, 'h' || x FROM long_sequence(40)");
+            Assert.assertNotEquals("the fourth commit must rewrite the parquet partition", nameTxn, getPartitionNameTxn("x"));
+            assertSqlCursors(query + "y", query + "x");
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 125, 85);
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnInPlaceMerge() throws Exception {
+        // the non-ASCII rows merge into an existing row group, which the update replaces in place
+        assertMemoryLeak(() -> {
+            createVarcharAsciiFlagTables("WAL");
+            addVarcharColumnAndRewriteWithAscii();
+            final long nameTxn = getPartitionNameTxn("x");
+            executeOnVarcharAsciiFlagTables("INSERT INTO %s (ts, i, v) VALUES ('2022-02-25T00:12:00', -1, 'ü1'), ('2022-02-25T00:13:00', -2, 'ü2')");
+            Assert.assertEquals("the merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("x"));
+
+            assertVarcharAsciiFlagTablesMatch();
+            assertQuery("SELECT ts, i, v, length(v) len, upper(v) up FROM x WHERE i < 0")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ti\tv\tlen\tup
+                            2022-02-25T00:12:00.000000Z\t-1\tü1\t2\tÜ1
+                            2022-02-25T00:13:00.000000Z\t-2\tü2\t2\tÜ2
+                            """);
         });
     }
 
@@ -3441,6 +3532,88 @@ public class ParquetTest extends AbstractCairoTest {
                             3.0\tC\t2024-01-02T00:00:00.000000Z
                             """);
         });
+    }
+
+    // Adds the VARCHAR column v to both tables, then merges ASCII values into the 06:00+ row groups of x: the
+    // schema change makes that update rewrite the file, and the new _pm flags the chunks of v it writes ASCII.
+    private void addVarcharColumnAndRewriteWithAscii() throws Exception {
+        executeOnVarcharAsciiFlagTables("ALTER TABLE %s ADD COLUMN v VARCHAR");
+        final long nameTxn = getPartitionNameTxn("x");
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s (ts, i, v) SELECT '2022-02-25T07:00:00'::TIMESTAMP + x * 1_000_000L, x::INT, 'abc' || x FROM long_sequence(30)");
+        Assert.assertNotEquals("the merge after ADD COLUMN must rewrite the parquet partition", nameTxn, getPartitionNameTxn("x"));
+        assertVarcharAsciiFlagTablesMatch();
+    }
+
+    // Counts the values each VARCHAR column of the query returns flagged ASCII.
+    private void assertAsciiFlaggedValueCounts(String query, int... expectedCounts) throws Exception {
+        final int[] counts = new int[expectedCounts.length];
+        try (
+                RecordCursorFactory factory = select(query);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0; i < counts.length; i++) {
+                    final Utf8Sequence value = record.getVarcharA(i);
+                    if (value != null && value.isAscii()) {
+                        counts[i]++;
+                    }
+                }
+            }
+        }
+        Assert.assertArrayEquals(expectedCounts, counts);
+    }
+
+    // length() and upper() take the ASCII fast path for a value flagged ASCII, so a stale flag changes their
+    // results; y holds the same rows in a native partition, where every value carries its own flag.
+    private void assertVarcharAsciiFlagTablesMatch() throws Exception {
+        final String query = "SELECT ts, i, v, length(v) len, upper(v) up FROM ";
+        assertSqlCursors(query + "y", query + "x");
+    }
+
+    // x: a FORMAT PARQUET table that only appends, with no DDL, row groups of 12 rows. The first commit writes a
+    // fresh Parquet partition and flags the chunks of its row group ASCII. The second commit rewrites that
+    // single row group. The third commit appends row groups in place and brings the first non-ASCII values of
+    // v2; v1 stays ASCII. y: the same rows in a native partition. Returns the name txn of the Parquet partition.
+    private long createFormatParquetTableWithNonAsciiAppendInPlace() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
+        execute("CREATE TABLE x (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+        execute("CREATE TABLE y (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x, 'b' || x FROM long_sequence(5)");
+        assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 5, 5);
+        final long firstNameTxn = getPartitionNameTxn("x");
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25T01:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'c' || x, 'd' || x FROM long_sequence(40)");
+        final long nameTxn = getPartitionNameTxn("x");
+        Assert.assertNotEquals("the second commit must rewrite the parquet partition", firstNameTxn, nameTxn);
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25T02:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'e' || x, 'ü' || x FROM long_sequence(40)");
+        Assert.assertEquals("the append must update the parquet partition in place", nameTxn, getPartitionNameTxn("x"));
+        return nameTxn;
+    }
+
+    // x: one day of rows every 5 minutes, 00:00-02:00 and 06:00-10:00, converted to Parquet with row groups of
+    // 12 rows, and a row in the next day, because a non-WAL table does not convert its last partition.
+    // y: the same rows, kept native.
+    private void createVarcharAsciiFlagTables(String walMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
+        execute("CREATE TABLE x (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("CREATE TABLE y (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 300_000_000L, x::INT FROM long_sequence(24)");
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25T06:00:00'::TIMESTAMP + (x - 1) * 300_000_000L, x::INT FROM long_sequence(48)");
+        executeOnVarcharAsciiFlagTables("INSERT INTO %s VALUES ('2022-02-26', 0)");
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
+        drainWalQueue();
+    }
+
+    private void executeOnVarcharAsciiFlagTables(String sql) throws Exception {
+        execute(sql.replace("%s", "x"));
+        execute(sql.replace("%s", "y"));
+        drainWalQueue();
+    }
+
+    private long getPartitionNameTxn(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionNameTxn(0);
+        }
     }
 
     private void testArrayColTops(boolean rawArrayEncoding) throws Exception {
@@ -3734,6 +3907,29 @@ public class ParquetTest extends AbstractCairoTest {
                             28\t1970-01-01T07:30:00.000000Z
                             26\t1970-01-01T06:56:40.000000Z
                             25\t1970-01-01T06:40:00.000000Z
+                            """);
+        });
+    }
+
+    // Replays the steps of the WalWriterFuzzTest.testConvertPartitionToParquet run that found the stale flag:
+    // CONVERT PARTITION TO PARQUET, ADD COLUMN VARCHAR, a commit that rewrites the partition with ASCII values
+    // in the new column, then 41 O3 rows with non-ASCII values that go in place as new row groups, and a read.
+    private void testVarcharAsciiFlagOnInPlaceAppendToAddedColumn(String walMode, String gapValue) throws Exception {
+        assertMemoryLeak(() -> {
+            createVarcharAsciiFlagTables(walMode);
+            addVarcharColumnAndRewriteWithAscii();
+            final long nameTxn = getPartitionNameTxn("x");
+            // O3 rows into the 02:00-06:00 gap: new row groups, appended in place
+            executeOnVarcharAsciiFlagTables("INSERT INTO %s (ts, i, v) SELECT '2022-02-25T03:43:00'::TIMESTAMP + x * 1_000_000L, x::INT, " + gapValue + " FROM long_sequence(41)");
+            Assert.assertEquals("the append must update the parquet partition in place", nameTxn, getPartitionNameTxn("x"));
+
+            assertVarcharAsciiFlagTablesMatch();
+            assertQuery("SELECT ts, i, v, length(v) len, upper(v) up FROM x WHERE ts = '2022-02-25T03:43:03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ti\tv\tlen\tup
+                            2022-02-25T03:43:03.000000Z\t3\tü3\t2\tÜ3
                             """);
         });
     }
