@@ -158,6 +158,17 @@ final class SampleByBinder {
     }
 
     /**
+     * True when the FILL value is a minus sign over a numeric literal, which the fill reads as one signed literal, so
+     * that it parses the lowest INT and LONG literals as their NULL and names the signed value in errors.
+     */
+    private static boolean isSignedFillLiteral(ExpressionNode expression) {
+        final ExpressionNode operand = expression.rhs;
+        return expression.type == ExpressionNode.OPERATION && expression.paramCount == 1 && Chars.equals(expression.token, '-')
+                && operand != null && operand.type == ExpressionNode.CONSTANT && !operand.token.isEmpty()
+                && (Character.isDigit(operand.token.charAt(0)) || operand.token.charAt(0) == '.');
+    }
+
+    /**
      * True when the SAMPLE BY aligns its buckets to the UTC calendar at no offset: no time zone or a constant UTC one,
      * and a constant offset of zero.
      */
@@ -345,6 +356,9 @@ final class SampleByBinder {
     }
 
     private BoundExpression bindFillValue(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
+        if (isSignedFillLiteral(expression)) {
+            return ctx.functionBinder.bindLiteral(fillToken(expression), expression.position, executionContext);
+        }
         if (expression.type == ExpressionNode.LITERAL || ctx.isAggregate(expression)) {
             throw GroupByUtils.invalidSampleByFillValue(expression.token, expression.position);
         }
@@ -361,14 +375,18 @@ final class SampleByBinder {
      * The OFFSET a SAMPLE BY cursor or fill reads, which must be a constant or runtime-constant expression of a type
      * convertible to STRING: the node {@link #sampleByOffset} returns, and, for an offset other than a literal,
      * {@code coalesce(offset, '00:00')}, which reads a NULL offset as the default when the cursor opens, so that a NULL
-     * offset aligns the buckets as an omitted one does. Binds the offset once; an offset {@code coalesce} cannot take
-     * is bound alone to report its own error or the OFFSET error.
+     * offset aligns the buckets as an omitted one does. Binds the offset once; an untyped bind variable offset, which
+     * {@code coalesce} does not type, first binds alone as STRING, and an offset {@code coalesce} cannot take is bound
+     * alone to report its own error or the OFFSET error.
      */
     private BoundExpression bindSampleByOffset(ExpressionNode offset, SqlExecutionContext executionContext) throws SqlException {
         if (offset == null || offset.type == ExpressionNode.CONSTANT) {
             final BoundExpression bound = bindSampleByParameter(offset, ColumnType.STRING, executionContext);
             validateRuntimeConstant(bound, ColumnType.STRING, OFFSET_ERROR);
             return bound;
+        }
+        if (offset.type == ExpressionNode.BIND_VARIABLE) {
+            bindSampleByParameter(offset, ColumnType.STRING, executionContext);
         }
         final BoundExpression bound;
         try {
@@ -398,24 +416,30 @@ final class SampleByBinder {
      */
     private BoundExpression bindSampleByRangeComparison(LogicalPlan input, QueryModel source, CharSequence operator,
                                                         ExpressionNode bound, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = ctx.scope();
-        final BoundExpression value = ctx.functionBinder.bind(bound, input.getOutput(), sourceAlias(source), executionContext);
+        final OutputSchema output = input.getOutput();
+        final BoundExpression value = ctx.functionBinder.bind(bound, output, sourceAlias(source), executionContext);
         final int placeholderId = ctx.planNodes.nextColumnId();
-        ctx.tmpScope.copyFrom(input.getOutput());
+        ctx.tmpScope.copyFrom(output);
         ctx.tmpScope.add(placeholderId, "", value.getDataType(), false);
-        scope.substitutionNodes.clear();
-        scope.substitutionColumns.clear();
-        scope.substitutionNodes.add(bound);
-        scope.substitutionColumns.add(ctx.planNodes.columns.next().of(placeholderId, value.getDataType(), bound.position));
         try {
-            final BoundExpression comparison = ctx.functionBinder.bind(sampleByComparison(input.getOutput(), operator, bound),
-                    ctx.tmpScope, sourceAlias(source), scope.substitutionNodes, scope.substitutionColumns, executionContext);
+            final BoundExpression comparison = ctx.functionBinder.bindCall(operator, 0, sampleByTimestampColumn(output, 0),
+                    ctx.planNodes.columns.next().of(placeholderId, value.getDataType(), bound.position), ctx.tmpScope, executionContext);
             return ctx.expressionRewriter.moveToColumn(comparison, placeholderId, value);
         } finally {
-            scope.substitutionNodes.clear();
-            scope.substitutionColumns.clear();
             ctx.tmpScope.clear();
         }
+    }
+
+    /**
+     * The text of the FILL value: the signed literal of {@link #isSignedFillLiteral}, otherwise the token as written.
+     */
+    private CharSequence fillToken(ExpressionNode expression) {
+        if (!isSignedFillLiteral(expression)) {
+            return expression.token;
+        }
+        final CharacterStoreEntry entry = ctx.characterStore.newEntry();
+        entry.put('-').put(expression.rhs.token);
+        return entry.toImmutable();
     }
 
     /**
@@ -461,6 +485,14 @@ final class SampleByBinder {
                 ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, ColumnType.nameOf(timestampType), 0, bound.position), bound.position);
     }
 
+    /**
+     * A reference to the SAMPLE BY timestamp of the input.
+     */
+    private ColumnExpression sampleByTimestampColumn(OutputSchema input, int position) {
+        final int index = sampleByTimestampIndex(input);
+        return ctx.planNodes.columns.next().of(input.getColumnId(index), input.getColumnType(index), position);
+    }
+
     private ExpressionNode sampleByTimezone(QueryModel source) {
         final ExpressionNode timezone = source.getSampleByTimezoneName();
         return timezone != null && !SqlKeywords.isUTC(timezone.token) ? timezone : null;
@@ -468,22 +500,6 @@ final class SampleByBinder {
 
     private ExpressionNode sampleByToUtc(ExpressionNode value, ExpressionNode timezone) {
         return ctx.binaryNode(ExpressionNode.FUNCTION, "to_utc", 0, value, timezone, value.position);
-    }
-
-    /**
-     * A minus sign over a numeric literal as one signed constant, so the fill parses the lowest INT and LONG literals
-     * as their NULL and names the signed value in errors.
-     */
-    private ExpressionNode signedFillLiteral(ExpressionNode expression) {
-        final ExpressionNode operand = expression.rhs;
-        if (expression.type != ExpressionNode.OPERATION || expression.paramCount != 1 || !Chars.equals(expression.token, '-')
-                || operand == null || operand.type != ExpressionNode.CONSTANT || operand.token.isEmpty()
-                || !(Character.isDigit(operand.token.charAt(0)) || operand.token.charAt(0) == '.')) {
-            return expression;
-        }
-        final CharacterStoreEntry entry = ctx.characterStore.newEntry();
-        entry.put('-').put(operand.token);
-        return ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, entry.toImmutable(), 0, expression.position);
     }
 
     /**
@@ -745,7 +761,7 @@ final class SampleByBinder {
         validateFill(aggregate.getAggregates(), aggregateNodes, fill);
         scope.fillBindings.clear();
         for (int i = 0; i < fillCount; i++) {
-            final ExpressionNode expression = signedFillLiteral(fill.getQuick(i));
+            final ExpressionNode expression = fill.getQuick(i);
             scope.fillBindings.add(SqlKeywords.isPrevKeyword(expression.token) ? null : bindFillValue(expression, executionContext));
         }
         final ExpressionNode period = source.getSampleBy();
@@ -773,14 +789,14 @@ final class SampleByBinder {
         final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
         final boolean isBroadcast = fillCount < fillValueCount(aggregates);
         if (isBroadcast) {
-            final ExpressionNode only = fillCount == 1 ? signedFillLiteral(fill.getQuick(0)) : null;
+            final ExpressionNode only = fillCount == 1 ? fill.getQuick(0) : null;
             if (only != null && SqlKeywords.isPrevKeyword(only.token) && only.type != ExpressionNode.LITERAL) {
                 validateFillPrev(only);
                 throw SqlException.$(only.position, "FILL(PREV(").put(only.rhs.token)
                         .put(")) cannot be broadcast across aggregates; specify one fill value per aggregate");
             }
             if (only == null || !(SqlKeywords.isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL
-                    || SqlKeywords.isNullKeyword(only.token) || only.type == ExpressionNode.CONSTANT)) {
+                    || SqlKeywords.isNullKeyword(only.token) || only.type == ExpressionNode.CONSTANT || isSignedFillLiteral(only))) {
                 throw SqlException.$(fill.getQuick(0).position, "not enough fill values");
             }
         }
@@ -797,12 +813,12 @@ final class SampleByBinder {
                 continue;
             }
             final int fillIndex = isBroadcast ? 0 : nextFillIndex++;
-            final ExpressionNode expression = signedFillLiteral(fill.getQuick(fillIndex));
+            final ExpressionNode expression = fill.getQuick(fillIndex);
             final int targetType = output.getColumnType(keyCount + i);
             FillMode mode = FillMode.VALUE;
             int sourceId = -1;
             int sourcePosition;
-            CharSequence token = expression.token;
+            CharSequence token = fillToken(expression);
             if (SqlKeywords.isPrevKeyword(expression.token)) {
                 validateFillPrev(expression);
                 mode = FillMode.PREV;
@@ -938,13 +954,9 @@ final class SampleByBinder {
      */
     private BoundExpression bindLinearBucket(QueryModel source, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode sampleBy = source.getSampleBy();
-        final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor", 0, sampleBy.position);
-        floor.paramCount = 2;
-        final CharacterStoreEntry stride = ctx.characterStore.newEntry();
-        stride.put('\'').put(sampleBy.token).put('\'');
-        floor.lhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, stride.toImmutable(), 0, sampleBy.position);
-        floor.rhs = sampleByTimestamp(input, sampleBy.position);
-        return ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
+        final ConstantExpression period = ctx.planNodes.constants.next().ofString(Chars.toString(sampleBy.token), sampleBy.position).markLiteral(null);
+        return ctx.functionBinder.bindCall("timestamp_floor", sampleBy.position, period,
+                sampleByTimestampColumn(input, sampleBy.position), input, executionContext);
     }
 
     /**
@@ -1016,7 +1028,7 @@ final class SampleByBinder {
         }
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
         for (int i = 0, n = fill.size(); i < n; i++) {
-            final ExpressionNode value = signedFillLiteral(fill.getQuick(i));
+            final ExpressionNode value = fill.getQuick(i);
             final FillMode mode = SqlKeywords.isNoneKeyword(value.token) ? FillMode.NONE
                     : SqlKeywords.isPrevKeyword(value.token) ? FillMode.PREV
                       : SqlKeywords.isNullKeyword(value.token) ? FillMode.NULL
@@ -1028,10 +1040,10 @@ final class SampleByBinder {
         validateFill(aggregates, aggregateNodes, fill);
         final int fillCount = fill.size();
         for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
-            final ExpressionNode value = signedFillLiteral(fill.getQuick(k));
+            final ExpressionNode value = fill.getQuick(k);
             final BoundExpression bound = plan.getFillValues().getQuick(k);
             if (bound != null) {
-                plan.getFillValues().setQuick(k, bindFillConstant(bound, aggregates.getQuick(k).getDataType(), value.token, value.position, executionContext));
+                plan.getFillValues().setQuick(k, bindFillConstant(bound, aggregates.getQuick(k).getDataType(), fillToken(value), value.position, executionContext));
             } else if (SqlKeywords.isNullKeyword(value.token)) {
                 for (int i = fillCount == 1 ? 0 : k, m = fillCount == 1 ? aggregates.size() : k + 1; i < m; i++) {
                     validateFillNull(aggregates.getQuick(i).getDataType(), value.position);

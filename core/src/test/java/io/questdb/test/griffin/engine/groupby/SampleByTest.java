@@ -13944,6 +13944,60 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOffsetUntypedBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:10:00', 1.0), ('2024-01-01T01:40:00', 2.0), ('2024-01-01T03:50:00', 4.0)");
+            final String hourly = """
+                    ts\tavg
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T01:00:00.000000Z\t2.0
+                    2024-01-01T03:00:00.000000Z\t4.0
+                    """;
+            final String halfPast = """
+                    ts\tavg
+                    2023-12-31T23:30:00.000000Z\t1.0
+                    2024-01-01T01:30:00.000000Z\t2.0
+                    2024-01-01T03:30:00.000000Z\t4.0
+                    """;
+            final String hourlyLinear = """
+                    ts\tavg
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T01:00:00.000000Z\t2.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    2024-01-01T03:00:00.000000Z\t4.0
+                    """;
+            final String halfPastLinear = """
+                    ts\tavg
+                    2023-12-31T23:30:00.000000Z\t1.0
+                    2024-01-01T00:30:00.000000Z\t1.5
+                    2024-01-01T01:30:00.000000Z\t2.0
+                    2024-01-01T02:30:00.000000Z\t3.0
+                    2024-01-01T03:30:00.000000Z\t4.0
+                    """;
+            final String[] queries = {
+                    "SELECT ts, avg(v) FROM t SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET $1",
+                    "SELECT ts, avg(v) FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET $1",
+                    "SELECT ts, avg(v) FROM t SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET $1"
+            };
+            final String[][] expected = {{halfPast, hourly}, {halfPast, hourly}, {halfPastLinear, hourlyLinear}};
+            final String[] offsets = {"00:30", null};
+            for (int i = 0; i < queries.length; i++) {
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(0).getType());
+                    for (int k = 0; k < offsets.length; k++) {
+                        bindVariableService.setStr(0, offsets[k]);
+                        final QueryAssertion assertion = assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts");
+                        (i == 1 ? assertion.noRandomAccess() : assertion.expectSize()).returns(expected[i][k]);
+                    }
+                }
+            }
+            bindVariableService.clear();
+        });
+    }
+
+    @Test
     public void testSampleByOnJoinResolvesMasterTimestamp() throws Exception {
         // SAMPLE BY over a join buckets on the master's designated timestamp. The optimiser
         // used to inject it under its bare name, which failed with "Ambiguous column" when
@@ -25437,6 +25491,41 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t3.25
                             """
             );
+            assertSampleByFillNegative(
+                    "SELECT ts, avg(d) a",
+                    " SAMPLE BY 1h FILL(-.5)",
+                    """
+                            ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.75
+                            2024-01-01T01:00:00.000000Z\t-0.5
+                            2024-01-01T02:00:00.000000Z\t-0.5
+                            2024-01-01T03:00:00.000000Z\t3.25
+                            """
+            );
+            for (String fill : new String[]{"3-4", "~0"}) {
+                assertSampleByFillNegative(
+                        "SELECT ts, sum(i) s",
+                        " SAMPLE BY 1h FILL(" + fill + ")",
+                        """
+                                ts\ts
+                                2024-01-01T00:00:00.000000Z\t30
+                                2024-01-01T01:00:00.000000Z\t-1
+                                2024-01-01T02:00:00.000000Z\t-1
+                                2024-01-01T03:00:00.000000Z\t30
+                                """
+                );
+            }
+            assertSampleByFillNegative(
+                    "SELECT ts, first(i) i, first(l) l",
+                    " SAMPLE BY 1h FILL(-1)",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000Z\t10\t100
+                            2024-01-01T01:00:00.000000Z\t-1\t-1
+                            2024-01-01T02:00:00.000000Z\t-1\t-1
+                            2024-01-01T03:00:00.000000Z\t30\t300
+                            """
+            );
             final String notKeyed = "SELECT ts, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
             assertSampleByFillNegative(
                     notKeyed,
@@ -25539,6 +25628,26 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("SELECT ts, first(ts) fts FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-'2019-01-01')")
                     .noLeakCheck()
                     .failsWith("inconvertible value: `2019-01-01` [STRING -> DOUBLE]");
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNotBroadcast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, i INT, l LONG, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, first(i) i, first(l) l FROM t SAMPLE BY 1h FILL(1+1)")
+                    .noLeakCheck()
+                    .fails(60, "not enough fill values");
+            assertQuery("SELECT ts, first(i) i, first(l) l FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(1+1)")
+                    .noLeakCheck()
+                    .fails(88, "not enough fill values");
+            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, "false");
+            assertQuery("SELECT ts, first(i) i, first(l) l, first(d) d FROM t SAMPLE BY 1h FILL(1, 2)")
+                    .noLeakCheck()
+                    .fails(71, "not enough fill values");
+            assertQuery("SELECT ts, first(i) i, first(l) l, first(d) d FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(1, 2)")
+                    .noLeakCheck()
+                    .fails(99, "not enough fill values");
         });
     }
 

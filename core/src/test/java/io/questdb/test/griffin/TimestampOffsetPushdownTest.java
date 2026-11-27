@@ -1689,6 +1689,40 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHandWrittenAndOffsetNestedShiftsByOuterOffsetFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2022-03-28T03:00:00.000000Z', 1),
+                        ('2022-03-29T03:00:00.000000Z', 2),
+                        ('2022-03-30T03:00:00.000000Z', 3),
+                        ('2022-03-31T03:00:00.000000Z', 4),
+                        ('2022-04-01T03:00:00.000000Z', 5)
+                    """);
+            final String expected = """
+                    ts\tv
+                    2022-03-28T03:00:00.000000Z\t1
+                    2022-03-29T03:00:00.000000Z\t2
+                    2022-03-30T03:00:00.000000Z\t3
+                    2022-03-31T03:00:00.000000Z\t4
+                    """;
+            assertQuery("SELECT * FROM tab WHERE dateadd('h', -5, dateadd('M', -1, ts)) = '2022-02-27T22:00:00.000000Z'")
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT * FROM tab WHERE and_offset(and_offset(ts = '2022-02-27T22:00:00.000000Z', 'h', 5), 'M', 1)")
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT * FROM tab WHERE and_offset(and_offset(ts = '2022-02-27T22:00:00.000000Z', 'M', 1), 'h', 5)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2022-03-28T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testHandWrittenAndOffsetOverCalendarUnitProjectionIsRejected() throws Exception {
         // generateFilter0() rebuilds a hand-written and_offset only over the designated timestamp of
         // the factory it filters. A LIMIT on the dateadd() projection keeps the wrapper above that
