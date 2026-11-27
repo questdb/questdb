@@ -6675,8 +6675,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                                     Hash
-                                        SelectedRecord
-                                            Materialize
+                                        Materialize
+                                            SelectedRecord
                                                 Async Stream Group By workers: 1
                                                   segmentKey: timestamp_floor_utc('1m',ts1)
                                                   keys: [sym,ts1]

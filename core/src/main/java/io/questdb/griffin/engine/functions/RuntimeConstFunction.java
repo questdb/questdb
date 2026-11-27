@@ -162,16 +162,13 @@ public interface RuntimeConstFunction extends UnaryFunction {
     }
 
     /**
-     * Wraps {@code arg} when it is runtime-constant text that a parameter reads as {@code temporalType}, TIMESTAMP or
-     * DATE, so the text parses once per cursor rather than on every row, and text that spells no value fails at
-     * {@code position}; returns any other argument as is. Unlike
-     * {@link #isFoldable(Function)}, this wraps a leaf too: a text bind variable caches its text, not the value it
-     * parses to.
+     * Wraps {@code arg}, runtime-constant text that a parameter reads as {@code temporalType}, TIMESTAMP or DATE, so
+     * the text parses once per cursor rather than on every row, and text that spells no value fails at
+     * {@code position}. Unlike {@link #isFoldable(Function)}, this wraps a leaf too: a text bind variable caches its
+     * text, not the value it parses to.
      */
     static Function wrapTemporalText(Function arg, int temporalType, int position) {
-        if (temporalTextType(arg.getType(), arg.isRuntimeConstant(), temporalType) == arg.getType()) {
-            return arg;
-        }
+        assert temporalTextType(arg.getType(), arg.isRuntimeConstant(), temporalType) != arg.getType();
         return temporalType == ColumnType.DATE ? new DateRuntimeConstFunction(arg, position) : new TimestampRuntimeConstFunction(arg, position);
     }
 

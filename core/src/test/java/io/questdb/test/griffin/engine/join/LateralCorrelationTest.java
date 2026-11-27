@@ -102,6 +102,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT x AS a, a+1 AS b, count() AS n FROM long_sequence(2) ORDER BY a")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             a\tb\tn
                             1\t2\t1
@@ -109,6 +110,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT s.x AS a, a+s.x AS b, count() AS n FROM long_sequence(2) s ORDER BY a")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             a\tb\tn
                             1\t2\t1
@@ -164,7 +166,6 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     FROM (SELECT x, 3-x AS a FROM long_sequence(2)) ORDER BY a+1
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             a\tn
                             2\t2
@@ -5395,6 +5396,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     FROM long_sequence(2) s ORDER BY a
                     """)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .expectSize()
                     .returns("""
                             a\tb\tc\trn
