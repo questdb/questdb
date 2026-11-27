@@ -1761,6 +1761,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.bumpTruncateVersion();
+            if (tableToken.isWal()) {
+                // Ahead of the commit that publishes the partition: a live view over this table
+                // never consumes the attached rows, and must know they are there by the time a
+                // reader can see them. A commit that fails afterwards leaves an attach on record
+                // that never landed, which costs such a view a keyed repair and nothing else.
+                engine.getTableSequencerAPI().getTxnTracker(tableToken).recordPartitionAttach(txWriter.getTruncateVersion());
+            }
 
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -6929,6 +6936,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The whole block applies as one O3 operation that stamps every touched partition with one
         // seqTxn, so use the block's last (the committed seqTxn).
         walApplySeqTxn = startSeqTxn + blockTransactionCount - 1;
+        // WalTxnDetails stamps FORCE_FULL_COMMIT on a transaction with a non-default dedup mode and
+        // on its predecessor, so a block always applies under the default mode. A NO_DEDUP
+        // transaction applied here would be deduplicated, and an UPSERT_NEW one inserted beside the
+        // rows it replaces.
+        assert isBlockDedupModeDefault(startSeqTxn, blockTransactionCount);
         segmentCopyInfo.clear();
         walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo, denseSymbolMapWriters.size() > 0);
         if (isLastPartitionClosed()) {
@@ -12883,6 +12895,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(partitionDirLen);
     }
 
+    private boolean isBlockDedupModeDefault(long startSeqTxn, int blockTransactionCount) {
+        for (long seqTxn = startSeqTxn, n = startSeqTxn + blockTransactionCount; seqTxn < n; seqTxn++) {
+            if (walTxnDetails.getDedupMode(seqTxn) != WalUtils.WAL_DEDUP_MODE_DEFAULT) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Returns true when the writer must leave superseded column version files to {@link ColumnPurgeJob} instead of
      * deleting them now: a reader pinned before the last committed txn, or a backup checkpoint, may still reference
@@ -16772,20 +16793,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     Math.min(txnMinTs, txWriter.getLagMinTimestamp()),
                     Math.max(txnMaxTs, txWriter.getLagMaxTimestamp())
             );
-            return processWalCommit(
-                    walPath,
-                    inOrder,
-                    rowLo,
-                    rowHi,
-                    txnMinTs,
-                    txnMaxTs,
-                    mapDiffCursor,
-                    commitToTimestamp,
-                    walIdSegmentId,
-                    isLastSegmentUsage,
-                    pressureControl,
-                    wallClockMicros
-            );
+            // isCommitDedupMode() reads the commit's own mode; left at the default, a NO_DEDUP
+            // commit on a dedup-keyed table would collapse the rows it asked to keep. The
+            // FORCE_FULL_COMMIT stamp keeps such a commit out of a block, but not away from rows an
+            // earlier DEFAULT-mode commit left in the WAL lag, which this apply flushes under its
+            // own mode. LiveViewRefreshJob avoids that by committing every forward block of a
+            // dedup-keyed view as NO_DEDUP; a new NO_DEDUP producer must establish the same
+            // property.
+            this.dedupMode = dedupMode;
+            try {
+                return processWalCommit(
+                        walPath,
+                        inOrder,
+                        rowLo,
+                        rowHi,
+                        txnMinTs,
+                        txnMaxTs,
+                        mapDiffCursor,
+                        commitToTimestamp,
+                        walIdSegmentId,
+                        isLastSegmentUsage,
+                        pressureControl,
+                        wallClockMicros
+                );
+            } finally {
+                this.dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            }
         }
     }
 

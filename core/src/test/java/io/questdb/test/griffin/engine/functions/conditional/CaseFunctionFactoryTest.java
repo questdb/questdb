@@ -24,18 +24,610 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.regex.Pattern;
+
 public class CaseFunctionFactoryTest extends AbstractCairoTest {
+    // The all-NULL CASE: every THEN and ELSE value is NULL, so it is NULL on every row. A query
+    // template spells it as a marker, #NC# for (CASE WHEN x > 0 THEN NULL END) and #NC(col)# for the
+    // same CASE over another column. withCase() writes the CASE; withNullLiteral() writes the NULL
+    // literal, the reference spelling that runs no CASE code.
+    private static final Pattern NULL_CASE_MARKER = Pattern.compile("#NC(?:\\(([^)#]+)\\))?#");
+    private static final String NULL_ROWS_OF_T = """
+            x\tv
+            1\tnull
+            -1\tnull
+            null\tnull
+            3\tnull
+            """;
+    // A scalar sub-query whose keyed GROUP BY allocates native memory when its factory is built, so
+    // a CASE condition over it that nothing closes leaks that memory.
+    private static final String SUB_QUERY_HOLDING_MEMORY = "(SELECT k FROM (SELECT x k, count() c FROM t) ORDER BY k LIMIT 1)";
+
+    @Test
+    public void testAllNullCaseBindVariableAsOperand() throws Exception {
+        // The parent's other operand is a bind variable, bound to a value and then to NULL.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String template = "SELECT x, #NC# + $1 a, $1 - #NC# b, #NC# = $1 c FROM t";
+            final String added = withCase("SELECT x, #NC# + $1 v FROM t");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 5);
+            assertAsNullLiteral(template);
+            assertQuery(added).noLeakCheck().expectSize().returns(NULL_ROWS_OF_T);
+
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertAsNullLiteral(template);
+            assertQuery(added).noLeakCheck().expectSize().returns(NULL_ROWS_OF_T);
+        });
+    }
+
+    @Test
+    public void testAllNullCaseBindVariableInCondition() throws Exception {
+        // The CASE frees its condition, the bind variable included, when it folds; a new bind value
+        // for the compiled query still gives NULL rows.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok("$1 = 0", NULL_ROWS_OF_T, binds -> binds.setInt(0, 0)));
+            cases.add(BindVarTuple.ok("$1 = 5", NULL_ROWS_OF_T, binds -> binds.setInt(0, 5)));
+            assertQuery("SELECT x, (CASE WHEN x > $1 THEN NULL END)::int v FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .assertBinds(cases);
+        });
+    }
+
+    @Test
+    public void testAllNullCaseCastToEveryType() throws Exception {
+        // (CASE ... END)::T is the follow-up the NULL-column hint suggests. The cast binds the NULL
+        // literal's cast and yields the typed NULL that NULL::T yields, for every T, INTERVAL included.
+        // The typed spelling CASE WHEN ... THEN NULL::T END runs the typed CASE over the typed NULL
+        // constant and gives the same values; no typed CASE of INTERVAL exists.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String[] types = {
+                    "boolean", "byte", "short", "char", "int", "long", "float4", "float", "double", "date",
+                    "timestamp", "timestamp_ns", "string", "varchar", "symbol", "uuid", "ipv4", "long256",
+                    "binary", "interval", "double[]", "double[][]", "decimal(2,0)", "decimal(4,0)",
+                    "decimal(9,0)", "decimal(18,3)", "decimal(38,0)", "decimal(76,0)"
+            };
+            for (String type : types) {
+                final String template = "SELECT x, #NC#::" + type + " v FROM t";
+                assertAsNullLiteral(template);
+                if (!"interval".equals(type)) {
+                    assertSameResult("SELECT x, CASE WHEN x > 0 THEN NULL::" + type + " END v FROM t", withCase(template), false);
+                }
+            }
+            // cast(... AS float) is FLOAT, while ::float is PostgreSQL's double precision
+            final String[] castTypes = {"float", "geohash(1c)", "geohash(2c)", "geohash(5c)", "geohash(8c)"};
+            for (String type : castTypes) {
+                final String template = "SELECT x, cast(#NC# AS " + type + ") v FROM t";
+                assertAsNullLiteral(template);
+                assertSameResult("SELECT x, CASE WHEN x > 0 THEN cast(NULL AS " + type + ") END v FROM t", withCase(template), false);
+            }
+            // BOOLEAN NULL is false, SHORT NULL is 0, CHAR NULL is empty
+            assertQuery(withCase("SELECT x, #NC#::boolean a, #NC#::short b, #NC#::char c, #NC#::int d, #NC#::string e FROM t"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb\tc\td\te
+                            1\tfalse\t0\t\tnull\t
+                            -1\tfalse\t0\t\tnull\t
+                            null\tfalse\t0\t\tnull\t
+                            3\tfalse\t0\t\tnull\t
+                            """);
+            assertTypedRows(
+                    withCase("SELECT x, #NC#::interval v FROM t"),
+                    """
+                            x:INT\tv:INTERVAL
+                            1\t
+                            -1\t
+                            null\t
+                            3\t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAllNullCaseComparedWithEveryColumnType() throws Exception {
+        // Each column type resolves = to its own function, each with its own constant-NULL branch.
+        // The CASE takes the literal's branch in each: NULL = NULL is true in QuestDB.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE ct (
+                      k INT, c_char CHAR, c_uuid UUID, c_ipv4 IPv4, c_long256 LONG256, c_geohash GEOHASH(5c),
+                      c_decimal DECIMAL(18,3), c_varchar VARCHAR, c_string STRING, c_long LONG, c_double DOUBLE,
+                      c_float FLOAT, c_date DATE, c_timestamp TIMESTAMP
+                    )""");
+            execute("""
+                    INSERT INTO ct VALUES
+                      (1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                      (2, 'a', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '1.2.3.4', 0x01, #u33d8, 1.5::decimal(18,3),
+                       'v', 's', 7, 1.5, 2.5, '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000000Z')""");
+            final String[] columns = {
+                    "c_char", "c_uuid", "c_ipv4", "c_long256", "c_geohash", "c_decimal", "c_varchar", "c_string",
+                    "c_long", "c_double", "c_float", "c_date", "c_timestamp"
+            };
+            for (String column : columns) {
+                final String template = "SELECT k, #NC(k)# = " + column + " a, " + column + " = #NC(k)# b, #NC(k)# != " + column + " d FROM ct";
+                assertAsNullLiteral(template);
+                // CHAR has no NULL value distinct from the empty char, so it answers as the literal does
+                if (!"c_char".equals(column)) {
+                    assertQuery(withCase(template))
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    k\ta\tb\td
+                                    1\ttrue\ttrue\tfalse
+                                    2\tfalse\tfalse\ttrue
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullCaseComparedWithNonNullableTypes() throws Exception {
+        // BOOLEAN, BYTE and SHORT have no NULL value, so their = answers false for a NULL operand. The
+        // CASE answers as the NULL literal does, and as the same CASE read through a sub-query column
+        // does. The typed spelling NULL::short = 0::short is true instead: SHORT NULL is 0.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String template = "SELECT x, #NC# = 0::short a, #NC# = 0::byte b, #NC# = false c FROM t";
+            assertAsNullLiteral(template);
+            assertSameResult(
+                    withCase("SELECT x, v = 0::short a, v = 0::byte b, v = false c FROM (SELECT x, #NC# v FROM t)"),
+                    withCase(template),
+                    true
+            );
+            assertQuery(withCase(template))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb\tc
+                            1\tfalse\tfalse\tfalse
+                            -1\tfalse\tfalse\tfalse
+                            null\tfalse\tfalse\tfalse
+                            3\tfalse\tfalse\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testAllNullCaseConditionErrors() throws Exception {
+        // The CASE is NULL whatever its conditions say, so it never evaluates them: a scalar sub-query
+        // that returns several rows and a per-row conversion failure raise nothing, as NULL + (CASE
+        // ... END) raises nothing for the operand it never reads. The typed spelling, whose THEN value
+        // is not of the NULL type, evaluates its condition and raises both errors.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            assertQuery("SELECT x, (CASE WHEN x = (SELECT x FROM t) THEN NULL END)::int v FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(NULL_ROWS_OF_T);
+            assertQuery("SELECT x, (CASE WHEN ts = sym::string THEN NULL END)::int v FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(NULL_ROWS_OF_T);
+            assertQuery("SELECT x, CASE WHEN x = (SELECT x FROM t) THEN NULL::int END v FROM t")
+                    .noLeakCheck()
+                    .fails(25, "scalar sub-query returned more than one row");
+            assertQuery("SELECT x, CASE WHEN ts = sym::string THEN NULL::int END v FROM t")
+                    .noLeakCheck()
+                    .failsWith("inconvertible value: `A` [STRING -> TIMESTAMP");
+            // A condition that fails to compile fails before the CASE exists, with either spelling.
+            assertQuery("SELECT x, (CASE WHEN ts = 'garbage' THEN NULL END)::int v FROM t")
+                    .noLeakCheck()
+                    .failsWith("inconvertible value: `garbage` [STRING -> TIMESTAMP");
+            assertQuery("SELECT x, CASE WHEN ts = 'garbage' THEN NULL::int END v FROM t")
+                    .noLeakCheck()
+                    .failsWith("inconvertible value: `garbage` [STRING -> TIMESTAMP");
+        });
+    }
+
+    @Test
+    public void testAllNullCaseFreesItsArguments() throws Exception {
+        // The CASE frees its conditions when it folds, here a condition holding native memory. Before
+        // the fold, coalesce(), greatest() and a simple CASE value replaced a NULL-typed argument with
+        // a typed NULL and dropped the CASE unclosed. Parents whose constant-NULL branch drops their
+        // OTHER operand (=, substring(), l2price(), IN over a NULL-typed sub-query) leak that operand
+        // with the NULL literal as well, so they stay out of this test: see the pre-existing bug
+        // "Constant-NULL shortcuts in function factories drop an operand without closing it".
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String held = "(CASE WHEN x = " + SUB_QUERY_HOLDING_MEMORY + " THEN NULL END)";
+            final String[][] referenceAndActual = {
+                    {"SELECT x, NULL v FROM t", "SELECT x, " + held + " v FROM t"},
+                    {"SELECT x, NULL::int v FROM t", "SELECT x, " + held + "::int v FROM t"},
+                    {"SELECT x, coalesce(NULL, 7) v FROM t", "SELECT x, coalesce(" + held + ", 7) v FROM t"},
+                    {"SELECT x, greatest(NULL) v FROM t", "SELECT x, greatest(" + held + ") v FROM t"},
+                    {"SELECT x, CASE x WHEN 1 THEN NULL ELSE 5 END v FROM t", "SELECT x, CASE x WHEN 1 THEN " + held + " ELSE 5 END v FROM t"},
+                    {"SELECT x, CASE WHEN x > 1 THEN NULL ELSE 5 END v FROM t", "SELECT x, CASE WHEN x > 1 THEN " + held + " ELSE 5 END v FROM t"}
+            };
+            for (String[] pair : referenceAndActual) {
+                // compiled and run twice
+                assertSameResult(pair[0], pair[1], true);
+                assertSameResult(pair[0], pair[1], true);
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullCaseInFilters() throws Exception {
+        // Several page frames, so the parallel filter and GROUP BY split the scan into tasks: that is
+        // where reading the CASE surfaced as "unexpected filter error" and "unexpected reduce error".
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final String[] filters = {"#NC# = 1", "#NC# IS NULL", "#NC# = NULL", "sym = #NC#", "x > 0 AND #NC# IS NULL"};
+            final String[] groupBys = {
+                    "SELECT #NC#::int k, sum(#NC#::double) s, count() c FROM f",
+                    "SELECT sym, #NC#::int k, sum(#NC#::double) s, count() c FROM f ORDER BY sym",
+                    "SELECT ts, #NC#::int k, sum(#NC#::double) s, count() c FROM f SAMPLE BY 1h"
+            };
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (String index : new String[]{"", " INDEX"}) {
+                    execute("CREATE TABLE f (ts TIMESTAMP, sym SYMBOL" + index + ", x INT) TIMESTAMP(ts) PARTITION BY HOUR " + walMode);
+                    // 1_000 rows over 3 hours; sym is NULL where x % 3 = 2, x is NULL where x % 7 = 0
+                    execute("""
+                            INSERT INTO f
+                            SELECT (x * 10_000_000)::timestamp, CASE WHEN x % 3 = 0 THEN 'sa' WHEN x % 3 = 1 THEN 'sb' END,
+                              CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 5)::int - 2 END
+                            FROM long_sequence(1_000)""");
+                    drainWalQueue();
+                    for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        for (boolean isParallel : new boolean[]{true, false}) {
+                            sqlExecutionContext.setJitMode(jitMode);
+                            sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                            sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                            for (String filter : filters) {
+                                assertAsNullLiteral("SELECT ts, sym, x FROM f WHERE " + filter);
+                            }
+                            assertCount(0, withCase("SELECT count() FROM f WHERE #NC# = 1"));
+                            assertCount(1_000, withCase("SELECT count() FROM f WHERE #NC# IS NULL"));
+                            assertCount(1_000, withCase("SELECT count() FROM f WHERE #NC# = NULL"));
+                            assertCount(333, withCase("SELECT count() FROM f WHERE sym = #NC#"));
+                            assertSameResult("SELECT count() FROM f WHERE x > 0", withCase("SELECT count() FROM f WHERE x > 0 AND #NC# IS NULL"), true);
+                            for (String groupBy : groupBys) {
+                                assertAsNullLiteral(groupBy);
+                            }
+                        }
+                    }
+                    execute("DROP TABLE f");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullCaseInJoinConditions() throws Exception {
+        // In a join condition the folded CASE is a constant: RIGHT and FULL JOIN take their
+        // constant-filter branches and WINDOW JOIN its no-match branch, which the CASE never reached
+        // before the fold. The ON condition is never true (PostgreSQL and DuckDB agree), so every row
+        // stays unmatched.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String rightJoin = "SELECT * FROM (SELECT a.x, b.x bx FROM t a RIGHT JOIN t b ON a.x = b.x AND #NC(a.x)# = 1) ORDER BY x, bx";
+            assertAsNullLiteral(rightJoin);
+            assertQuery(withCase(rightJoin))
+                    .noLeakCheck()
+                    .returns("""
+                            x\tbx
+                            null\tnull
+                            null\t-1
+                            null\t1
+                            null\t3
+                            """);
+            final String fullJoin = "SELECT * FROM (SELECT a.x, b.x bx FROM t a FULL JOIN t b ON a.x = b.x AND #NC(a.x)# = 1) ORDER BY x, bx";
+            assertAsNullLiteral(fullJoin);
+            assertQuery(withCase(fullJoin))
+                    .noLeakCheck()
+                    .returns("""
+                            x\tbx
+                            null\tnull
+                            null\tnull
+                            null\t-1
+                            null\t1
+                            null\t3
+                            -1\tnull
+                            1\tnull
+                            3\tnull
+                            """);
+            // a condition that is true on every row keeps the rows the join gives without it
+            final String[] joins = {
+                    "SELECT a.x, b.x bx FROM t a CROSS JOIN t b",
+                    "SELECT a.x, b.x bx FROM t a LT JOIN t b ON (sym)",
+                    "SELECT a.x, b.x bx FROM t a SPLICE JOIN t b ON (sym)"
+            };
+            for (String join : joins) {
+                assertAsNullLiteral(join + " WHERE #NC(b.x)# IS NULL");
+                assertSameResult(join, withCase(join + " WHERE #NC(b.x)# IS NULL"), true);
+            }
+            final String horizonJoin = "SELECT a.sym, count() c FROM t a HORIZON JOIN t b ON (sym) LIST (0s) AS h";
+            assertAsNullLiteral(horizonJoin + " WHERE #NC(a.x)# IS NULL ORDER BY a.sym");
+            assertSameResult(horizonJoin + " ORDER BY a.sym", withCase(horizonJoin + " WHERE #NC(a.x)# IS NULL ORDER BY a.sym"), true);
+
+            // WINDOW JOIN over a native and then a parquet master partition
+            execute("CREATE TABLE m (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO m VALUES
+                      ('2026-04-01T00:10:00.000000Z', 'A', 10),
+                      ('2026-04-01T01:10:00.000000Z', 'B', 20),
+                      ('2026-04-02T00:10:00.000000Z', 'A', 30)""");
+            final String windowJoin = "SELECT m.ts, m.sym, sum(p.x) s, count(p.x) c FROM m WINDOW JOIN t p ON (%s) RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW";
+            for (int i = 0; i < 2; i++) {
+                if (i == 1) {
+                    // only a partition that is not the last one converts
+                    execute("ALTER TABLE m CONVERT PARTITION TO PARQUET WHERE ts = '2026-04-01'");
+                }
+                final String template = String.format(windowJoin, "m.sym = p.sym AND #NC(p.x)# = 1");
+                assertAsNullLiteral(template);
+                assertSameResult(String.format(windowJoin, "0 = 1"), withCase(template), true);
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullCaseInQueryContexts() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String[] templates = {
+                    // sub-query and CTE
+                    "SELECT x, v FROM (SELECT x, #NC#::int v FROM t) WHERE x > 0",
+                    "WITH c AS (SELECT x, #NC#::int v FROM t) SELECT x, v FROM c",
+                    // joins
+                    "SELECT a.x, b.x bx FROM t a JOIN t b ON a.x = b.x WHERE #NC(a.x)# = b.x",
+                    "SELECT a.x, b.x bx FROM t a LEFT JOIN t b ON a.x = b.x AND #NC(a.x)# = 1",
+                    "SELECT a.x, b.x bx FROM t a LEFT JOIN t b ON a.x = b.x AND #NC(b.x)# = 1",
+                    "SELECT a.x, b.x bx FROM t a LEFT JOIN t b ON a.x = b.x AND #NC(b.x)# IS NULL",
+                    "SELECT a.x, b.x bx FROM t a ASOF JOIN t b ON (sym) WHERE #NC(b.x)# IS NULL",
+                    // GROUP BY keys and aggregates
+                    "SELECT #NC# k, count() c FROM t",
+                    "SELECT #NC#::int k, count() c FROM t",
+                    "SELECT sym, #NC# k, count() c FROM t ORDER BY sym",
+                    "SELECT count(#NC#) a, sum(#NC#) b, max(#NC#) c, sum(#NC#::double) d FROM t",
+                    // SAMPLE BY
+                    "SELECT ts, #NC#::int k, count() c FROM t SAMPLE BY 1h",
+                    "SELECT ts, #NC#::int k, count() c FROM t SAMPLE BY 30m FILL(NULL)",
+                    // LATEST ON
+                    "SELECT ts, sym, #NC#::int k FROM t LATEST ON ts PARTITION BY sym",
+                    // window functions
+                    "SELECT x, sum(#NC#::double) OVER () s FROM t",
+                    "SELECT x, sum(#NC#::double) OVER (PARTITION BY sym ORDER BY ts) s FROM t",
+                    "SELECT x, sum(x) OVER (PARTITION BY #NC# ORDER BY ts) s FROM t",
+                    // ORDER BY and LIMIT
+                    "SELECT x, #NC#::int v FROM t ORDER BY #NC#::int, x LIMIT 2",
+                    "SELECT x, #NC#::int v FROM t ORDER BY #NC#::int, x LIMIT -2",
+                    // set operations
+                    "SELECT #NC# v FROM t UNION ALL SELECT 1 v FROM t",
+                    "SELECT #NC# v FROM t UNION SELECT 1 v FROM t",
+                    "SELECT #NC#::int v FROM t EXCEPT SELECT 1 v FROM t",
+                    "SELECT #NC#::int v FROM t INTERSECT SELECT NULL::int v FROM t"
+            };
+            for (String template : templates) {
+                assertAsNullLiteral(template);
+            }
+            assertQuery(withCase("SELECT a.x, b.x bx FROM t a LEFT JOIN t b ON a.x = b.x AND #NC(a.x)# = 1"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tbx
+                            1\tnull
+                            -1\tnull
+                            null\tnull
+                            3\tnull
+                            """);
+            assertQuery(withCase("SELECT #NC#::int k, count() c FROM t"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            null\t4
+                            """);
+            assertQuery(withCase("SELECT #NC# v FROM t UNION ALL SELECT 1 v FROM t"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            null
+                            null
+                            null
+                            null
+                            1
+                            1
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAllNullCaseInView() throws Exception {
+        // A view stores its SQL and compiles it again on every read.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            execute(withCase("CREATE VIEW v AS (SELECT ts, #NC#::int c FROM t)"));
+            assertSameResult("SELECT ts, NULL::int c FROM t", "SELECT * FROM v", true);
+            assertTypedRows(
+                    "SELECT * FROM v",
+                    """
+                            ts:TIMESTAMP\tc:INT
+                            2026-04-01T00:00:00.000000Z\tnull
+                            2026-04-01T00:30:00.000000Z\tnull
+                            2026-04-01T01:00:00.000000Z\tnull
+                            2026-04-01T01:30:00.000000Z\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAllNullCaseMisuse() throws Exception {
+        // The CASE keeps the NULL type, so the refusals of an untyped NULL stay, with the literal's
+        // message, at the position of the CASE where the literal's points at the NULL.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String untypedWindowArgument = "window function first_value does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double";
+            assertExceptionNoLeakCheck("SELECT x, first_value(NULL) OVER () v FROM t", 10, untypedWindowArgument);
+            assertExceptionNoLeakCheck(withCase("SELECT x, first_value(#NC#) OVER () v FROM t"), 10, untypedWindowArgument);
+            assertExceptionNoLeakCheck("SELECT x FROM t WHERE NULL", 22, "boolean expression expected");
+            assertExceptionNoLeakCheck(withCase("SELECT x FROM t WHERE #NC#"), 23, "boolean expression expected");
+        });
+    }
+
+    @Test
+    public void testAllNullCaseNextToIndexedSymbol() throws Exception {
+        // Next to an indexed symbol key the folded CASE is a constant residual filter, which the index
+        // scan and LATEST ON either drop or answer with no rows; the CASE never reached those branches
+        // before the fold.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (ts TIMESTAMP, sym SYMBOL INDEX, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO ti VALUES
+                      ('2026-04-01T00:00:00.000000Z', 'A', 1),
+                      ('2026-04-01T00:30:00.000000Z', 'B', -1),
+                      ('2026-04-01T01:00:00.000000Z', NULL, NULL),
+                      ('2026-04-01T01:30:00.000000Z', 'A', 3),
+                      ('2026-04-02T00:00:00.000000Z', 'C', 5),
+                      ('2026-04-02T00:30:00.000000Z', 'A', -5)""");
+            drainWalQueue();
+            for (String latestOn : new String[]{"", " LATEST ON ts PARTITION BY sym"}) {
+                final String noRows = "SELECT ts, sym, x FROM ti WHERE sym = 'A' AND #NC# = 1" + latestOn;
+                assertAsNullLiteral(noRows);
+                assertTypedRows(withCase(noRows), "ts:TIMESTAMP\tsym:SYMBOL\tx:INT\n");
+                final String keyed = "SELECT ts, sym, x FROM ti WHERE sym = 'A'" + latestOn;
+                assertAsNullLiteral("SELECT ts, sym, x FROM ti WHERE sym = 'A' AND #NC# IS NULL" + latestOn);
+                assertSameResult(keyed, withCase("SELECT ts, sym, x FROM ti WHERE sym = 'A' AND #NC# IS NULL" + latestOn), true);
+                final String excluded = "SELECT ts, sym, x FROM ti WHERE sym != 'B'" + latestOn;
+                assertAsNullLiteral("SELECT ts, sym, x FROM ti WHERE sym != 'B' AND #NC# IS NULL" + latestOn);
+                assertSameResult(excluded, withCase("SELECT ts, sym, x FROM ti WHERE sym != 'B' AND #NC# IS NULL" + latestOn), true);
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullCasePlan() throws Exception {
+        // The CASE does not survive into execution: the plan is the NULL literal's.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String[] templates = {
+                    "SELECT ts, #NC# v FROM t",
+                    "SELECT ts, #NC#::int v FROM t",
+                    "SELECT x FROM t WHERE #NC# = 1",
+                    "SELECT x FROM t WHERE #NC# IS NULL"
+            };
+            for (String template : templates) {
+                assertSameResult("EXPLAIN " + withNullLiteral(template), "EXPLAIN " + withCase(template), false);
+            }
+            assertQuery(withCase(templates[0])).noLeakCheck().assertsPlanContaining("functions: [ts,null]");
+            assertQuery(withCase(templates[1])).noLeakCheck().assertsPlanContaining("functions: [ts,null]");
+            assertQuery(withCase(templates[2])).noLeakCheck().assertsPlan("Empty table\n");
+            assertQuery(withCase(templates[3])).noLeakCheck().assertsPlanNotContaining("Filter", "case");
+        });
+    }
+
+    @Test
+    public void testAllNullCaseReadByFunctions() throws Exception {
+        // Every parent reads the CASE as it reads the NULL literal. Before the fold each one read a
+        // function whose getters threw UnsupportedOperationException.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            final String projection = """
+                    SELECT x,
+                      #NC# + 1 a1, 1 - #NC# a2, #NC# * 2.5 a3, #NC# / 2 a4, #NC# % 2 a5, #NC# + x a6, #NC# * x a7,
+                      #NC# + 1.5::decimal(18,3) a8,
+                      #NC# = 1 b1, #NC# != 1 b2, #NC# < 1 b3, #NC# IS NULL b4, #NC# IS NOT NULL b5, #NC# = NULL b6,
+                      #NC# BETWEEN 1 AND 2 b7, #NC# IN ('A', 'B') b8, #NC# IN (SELECT sym FROM t) b9, #NC# = sym b10,
+                      sym = #NC# b11,
+                      length(#NC#) s1, upper(#NC#) s2, substring(#NC#, 1, 2) s3, concat(#NC#, 'a') s4, #NC# || 'a' s5,
+                      coalesce(#NC#, 7) f1, nullif(#NC#, 1) f2, abs(#NC#) f3
+                    FROM""";
+            assertAsNullLiteral(projection + " t");
+            // a CASE nested in the CASE is the same NULL
+            assertSameResult(
+                    "SELECT x, NULL::int v FROM t",
+                    "SELECT x, (CASE WHEN x > 0 THEN CASE WHEN x > 1 THEN NULL END END)::int v FROM t",
+                    true
+            );
+            // NULL + 1 is NULL, length(NULL) is -1, NULL = NULL is true, t has a NULL symbol
+            assertQuery(withCase("""
+                    SELECT x, #NC# + 1 a, length(#NC#) b, #NC# IS NULL c, #NC# = NULL d, coalesce(#NC#, 7) e,
+                      #NC# IN (SELECT sym FROM t) f, #NC# = sym g
+                    FROM t"""))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb\tc\td\te\tf\tg
+                            1\tnull\t-1\ttrue\ttrue\t7\ttrue\tfalse
+                            -1\tnull\t-1\ttrue\ttrue\t7\ttrue\tfalse
+                            null\tnull\t-1\ttrue\ttrue\t7\ttrue\ttrue
+                            3\tnull\t-1\ttrue\ttrue\t7\ttrue\tfalse
+                            """);
+
+            // the smallest and the largest INT
+            execute("CREATE TABLE edges (x INT)");
+            execute("INSERT INTO edges VALUES (-2_147_483_647), (2_147_483_647)");
+            assertQuery(withCase("SELECT x, #NC# + x a, #NC# * x b FROM edges"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            -2147483647\tnull\tnull
+                            2147483647\tnull\tnull
+                            """);
+
+            // an empty table
+            execute("CREATE TABLE empty (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertAsNullLiteral(projection + " empty");
+            assertTypedRows(withCase("SELECT x, #NC# + 1 a, length(#NC#) b FROM empty"), "x:INT\ta:INT\tb:INT\n");
+        });
+    }
+
+    @Test
+    public void testAllNullCaseWithConstantConditions() throws Exception {
+        // With constant conditions the parent is a constant the compiler folds, so it read the CASE
+        // while compiling the query.
+        assertMemoryLeak(() -> {
+            createAllNullCaseTable();
+            assertQuery("SELECT (CASE WHEN true THEN NULL END) + 1 a, (CASE WHEN true THEN NULL END)::int b, length(CASE WHEN 1 = 1 THEN NULL END) c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            null\tnull\t-1
+                            """);
+            final String symbolFilter = "SELECT x FROM t WHERE sym = (CASE WHEN true THEN NULL END)";
+            assertSameResult("SELECT x FROM t WHERE sym = NULL", symbolFilter, true);
+            assertTypedRows(symbolFilter, "x:INT\nnull\n");
+        });
+    }
 
     @Test
     public void testAllNullBranchesCast() throws Exception {
@@ -2515,5 +3107,83 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         940\t
                         841\t
                         """);
+    }
+
+    // Compares the query with the same query spelling each all-NULL CASE as the NULL literal: the
+    // rows, each column's name and type.
+    private static void assertAsNullLiteral(String template) throws SqlException {
+        assertSameResult(withNullLiteral(template), withCase(template), true);
+    }
+
+    private static void assertCount(long expected, String countSql) throws SqlException {
+        assertTypedRows(countSql, "count:LONG\n" + expected + "\n");
+    }
+
+    private static void assertSameResult(String expectedSql, String actualSql, boolean isTypeCompared) throws SqlException {
+        final StringSink expected = new StringSink();
+        final StringSink actual = new StringSink();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            if (isTypeCompared) {
+                printTypedRows(compiler, expectedSql, expected);
+                printTypedRows(compiler, actualSql, actual);
+            } else {
+                TestUtils.printSql(compiler, sqlExecutionContext, expectedSql, expected);
+                TestUtils.printSql(compiler, sqlExecutionContext, actualSql, actual);
+            }
+        }
+        TestUtils.assertEquals(actualSql, expected, actual);
+    }
+
+    // Asserts rows of types the cursor comparison does not handle (NULL, INTERVAL) and of empty
+    // results, whose column types a printed header alone does not show.
+    private static void assertTypedRows(String sql, String expected) throws SqlException {
+        final StringSink actual = new StringSink();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            printTypedRows(compiler, sql, actual);
+        }
+        TestUtils.assertEquals(sql, expected, actual);
+    }
+
+    private static void createAllNullCaseTable() throws SqlException {
+        // x is positive, negative and NULL, so the CASE condition is TRUE, FALSE and NULL on some row
+        execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO t VALUES
+                  ('2026-04-01T00:00:00.000000Z', 'A', 1),
+                  ('2026-04-01T00:30:00.000000Z', 'B', -1),
+                  ('2026-04-01T01:00:00.000000Z', NULL, NULL),
+                  ('2026-04-01T01:30:00.000000Z', 'A', 3)""");
+        drainWalQueue();
+    }
+
+    // Prints the header as name:TYPE and the rows as CursorPrinter prints them.
+    private static void printTypedRows(SqlCompiler compiler, String sql, StringSink sink) throws SqlException {
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    sink.put('\t');
+                }
+                sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i)));
+            }
+            sink.put('\n');
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    CursorPrinter.println(record, metadata, sink);
+                }
+            }
+        }
+    }
+
+    private static String withCase(String template) {
+        return NULL_CASE_MARKER.matcher(template).replaceAll(
+                match -> "(CASE WHEN " + (match.group(1) != null ? match.group(1) : "x") + " > 0 THEN NULL END)"
+        );
+    }
+
+    private static String withNullLiteral(String template) {
+        return NULL_CASE_MARKER.matcher(template).replaceAll("NULL");
     }
 }

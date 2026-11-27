@@ -302,8 +302,7 @@ public final class CachedWindowMapGroups implements QuietCloseable {
 
     /**
      * Every bound group, in no particular traversal order. It is the lifecycle list - what
-     * {@link #reopen} allocates and {@link #reset} hands back - and what a test reads the
-     * structural counters off.
+     * {@link #reopen} allocates and {@link #reset} hands back.
      */
     @TestOnly
     public ObjList<WindowMapState> getStates() {
@@ -351,8 +350,26 @@ public final class CachedWindowMapGroups implements QuietCloseable {
         // thing only - the lowest position among equal candidates wins the contributor role -
         // and a bucket collects its members in SELECT order, so the two agree on which that is.
         final ObjList<WindowMapSpec> bucketSpecs = new ObjList<>(bucket.size());
+        final int specCount = specFunctions.size();
+        // Both lists run in SELECT order, so the search resumes after the previous member. It
+        // wraps, so a member in any other order, or one the lists never carried, still gets the
+        // answer a scan from zero would give, only after more compares.
+        int cursor = 0;
         for (int i = 0, n = bucket.size(); i < n; i++) {
-            bucketSpecs.add(specOf(bucket.getQuick(i), specFunctions, specs));
+            final WindowFunction function = bucket.getQuick(i);
+            WindowMapSpec spec = null;
+            for (int k = 0; k < specCount; k++) {
+                int j = cursor + k;
+                if (j >= specCount) {
+                    j -= specCount;
+                }
+                if (specFunctions.getQuick(j) == function) {
+                    spec = specs.getQuick(j);
+                    cursor = j + 1 < specCount ? j + 1 : 0;
+                    break;
+                }
+            }
+            bucketSpecs.add(spec);
         }
         return WindowAccumulatorPlanBuilder.compileGroups(bucket, bucketSpecs, chainTypes);
     }
@@ -374,16 +391,4 @@ public final class CachedWindowMapGroups implements QuietCloseable {
         return spec.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD;
     }
 
-    private static @Nullable WindowMapSpec specOf(
-            @NotNull WindowFunction function,
-            @NotNull ObjList<WindowFunction> specFunctions,
-            @NotNull ObjList<WindowMapSpec> specs
-    ) {
-        for (int i = 0, n = specFunctions.size(); i < n; i++) {
-            if (specFunctions.getQuick(i) == function) {
-                return specs.getQuick(i);
-            }
-        }
-        return null;
-    }
 }

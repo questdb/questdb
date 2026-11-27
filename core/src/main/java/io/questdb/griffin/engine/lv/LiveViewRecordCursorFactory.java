@@ -63,10 +63,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * holds it serves disk rows with {@code ts < seamTs} and the pinned in-mem slot
  * for {@code ts >= seamTs}, skipping the hot tail partition(s) of the LV table.
  * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a
- * tier-addressable-projection and unfiltered-scan requirement keep this
- * safe; anything else falls back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
- * {@link #toPlan} surfaces the static, query-shape part of this decision as the
- * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
+ * tier-addressable-projection and unfiltered-scan requirement keep this safe;
+ * anything else falls back to disk-only. See {@link LiveViewRecordCursor} for the
+ * routing details. {@link #toPlan} surfaces the static, query-shape part of this
+ * decision as the {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
  * <p>
  * The read gets the tier and the engine's page-frame machinery, not one or the
  * other. {@link #supportsPageFrameCursor} follows the base, so a filtered live-view
@@ -126,6 +126,15 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     // LiveViewRecordCursor.
     private final boolean inMemRoutable;
     private final TableToken liveViewToken;
+    // Scratch the frame path builds its output-to-tier mapping into before a cursor
+    // exists to hold it. LiveViewPageFrameCursor.of() copies it into the cursor's own
+    // list (the parameter is @Transient), so it lives only for the bindFrameCursor call
+    // and two cursors with overlapping lifetimes never share it - unlike the cursor
+    // itself, which is why that one is still allocated per query. A factory serves one
+    // getCursor at a time, the same assumption every factory that reuses a cursor field
+    // makes. The record path needs no equivalent: LiveViewRecordCursor owns its list and
+    // fills it in place.
+    private final IntList tierColumnsScratch = new IntList();
     private final int timestampColumnIndex;
 
     public LiveViewRecordCursorFactory(CairoEngine engine, TableToken liveViewToken, RecordCursorFactory base) {
@@ -271,7 +280,8 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
             runSlotPinnedHook();
             final LiveViewInMemoryBuffer slot = tier.getSlot(pin);
             final long diskSeqTxn = LiveViewRouting.diskReaderSeqTxn(tableDiskCursor);
-            final IntList tierColumns = new IntList();
+            final IntList tierColumns = tierColumnsScratch;
+            tierColumns.clear();
             if (diskSeqTxn != Numbers.LONG_NULL
                     && LiveViewRouting.buildTierColumnMapping(tableDiskCursor, base.getMetadata(), slot, tierColumns)) {
                 if (!isLastAttempt && LiveViewRouting.isSlotNewerThanDisk(slot, diskSeqTxn)) {

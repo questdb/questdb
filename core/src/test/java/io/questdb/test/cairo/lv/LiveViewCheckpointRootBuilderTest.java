@@ -26,7 +26,6 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRootBuilder;
@@ -40,8 +39,11 @@ import io.questdb.cairo.lv.LiveViewCheckpointRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRootBuilder;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -49,13 +51,27 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
 
-    private static final byte[] ANCHOR_NAME = "w0".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] WINDOW_IDENTITY = "w0".getBytes(StandardCharsets.UTF_8);
+    // The manifest of a window whose only durable component is the anchor value, which is
+    // what a state root the builder only counts segments for needs to be.
+    private static final byte[] WINDOW_MANIFEST = new byte[]{0};
     private static final byte[] AVG_ID = "avg(double):w0:0".getBytes(StandardCharsets.UTF_8);
+    /**
+     * Image bytes one identity pool of a builder or metadata reader may keep once its
+     * operation ends: LiveViewCheckpointMetadata.MAX_RETAINED_IDENTITY_BYTES, which is
+     * package-private to the checkpoint package.
+     */
+    private static final long IDENTITY_POOL_RETAINED_BYTES_LIMIT = 1_048_576;
     private static final String LV_DIR = "lv_root_builder";
+    private static final int[] OUTLIER_IDENTITY_WIDTHS = {300_000, 400_000, 500_000};
+    private static final int SMALL_IDENTITY_WIDTH = 64;
     private static final byte[] SUM_ID = "sum(long):w1:1".getBytes(StandardCharsets.UTF_8);
 
     @Before
@@ -72,19 +88,19 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef avgRoot = buildInitialAvgRoot(20);
             final LiveViewCheckpointPageRef sumRoot = buildSumRoot(21);
-            final LiveViewCheckpointPageRef anchorRoot = buildAnchorRoot(22);
+            final LiveViewCheckpointPageRef windowRoot = buildWindowRoot(22);
             final LiveViewCheckpointPageRef checkpoint1 = new LiveViewCheckpointPageRef();
             final LongList referenced1 = new LongList();
             try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
                  Path dir = new Path()) {
-                builder.begin(checkpointsDir(dir), 7, 123_456, 42, anchorRoot);
+                builder.begin(checkpointsDir(dir), 7, 123_456, 42, windowRoot);
                 builder.addFunction(sumRoot);
                 builder.addFunction(avgRoot);
                 builder.build(30, checkpoint1);
                 builder.getReferencedSegmentIds(referenced1);
             }
             // Data segments 1, 2 and 4 hold the functions' state pages; 20, 21 and
-            // 22 hold the function and anchor roots with their map pages, and 30
+            // 22 hold the function and window roots with their map pages, and 30
             // holds this root and its function directory.
             assertLongList(referenced1, 1, 2, 4, 20, 21, 22, 30);
 
@@ -112,7 +128,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
             final LongList referenced2 = new LongList();
             try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
                  Path dir = new Path()) {
-                builder.begin(checkpointsDir(dir), 8, 223_456, 42, anchorRoot);
+                builder.begin(checkpointsDir(dir), 8, 223_456, 42, windowRoot);
                 builder.addFunction(avgRoot);
                 builder.addFunction(sumRoot);
                 builder.build(31, checkpoint2);
@@ -172,8 +188,8 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                  Path dir = new Path()) {
                 builder.of(checkpointsDir(dir), oldRoot, AVG_ID, 1, new byte[]{1, 2});
                 builder.setScalarStateRef(stateRef(3, 0));
-                builder.putPartition(key(1), new byte[]{11}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
-                builder.removePartition(key(2));
+                LiveViewCheckpointTestKeys.putPartition(builder, key(1), new byte[]{11}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
+                LiveViewCheckpointTestKeys.removePartition(builder, key(2));
                 builder.build(41, newRoot);
             }
 
@@ -209,14 +225,75 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 oldFunction.getPartitionMapRootRef(oldMapRoot);
                 newFunction.getPartitionMapRootRef(newMapRoot);
                 mapReader.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                Assert.assertTrue(mapReader.find(oldMapRoot, key(1), entry));
-                Assert.assertEquals(1, entry.getScalarState()[0]);
-                Assert.assertTrue(mapReader.find(oldMapRoot, key(2), entry));
-                Assert.assertTrue(mapReader.find(newMapRoot, key(1), entry));
-                Assert.assertEquals(11, entry.getScalarState()[0]);
-                Assert.assertEquals(2, entry.getStatePageRef(0).getSegmentId());
-                Assert.assertFalse(mapReader.find(newMapRoot, key(2), entry));
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, oldMapRoot, key(1), entry));
+                    Assert.assertEquals(1, entry.copyScalarStateForTest()[0]);
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, oldMapRoot, key(2), entry));
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, newMapRoot, key(1), entry));
+                    Assert.assertEquals(11, entry.copyScalarStateForTest()[0]);
+                    Assert.assertEquals(2, entry.getStatePageRef(0).getSegmentId());
+                    Assert.assertFalse(LiveViewCheckpointTestKeys.find(mapReader, newMapRoot, key(2), entry));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIdentityPoolsKeepBoundedBytesAcrossDefinitions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LiveViewCheckpointRootBuilder builder = new LiveViewCheckpointRootBuilder(configuration);
+                 LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                 LiveViewCheckpointFunctionDirectory directory = new LiveViewCheckpointFunctionDirectory(configuration);
+                 LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
+                 LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration);
+                 Path dir = new Path()) {
+                // A refresh worker keeps one builder and one set of metadata readers for its
+                // whole life and serves one definition after another through them. Each outlier
+                // identity fits under the limit on its own, but together they exceed it, so a
+                // shell that parked every width it has seen would keep over 1,200,000 image bytes.
+                long segmentId = 100;
+                for (int i = 0; i < OUTLIER_IDENTITY_WIDTHS.length; i++) {
+                    final byte[] identity = identity(OUTLIER_IDENTITY_WIDTHS[i], 'a' + i);
+                    serveDefinition(builder, root, directory, functionRoot, windowRoot, dir, identity, segmentId);
+                    segmentId += 3;
+                }
+                final byte[] smallIdentity = identity(SMALL_IDENTITY_WIDTH, 'z');
+                serveDefinition(builder, root, directory, functionRoot, windowRoot, dir, smallIdentity, segmentId);
+                segmentId += 3;
+
+                final long[] retained = retainedIdentityPoolBytes(builder, directory, functionRoot, windowRoot);
+                final String retainedText = " [rootBuilder=" + retained[0]
+                        + ", rootBuilderFunctionRoot=" + retained[1]
+                        + ", rootBuilderWindowRoot=" + retained[2]
+                        + ", functionDirectory=" + retained[3]
+                        + ", functionRoot=" + retained[4]
+                        + ", windowRoot=" + retained[5]
+                        + ", limit=" + IDENTITY_POOL_RETAINED_BYTES_LIMIT + ']';
+                for (long bytes : retained) {
+                    Assert.assertTrue(
+                            "an identity pool kept the widths of definitions served before" + retainedText,
+                            bytes <= IDENTITY_POOL_RETAINED_BYTES_LIMIT
+                    );
+                }
+                // A detached builder stages nothing, so no slot of its identity list may keep an
+                // image of a definition it built before.
+                final ObjList<?> stagedIdentities = (ObjList<?>) readField(builder, "functionIdentities");
+                for (int i = 0, n = stagedIdentities.size(); i < n; i++) {
+                    Assert.assertNull("detached builder still names a staged identity at " + i, stagedIdentities.getQuick(i));
+                }
+
+                // The same definition again reuses every pooled image: a pool within its limit
+                // keeps what it holds when the operation ends.
+                final byte[] pooledFunctionIdentity = functionRoot.getFunctionIdentity();
+                final byte[] pooledWindowIdentity = windowRoot.getWindowIdentity();
+                serveDefinition(builder, root, directory, functionRoot, windowRoot, dir, smallIdentity, segmentId);
+                Assert.assertSame(pooledFunctionIdentity, functionRoot.getFunctionIdentity());
+                Assert.assertSame(pooledWindowIdentity, windowRoot.getWindowIdentity());
+                final long[] reused = retainedIdentityPoolBytes(builder, directory, functionRoot, windowRoot);
+                for (int i = 0; i < retained.length; i++) {
+                    Assert.assertTrue("identity pool " + i + " must keep the images it lent" + retainedText, retained[i] > 0);
+                    Assert.assertEquals("identity pool " + i + " must reuse the images it kept" + retainedText, retained[i], reused[i]);
+                }
             }
         });
     }
@@ -308,6 +385,12 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         return path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
     }
 
+    private static byte[] identity(int width, int fill) {
+        final byte[] identity = new byte[width];
+        Arrays.fill(identity, (byte) fill);
+        return identity;
+    }
+
     private static byte[] key(int key) {
         return new byte[]{(byte) key};
     }
@@ -341,20 +424,81 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         mem.putInt(0);
     }
 
+    private static Object readField(Object owner, String name) throws ReflectiveOperationException {
+        final Field field = owner.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(owner);
+    }
+
+    /**
+     * Image bytes each identity pool of the shells a worker keeps holds: the root builder's
+     * own, those of the function and window roots it reads through, then those of the
+     * standalone directory, function root and window root.
+     */
+    private static long[] retainedIdentityPoolBytes(
+            LiveViewCheckpointRootBuilder builder,
+            LiveViewCheckpointFunctionDirectory directory,
+            LiveViewCheckpointFunctionRoot functionRoot,
+            LiveViewCheckpointWindowRoot windowRoot
+    ) throws ReflectiveOperationException {
+        return new long[]{
+                retainedPoolBytes(builder, "functionIdentityBytes"),
+                retainedPoolBytes(readField(builder, "functionRoot"), "decodedBytes"),
+                retainedPoolBytes(readField(builder, "windowRoot"), "decodedBytes"),
+                retainedPoolBytes(directory, "identityBytes"),
+                retainedPoolBytes(functionRoot, "decodedBytes"),
+                retainedPoolBytes(windowRoot, "decodedBytes")
+        };
+    }
+
+    /**
+     * Image bytes the exact-width byte array pool in {@code owner}'s {@code poolField}
+     * holds. {@code countRetainedBytesForTest()} sums the arrays of every width rather than
+     * reading the pool's own tally.
+     */
+    private static long retainedPoolBytes(Object owner, String poolField) throws ReflectiveOperationException {
+        final Object pool = readField(owner, poolField);
+        final Method count = pool.getClass().getDeclaredMethod("countRetainedBytesForTest");
+        count.setAccessible(true);
+        return (long) count.invoke(pool);
+    }
+
     private static LiveViewCheckpointStatePageRef stateRef(long segmentId, long offset) {
         return new LiveViewCheckpointStatePageRef().of(segmentId, offset, 8, 8, 0x31, 0, 1, 0);
     }
 
-    private LiveViewCheckpointPageRef buildAnchorRoot(long metadataSegmentId) {
+    private LiveViewCheckpointPageRef buildWindowRoot(long metadataSegmentId) {
         final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
-        try (LiveViewCheckpointAnchorRootBuilder builder = new LiveViewCheckpointAnchorRootBuilder(configuration);
+        try (LiveViewCheckpointWindowRootBuilder builder = new LiveViewCheckpointWindowRootBuilder(configuration);
              Path dir = new Path()) {
-            builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), ANCHOR_NAME, ColumnType.TIMESTAMP_MICRO, new byte[]{1, 0, 0, 0});
-            builder.putPartition(key(1), 111);
-            builder.putPartition(key(2), 222);
+            builder.of(
+                    checkpointsDir(dir),
+                    new LiveViewCheckpointPageRef(),
+                    WINDOW_IDENTITY,
+                    ColumnType.TIMESTAMP_MICRO,
+                    new byte[]{1, 0, 0, 0},
+                    WINDOW_MANIFEST,
+                    Long.BYTES,
+                    true,
+                    null
+            );
+            LiveViewCheckpointTestKeys.putPartition(builder, key(1), anchorState(111), false);
+            LiveViewCheckpointTestKeys.putPartition(builder, key(2), anchorState(222), false);
             builder.build(metadataSegmentId, root);
         }
         return root;
+    }
+
+    /**
+     * One window entry's payload for a manifest declaring no components beside the anchor:
+     * the anchor value's eight little-endian bytes and nothing else.
+     */
+    private static byte[] anchorState(long anchorValue) {
+        final byte[] state = new byte[Long.BYTES];
+        for (int i = 0; i < Long.BYTES; i++) {
+            state[i] = (byte) (anchorValue >>> (i * Byte.SIZE));
+        }
+        return state;
     }
 
     private LiveViewCheckpointPageRef buildInitialAvgRoot(long metadataSegmentId) {
@@ -363,8 +507,8 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
              Path dir = new Path()) {
             builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), AVG_ID, 1, new byte[]{1, 2});
             builder.setScalarStateRef(stateRef(1, 0));
-            builder.putPartition(key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 8), stateRef(2, 16)});
-            builder.putPartition(key(2), new byte[]{2}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
+            LiveViewCheckpointTestKeys.putPartition(builder, key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 8), stateRef(2, 16)});
+            LiveViewCheckpointTestKeys.putPartition(builder, key(2), new byte[]{2}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
             builder.build(metadataSegmentId, root);
         }
         return root;
@@ -375,10 +519,78 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration);
              Path dir = new Path()) {
             builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), SUM_ID, 1, new byte[]{3});
-            builder.putPartition(key(7), new byte[]{7}, new LiveViewCheckpointStatePageRef[]{stateRef(4, 0)});
+            LiveViewCheckpointTestKeys.putPartition(builder, key(7), new byte[]{7}, new LiveViewCheckpointStatePageRef[]{stateRef(4, 0)});
             builder.build(metadataSegmentId, root);
         }
         return root;
+    }
+
+    /**
+     * Serves one single-function definition the way a worker does: writes its window and
+     * function roots, seals a checkpoint root over them through {@code builder}, then
+     * restores through the long-lived readers - the directory the root names, the function
+     * root in it and the window root. This method detaches every shell when its operation
+     * ends, as the worker detaches its own, and only then reads what the shell decoded: a
+     * pool over its limit drops its arrays on detach, and the images it already lent must
+     * stay intact. The window shares the function's identity width.
+     */
+    private void serveDefinition(
+            LiveViewCheckpointRootBuilder builder,
+            LiveViewCheckpointRoot root,
+            LiveViewCheckpointFunctionDirectory directory,
+            LiveViewCheckpointFunctionRoot functionRoot,
+            LiveViewCheckpointWindowRoot windowRoot,
+            Path dir,
+            byte[] identity,
+            long segmentId
+    ) {
+        final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+        try (LiveViewCheckpointFunctionRootBuilder functionBuilder = new LiveViewCheckpointFunctionRootBuilder(configuration)) {
+            functionBuilder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), identity, 1, new byte[]{1, 2});
+            LiveViewCheckpointTestKeys.putPartition(functionBuilder, key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 0)});
+            functionBuilder.build(segmentId, functionRootRef);
+        }
+        final LiveViewCheckpointPageRef windowRootRef = new LiveViewCheckpointPageRef();
+        try (LiveViewCheckpointWindowRootBuilder windowBuilder = new LiveViewCheckpointWindowRootBuilder(configuration)) {
+            windowBuilder.of(
+                    checkpointsDir(dir),
+                    new LiveViewCheckpointPageRef(),
+                    identity,
+                    ColumnType.TIMESTAMP_MICRO,
+                    new byte[]{1, 0, 0, 0},
+                    WINDOW_MANIFEST,
+                    Long.BYTES,
+                    true,
+                    null
+            );
+            LiveViewCheckpointTestKeys.putPartition(windowBuilder, key(1), anchorState(111), false);
+            windowBuilder.build(segmentId + 1, windowRootRef);
+        }
+
+        final LiveViewCheckpointPageRef checkpointRef = new LiveViewCheckpointPageRef();
+        builder.begin(checkpointsDir(dir), segmentId, 1_000, 1, windowRootRef);
+        builder.addFunction(functionRootRef);
+        builder.build(segmentId + 2, checkpointRef);
+        builder.detach();
+
+        final LiveViewCheckpointPageRef directoryRef = new LiveViewCheckpointPageRef();
+        final LiveViewCheckpointPageRef foundRef = new LiveViewCheckpointPageRef();
+        root.of(checkpointsDir(dir), checkpointRef);
+        root.getFunctionDirectoryRef(directoryRef);
+        directory.of(checkpointsDir(dir), directoryRef);
+        directory.detach();
+        root.detach();
+        Assert.assertEquals(1, directory.size());
+        Assert.assertTrue("detached directory lost the identity it decoded", directory.find(identity, foundRef));
+        assertRefEquals(functionRootRef, foundRef);
+
+        functionRoot.of(checkpointsDir(dir), functionRootRef);
+        functionRoot.detach();
+        Assert.assertArrayEquals("detached function root lost its identity", identity, functionRoot.getFunctionIdentity());
+
+        windowRoot.of(checkpointsDir(dir), windowRootRef);
+        windowRoot.detach();
+        Assert.assertArrayEquals("detached window root lost its identity", identity, windowRoot.getWindowIdentity());
     }
 
     private LiveViewCheckpointPageRef writeRaw(long segmentId, int pageKind, PageWriter pageWriter) {

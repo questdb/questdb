@@ -69,13 +69,10 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
     private static final String CREATE_PREFIX = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS ";
     private static final String SELECT_PREFIX = "SELECT ts, v, ";
     /**
-     * Factory-raised errors are positioned within the inner SELECT.
+     * Where the window function call starts in the whole CREATE statement. The parser and the factory,
+     * which runs when CREATE compiles the SELECT, both report their rejects of the call there.
      */
-    private static final int FACTORY_POS = SELECT_PREFIX.length();
-    /**
-     * Parser-raised errors are positioned within the whole CREATE statement.
-     */
-    private static final int PARSER_POS = CREATE_PREFIX.length() + SELECT_PREFIX.length();
+    private static final int FUNCTION_POS = CREATE_PREFIX.length() + SELECT_PREFIX.length();
 
     /**
      * Every window-function spelling the SUBSAMPLE family exposes, with the name it reports.
@@ -123,7 +120,7 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
                 assertException(
                         CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) + " OVER w AS keep FROM base " +
                                 "WINDOW w AS (PARTITION BY k ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))",
-                        FACTORY_POS,
+                        FUNCTION_POS,
                         form.getQuick(1) + "() does not support PARTITION BY"
                 );
             }
@@ -164,13 +161,13 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
                 assertException(
                         CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS keep FROM base",
-                        FACTORY_POS,
+                        FUNCTION_POS,
                         form.getQuick(1) + "() does not support framing; remove ROWS/RANGE clause"
                 );
                 assertException(
                         CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) +
                                 " OVER (ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) AS keep FROM base",
-                        FACTORY_POS,
+                        FUNCTION_POS,
                         form.getQuick(1) + "() does not support framing; remove ROWS/RANGE clause"
                 );
             }
@@ -299,7 +296,7 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
                 final ObjList<String> form = ALL_WINDOW_FORMS.getQuick(formIndex);
                 assertException(
                         CREATE_PREFIX + SELECT_PREFIX + form.getQuick(0) + " OVER (ORDER BY ts) AS keep FROM base",
-                        PARSER_POS,
+                        FUNCTION_POS,
                         "live view select cannot use " + form.getQuick(1) + "() over a frame starting at UNBOUNDED PRECEDING; " +
                                 "it has no finite out-of-order influence boundary, so a late row would replay the whole history"
                 );

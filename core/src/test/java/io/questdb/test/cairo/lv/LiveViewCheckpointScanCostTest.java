@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointScanCost;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -102,6 +103,34 @@ public class LiveViewCheckpointScanCostTest extends AbstractCairoTest {
                 // infinity, and every interval over it would round to nothing.
                 Assert.assertEquals(8, cost.estimateScanRows(Long.MIN_VALUE, ts(DAY3_MAX)));
                 Assert.assertEquals(2, cost.estimateScanRows(ts(DAY3_MIN), ts(DAY3_MAX)));
+            }
+        });
+    }
+
+    @Test
+    public void testParquetPartitionCountsItsRowsExactly() throws Exception {
+        // A resume's chain is priced against this estimate, so a partition in parquet must
+        // count its rows as a native one does: hour 1, converted, holds 3 rows and hour 2 holds
+        // 2, and an interval from hour 1's floor covers both whole.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute(
+                    "INSERT INTO base VALUES" +
+                            " ('2026-01-01T00:10:00.000000Z', 1)," +
+                            " ('2026-01-01T00:50:00.000000Z', 2)," +
+                            " ('2026-01-01T01:00:00.000000Z', 3)," +
+                            " ('2026-01-01T01:20:00.000000Z', 4)," +
+                            " ('2026-01-01T01:59:59.999999Z', 5)," +
+                            " ('2026-01-01T02:10:00.000000Z', 6)," +
+                            " ('2026-01-01T02:40:00.000000Z', 7)"
+            );
+            execute("ALTER TABLE base CONVERT PARTITION TO PARQUET WHERE ts >= '2026-01-01T01:00:00.000000Z' AND ts < '2026-01-01T02:00:00.000000Z'");
+            final LiveViewCheckpointScanCost cost = new LiveViewCheckpointScanCost();
+            try (TableReader reader = engine.getReader("base")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(1));
+                cost.of(reader);
+                Assert.assertEquals(3 + 2, cost.estimateScanRows(ts("2026-01-01T01:00:00.000000Z"), Long.MAX_VALUE));
+                Assert.assertEquals(7, cost.estimateScanRows(Long.MIN_VALUE, Long.MAX_VALUE));
             }
         });
     }

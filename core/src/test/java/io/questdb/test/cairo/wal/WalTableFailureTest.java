@@ -27,12 +27,14 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableToken;
@@ -43,6 +45,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -61,6 +64,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -79,6 +83,7 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -92,8 +97,11 @@ import org.junit.Test;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cairo.ErrorTag.*;
@@ -1384,6 +1392,45 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResumeWalDuringParkedApplyLeavesTableRunning() throws Exception {
+        // SUSPEND WAL and then RESUME WAL both land while an apply that passed the hard-suspension check
+        // is parked. RESUME clears the hard flag before it clears the suspended state, so the parked
+        // apply's progress finds the table running, as RESUME left it, and later commits apply.
+        final ParkedDayTwoApply parked = new ParkedDayTwoApply();
+        assertMemoryLeak(parked.facade(), () -> {
+            parked.run(() -> {
+                execute("ALTER TABLE t SUSPEND WAL WITH 'DISK FULL', 'manual halt'");
+                execute("ALTER TABLE t RESUME WAL");
+            });
+            assertSuspensionReport("t\tfalse\t2\t2\t\t\n");
+            execute("INSERT INTO t VALUES ('2026-04-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertSuspensionReport("t\tfalse\t3\t3\t\t\n");
+            assertParkedApplyRows("1\n2\n3\n");
+        });
+    }
+
+    @Test
+    public void testResumeWalFromTxnAfterSuspendDuringApplySkips() throws Exception {
+        // RESUME WAL FROM TXN n skips the transactions below n only on a suspended table. An apply
+        // that was in flight when SUSPEND landed must leave the table suspended, so the statement
+        // skips txn 3 here exactly as it does when no apply is in flight.
+        final ParkedDayTwoApply parked = new ParkedDayTwoApply();
+        assertMemoryLeak(parked.facade(), () -> {
+            parked.run(() -> execute("ALTER TABLE t SUSPEND WAL WITH 'DISK FULL', 'manual halt'"));
+            execute("INSERT INTO t VALUES ('2026-04-03T00:00:00.000000Z', 3)");
+            execute("INSERT INTO t VALUES ('2026-04-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertSuspensionReport("t\ttrue\t2\t4\tDISK FULL\tmanual halt\n");
+            execute("ALTER TABLE t RESUME WAL FROM TXN 4");
+            engine.releaseInactive();
+            drainWalQueue();
+            assertParkedApplyRows("1\n2\n4\n");
+            assertSuspensionReport("t\tfalse\t4\t4\t\t\n");
+        });
+    }
+
+    @Test
     public void testRollbackSupport() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             int counter = 0;
@@ -1545,6 +1592,32 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSuspendWalDuringApplyStaysSuspended() throws Exception {
+        // SUSPEND WAL lands while an apply that already passed the hard-suspension check is parked in
+        // its open of the day-2 partition. The parked apply finishes, and its progress must not take
+        // the table out of the suspended state: only RESUME WAL lifts an operator's suspension, so
+        // wal_tables() keeps the operator's tag and message until then.
+        final ParkedDayTwoApply parked = new ParkedDayTwoApply();
+        assertMemoryLeak(parked.facade(), () -> {
+            parked.run(() -> {
+                execute("ALTER TABLE t SUSPEND WAL WITH 'DISK FULL', 'manual halt'");
+                assertSuspensionReport("t\ttrue\t1\t2\tDISK FULL\tmanual halt\n");
+            });
+            assertSuspensionReport("t\ttrue\t2\t2\tDISK FULL\tmanual halt\n");
+
+            execute("INSERT INTO t VALUES ('2026-04-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertSuspensionReport("t\ttrue\t2\t3\tDISK FULL\tmanual halt\n");
+            assertParkedApplyRows("1\n2\n");
+
+            execute("ALTER TABLE t RESUME WAL");
+            drainWalQueue();
+            assertParkedApplyRows("1\n2\n3\n");
+            assertSuspensionReport("t\tfalse\t3\t3\t\t\n");
+        });
+    }
+
+    @Test
     public void testSuspendWalFailure() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());
@@ -1623,6 +1696,40 @@ public class WalTableFailureTest extends AbstractCairoTest {
                             2022-02-25T00:00:00.000000Z\tabcde
                             2022-02-25T00:00:00.000000Z\tabcdr
                             """);
+        });
+    }
+
+    @Test
+    public void testWaitWalTableEndsOnTableSuspendedDuringApply() throws Exception {
+        // wait_wal_table() and tables() read the suspended state that the progress of an apply in
+        // flight at SUSPEND WAL used to clear. A wait for a transaction the suspension holds back must
+        // end on its first look with the suspension, and tables() must report the table suspended.
+        final ParkedDayTwoApply parked = new ParkedDayTwoApply();
+        assertMemoryLeak(parked.facade(), () -> {
+            parked.run(() -> execute("ALTER TABLE t SUSPEND WAL WITH 'DISK FULL', 'manual halt'"));
+            execute("INSERT INTO t VALUES ('2026-04-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("SELECT table_name, table_suspended FROM tables() WHERE table_name = 't'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_name\ttable_suspended
+                            t\ttrue
+                            """);
+
+            // The breaker ends a wait that never sees the suspension after a bounded number of checks,
+            // so such a wait fails the test with the bound's message rather than hanging it.
+            final CountingCircuitBreaker breaker = new CountingCircuitBreaker(engine, 2_000);
+            try (
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+                            .with(securityContext, bindVariableService, null, -1, breaker)
+            ) {
+                TestUtils.printSql(engine, context, "SELECT wait_wal_table('t')", new StringSink());
+                Assert.fail("the wait must end on the suspension");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table is suspended [tableName=t]");
+            }
+            Assert.assertEquals("the wait must see the suspension on its first look", 1, breaker.getChecks());
         });
     }
 
@@ -2713,6 +2820,43 @@ public class WalTableFailureTest extends AbstractCairoTest {
         });
     }
 
+    private void assertParkedApplyRows(String expectedX) throws Exception {
+        assertQuery("SELECT x FROM t")
+                .noLeakCheck()
+                .expectSize()
+                .returns("x\n" + expectedX);
+    }
+
+    private void assertSuspensionReport(String expectedRow) throws Exception {
+        assertQuery("SELECT name, suspended, writerTxn, sequencerTxn, errorTag, errorMessage FROM wal_tables() WHERE name = 't'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("name\tsuspended\twriterTxn\tsequencerTxn\terrorTag\terrorMessage\n" + expectedRow);
+    }
+
+    // Counts the checks a statement makes while it waits, and ends the statement once it made
+    // maxChecks of them.
+    private static class CountingCircuitBreaker extends AtomicBooleanCircuitBreaker {
+        private final int maxChecks;
+        private int checks;
+
+        CountingCircuitBreaker(CairoEngine engine, int maxChecks) {
+            super(engine);
+            this.maxChecks = maxChecks;
+        }
+
+        int getChecks() {
+            return checks;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+            if (++checks >= maxChecks) {
+                throw CairoException.nonCritical().put("the wait never saw the suspension [checks=").put(checks).put(']');
+            }
+        }
+    }
+
     // Fails the first msync after the apply job closes a WAL column file it read, which in SYNC mode
     // falls in commit00 after the data write and before the _txn write.
     private static class MsyncFailureAfterWalReadFacade extends TestFilesFacadeImpl {
@@ -2767,6 +2911,73 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
             return fd;
+        }
+    }
+
+    // Parks the apply of table t's second transaction, on another thread, in its open of the day-2
+    // partition's x.d, and runs an action while it is parked: an apply already past the
+    // hard-suspension check of ApplyWal2TableJob.doRun when the action lands.
+    private static class ParkedDayTwoApply {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private final CountDownLatch parked = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private volatile String dirName;
+
+        FilesFacade facade() {
+            return new TestFilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    final String dir = dirName;
+                    if (dir != null
+                            && Utf8s.endsWithAscii(name, "x.d")
+                            && Utf8s.containsAscii(name, dir)
+                            && Utf8s.containsAscii(name, "2026-04-02")
+                            && isArmed.compareAndSet(true, false)) {
+                        parked.countDown();
+                        try {
+                            if (!release.await(30, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("the parked apply was never released");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    return super.openRW(name, opts);
+                }
+            };
+        }
+
+        // Creates t (ts, x) with its first transaction applied and its second, on day 2, committed,
+        // then runs whileParked while another thread's apply of the second is parked.
+        void run(TestUtils.LeakProneCode whileParked) throws Exception {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            dirName = engine.verifyTableName("t").getDirName();
+            execute("INSERT INTO t VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2026-04-02T00:00:00.000000Z', 2)");
+            isArmed.set(true);
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+            final Thread applier = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                }
+            });
+            applier.start();
+            try {
+                Assert.assertTrue("the apply never reached the day-2 open", parked.await(30, TimeUnit.SECONDS));
+                whileParked.run();
+            } finally {
+                release.countDown();
+                applier.join();
+            }
+            if (applyError.get() != null) {
+                throw new AssertionError("the parked apply failed", applyError.get());
+            }
         }
     }
 }

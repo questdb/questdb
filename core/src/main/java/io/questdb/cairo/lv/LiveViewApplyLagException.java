@@ -28,26 +28,13 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.FiberLocal;
 
 /**
- * Cooperative-yield signal thrown by the live-view refresh worker when a
- * drain-triggered O3 replay needs the base table applied to a seqTxn that
- * {@code ApplyWal2TableJob} has not reached yet. Unlike a hard failure, this is
- * not an error condition: the refresh worker unwinds its current cycle without
- * advancing any watermark or touching the flush-retry budget, and the next
- * fallback scan re-triggers the view once the base apply has caught up.
+ * Cooperative yield when replay or rebuild needs a base seqTxn not yet applied.
+ * Deferral advances no watermark and spends no flush-retry budget. Rebuild must wait
+ * through the highest base transaction represented in the view's durable output.
+ * Blocking would starve the worker and can deadlock a single-threaded apply/drain.
  * <p>
- * It exists to keep the replay path <em>cooperative</em>. Block-spinning inside
- * {@code LiveViewRefreshJob.waitForApply} until the apply catches up starves the
- * refresh worker for up to the whole flush-retry budget, and on the
- * single-threaded refresh/drain model the fuzz harness drives it deadlocks
- * outright: the same thread that has to advance the base apply is the one
- * spinning. Throwing instead yields the worker so the apply can proceed.
- * <p>
- * Deliberately NOT a {@link io.questdb.cairo.CairoException}: several O3-replay
- * callers wrap their work in a {@code catch (CairoException)} that recovers or
- * re-derives, and this signal must bypass all of them and reach the top-level
- * apply-lag handler in {@code LiveViewRefreshJob.refreshInstance}. It is a
- * thread-local flyweight (no stack trace, no per-throw allocation), reused
- * across refresh cycles on the same worker.
+ * This thread-local flyweight deliberately is not a CairoException. Recovery catches
+ * must pass it to the apply-lag handler instead of counting it as a refresh failure.
  */
 public class LiveViewApplyLagException extends RuntimeException {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};

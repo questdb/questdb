@@ -49,7 +49,10 @@ import io.questdb.test.griffin.fuzz.types.LongType;
  *     provided a numeric expression can be cast to it at all -- see
  *     {@link #castTargetFromNumeric(ColumnKind)};</li>
  *     <li>searched or simple {@code CASE} of any kind -- see {@link #generateCase};</li>
- *     <li>{@code extract(part FROM temporal)}.</li>
+ *     <li>{@code extract(part FROM temporal)};</li>
+ *     <li>in an operand or argument slot, now and then an all-NULL CASE,
+ *     bare or cast to a type of the slot's kind -- see
+ *     {@link NullCaseExpr}.</li>
  * </ul>
  * CASE, extract and the cast keyword form also have a plain spelling, see
  * {@link BindContext#plainSpelling()}.
@@ -67,6 +70,8 @@ public final class ExpressionGenerator {
             new FunctionSpec("upper", ColumnKind.STRING_LIKE, ColumnKind.STRING_LIKE),
             new FunctionSpec("lower", ColumnKind.STRING_LIKE, ColumnKind.STRING_LIKE),
     };
+    // One operand or argument slot in this many gets an all-NULL CASE.
+    private static final int NULL_CASE_ODDS = 16;
 
     private final ObjList<FuzzColumn> columns;
     private final int maxDepth;
@@ -173,7 +178,17 @@ public final class ExpressionGenerator {
         return generateLeafAny();
     }
 
+    private FuzzExpr generateNullCase(ColumnKind target) {
+        FuzzColumn col = columns.getQuick(rnd.nextInt(columns.size()));
+        // pickOfKind() answers null for a kind no type has, which leaves the CASE bare
+        FuzzColumnType castType = rnd.nextBoolean() ? FuzzColumnTypes.pickOfKind(rnd, target) : null;
+        return new NullCaseExpr(new ColumnRefExpr(rnd, col, qualifier), target, castType);
+    }
+
     private FuzzExpr generateOfKind(ColumnKind target, int depth) {
+        if (depth > 0 && columns.size() > 0 && rnd.nextInt(NULL_CASE_ODDS) == 0) {
+            return generateNullCase(target);
+        }
         if (depth >= maxDepth || rnd.nextInt(3) == 0) {
             return generateLeafOfKind(target);
         }

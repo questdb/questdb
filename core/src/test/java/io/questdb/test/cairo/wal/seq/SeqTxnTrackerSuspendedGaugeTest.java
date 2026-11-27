@@ -45,6 +45,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The suspended_tables gauge counts the tables that are suspended right now: a call that leaves the suspension
@@ -70,6 +71,92 @@ public class SeqTxnTrackerSuspendedGaugeTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
             assertSuspendedTables(0);
+        });
+    }
+
+    @Test
+    public void testApplyProgressDuringOperatorSuspensionKeepsGaugeExact() throws Exception {
+        // An operator thread runs what SUSPEND WAL and RESUME WAL run, in their order, against two
+        // threads reporting apply progress, as applies already in flight when SUSPEND lands do. Between
+        // an operator's SUSPEND and its RESUME the table must read suspended on every look, and the
+        // gauge must count the tracker exactly when it ends suspended.
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final int rounds = 20;
+            for (int round = 0; round < rounds; round++) {
+                final int iterations = 200 + rnd.nextInt(800);
+                final int reads = 1 + rnd.nextInt(16);
+                // The first round always ends suspended, so every run checks a progress report that
+                // lands after the operator's last SUSPEND.
+                final boolean isEndingSuspended = round == 0 || rnd.nextBoolean();
+                final SeqTxnTracker tracker = new SeqTxnTracker(configuration);
+                if (rnd.nextBoolean()) {
+                    tracker.initTxns(0, 0, false);
+                }
+                final long before = suspendedTables();
+                final AtomicLong appliedTxn = new AtomicLong();
+                final AtomicInteger runningReads = new AtomicInteger();
+                final ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
+                final ObjList<Thread> threads = new ObjList<>();
+                final CyclicBarrier barrier = new CyclicBarrier(3);
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        for (int i = 0; i < iterations; i++) {
+                            tracker.setHardSuspended(true);
+                            tracker.setSuspended(ErrorTag.DISK_FULL, "manual halt");
+                            for (int r = 0; r < reads; r++) {
+                                if (!tracker.isSuspended()) {
+                                    runningReads.incrementAndGet();
+                                }
+                            }
+                            if (i < iterations - 1 || !isEndingSuspended) {
+                                tracker.setHardSuspended(false);
+                                tracker.setUnsuspended();
+                            }
+                            Os.pause();
+                        }
+                    } catch (Throwable th) {
+                        failures.add(th);
+                    }
+                }));
+                for (int t = 0; t < 2; t++) {
+                    threads.add(new Thread(() -> {
+                        try {
+                            barrier.await();
+                            for (int i = 0; i < iterations; i++) {
+                                final long txn = appliedTxn.incrementAndGet();
+                                tracker.updateWriterTxns(txn, txn);
+                                Os.pause();
+                            }
+                        } catch (Throwable th) {
+                            failures.add(th);
+                        }
+                    }));
+                }
+                for (int t = 0, n = threads.size(); t < n; t++) {
+                    threads.getQuick(t).start();
+                }
+                for (int t = 0, n = threads.size(); t < n; t++) {
+                    threads.getQuick(t).join();
+                }
+                if (!failures.isEmpty()) {
+                    throw new AssertionError("a tracker thread failed", failures.peek());
+                }
+                // The apply that was in flight when the last SUSPEND landed reports its progress last.
+                final long txn = appliedTxn.incrementAndGet();
+                tracker.updateWriterTxns(txn, txn);
+                final String roundLabel = "round " + round + ", endingSuspended=" + isEndingSuspended;
+                Assert.assertEquals(roundLabel + ": reads that found a suspended table running", 0, runningReads.get());
+                Assert.assertEquals(roundLabel, isEndingSuspended, tracker.isSuspended());
+                Assert.assertEquals(roundLabel, isEndingSuspended ? 1 : 0, suspendedTables() - before);
+                if (isEndingSuspended) {
+                    // What RESUME WAL runs, in its order: the gauge drops the tracker again.
+                    tracker.setHardSuspended(false);
+                    tracker.setUnsuspended();
+                    Assert.assertEquals(roundLabel, 0, suspendedTables() - before);
+                }
+            }
         });
     }
 

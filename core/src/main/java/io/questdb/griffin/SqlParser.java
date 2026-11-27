@@ -300,6 +300,8 @@ public class SqlParser {
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
+    // Whether parse() is parsing the SELECT that CREATE LIVE VIEW stores, see checkLiveViewSelectBindVariable().
+    private boolean isLiveViewSelectParse;
     private boolean isParsingExpiryPredicate;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
@@ -3546,12 +3548,18 @@ public class SqlParser {
         // The top-level projection is the only one to check: it alone fixes the view's schema,
         // and a subquery in FROM - the one shape that could hide another projection - is
         // already rejected below ("live view requires a single base table in FROM clause").
+        //
+        // The same walk records where each projection item sits in the CREATE statement, one
+        // per output column: CairoEngine.createLiveView compiles the SELECT text on its own, so
+        // its positions are relative to the SELECT, and it reports an output column of a type
+        // no table can store at the position recorded here.
         final ObjList<QueryColumn> projection = queryModel.getColumns();
         for (int i = 0, n = projection.size(); i < n; i++) {
             final ExpressionNode ast = projection.getQuick(i).getAst();
             if (ast.isWildcard()) {
                 throw SqlException.$(ast.position, "wildcard column select is not allowed in live view queries");
             }
+            builder.addSelectColumnPosition(ast.position);
         }
         // Trim whitespace between the query and any wrapping parentheses so the
         // captured SELECT text round-trips cleanly. SHOW CREATE LIVE VIEW re-emits
@@ -3567,7 +3575,7 @@ public class SqlParser {
         while (selectTextEnd > selectTextStart && isLexerWhitespace(content.charAt(selectTextEnd - 1))) {
             selectTextEnd--;
         }
-        builder.setSelectSql(Chars.toString(content, selectTextStart, selectTextEnd));
+        builder.setSelectSql(Chars.toString(content, selectTextStart, selectTextEnd), selectTextStart);
         builder.setSelectModel(queryModel);
 
         // extract base table name from query model
@@ -3645,12 +3653,14 @@ public class SqlParser {
             String windowName = Chars.toString(keyCs);
             byte anchorKind = w.getAnchorKind();
             String anchorExpressionSql = null;
+            int anchorExpressionPosition = w.getAnchorPosition();
             if (anchorKind == WindowExpression.ANCHOR_KIND_EXPRESSION) {
                 ExpressionNode expr = w.getAnchorExpression();
                 if (expr != null) {
                     StringSink anchorSink = Misc.getThreadLocalSink();
                     expr.toSink(anchorSink);
                     anchorExpressionSql = anchorSink.toString();
+                    anchorExpressionPosition = expr.position;
                 }
             } else if (anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
                 // Desugar ANCHOR DAILY 'HH:MM' [tz] into the equivalent
@@ -3673,6 +3683,7 @@ public class SqlParser {
                     windowName,
                     anchorKind,
                     anchorExpressionSql,
+                    anchorExpressionPosition,
                     w.getAnchorDailyTimeUs(),
                     w.getAnchorDailyTimeZone() == null ? null : Chars.toString(w.getAnchorDailyTimeZone()),
                     w.getAnchorPosition(),
@@ -3693,6 +3704,13 @@ public class SqlParser {
      *     <li>Tz-aware: {@code timestamp_floor_utc('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp, '+00:00', '<tz>')}
      *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
      * </ul>
+     * <p>
+     * A day-or-larger period whose anchor time lands in the hour a DST fall-back repeats
+     * (e.g. {@code ANCHOR DAILY '02:30' 'Europe/Berlin'}) makes the floor non-monotone: an
+     * anchor value can recur after a later one. A live view segment is one maximal run of
+     * adjacent rows sharing an anchor value, so the second run opens its own accumulator
+     * ({@code LiveViewWindow.processRow} resets on inequality). SAMPLE BY over the same floor
+     * differs by design: its hash aggregation rejoins both runs into one bucket.
      */
     private static String desugarDailyAnchor(WindowExpression w) throws SqlException {
         ObjList<ExpressionNode> orderBy = w.getOrderBy();
@@ -10238,6 +10256,22 @@ public class SqlParser {
         }
     }
 
+    /**
+     * Refuses a bind variable written in the SELECT that CREATE LIVE VIEW stores, at its token: the view's
+     * refreshes and restarts compile that text with nothing bound, so the value bound at CREATE could never
+     * be reproduced. The expression parser calls this for every bind variable it parses. The body of a view
+     * the SELECT reads is not the SELECT's text: another statement wrote it, and the compile may drop its
+     * variables (an OVERRIDABLE default the reader overrides, a column the reader does not read), so it is
+     * left to the rules that judge the compiled plan. parseDeclaredQuery() takes the views off
+     * viewsBeingCompiled while it parses a copy of a sub-query the statement declared, so such a copy
+     * counts as the statement's text.
+     */
+    void checkLiveViewSelectBindVariable(ExpressionNode node) throws SqlException {
+        if (isLiveViewSelectParse && viewsBeingCompiled.size() == 0) {
+            throw SqlException.nonDeterministicColumn(node.position, node.token, "live view");
+        }
+    }
+
     void clear() {
         declaredQueries.clear();
         declaredQueryDigits.clear();
@@ -10356,7 +10390,18 @@ public class SqlParser {
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         recordStatementTextLength(lexer);
-        final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
+        // CairoEngine.createLiveView compiles the SELECT a live view stores in the caller's context, with the
+        // live view compile and the determinism guard armed. The caller's bind values are visible there, but
+        // every refresh and restart compiles the same text with nothing bound.
+        isLiveViewSelectParse = executionContext.isLiveViewCompile()
+                && !executionContext.isLiveViewRefresh()
+                && !executionContext.allowNonDeterministicFunctions();
+        final ExecutionModel model;
+        try {
+            model = parse0(lexer, executionContext, sqlParserCallback);
+        } finally {
+            isLiveViewSelectParse = false;
+        }
         attachViewReads(model);
         return model;
     }

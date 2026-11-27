@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -59,6 +60,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -69,8 +71,10 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -80,12 +84,14 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CompositePartitionRandomiser;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -96,6 +102,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -572,6 +579,141 @@ public class MatViewTest extends AbstractCairoTest {
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n" +
                             "gbpusd\t1.7\t2024-09-10T14:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testSuspendWalDuringMatViewApplyStaysSuspended() throws Exception {
+        // ALTER MATERIALIZED VIEW ... SUSPEND WAL lands while the apply of the view's own WAL, already past
+        // the hard-suspension check, is parked in its open of a new partition. The parked apply finishes,
+        // and its progress must leave the view suspended with the operator's tag and message: the refresh
+        // keeps committing to the view's WAL, nothing applies it, and RESUME WAL lands it.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final CountDownLatch parked = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final String[] viewDir = new String[1];
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final String dir = viewDir[0];
+                if (dir != null
+                        && Utf8s.containsAscii(name, dir)
+                        && Utf8s.containsAscii(name, "2024-10")
+                        && Utf8s.endsWithAscii(name, ".d")
+                        && isArmed.compareAndSet(true, false)) {
+                    parked.countDown();
+                    try {
+                        if (!release.await(30, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("the parked apply was never released");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // The randomiser commits transactions of its own to the view, which the txn counts below exclude.
+            disableCompositePartitionRandomisation();
+            execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price values ('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            viewDir[0] = viewToken.getDirName();
+
+            // The view is partitioned by month. The refresh commits the October bucket to the view's WAL, and
+            // another thread's apply of it parks in its open of the new partition.
+            execute("insert into base_price values ('gbpusd', 1.330, '2024-10-11T12:01')");
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            final long committedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+            isArmed.set(true);
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+            final Thread applier = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                }
+            });
+            applier.start();
+            try {
+                Assert.assertTrue("the view's apply never reached the October partition", parked.await(30, TimeUnit.SECONDS));
+                execute("alter materialized view price_1h suspend wal with 'DISK FULL', 'manual halt'");
+            } finally {
+                release.countDown();
+                applier.join();
+            }
+            Assert.assertNull(applyError.get());
+            final SeqTxnTracker viewTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            Assert.assertEquals("the parked apply lands what was committed before the suspension", committedSeqTxn, viewTracker.getWriterTxn());
+            assertMatViewSuspensionReport("price_1h\ttrue\tDISK FULL\tmanual halt\n");
+
+            // The refresh keeps committing to the view's WAL, and nothing applies it.
+            execute("insert into base_price values ('gbpusd', 1.340, '2024-11-12T12:01')");
+            drainQueues();
+            Assert.assertEquals(committedSeqTxn, viewTracker.getWriterTxn());
+            Assert.assertTrue("the refresh must commit the November bucket", viewTracker.getSeqTxn() > committedSeqTxn);
+            assertMatViewSuspensionReport("price_1h\ttrue\tDISK FULL\tmanual halt\n");
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.33\t2024-10-11T12:00:00.000000Z\n");
+
+            execute("alter materialized view price_1h resume wal");
+            drainQueues();
+            assertMatViewSuspensionReport("price_1h\tfalse\t\t\n");
+            Assert.assertEquals(viewTracker.getSeqTxn(), viewTracker.getWriterTxn());
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "select sym, last(price) as price, ts from base_price sample by 1h",
+                    "price_1h",
+                    LOG
+            );
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testAllNullCaseCastInDefinition() throws Exception {
+        // The refresh runs the view's SAMPLE BY, whose reduce read the all-NULL CASE as an INT and a
+        // DOUBLE; before the CASE folded to the NULL literal that read threw and invalidated the view.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String viewSql = "SELECT ts, (CASE WHEN x > 0 THEN NULL END)::int k, max((CASE WHEN x > 0 THEN NULL END)::double) m, count() c"
+                    + " FROM base_price SAMPLE BY 1h";
+            createMatView(viewSql);
+            execute("""
+                    INSERT INTO base_price VALUES
+                      ('2026-04-01T00:00:00.000000Z', 'A', 1),
+                      ('2026-04-01T00:30:00.000000Z', 'B', -1),
+                      ('2026-04-01T01:00:00.000000Z', NULL, NULL),
+                      ('2026-04-01T01:30:00.000000Z', 'A', 3)""");
+            drainQueues();
+            assertAllNullCaseMatView(viewSql, """
+                    ts\tk\tm\tc
+                    2026-04-01T00:00:00.000000Z\tnull\tnull\t2
+                    2026-04-01T01:00:00.000000Z\tnull\tnull\t2
+                    """);
+
+            execute("""
+                    INSERT INTO base_price VALUES
+                      ('2026-04-01T01:45:00.000000Z', 'B', 5),
+                      ('2026-04-01T02:00:00.000000Z', 'A', -5)""");
+            drainQueues();
+            assertAllNullCaseMatView(viewSql, """
+                    ts\tk\tm\tc
+                    2026-04-01T00:00:00.000000Z\tnull\tnull\t2
+                    2026-04-01T01:00:00.000000Z\tnull\tnull\t3
+                    2026-04-01T02:00:00.000000Z\tnull\tnull\t1
+                    """);
         });
     }
 
@@ -12546,6 +12688,22 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
+    private void assertAllNullCaseMatView(String viewSql, String expected) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views WHERE view_name = 'price_1h'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tinvalidation_reason
+                        valid\t
+                        """);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql, "price_1h", LOG);
+        assertQuery("price_1h")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expected);
+    }
+
     private void assertFullRefreshAfterBaseColumnTypeChange(String type, String newAt, boolean isRehydrated) throws Exception {
         assertMemoryLeak(() -> {
             createTimestampMatViewForTypeChange();
@@ -12841,6 +12999,13 @@ public class MatViewTest extends AbstractCairoTest {
                 """);
         drainQueues();
         assertTimestampMatViewAfterTypeChange();
+    }
+
+    private void assertMatViewSuspensionReport(String expectedRow) throws Exception {
+        assertQuery("select name, suspended, errorTag, errorMessage from wal_tables() where name = 'price_1h'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("name\tsuspended\terrorTag\terrorMessage\n" + expectedRow);
     }
 
     private void drainQueues() {

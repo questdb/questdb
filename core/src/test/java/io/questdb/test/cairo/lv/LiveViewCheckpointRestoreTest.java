@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.log.LogFactory;
@@ -62,6 +63,7 @@ import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SQL {@code CHECKPOINT CREATE} / restore (database backup) coverage for live views.
@@ -467,6 +469,80 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointCreateFreesViewInvalidatedByBaseDdlDuringItsFreeze() throws Exception {
+        // CHECKPOINT CREATE freezes a live view by taking its refresh latch and then its monitor. A base DROP COLUMN
+        // of a column the view reads invalidates the view under that monitor, which the test thread holds while the
+        // checkpoint waits for it, so the invalidation's free of the view's runtime state loses its latch CAS to the
+        // checkpoint. The checkpoint makes the free once it lets the latch go and leaves nothing of the view in
+        // memory, and the copy it takes afterwards holds the invalidation, which the view committed before it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+            execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 'AA', 1), ('2026-01-01T00:00:02.000000Z', 'BB', 2)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            final String expectedRows = """
+                    ts\tsym\ti\tv
+                    2026-01-01T00:00:01.000000Z\tAA\t1\t1.0
+                    2026-01-01T00:00:02.000000Z\tBB\t2\t2.0
+                    """;
+            assertQuery("SELECT * FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expectedRows);
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertNotNull("the refreshed view must hold an in-memory tier", instance.getInMemoryTier());
+
+            final AtomicReference<Throwable> checkpointError = new AtomicReference<>();
+            final Thread checkpoint = new Thread(() -> {
+                try {
+                    engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+                } catch (Throwable th) {
+                    checkpointError.set(th);
+                } finally {
+                    clearWorkerThreadLocals();
+                }
+            }, "lv-checkpoint");
+            synchronized (instance) {
+                checkpoint.start();
+                awaitAgentBlockedHoldingTheLatch(checkpoint, instance);
+                execute("ALTER TABLE base DROP COLUMN i");
+                drainWalQueue();
+                Assert.assertTrue(instance.isInvalid());
+                Assert.assertNotNull("the invalidation's free must lose to the checkpoint's freeze", instance.getCompiledFactory());
+                Assert.assertNotNull(instance.getInMemoryTier());
+                Assert.assertNotNull(instance.getMemoryTracker());
+            }
+            checkpoint.join(THREAD_JOIN_MILLIS);
+            Assert.assertFalse("CHECKPOINT CREATE must complete", checkpoint.isAlive());
+            if (checkpointError.get() != null) {
+                throw new AssertionError("CHECKPOINT CREATE failed", checkpointError.get());
+            }
+            Assert.assertFalse("CHECKPOINT CREATE must end its freeze", instance.isFreezeArmed());
+            Assert.assertNull(instance.getCompiledFactory());
+            Assert.assertNull(instance.getInMemoryTier());
+            Assert.assertNull(instance.getMemoryTracker());
+            assertQuery("SELECT view_status, invalidation_reason, in_mem_bytes, in_mem_rows FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\tin_mem_bytes\tin_mem_rows\n" +
+                            "invalid\tdrop column operation [column=i]\t0\t0\n");
+
+            restoreFromCheckpoint();
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n" +
+                            "invalid\tdrop column operation [column=i]\n");
+            assertQuery("SELECT * FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expectedRows);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testCheckpointOfInvalidatedViewRestoresInvalid() throws Exception {
         // An invalidated view is still a WAL-backed table with its own materialized data. Checkpoint
         // must capture the terminal INVALID state (with its reason) and the frozen data; restore must
@@ -568,6 +644,106 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     .noRandomAccess()
                     .returns("view_name\tview_status\n" +
                             "lv\tstate_unreadable\n");
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointOverBaseThatLostRowsBlocksTheRestoredView() throws Exception {
+        // A restore clears every live view's checkpoint timeline, so the first refresh after it
+        // rebuilds the view from its base table. This base lost a day the view derived rows from
+        // before the checkpoint, and the incremental path kept those rows. The rebuild would drop
+        // them, so the restatement guard refuses it and stops the view. The reason says what a
+        // restart does without promising or ruling out that it lifts the block. The test then
+        // checks both outcomes: a restart over the unchanged base meets the same refusal, and a
+        // restart once the base holds the lost day again resumes the view with its 6 rows and
+        // folds the next commit onto them.
+        final String viewRows = """
+                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
+                2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
+                """;
+        final String blocked = "view_status\tcheckpoint_recovery_phase\tinvalidation_reason\n"
+                + "invalid\trebuild_blocked\trebuilding the view from its base table would drop rows it retains "
+                + "[cause=timeline is absent]: the view holds rows from 2026-01-01T09:00:00.000000Z but the base "
+                + "table's earliest row is at 2026-01-02T09:00:00.000000Z; refresh is stopped and the view's rows, "
+                + "checkpoints and watermarks are kept. A restart runs the recovery again: it restores the view "
+                + "from its checkpoint timeline when it can, and the restatement guard refuses any rebuild the "
+                + "restart still needs unless what it reads has changed, for example because the base table holds "
+                + "the lost rows again. DROP and re-create the view to rebuild it from the base rows available "
+                + "today, or set cairo.live.view.rebuild.restatement.guard.enabled=false and restart to let "
+                + "rebuilds follow the base table\n";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS
+                    SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum,
+                    count(account_id) OVER w AS cumulative_count
+                    FROM tx
+                    WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO tx (created_at, account_id, amount) VALUES
+                        ('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0),
+                        ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0),
+                        ('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0),
+                        ('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0),
+                        ('2026-01-03T09:00:00.000000Z', 'acct-1', 16.0),
+                        ('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)""");
+                driveRefreshToQuiescence(job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+                driveRefreshToQuiescence(job);
+            }
+            // The incremental path walks past the DROP PARTITION and keeps the dropped day's rows.
+            assertTimelineExists(engine.verifyTableName("lv"));
+            assertLiveViewRows(viewRows);
+            execute("CHECKPOINT CREATE");
+
+            restoreFromCheckpoint();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertLiveViewStatus(blocked);
+            assertLiveViewRows(viewRows);
+
+            // The block is not durable. A restart over the unchanged base finds no timeline, asks
+            // for the same rebuild, and the guard refuses it again.
+            restartLiveViews();
+            assertLiveViewStatus(blocked);
+            assertLiveViewRows(viewRows);
+
+            // Once the base holds the lost day again, the restart's rebuild reproduces every row
+            // the view retains, the guard lets it commit, and the view resumes.
+            execute("""
+                    INSERT INTO tx (created_at, account_id, amount) VALUES
+                    ('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0),
+                    ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)""");
+            drainWalQueue();
+            restartLiveViews();
+            final String active = """
+                    view_status\tcheckpoint_recovery_phase\tinvalidation_reason
+                    active\t\t
+                    """;
+            assertLiveViewStatus(active);
+            assertRebuiltFromAppliedBase("lv");
+            assertLiveViewRows(viewRows);
+
+            // A resumed view refreshes again: a commit after the resume reaches it, folded onto
+            // the accumulators the rebuild derived. A view that reported active while it stayed
+            // frozen, or that resumed over a runtime the rebuild never filled, fails here.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+                driveRefreshToQuiescence(job);
+            }
+            assertLiveViewStatus(active);
+            assertNoRefreshFaults("lv");
+            assertLiveViewRows(viewRows + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
 
             execute("CHECKPOINT RELEASE");
         });
@@ -1207,6 +1383,23 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n" + expected + "\n");
     }
 
+    // Asserts the rows of the tx-based view testCheckpointOverBaseThatLostRowsBlocksTheRestoredView creates.
+    private void assertLiveViewRows(String expected) throws Exception {
+        assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize()
+                .returns(expected);
+    }
+
+    // Asserts what live_views() reports for lv: its status, recovery phase and operator reason.
+    private void assertLiveViewStatus(String expected) throws Exception {
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
+    }
+
     // The live view must equal the same window recomputed directly over the base table. The view's
     // stored columns are exactly the projection it was created from, so (lv) and (viewSql) share a
     // schema. ORDER BY 2, 1 (sym, ts) gives both sides a total order; genericStringMatch tolerates
@@ -1245,6 +1438,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     "expected an _lv.s to remove at " + path,
                     configuration.getFilesFacade().removeQuiet(path.$())
             );
+        }
+    }
+
+    // Simulates a restart in-process: drops the registered views, releases every reader and writer,
+    // rebuilds the view graphs from disk and drives the restart's recovery to quiescence.
+    private void restartLiveViews() {
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.buildViewGraphs();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
         }
     }
 

@@ -1628,10 +1628,10 @@ public class PivotTest extends AbstractSqlParserTest {
                 constructionCount.set(0);
                 final String select = "SELECT ts, v, count(*) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn "
                         + "FROM base WHERE v < (SELECT a FROM pv)";
-                // CREATE LIVE VIEW compiles the SELECT on its own, so the position is relative to it
-                assertQuery("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select)
+                final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select;
+                assertQuery(createSql)
                         .noLeakCheck()
-                        .fails(select.lastIndexOf("pv"), "administrative function cannot be used in live view: admin_scalar");
+                        .fails(createSql.lastIndexOf("pv"), "administrative function cannot be used in live view: admin_scalar");
                 Assert.assertEquals(0, constructionCount.get());
                 Assert.assertNull(engine.getTableTokenIfExists("lv"));
                 assertNothingBusy();

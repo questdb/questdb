@@ -39,12 +39,14 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -478,6 +480,21 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     }
                 }
         );
+    }
+
+    @Test
+    public void testAttachNonWalPartitionPutsNoAttachOnRecord() throws Exception {
+        // No live view stands over a table without a WAL, so its attach leaves the tracker a
+        // live view would read alone.
+        assertMemoryLeak(() -> {
+            detachToAttachable();
+            final TableToken tt = engine.verifyTableName("tab");
+            Assert.assertFalse(tt.isWal());
+            execute("alter table tab attach partition list '2024-01-01'");
+            assertQuery("select count(), sum(v) from tab").noRandomAccess().expectSize().returns("count\tsum\n2\t3\n");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tt);
+            Assert.assertTrue(tracker == null || tracker.getPartitionAttachTruncateVersion() == Numbers.LONG_NULL);
+        });
     }
 
     @Test
@@ -1583,6 +1600,40 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachWalPartitionPutsItsTruncateVersionOnRecord() throws Exception {
+        // An attach is the one partition change that brings in rows no WAL commit carried, so a
+        // live view over the table reads the truncate version each attach published off the
+        // table's tracker. DETACH and DROP move the truncate version too, and put nothing on
+        // record.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts " + timestampType.getTypeName() + ", v long) timestamp(ts) partition by day wal");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2), "
+                    + "('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("tab");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            Assert.assertEquals(Numbers.LONG_NULL, tracker.getPartitionAttachTruncateVersion());
+
+            execute("alter table tab detach partition list '2024-01-01'");
+            drainWalQueue();
+            Assert.assertEquals(1, truncateVersionOf(tt));
+            Assert.assertEquals(Numbers.LONG_NULL, tracker.getPartitionAttachTruncateVersion());
+
+            renameDetachedToAttachable(tt, "2024-01-01");
+            execute("alter table tab attach partition list '2024-01-01'");
+            drainWalQueue();
+            assertQuery("select count(), sum(v) from tab").noRandomAccess().expectSize().returns("count\tsum\n3\t6\n");
+            Assert.assertEquals(2, truncateVersionOf(tt));
+            Assert.assertEquals(2, tracker.getPartitionAttachTruncateVersion());
+
+            execute("alter table tab drop partition list '2024-01-02'");
+            drainWalQueue();
+            Assert.assertEquals(3, truncateVersionOf(tt));
+            Assert.assertEquals(2, tracker.getPartitionAttachTruncateVersion());
+        });
+    }
+
+    @Test
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
@@ -2190,6 +2241,14 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         }
     }
 
+    private void renameDetachedToAttachable(TableToken tt, String partitionName) throws Exception {
+        final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName());
+        java.nio.file.Files.move(
+                tableDir.resolve(partitionName + TableUtils.DETACHED_DIR_MARKER),
+                tableDir.resolve(partitionName + configuration.getAttachPartitionSuffix())
+        );
+    }
+
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
@@ -2293,6 +2352,12 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     attachFromSrcIntoDst(src, dst, "2020-01-02");
                 }
         );
+    }
+
+    private long truncateVersionOf(TableToken tt) {
+        try (TableReader reader = engine.getReader(tt)) {
+            return reader.getTxFile().getTruncateVersion();
+        }
     }
 
     private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {

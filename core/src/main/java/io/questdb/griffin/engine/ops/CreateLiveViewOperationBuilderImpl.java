@@ -27,11 +27,16 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperationBuilder, Mutable {
+    // Per top-level SELECT item, in projection order, the position of its expression in the
+    // CREATE statement. The operation takes a copy: this builder is the parser's, reused by
+    // the next parse.
+    private final IntList selectColumnPositions = new IntList();
     private @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
     private String baseTableName;
     private int baseTableNamePosition;
@@ -49,6 +54,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     private int partitionBy = Numbers.INT_NULL;
     private IQueryModel selectModel;
     private String selectSql;
+    private int selectSqlPosition;
     // The START FROM mode the user asked for. The parser always sets one - the clause is
     // mandatory - so START_FROM_UNSET only survives a builder that was never parsed into.
     private byte startFromKind = LiveViewDefinition.START_FROM_UNSET;
@@ -60,6 +66,10 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     private String viewName;
     private int viewNamePosition;
 
+    public void addSelectColumnPosition(int position) {
+        selectColumnPositions.add(position);
+    }
+
     @Override
     public CreateLiveViewOperation build(CharSequence sqlText) {
         return new CreateLiveViewOperation(
@@ -68,6 +78,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
                 baseTableName,
                 baseTableNamePosition,
                 selectSql,
+                selectSqlPosition,
                 Chars.toString(sqlText),
                 flushEveryInterval,
                 flushEveryIntervalUnit,
@@ -78,7 +89,8 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
                 startFromKind,
                 startFromTimestamp,
                 startFromTimestampPosition,
-                anchorSpec
+                anchorSpec,
+                selectColumnPositions
         );
     }
 
@@ -93,8 +105,10 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
         inMemoryInterval = 0;
         inMemoryIntervalUnit = 0;
         partitionBy = Numbers.INT_NULL;
+        selectColumnPositions.clear();
         selectModel = null;
         selectSql = null;
+        selectSqlPosition = 0;
         startFromKind = LiveViewDefinition.START_FROM_UNSET;
         startFromTimestamp = null;
         startFromTimestampPosition = 0;
@@ -152,8 +166,9 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
         this.selectModel = selectModel;
     }
 
-    public void setSelectSql(String selectSql) {
+    public void setSelectSql(String selectSql, int selectSqlPosition) {
         this.selectSql = selectSql;
+        this.selectSqlPosition = selectSqlPosition;
     }
 
     public void setStartFromBeginning() {

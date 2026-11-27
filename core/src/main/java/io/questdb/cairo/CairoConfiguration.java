@@ -465,6 +465,24 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointPurgeInterval();
 
     /**
+     * Price, in base rows, a keyed repair scan pays per index open; each per-key, per-frame seek is
+     * charged this divided by {@code LiveViewCheckpointKeyedScanCost.INDEX_SEEKS_PER_INDEX_OPEN}. A
+     * policy price rather than a measurement; see {@code LiveViewCheckpointKeyedScanCost}.
+     */
+    long getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+
+    /**
+     * Maximum checkpoint boundaries one out-of-order repair may re-version as a chain; past it the
+     * repair truncates the ladder above its floor and seals a single fresh head. A value
+     * {@code <= 0} disables the chain. A repair also stops keeping the chain, at the boundary
+     * where it learns it, once the keys its boundaries image whole would pass the larger of the
+     * base rows it reads and {@link #getLiveViewCheckpointRepairScanMaxKeys()}: an out-of-order
+     * resume, and a head-miss repair that reaches the end of the base table, measured against the
+     * rows its own replay reads.
+     */
+    int getLiveViewCheckpointRepairMaxChainedBoundaries();
+
+    /**
      * Per-turn budget on the base rows one localized out-of-order repair may
      * replay. The repair's convergence boundary makes its work finite, but a
      * dense interval can still hold more rows than one refresh turn should
@@ -488,7 +506,11 @@ public interface CairoConfiguration {
      * the number of index seeks. A discovery that crosses this budget reports
      * an explicit budget status and hands the repair back to the unlocalized
      * rebuild instead of planning a replacement of that width. A value
-     * {@code <= 0} disables the budget.
+     * {@code <= 0} disables the budget. It is also the floor of what an
+     * out-of-order resume's checkpoint chain, and an end-of-table head-miss
+     * repair's, may image whole: a chain whose boundaries would image more keys
+     * whole than the larger of this and the base rows its own replay reads
+     * truncates instead, and {@code <= 0} lifts that floor.
      */
     long getLiveViewCheckpointRepairScanMaxKeys();
 
@@ -503,7 +525,10 @@ public interface CairoConfiguration {
      * arbitrary span, so this is the bound that keeps discovery from costing
      * the view's whole history. Crossing it reports an explicit budget status
      * and leaves the conservative bound in place rather than continuing the
-     * scan. A value {@code <= 0} disables the budget.
+     * scan. It also bounds the open-segment row timestamps the change-set walk
+     * records; past it the open segment's key domain is incomplete and the
+     * repair reads every row above its anchor. A value {@code <= 0} disables
+     * the budget.
      */
     long getLiveViewCheckpointRepairScanMaxRows();
 
@@ -536,14 +561,15 @@ public interface CairoConfiguration {
     long getLiveViewInMemoryMaxMicros();
 
     /**
-     * Reclaimable-partition threshold for the frontier sweep in {@code LiveViewWindow}. The
-     * sweep drops the anchor-map partitions that have fallen behind the previous anchor
-     * bucket, and it runs only once the anchor has advanced past a bucket boundary since the
-     * last sweep and all three of these hold together: the anchor map holds more partitions
-     * than this threshold, at least this many of them are reclaimable, and the reclaimable
-     * ones are at least half the map. A higher value leaves the anchor map larger between
-     * sweeps; a lower one sweeps more often. Neither matters for a view whose anchor is not
-     * provably monotone, or is NULL - such a view never compacts, at any value of this key.
+     * Minimum share of the anchor map, in percent, a frontier sweep must be able to reclaim before
+     * {@code LiveViewWindow} fires one. {@code 0} leaves
+     * {@link #getLiveViewPartitionCompactThreshold()} to decide alone.
+     */
+    int getLiveViewPartitionCompactStalePercent();
+
+    /**
+     * Minimum stale-partition count, and anchor map size, a frontier sweep needs before
+     * {@code LiveViewWindow} fires one; it keeps the sweep off small maps.
      */
     int getLiveViewPartitionCompactThreshold();
 
@@ -1585,6 +1611,57 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    /**
+     * Whether a live view may shorten its checkpoint duration cadence from observed out-of-order
+     * depth. Only a view whose seals image incrementally - it has an ANCHOR window and every
+     * stateful window function's seal images only the keys a correction touched - shortens it,
+     * and never below the longer of its {@code FLUSH EVERY} interval and one minute. Every
+     * other view records the correction depth but keeps
+     * {@link #getLiveViewCheckpointMaxDurationMicros()}, so a shallow late row does not make it
+     * seal and retain several times the checkpoint roots.
+     */
+    boolean isLiveViewCheckpointAdaptiveCadenceEnabled();
+
+    /**
+     * Whether a converging out-of-order repair replays through a second compiled runtime of the
+     * view's SELECT instead of copying the primary runtime's window state aside and back.
+     */
+    boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
+
+    /**
+     * Whether a per-segment out-of-order repair may recompute only the keys a correction touched,
+     * via the base's posting index, and copy every other key's row forward from the view's stored
+     * segment.
+     */
+    boolean isLiveViewCheckpointRepairKeyedReplayEnabled();
+
+    /**
+     * Whether a repair of a correction in the open anchor segment may follow only the keys it
+     * touched and publish them as an upsert; it needs a view created under
+     * {@link #isLiveViewCheckpointRepairSparsePublicationEnabled()}.
+     */
+    boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
+
+    /**
+     * Whether an out-of-order repair repairs each anchor segment it touches over its own range,
+     * instead of one union range from the deepest correction's anchor to the frontier.
+     */
+    boolean isLiveViewCheckpointRepairPerSegmentEnabled();
+
+    /**
+     * Whether one anchor segment's out-of-order repair may park on the refresh turn's budget and
+     * resume on a later turn; {@link io.questdb.cairo.lv.LiveViewCheckpointRepairSession} carries
+     * the parked loop position.
+     */
+    boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
+
+    /**
+     * Whether a live view CREATEd under this configuration marks its designated timestamp and
+     * partition key as dedup keys, so a repair can publish only the rows it recomputed. A
+     * CREATE-time schema decision: the keys stay for the view's lifetime.
+     */
+    boolean isLiveViewCheckpointRepairSparsePublicationEnabled();
+
     boolean isLiveViewEnabled();
 
     /**
@@ -1607,6 +1684,13 @@ public interface CairoConfiguration {
     default boolean isLiveViewRefreshEnabled() {
         return isLiveViewEnabled() && getLiveViewRefreshWorkerCount() > 0;
     }
+
+    /**
+     * Whether a live view refuses a whole-view rebuild from its base table that would drop output
+     * it already retains, and stops refreshing as invalid instead. A view over a materialized view
+     * never refuses one. See {@code LiveViewRebuildRestatementGuard}.
+     */
+    boolean isLiveViewRebuildRestatementGuardEnabled();
 
     boolean isMatViewCoveringIndexEnabled();
 
@@ -1714,8 +1798,15 @@ public interface CairoConfiguration {
      * The switch changes no answer - a group co-locates state that stays each member's own - so
      * it is an operational escape hatch for a shape whose Map implementation or key distribution
      * regresses in the field, and the control the differential tests compare against. It gates
-     * the runtime binding only; the group is compiled either way, and nothing user-visible,
-     * {@code EXPLAIN} included, differs between the two settings.
+     * the runtime binding only; the group is compiled either way, and for a plain SQL query
+     * nothing user-visible, {@code EXPLAIN} included, differs between the two settings. The
+     * key is reloadable and read once per compile, so flipping it moves the next compile and
+     * nothing already compiled.
+     * <p>
+     * An anchored live view reads the switch when {@code LiveViewWindow} builds its window. The
+     * checkpoint layout does not depend on it, so a view restarts across a flip from the same
+     * window root. Off, it disables the keyed open-segment repair routes, which hand a
+     * correction's keys back through the fused map value.
      */
     boolean isSqlWindowMapFusionEnabled();
 

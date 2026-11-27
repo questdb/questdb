@@ -67,10 +67,10 @@ public class ShowExecutionRequirementsTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String select = "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn "
                     + "FROM base WHERE x < (SELECT count() FROM (SHOW TABLES))";
-            // CREATE LIVE VIEW compiles the SELECT on its own, so the position is relative to it
-            assertQuery("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select)
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select;
+            assertQuery(createSql)
                     .noLeakCheck()
-                    .fails(select.indexOf("SHOW"), LIVE_VIEW_REJECTION);
+                    .fails(createSql.indexOf("SHOW"), LIVE_VIEW_REJECTION);
             Assert.assertNull(engine.getTableTokenIfExists("lv"));
         });
     }

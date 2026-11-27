@@ -37,21 +37,19 @@ import org.jetbrains.annotations.Nullable;
  * into the LV table's scan (a {@code WHERE} on the designated timestamp), the disk side
  * yields only the rows inside those intervals. The slot has no filter of its own, so
  * serving its band whole next to that scan emits rows the query excluded - wrong results,
- * not stale ones. Applying the SAME intervals to the slot's band restores the union: disk
- * holds every applied row in the intervals and the lead holds exactly the rows in the
- * intervals that disk lacks.
+ * not stale ones. Applying the SAME intervals to the slot's band restores the union.
  * <p>
  * <b>Why a row band and not a predicate per row.</b> Both paths need the answer in row
  * space - the page-frame path publishes frames, which are row ranges - and both must agree
- * row-for-row on what they serve, so they share one definition rather than each testing
- * rows their own way. The slot's timestamps ascend (a live view's output is its base's
- * designated timestamp, which {@code CairoEngine.validateLiveViewTimestamp} enforces at
- * CREATE), so each interval maps to one contiguous row range found by binary search.
+ * row-for-row on what they serve, so they share one definition. The slot's timestamps
+ * ascend (a live view's output is its base's designated timestamp, which
+ * {@code CairoEngine.validateLiveViewTimestamp} enforces at CREATE), so each interval maps
+ * to one contiguous row range found by binary search.
  * <p>
  * The bands come back ascending, disjoint and non-empty, as flat {@code (lo, hi)} pairs
- * with {@code hi} EXCLUSIVE - the row-range convention a page frame already uses. Note this
- * is the opposite end convention to the intervals themselves, which are closed at both
- * ends; {@link #cut} is where the two meet.
+ * with {@code hi} EXCLUSIVE - the row-range convention a page frame already uses, the
+ * opposite of the intervals themselves, which are closed at both ends. {@link #cut} is
+ * where the two meet.
  */
 public final class LiveViewIntervalBands {
 

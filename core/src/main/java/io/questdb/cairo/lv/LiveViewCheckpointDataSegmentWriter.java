@@ -125,6 +125,22 @@ public class LiveViewCheckpointDataSegmentWriter implements Closeable {
             mem.sync(commitMode == CommitMode.ASYNC);
         }
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        // The close shrinks the file to the bytes written, but it ignores a refused truncate
+        // (Vm.bestEffortTruncate). The data segment reader accepts only the exact length the
+        // catalogue records, so publishing the longer file would seal a root no restore can read.
+        final long actualLength = ff.length(tmpPath.$());
+        if (actualLength != fileLength) {
+            final long failedSegmentId = segmentId;
+            ff.removeQuiet(tmpPath.$());
+            reset();
+            throw CairoException.critical(0)
+                    .put("could not truncate live view checkpoint data segment to its written length, segmentId=")
+                    .put(failedSegmentId)
+                    .put(", expected=")
+                    .put(fileLength)
+                    .put(", actual=")
+                    .put(actualLength);
+        }
 
         LiveViewCheckpointLayout.dataSegmentPath(finalPath, checkpointsDirCopy, segmentId);
         if (ff.exists(finalPath.$())) {

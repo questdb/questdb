@@ -37,7 +37,10 @@ import org.jetbrains.annotations.NotNull;
  * timestamps and row counts it already holds in memory - so it opens no partition,
  * touches no column and costs one walk over the partitions the interval overlaps.
  * Planning runs it twice per repair, once per disposition, and it must therefore
- * stay cheaper than the difference it is there to detect.
+ * stay cheaper than the difference it is there to detect. An end-of-table head miss
+ * that chains runs it once more, over the interval its own replay reads, for the rows
+ * its chain is priced against: the plan computes that figure only when an anchor
+ * competed for the repair.
  * <p>
  * Rows inside one partition are assumed evenly spread over that partition's span,
  * because an even spread is the only distribution the transaction file describes.

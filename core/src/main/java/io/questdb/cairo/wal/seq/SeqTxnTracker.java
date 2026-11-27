@@ -170,6 +170,14 @@ public class SeqTxnTracker {
     // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
     private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
+    // Live-view attach signal: the highest truncate version the table's _txn reached through an
+    // ATTACH PARTITION in this process, or LONG_NULL. An attach is the one partition-level change
+    // that adds rows no WAL commit carried, so a live view never consumes them, and the truncate
+    // version alone cannot tell it apart from a DROP, DETACH or TTL eviction. The table writer is
+    // the single writer, and it raises this before the _txn commit that makes the partition
+    // visible, so a reader that sees the attached rows sees the raised value too. In memory only:
+    // a live view that trusts it holds a match it recorded in this process.
+    private volatile long partitionAttachTruncateVersion = Numbers.LONG_NULL;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
     // Published by TableSequencerImpl under its lock, after the txn log entry and
@@ -237,6 +245,14 @@ public class SeqTxnTracker {
 
     public TableWriterPressureControl getMemPressureControl() {
         return pressureControl;
+    }
+
+    /**
+     * @return the highest truncate version an ATTACH PARTITION of this table reached in this
+     * process, or {@link Numbers#LONG_NULL} when none attached one
+     */
+    public long getPartitionAttachTruncateVersion() {
+        return partitionAttachTruncateVersion;
     }
 
     public long getDurableEpochSeqTxn() {
@@ -507,6 +523,16 @@ public class SeqTxnTracker {
         if (coveredSeqTxn > dedupSignalCoveredSeqTxn) {
             dedupSignalCoveredSeqTxn = coveredSeqTxn;
         }
+    }
+
+    /**
+     * Records that an ATTACH PARTITION is about to publish the table's {@code _txn} at
+     * {@code truncateVersion}. Table writer only, ahead of that commit.
+     */
+    public void recordPartitionAttach(long truncateVersion) {
+        // The table writer is the only caller and a table's truncate version only grows, so each
+        // call raises the value or, retrying an attach whose commit failed, repeats it.
+        partitionAttachTruncateVersion = truncateVersion;
     }
 
     public SourceRegistrationResult registerWaiter(FiberWalWaitRegistration waiter) {
@@ -944,11 +970,15 @@ public class SeqTxnTracker {
             if (gaugeDelta != 0) {
                 metrics.walMetrics().addWriterTxn(gaugeDelta);
             }
-            // Progress made means table is not suspended
+            // Progress made means table is not suspended, unless an operator suspended it. SUSPEND WAL can
+            // land while an apply that already passed the hard-suspension check runs, and only RESUME WAL
+            // lifts it: TableSequencerAPI.resumeTable clears the hard flag before setUnsuspended().
             if (writerTxn > prevWriterTxn) {
-                setSuspendedState(1);
+                if (!hardSuspended) {
+                    setSuspendedState(1);
+                }
                 progressMade = true;
-            } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
+            } else if (dirtyWriterTxn > prevDirtyWriterTxn && !hardSuspended) {
                 setSuspendedState(1);
             }
         }

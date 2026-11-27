@@ -34,6 +34,71 @@ import org.junit.Test;
 public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testAllNullSwitchEveryKeyType() throws Exception {
+        // A simple CASE whose every value is NULL is NULL on every row, on each key type's path, and
+        // the fold frees what that path collected: the key, the values, the symbol picker. The key is
+        // a bare column, since a CASE over an expression parses as a searched CASE.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE sw (
+                      k_char CHAR, k_int INT, k_ipv4 IPv4, k_byte BYTE, k_short SHORT, k_long LONG, k_float FLOAT,
+                      k_double DOUBLE, k_date DATE, k_timestamp TIMESTAMP, k_boolean BOOLEAN, k_string STRING,
+                      k_varchar VARCHAR, k_symbol SYMBOL
+                    )""");
+            execute("""
+                    INSERT INTO sw VALUES
+                      ('a', 1, '1.1.1.1', 1, 1, 1, 1.5, 1.5, '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000000Z',
+                       true, 'A', 'A', 'A'),
+                      ('b', 2, '2.2.2.2', 2, 2, 2, 2.5, 2.5, '2026-04-02T00:00:00.000Z', '2026-04-02T00:00:00.000000Z',
+                       false, 'B', 'B', 'B'),
+                      ('c', 3, '3.3.3.3', 3, 3, 3, 3.5, 3.5, '2026-04-03T00:00:00.000Z', '2026-04-03T00:00:00.000000Z',
+                       true, 'C', 'C', 'C'),
+                      (NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, NULL)""");
+            final String[] keyedCases = {
+                    "CASE k_char WHEN 'a' THEN NULL WHEN 'b' THEN NULL ELSE NULL END",
+                    "CASE k_int WHEN 1 THEN NULL WHEN 2 THEN NULL ELSE NULL END",
+                    "CASE k_ipv4 WHEN '1.1.1.1' THEN NULL WHEN '2.2.2.2' THEN NULL ELSE NULL END",
+                    "CASE k_byte WHEN 1::byte THEN NULL WHEN 2::byte THEN NULL ELSE NULL END",
+                    "CASE k_short WHEN 1::short THEN NULL WHEN 2::short THEN NULL ELSE NULL END",
+                    "CASE k_long WHEN 1 THEN NULL WHEN 2 THEN NULL ELSE NULL END",
+                    "CASE k_float WHEN 1.5f THEN NULL WHEN 2.5f THEN NULL ELSE NULL END",
+                    "CASE k_double WHEN 1.5 THEN NULL WHEN 2.5 THEN NULL ELSE NULL END",
+                    "CASE k_date WHEN '2026-04-01T00:00:00.000Z'::date THEN NULL WHEN '2026-04-02T00:00:00.000Z'::date THEN NULL ELSE NULL END",
+                    "CASE k_timestamp WHEN '2026-04-01T00:00:00.000000Z'::timestamp THEN NULL"
+                            + " WHEN '2026-04-02T00:00:00.000000Z'::timestamp THEN NULL ELSE NULL END",
+                    // BOOLEAN takes one or two branches
+                    "CASE k_boolean WHEN true THEN NULL ELSE NULL END",
+                    "CASE k_boolean WHEN true THEN NULL WHEN false THEN NULL END",
+                    "CASE k_string WHEN 'A' THEN NULL WHEN 'B' THEN NULL WHEN NULL THEN NULL ELSE NULL END",
+                    "CASE k_varchar WHEN 'A' THEN NULL WHEN 'B' THEN NULL WHEN NULL THEN NULL ELSE NULL END",
+                    // a table's symbol column has a static symbol table: one, two and more branches
+                    "CASE k_symbol WHEN 'A' THEN NULL ELSE NULL END",
+                    "CASE k_symbol WHEN 'A' THEN NULL WHEN 'B' THEN NULL WHEN NULL THEN NULL ELSE NULL END",
+                    "CASE k_symbol WHEN 'A' THEN NULL WHEN 'B' THEN NULL WHEN 'C' THEN NULL ELSE NULL END"
+            };
+            final String nullRows = """
+                    v
+                    null
+                    null
+                    null
+                    null
+                    """;
+            for (String keyedCase : keyedCases) {
+                assertQuery("SELECT (" + keyedCase + ")::int v FROM sw")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(nullRows);
+            }
+            // a symbol computed by the query has no static symbol table
+            assertQuery("SELECT (CASE s WHEN 'A' THEN NULL WHEN 'B' THEN NULL WHEN NULL THEN NULL ELSE NULL END)::int v"
+                    + " FROM (SELECT concat(k_symbol, '')::symbol s FROM sw)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(nullRows);
+        });
+    }
+
+    @Test
     public void testBindVar() throws Exception {
         assertQuery("""
                 select\s

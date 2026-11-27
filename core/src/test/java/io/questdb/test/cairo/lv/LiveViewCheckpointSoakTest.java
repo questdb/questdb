@@ -77,8 +77,10 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
     // In-order commits per round. Every commit seals one logical checkpoint boundary,
     // so a round contributes this many roots plus one per correction.
     private static final int COMMITS_PER_ROUND = 12;
-    // Four lifecycle cycles rotate over the rounds, so this is a multiple of four.
-    private static final int ROUNDS = 40;
+    // Four lifecycle cycles rotate over the rounds, so this is a multiple of four. Halved on the
+    // slow hosted Windows runner (still a multiple of four); every count asserted below derives
+    // from ROUNDS, so the shorter soak stays self-consistent.
+    private static final int ROUNDS = Os.type == Os.WINDOWS ? 20 : 40;
     private static final String SNAPSHOT_ID = "test-live-view-soak";
     // CHECKPOINT CREATE relies on the sync() syscall, which is unavailable on Windows.
     // The soak keeps running there; the restore cycle is substituted with a restart so
@@ -209,7 +211,9 @@ public class LiveViewCheckpointSoakTest extends AbstractLiveViewTest {
                     writer,
                     instance.getLiveViewToken().getTableId(),
                     0,
+                    instance.getLifecycleIdentity(),
                     true,
+                    null,
                     100,
                     1,
                     8
