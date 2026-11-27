@@ -24,11 +24,9 @@
 
 package io.questdb.griffin.bind;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompilerTemporaries;
-import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -72,34 +70,26 @@ import static io.questdb.griffin.bind.OrderBinder.orderProjectionIndex;
 
 final class AggregateBinder implements Mutable {
     private final ObjList<ExpressionNode> aggregateNodeStack;
-    private final SqlBinder binder;
     private final IntHashSet columnIds;
     private final IntObjHashMap<ExpressionNode> columnSpellings = new IntObjHashMap<>();
-    private final CairoConfiguration configuration;
     private final BindContext ctx;
     private final StringSink groupingSetForm = new StringSink();
     private final CharSequenceHashSet groupingSetForms = new CharSequenceHashSet();
     private final IntList groupingSetKeys = new IntList();
-    private final ExpressionNode normalizedCount;
     private final OrderBinder orderBinder;
     private final SampleByBinder sampleByBinder;
 
     AggregateBinder(
             BindContext ctx,
-            SqlBinder binder,
-            CairoConfiguration configuration,
             OrderBinder orderBinder,
             SampleByBinder sampleByBinder,
             CompilerTemporaries temporaries
     ) {
         this.ctx = ctx;
-        this.binder = binder;
-        this.configuration = configuration;
         this.orderBinder = orderBinder;
         this.sampleByBinder = sampleByBinder;
         this.aggregateNodeStack = orderBinder.selectExpressions;
         this.columnIds = temporaries.ids;
-        this.normalizedCount = orderBinder.normalizedCount;
     }
 
     @Override
@@ -1536,7 +1526,7 @@ final class AggregateBinder implements Mutable {
         }
         final ExpressionNode expression = scope.aggregateNodes.getQuick(0);
         if (!Chars.equalsIgnoreCase(expression.token, "count_distinct") || expression.paramCount != 1
-                || expression.rhs == null || expression.rhs.type == ExpressionNode.CONSTANT) {
+                || expression.rhs == null || expression.rhs.type == ExpressionNode.CONSTANT || ctx.isAggregate(expression.rhs)) {
             return false;
         }
         final ExpressionNode argument = expression.rhs;
@@ -1549,19 +1539,15 @@ final class AggregateBinder implements Mutable {
             return false;
         }
 
-        final OperatorExpression neq = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
-                .getOperatorDefinition("!=");
-        final ExpressionNode notNull = ctx.binaryNode(ExpressionNode.OPERATION, neq.operator.token, neq.precedence,
-                ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, 0), argument, 0);
-        BoundExpression predicate = binder.bindPredicate(notNull, input, source, executionContext);
+        final BoundExpression key = ctx.functionBinder.bindValue(argument, input.getOutput(), sourceAlias(source), executionContext);
+        BoundExpression predicate = ctx.functionBinder.bindCall("!=", 0, ctx.planNodes.constants.next().ofNull(0).markLiteral(),
+                ctx.expressionRewriter.copy(key), input.getOutput(), executionContext);
         LogicalPlan filtered = input;
         if (filtered instanceof FilterPlan previous) {
             predicate = ctx.expressionRewriter.combineConjunction(previous.getPredicate(), predicate, 0);
             filtered = previous.getChild();
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(filtered, predicate, 0);
-
-        final BoundExpression key = ctx.functionBinder.bind(argument, filter.getOutput(), sourceAlias(source), executionContext);
         final AggregatePlan distinct = ctx.planNodes.aggregates.next().of(filter, expression.position);
         distinct.getGroupingExpressions().add(key);
         scope.resetAliases();
@@ -1812,12 +1798,16 @@ final class AggregateBinder implements Mutable {
         final OutputSchema aggregateScope = selectExpressions == null ? aggregate.getChild().getOutput() : ctx.windowBindingScope(aggregate.getChild().getOutput());
         for (int i = 0; i < scope.aggregateNodes.size(); ) {
             final ExpressionNode expression = scope.aggregateNodes.getQuick(i);
-            final ExpressionNode call = isCountDistinctRewritten
-                    ? normalizedCount.of(ExpressionNode.FUNCTION, "count", expression.precedence, expression.position)
-                    : orderBinder.rowCountCall(expression);
-            final BoundExpression bound = isGroupingCall(call)
-                    ? bindGroupingCall(call, model, source, aggregate, aggregateScope, executionContext)
-                    : ctx.functionBinder.bindGroupByExpression(call, aggregateScope, sourceAlias(source), executionContext);
+            final BoundExpression bound;
+            if (isCountDistinctRewritten) {
+                ctx.functionBinder.getCallArguments().clear();
+                bound = ctx.functionBinder.bindCall("count", expression.position, aggregateScope, executionContext);
+            } else {
+                final ExpressionNode call = orderBinder.rowCountCall(expression);
+                bound = isGroupingCall(call)
+                        ? bindGroupingCall(call, model, source, aggregate, aggregateScope, executionContext)
+                        : ctx.functionBinder.bindGroupByExpression(call, aggregateScope, sourceAlias(source), executionContext);
+            }
             if (bound instanceof FunctionExpression function && function.isAggregate()) {
                 if (LogicalPlans.readsOnlyOuterColumns(function)) {
                     throw SqlException.$(expression.position, "aggregate functions are not allowed in FROM clause of their own query level");

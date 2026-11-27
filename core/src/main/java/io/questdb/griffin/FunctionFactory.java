@@ -241,6 +241,17 @@ public interface FunctionFactory {
     }
 
     /**
+     * Whether the group by function the factory builds counts the rows of a group in which no argument is NULL, as
+     * count() does. A call without arguments counts every row of its group, which the planner answers without reading
+     * the rows, see {@link FunctionFactoryDescriptor#isRowCount()}.
+     *
+     * @return true when the group by function counts the rows whose arguments are not NULL
+     */
+    default boolean isNonNullRowCount() {
+        return false;
+    }
+
+    /**
      * Returns true if the window function ranks a row among its peers, so that a window without ORDER BY, where every
      * row is a peer of every other, gives every row of a partition the same value whatever order the rows come in:
      * rank(), dense_rank(), percent_rank() and cume_dist().

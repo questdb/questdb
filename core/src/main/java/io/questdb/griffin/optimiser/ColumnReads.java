@@ -280,7 +280,7 @@ final class ColumnReads implements Mutable {
                 count = aggregate.getAggregates().getQuick(i);
             }
         }
-        return count != null && LogicalPlans.isCountCall(count);
+        return count != null && count.isRowCount();
     }
 
     /**

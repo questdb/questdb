@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,6 +38,9 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -135,11 +140,62 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEveryGroupByOverloadOfANameDeclaresWhetherItCountsNonNullRows() {
+        Assert.assertEquals(
+                "{count=true}",
+                declared(engine.getFunctionFactoryCache(), FunctionFactory::isNonNullRowCount, false).toString()
+        );
+    }
+
+    @Test
     public void testEveryGroupByOverloadOfANameDeclaresWhetherItSumsItsArgument() {
         Assert.assertEquals(
                 "{sum=true}",
                 declared(engine.getFunctionFactoryCache(), FunctionFactory::isArgumentSum, false).toString()
         );
+    }
+
+    @Test
+    public void testEveryNonNullRowCountCountsTheRowsWhoseArgumentIsNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE czw_prices (" + GroupByCallSweep.PRICES_COLUMNS + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO czw_prices SELECT " + GroupByCallSweep.PRICES_VALUES + ", timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(3)");
+            execute("INSERT INTO czw_prices (ts) VALUES ('2024-01-02')");
+            final TreeSet<String> calls = new TreeSet<>();
+            final TreeSet<String> functionNames = new TreeSet<>();
+            GroupByCallSweep.collectCalls(engine.getFunctionFactoryCache(), "", FunctionFactory::isNonNullRowCount, calls, functionNames);
+            Assert.assertEquals("[count]", functionNames.toString());
+            Assert.assertTrue("too few calls of non-null row counts: " + calls.size(), calls.size() >= 20);
+            for (String call : calls) {
+                final String argument = call.substring(call.indexOf('(') + 1, call.length() - 1);
+                if (argument.isEmpty()) {
+                    assertQuery("SELECT " + call + " v FROM czw_prices").noRandomAccess().expectSize().returns("v\n4\n");
+                } else {
+                    assertSqlCursors("SELECT count() v FROM czw_prices WHERE " + argument + " IS NOT NULL", "SELECT " + call + " v FROM czw_prices");
+                    assertQuery("SELECT " + call + " v FROM czw_prices WHERE ts = '2024-01-02'").noRandomAccess().expectSize().returns("v\n0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOnlyANonNullRowCountWithoutArgumentsCountsEveryRow() {
+        final TreeSet<String> rowCounts = new TreeSet<>();
+        engine.getFunctionFactoryCache().getFactories().forEach((name, descriptors) -> {
+            for (int i = 0, n = descriptors.size(); i < n; i++) {
+                final FunctionFactoryDescriptor descriptor = descriptors.getQuick(i);
+                if (descriptor.isRowCount()) {
+                    rowCounts.add(descriptor.getFactory().getSignature());
+                }
+            }
+        });
+        Assert.assertEquals("[count()]", rowCounts.toString());
+    }
+
+    @Test
+    public void testZeroArgumentAggregateCountsEveryRowOnlyWhenItCountsNonNullRows() throws SqlException {
+        Assert.assertFalse(new FunctionFactoryDescriptor(zeroArgumentAggregate(false)).isRowCount());
+        Assert.assertTrue(new FunctionFactoryDescriptor(zeroArgumentAggregate(true)).isRowCount());
     }
 
     /**
@@ -187,5 +243,35 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
             }
         });
         return declared;
+    }
+
+    private static FunctionFactory zeroArgumentAggregate(boolean isNonNullRowCount) {
+        return new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "czw_rows()";
+            }
+
+            @Override
+            public boolean isGroupBy() {
+                return true;
+            }
+
+            @Override
+            public boolean isNonNullRowCount() {
+                return isNonNullRowCount;
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext sqlExecutionContext
+            ) {
+                throw new UnsupportedOperationException();
+            }
+        };
     }
 }

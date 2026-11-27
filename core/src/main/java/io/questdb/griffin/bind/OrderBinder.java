@@ -54,9 +54,9 @@ import static io.questdb.griffin.bind.BindContext.*;
 import static io.questdb.griffin.bind.TemporalJoinBinder.designateTimestampOffset;
 
 final class OrderBinder implements Mutable {
-    final ExpressionNode normalizedCount = ExpressionNode.FACTORY.newInstance();
     final ObjList<ExpressionNode> selectExpressions;
     private final BindContext ctx;
+    private final ExpressionNode normalizedCount = ExpressionNode.FACTORY.newInstance();
     private final SampleByBinder sampleByBinder;
 
     OrderBinder(BindContext ctx, SampleByBinder sampleByBinder, CompilerTemporaries temporaries) {

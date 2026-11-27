@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -258,6 +259,36 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUntypedParameterTakesTheTypeOfAGroupingKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cd_param (x INT)");
+            execute("INSERT INTO cd_param VALUES (1),(2)");
+            bindVariableService.clear();
+            try (RecordCursorFactory ignored = select("SELECT count_distinct($1) c, count_distinct(x) d FROM cd_param")) {
+                Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(0).getType());
+            }
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select("SELECT count_distinct($1) c FROM cd_param")) {
+                Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(0).getType());
+                assertRowsOnly(factory, "c\n0\n");
+                bindVariableService.setStr(0, "a");
+                assertRowsOnly(factory, "c\n1\n");
+            }
+            assertCountDistinct("SELECT count_distinct($1) c FROM cd_param", "c\n1\n", """
+                    Count
+                        Async Group By workers: 1
+                          keys: [$1]
+                          keyFunctions: [$0::string]
+                          filter: null
+                            Filter filter: $0::string is not null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cd_param
+                    """);
+        });
+    }
+
+    @Test
     public void testLatestOnSelectsRowsBeforeNullArgumentFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cd_latest_null (ts TIMESTAMP,k INT,x VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
@@ -409,6 +440,10 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
                 assertErrorRecovers(compiler, "SELECT count_distinct(missing) FROM cd_errors", 22, "Invalid column: missing");
                 assertErrorRecovers(compiler, "SELECT count_distinct(x) c FROM cd_errors ORDER BY 2", 51, "order column position is out of range [max=1]");
                 assertErrorRecovers(compiler, "SELECT count_distinct(x) c FROM cd_errors ORDER BY missing", 51, "Invalid column: missing");
+                assertErrorRecovers(compiler, "SELECT count_distinct(sum(x)) FROM cd_errors", 22, "Aggregate function cannot be passed as an argument");
+                assertErrorRecovers(compiler, "SELECT count_distinct(count()) FROM cd_errors", 22, "Aggregate function cannot be passed as an argument");
+                assertErrorRecovers(compiler, "SELECT count_distinct(sum(x) + 1) FROM cd_errors", 22, "Aggregate function cannot be passed as an argument");
+                assertErrorRecovers(compiler, "SELECT count_distinct(sum(missing)) FROM cd_errors", 26, "Invalid column: missing");
             }
         });
     }
