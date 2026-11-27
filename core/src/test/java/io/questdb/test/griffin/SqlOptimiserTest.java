@@ -6231,6 +6231,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSetOperationColumnTypeOfArrayOfUnknownDimensionality() throws Exception {
+        // An array of unknown dimensionality, the type of an array bind variable, has no type in a set operation:
+        // SqlCodeGenerator.getUnionCastType() rejects it. getSetOperationColumnType() types no bind variable, so the
+        // test gives the column of the first operand that type, after the column has typed as DOUBLE[].
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (a DOUBLE[])");
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                for (String operation : new String[]{"UNION ALL", "EXCEPT"}) {
+                    final IQueryModel model = setOperationHead(compiler.generateExecutionModel(
+                            "SELECT a FROM ta " + operation + " SELECT a FROM ta",
+                            sqlExecutionContext
+                    ));
+                    final int weakArrayType = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
+                    final QueryColumn column = model.getColumns().getQuick(0);
+                    assertEquals(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), compiler.getSetOperationColumnType(model, 0));
+                    column.of(column.getAlias(), column.getAst(), column.isIncludeIntoWildcard(), weakArrayType);
+                    assertEquals(operation, -1, compiler.getSetOperationColumnType(model, 0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetOperationColumnTypeOfColumnTheSetOperationDoesNotList() throws Exception {
         // getSetOperationColumnType() types a column by its position among the columns of the set operation. The test
         // makes x, which the top level reads by name, name the column of the later operand of the union below, which

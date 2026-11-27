@@ -26,7 +26,14 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -206,6 +213,48 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRecordReadsSymbolKeyOfSelfJoinWithEitherAccessor() throws Exception {
+        // A consumer may read a SYMBOL column through getSymA() or getSymB(), as an equality of two SYMBOL
+        // columns reads its right operand through getSymB(). Both read the symbol that the join map resolves
+        // for the key of the self-join, see testAsOfJoinReadsSymbolKeyOfSelfJoin() and
+        // testLtJoinReadsSymbolKeyOfSelfJoin(): a1.s of each row of a0, NULL for a row that matches none.
+        assertMemoryLeak(() -> {
+            createSelfJoinTable();
+            assertSymbolKeyReads("ASOF", "x", "é", null, "x");
+            assertSymbolKeyReads("LT", null, null, null, "x");
+        });
+    }
+
+    @Test
+    public void testRecordReadsTimestampKeyComparedWithNanosWithEitherAccessor() throws Exception {
+        // A record reads a TIMESTAMP column alike through getLong() and getTimestamp(), in microseconds, when
+        // the join map stores it in nanoseconds as well, see assertTimestampKeyComparedWithNanos(): a1.k of the
+        // rows at 1s and 3s, and NULL for the rows at 5s, 7s and 9s.
+        assertMemoryLeak(() -> {
+            createTimestampOverNanosTables();
+            for (String join : new String[]{"ASOF", "LT"}) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(true);
+                    try (
+                            RecordCursorFactory factory = select(compiler, "SELECT a0.ts, a1.k FROM m a0 " + join + " JOIN s a1 ON a1.k = a0.k", sqlExecutionContext);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        final long[] expected = {1_704_067_200_000_001L, -1L, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL};
+                        final Record record = cursor.getRecord();
+                        int row = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(join + " row " + row, expected[row], record.getTimestamp(1));
+                            Assert.assertEquals(join + " row " + row, expected[row], record.getLong(1));
+                            row++;
+                        }
+                        Assert.assertEquals(expected.length, row);
+                    }
+                }
+            }
+        });
+    }
+
     private static String unionOf(String table) {
         return "((SELECT * FROM " + table + " UNION ALL SELECT * FROM " + table + " WHERE 1 = 0) TIMESTAMP(ts))";
     }
@@ -275,14 +324,7 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
 
     private void assertSymbolKeyOfSelfJoin(String join, String expected) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s SYMBOL, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        ('x', 1, '1970-01-01T00:00:01Z'),
-                        ('é', 1, '1970-01-01T00:00:02Z'),
-                        (NULL, 1, '1970-01-01T00:00:03Z'),
-                        ('x', 1, '1970-01-01T00:00:04Z')
-                    """);
+            createSelfJoinTable();
             for (String on : new String[]{" a1 ON a0.s = a1.s", " a1 ON a0.s = a1.s AND a0.j = a1.j"}) {
                 final String query = "SELECT a0.ts, a0.s, a1.s, a1.ts FROM t a0 " + join + " JOIN t" + on;
                 assertQuery(query).noLeakCheck().noRandomAccess().timestamp("ts").expectSize().returns(expected);
@@ -293,30 +335,44 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
         });
     }
 
+    private void assertSymbolKeyReads(String join, String... expected) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(true);
+            try (
+                    RecordCursorFactory factory = select(compiler, "SELECT a0.ts, a1.s FROM t a0 " + join + " JOIN t a1 ON a0.s = a1.s", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final Record record = cursor.getRecord();
+                int row = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(join + " row " + row, expected[row], Chars.toString(record.getSymA(1)));
+                    Assert.assertEquals(join + " row " + row, expected[row], Chars.toString(record.getSymB(1)));
+                    row++;
+                }
+                Assert.assertEquals(expected.length, row);
+            }
+        }
+    }
+
     private void assertTimestampKeyComparedWithNanos(String join) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m (k TIMESTAMP_NS, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s (k TIMESTAMP, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO m VALUES
-                        ('2024-01-01T00:00:00.000001Z', 1, '1970-01-01T00:00:01Z'),
-                        ('1969-12-31T23:59:59.999999Z', 1, '1970-01-01T00:00:03Z'),
-                        ('2024-01-03T00:00:00Z', 1, '1970-01-01T00:00:05Z'),
-                        (NULL, 1, '1970-01-01T00:00:07Z'),
-                        ('1970-01-01T00:00:00Z', 1, '1970-01-01T00:00:09Z')
-                    """);
-            execute("""
-                    INSERT INTO s VALUES
-                        ('2024-01-01T00:00:00.000001Z', 1, '1970-01-01T00:00:00Z'),
-                        ('1969-12-31T23:59:59.999999Z', 1, '1970-01-01T00:00:02Z'),
-                        ('2024-01-04T00:00:00Z', 1, '1970-01-01T00:00:04Z'),
-                        (NULL, 1, '1970-01-01T00:00:06Z')
-                    """);
+            createTimestampOverNanosTables();
             for (String on : new String[]{" a1 ON a1.k = a0.k", " a1 ON a1.k = a0.k AND a1.j = a0.j"}) {
                 final String select = "SELECT a0.ts, a0.k, a1.k, a1.k::LONG k_micros, a1.ts FROM m a0 " + join + " JOIN ";
                 assertConvertedKeyJoin(TIMESTAMP_OVER_NANOS_ROWS, select + "s" + on, select + unionOf("s") + on);
             }
         });
+    }
+
+    private void createSelfJoinTable() throws Exception {
+        execute("CREATE TABLE t (s SYMBOL, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('x', 1, '1970-01-01T00:00:01Z'),
+                    ('é', 1, '1970-01-01T00:00:02Z'),
+                    (NULL, 1, '1970-01-01T00:00:03Z'),
+                    ('x', 1, '1970-01-01T00:00:04Z')
+                """);
     }
 
     private void createStringOverVarcharTables() throws Exception {
@@ -337,6 +393,26 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
                     (NULL, 1, '1970-01-01T00:00:04Z'),
                     ('\uD834\uDD1E clef', 1, '1970-01-01T00:00:06Z'),
                     ('z', 1, '1970-01-01T00:00:08Z')
+                """);
+    }
+
+    private void createTimestampOverNanosTables() throws Exception {
+        execute("CREATE TABLE m (k TIMESTAMP_NS, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE s (k TIMESTAMP, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO m VALUES
+                    ('2024-01-01T00:00:00.000001Z', 1, '1970-01-01T00:00:01Z'),
+                    ('1969-12-31T23:59:59.999999Z', 1, '1970-01-01T00:00:03Z'),
+                    ('2024-01-03T00:00:00Z', 1, '1970-01-01T00:00:05Z'),
+                    (NULL, 1, '1970-01-01T00:00:07Z'),
+                    ('1970-01-01T00:00:00Z', 1, '1970-01-01T00:00:09Z')
+                """);
+        execute("""
+                INSERT INTO s VALUES
+                    ('2024-01-01T00:00:00.000001Z', 1, '1970-01-01T00:00:00Z'),
+                    ('1969-12-31T23:59:59.999999Z', 1, '1970-01-01T00:00:02Z'),
+                    ('2024-01-04T00:00:00Z', 1, '1970-01-01T00:00:04Z'),
+                    (NULL, 1, '1970-01-01T00:00:06Z')
                 """);
     }
 }

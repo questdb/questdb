@@ -62,6 +62,19 @@ public class LateralJoinSubQueryPredicateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinCaseConditionReadsInnerAndOuterColumns() throws Exception {
+        // testLeftJoinConditionReadsInnerAndOuterColumns() with the condition in a CASE expression
+        assertRows(
+                "SELECT o.id, t.v FROM o LEFT JOIN LATERAL (SELECT b.v FROM b WHERE b.k = o.k AND CASE WHEN b.v - o.v > (SELECT count() FROM c) THEN true ELSE false END) t ON true ORDER BY 1",
+                """
+                        id\tv
+                        1\t10
+                        2\tnull
+                        """
+        );
+    }
+
+    @Test
     public void testLeftJoinConditionReadsInnerAndOuterColumns() throws Exception {
         // the body has no row for outer row 2, so the LEFT JOIN returns it with NULL
         assertRows(
@@ -69,6 +82,60 @@ public class LateralJoinSubQueryPredicateTest extends AbstractCairoTest {
                 """
                         id\tv
                         1\t10
+                        2\tnull
+                        """
+        );
+    }
+
+    @Test
+    public void testLeftJoinNestedCaseConditionReadsInnerAndOuterColumns() throws Exception {
+        // testLeftJoinNestedConditionReadsInnerAndOuterColumns() with the condition in a CASE expression
+        assertRows(
+                "SELECT o.id, t.v FROM o LEFT JOIN LATERAL (SELECT * FROM (SELECT * FROM (SELECT * FROM b WHERE b.k = o.k)) s WHERE s.k = o.k AND CASE WHEN s.v - o.v > (SELECT count() FROM c) THEN true ELSE false END) t ON true ORDER BY 1",
+                """
+                        id\tv
+                        1\t10
+                        2\tnull
+                        """
+        );
+    }
+
+    @Test
+    public void testLeftJoinNestedConditionReadsInnerAndOuterColumns() throws Exception {
+        // testLeftJoinConditionReadsInnerAndOuterColumns() with the body's rows in two nested sub-queries,
+        // so the condition with the sub-query reads the outer row in a layer above the one that joins it
+        assertRows(
+                "SELECT o.id, t.v FROM o LEFT JOIN LATERAL (SELECT * FROM (SELECT * FROM (SELECT * FROM b WHERE b.k = o.k)) s WHERE s.k = o.k AND s.v - o.v > (SELECT count() FROM c)) t ON true ORDER BY 1",
+                """
+                        id\tv
+                        1\t10
+                        2\tnull
+                        """
+        );
+    }
+
+    @Test
+    public void testLeftJoinNestedConditionReadsInnerAndOuterColumnsFirst() throws Exception {
+        // testLeftJoinNestedConditionReadsInnerAndOuterColumns() with the condition with the sub-query first
+        assertRows(
+                "SELECT o.id, t.v FROM o LEFT JOIN LATERAL (SELECT * FROM (SELECT * FROM (SELECT * FROM b WHERE b.k = o.k)) s WHERE s.v - o.v > (SELECT count() FROM c) AND s.k = o.k) t ON true ORDER BY 1",
+                """
+                        id\tv
+                        1\t10
+                        2\tnull
+                        """
+        );
+    }
+
+    @Test
+    public void testLeftJoinNestedConditionsWithSubQueryReadOuterColumnOrNot() throws Exception {
+        // testLeftJoinNestedConditionReadsInnerAndOuterColumns() with a condition with a sub-query that reads
+        // no outer column ahead of the others: b.v > 2 * 8 drops the b row of outer row 1 (v = 10)
+        assertRows(
+                "SELECT o.id, t.v FROM o LEFT JOIN LATERAL (SELECT * FROM (SELECT * FROM (SELECT * FROM b WHERE b.k = o.k)) s WHERE s.v > (SELECT max(x) * 8 FROM c) AND s.k = o.k AND s.v - o.v > (SELECT count() FROM c)) t ON true ORDER BY 1",
+                """
+                        id\tv
+                        1\tnull
                         2\tnull
                         """
         );

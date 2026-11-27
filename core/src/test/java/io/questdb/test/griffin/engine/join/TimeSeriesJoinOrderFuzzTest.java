@@ -103,6 +103,37 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnTimestampKeysOfOneType() throws Exception {
+        // A query of generateTimestampKeyQueries() whose keys a1.n = a2.m and a3.n = a2.m share a2.m and both
+        // compare it as TIMESTAMP_NS, so the join that holds both keys needs no wider key type for a2.m.
+        final String joins = "t1 a0 CROSS JOIN t1 a1 JOIN t4 a2 ON a1.n = a2.m JOIN t4 a3 ON a3.n = a2.m AND a3.l = a1.l"
+                + " JOIN t3 a4 ON a4.k = a0.k AND a4.s = a3.s";
+        assertFlatQueryReturnsRowsOfReference(
+                "SELECT a0.k, a0.ts, a1.n, q.k, q.ts FROM " + joins + " ASOF JOIN t1 q",
+                "SELECT x.a0_k, x.a0_ts, x.a1_y, q.k, q.ts FROM (SELECT a0.k a0_k, a0.ts a0_ts, a1.n a1_y FROM " + joins
+                        + " ORDER BY a0_ts) x ASOF JOIN t1 q"
+        );
+    }
+
+    @Test
+    public void testTimeSeriesJoinBeforeRightJoinWithDeferredKeyOfMovedTables() throws Exception {
+        // A query of generateQueries() that defers the key a3.s = a2.s of the INNER join after the RIGHT JOIN,
+        // which compares two tables joined before the time-series join, while the optimiser moves the keys of
+        // a4 on a0 onto a0. Before it moves a key, the optimiser follows the ordering edges of the tables,
+        // the deferred key included, to tell whether the move would make two tables wait for each other.
+        final String joins = "t3 a0 CROSS JOIN t0 a1 JOIN t0 a2 ON a2.v = a1.v AND a2.n = a0.n JOIN t2 a3 ON a3.s = a1.v AND a3.V = a0.v"
+                + " JOIN (SELECT s, concat(s, '')::varchar v, k, l, m, n, ts FROM t4) a4 ON a4.v = a1.v AND a4.k = a0.k AND a4.n = a0.m AND a4.s = a3.s";
+        final String timeSeriesJoin = " ASOF JOIN (SELECT s, concat(s, '')::varchar v, k, l, m, n, ts FROM t1) q";
+        assertFlatQueryReturnsRowsOfReference(
+                "SELECT a0.k, a0.ts, a4.s, q.k, q.ts, r.k, a5.k FROM " + joins + timeSeriesJoin
+                        + " RIGHT JOIN t2 r ON r.k = a1.k JOIN t4 a5 ON a5.k = r.k AND a3.s = a2.s",
+                "SELECT x.a0_k, x.a0_ts, x.a4_s, q.k, q.ts, r.k, a5.k FROM (SELECT a0.k a0_k, a0.ts a0_ts, a1.k a1_k, a2.s a2_s,"
+                        + " a3.s a3_s, a4.s a4_s FROM " + joins + " ORDER BY a0_ts) x" + timeSeriesJoin
+                        + " RIGHT JOIN t2 r ON r.k = x.a1_k JOIN t4 a5 ON a5.k = r.k AND x.a3_s = x.a2_s"
+        );
+    }
+
+    @Test
     public void testTimeSeriesJoinOnTimestampKeysOfTwoPrecisions() throws Exception {
         assertFlatJoinReturnsRowsOfReference(false, TimeSeriesJoinOrderFuzzTest::generateTimestampKeyQueries);
     }
@@ -163,6 +194,26 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             // Full-fat joins skip a query whose hash table would store a VARCHAR column. A change that
             // made most queries do so would check few rows and pass.
             Assert.assertTrue("only " + checkedCount + " of " + QUERY_COUNT + " queries were checked", checkedCount * 2 >= QUERY_COUNT);
+        });
+    }
+
+    // Compares one pair of queries of the generators, see assertFlatJoinReturnsRowsOfReference(), with and
+    // without full-fat joins
+    private void assertFlatQueryReturnsRowsOfReference(String flat, String reference) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final StringSink flatRows = new StringSink();
+            final StringSink referenceRows = new StringSink();
+            for (boolean fullFatJoins : new boolean[]{false, true}) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(fullFatJoins);
+                    TestUtils.printSql(compiler, sqlExecutionContext, reference, referenceRows);
+                    TestUtils.printSql(compiler, sqlExecutionContext, flat, flatRows);
+                }
+                final String expected = sortedRows(referenceRows);
+                Assert.assertFalse("the reference returns no rows: " + reference, expected.isEmpty());
+                Assert.assertEquals("fullFatJoins=" + fullFatJoins + ", flat=" + flat, expected, sortedRows(flatRows));
+            }
         });
     }
 

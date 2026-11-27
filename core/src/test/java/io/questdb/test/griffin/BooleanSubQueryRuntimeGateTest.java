@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -330,8 +331,15 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                     try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue("a parent may skip the rows of the gate", cursor.isKnownEmpty());
                         Assert.assertEquals(0, cursor.size());
+                        Assert.assertEquals(0, cursor.preComputedStateSize());
                         Assert.assertFalse(cursor.hasNext());
                         cursor.toTop();
+                        Assert.assertFalse(cursor.hasNext());
+                        // the cursor reads as an empty table, not as the open base: no symbol of sym, and no row
+                        Assert.assertSame(EmptySymbolMapReader.INSTANCE, cursor.getSymbolTable(2));
+                        Assert.assertSame(EmptySymbolMapReader.INSTANCE, cursor.newSymbolTable(2));
+                        Assert.assertNull(cursor.getSymbolTable(2).valueOf(0));
+                        cursor.recordAt(cursor.getRecordB(), 0);
                         Assert.assertFalse(cursor.hasNext());
                         Assert.assertEquals("the open base cursor holds the table reader", 1, engine.getBusyReaderCount());
                     }

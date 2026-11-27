@@ -81,6 +81,25 @@ public class LateralJoinSubQueryOnClauseTest extends AbstractCairoTest {
             4\t10\t40\t34
             """;
 
+    // The sub-query computes x from o.k, so the WHERE clause above it cannot read a column of c in its
+    // place. x + o.k = o.k2 keeps the c rows whose x is o.k2 - o.k: x = 1 for outer row 2 (k = 1,
+    // k2 = 2), rows 30, 31 and 32, and the NULL x of c row 34 for outer row 3, whose k2 is NULL, as = matches
+    // NULL to NULL. Outer row 1 needs x = 4, which no c row has, and outer row 4 reads a NULL k with a k2 of 3.
+    @Test
+    public void testComputedColumnOfSubQueryComparedWithOuterColumn() throws Exception {
+        assertRows(
+                true,
+                "SELECT o.id, l.cid, l.x FROM o JOIN LATERAL (SELECT s.id cid, s.x FROM (SELECT id, x + o.k x, y FROM c) s WHERE s.x = o.k2) l ORDER BY 1, 2",
+                """
+                        id\tcid\tx
+                        2\t30\t2
+                        2\t31\t2
+                        2\t32\t2
+                        3\t34\tnull
+                        """
+        );
+    }
+
     // a FULL JOIN d returns a row 10 with d row 40, a row 11 with NULL and d row 41 with NULL.
     @Test
     public void testFullJoinThenSubQueryOnOtherOuterColumn() throws Exception {
@@ -101,6 +120,35 @@ public class LateralJoinSubQueryOnClauseTest extends AbstractCairoTest {
                         4\tnull\t41\t34
                         4\t10\t40\t34
                         4\t11\tnull\t34
+                        """
+        );
+    }
+
+    // long_sequence(3) has no alias, and the body reads its column x by the bare name. The FULL JOIN pairs
+    // x with the c rows whose id - 29 equals it: c rows 30, 31 and 32 for outer rows 1 and 2 (k = 1) take
+    // x = 1, 2 and 3. c row 33 of outer row 3 (k = 2) and c row 34 of outer row 4, whose NULL k matches the
+    // NULL x of the row, need x = 4 and x = 5, so the join NULL-extends them and each x.
+    @Test
+    public void testFullJoinToTableFunctionWithoutAlias() throws Exception {
+        assertRows(
+                true,
+                "SELECT o.id, l.id, l.x FROM o CROSS JOIN LATERAL (SELECT s.id, x FROM (SELECT id, y FROM c WHERE c.x = o.k) s FULL JOIN long_sequence(3) ON s.id - 29 = x) l ORDER BY 1, 2, 3",
+                """
+                        id\tid1\tx
+                        1\t30\t1
+                        1\t31\t2
+                        1\t32\t3
+                        2\t30\t1
+                        2\t31\t2
+                        2\t32\t3
+                        3\tnull\t1
+                        3\tnull\t2
+                        3\tnull\t3
+                        3\t33\tnull
+                        4\tnull\t1
+                        4\tnull\t2
+                        4\tnull\t3
+                        4\t34\tnull
                         """
         );
     }
@@ -701,6 +749,91 @@ public class LateralJoinSubQueryOnClauseTest extends AbstractCairoTest {
                         2\t10\t30
                         3\tnull\t33
                         4\tnull\t34
+                        """
+        );
+    }
+
+    // The outer side is a GROUP BY, which the body reads through a shared cursor in the sub-query that the
+    // RIGHT join keeps: aa holds one row per outer row, the count of the a rows of its k, so s holds both
+    // d rows for every k. d row 40 (x = 1) matches c rows 30, 31 and 32, d row 41 (x = 3) matches c row 35,
+    // and s.x < 3 keeps d row 40. The WHERE clause stays after the RIGHT join, whose slave reads the shared
+    // cursor in a join of its own, see SqlOptimiser.isWherePushableBelowJoin().
+    @Test
+    public void testRightJoinToSubQueryOverSharedGroupBy() throws Exception {
+        assertRowsAndPlan(
+                true,
+                "SELECT o2.k, o2.n, l.cid FROM (SELECT k, count() n FROM o GROUP BY k) o2 CROSS JOIN LATERAL "
+                        + "(SELECT c.id cid FROM c RIGHT JOIN (SELECT d.id, d.x FROM d CROSS JOIN (SELECT count() cnt FROM a WHERE a.x = o2.k) aa) s "
+                        + "ON s.x = c.x WHERE s.x < 3) l ORDER BY 1, 3",
+                """
+                        k\tn\tcid
+                        null\t1\t30
+                        null\t1\t31
+                        null\t1\t32
+                        1\t2\t30
+                        1\t2\t31
+                        1\t2\t32
+                        2\t1\t30
+                        2\t1\t31
+                        2\t1\t32
+                        """,
+                """
+                                            Filter filter: s.x<3
+                                                Hash Right Outer Join
+                                                  condition: s.x=c.x
+                        """,
+                "(Shared)"
+        );
+    }
+
+    // The body reads the outer row in its select list alone, so every outer row joins all rows of c RIGHT
+    // JOIN d: d row 40 (x = 1) with c rows 30, 31 and 32, and d row 41 (x = 3) with c row 35. Each row
+    // carries o.k2 of its outer row.
+    @Test
+    public void testRightJoinWhileSelectReadsOuterColumn() throws Exception {
+        assertRows(
+                true,
+                "SELECT o.id, l.cid, l.kk FROM o JOIN LATERAL (SELECT c.id cid, o.k2 kk FROM c RIGHT JOIN d ON d.x = c.x) l ORDER BY 1, 2",
+                """
+                        id\tcid\tkk
+                        1\t30\t5
+                        1\t31\t5
+                        1\t32\t5
+                        1\t35\t5
+                        2\t30\t2
+                        2\t31\t2
+                        2\t32\t2
+                        2\t35\t2
+                        3\t30\tnull
+                        3\t31\tnull
+                        3\t32\tnull
+                        3\t35\tnull
+                        4\t30\t3
+                        4\t31\t3
+                        4\t32\t3
+                        4\t35\t3
+                        """
+        );
+    }
+
+    // The select list reads its own column k2 by the bare name, which o has as well: k2 + 1 is c.y * 2 + 1 of
+    // the c rows whose x is o.k, not o.k2 + 1. Outer rows 1 and 2 (k = 1) read c rows 30, 31 and 32, outer
+    // row 3 reads c row 33, whose y is NULL, and outer row 4 reads c row 34, as = matches NULL to NULL.
+    @Test
+    public void testSelectListReadsOwnColumnNamedAsOuterColumn() throws Exception {
+        assertRows(
+                false,
+                "SELECT o.id, l.cid, l.zz FROM o CROSS JOIN LATERAL (SELECT c.id cid, c.y * 2 k2, k2 + 1 zz FROM c WHERE c.x = o.k) l ORDER BY 1, 2",
+                """
+                        id\tcid\tzz
+                        1\t30\t3
+                        1\t31\t9
+                        1\t32\t11
+                        2\t30\t3
+                        2\t31\t9
+                        2\t32\t11
+                        3\t33\tnull
+                        4\t34\t5
                         """
         );
     }
