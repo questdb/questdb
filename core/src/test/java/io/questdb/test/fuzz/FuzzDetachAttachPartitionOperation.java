@@ -80,6 +80,8 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     private final int between;
     // the first partition BETWEEN_DROP_NEWEST drops
     private final long dropFromTimestamp;
+    // the partitioning of the table, which names the partition
+    private final int partitionBy;
     private final long partitionTimestamp;
     // the column BETWEEN_RENAME_CASE_ONLY_AND_BACK renamed: its name, and its name in other letter case, which a failed
     // attempt of the operation can leave it with
@@ -88,7 +90,15 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     private int renamedAwayAttachOutcome = RENAMED_AWAY_ATTACH_NOT_TRIED;
 
     public FuzzDetachAttachPartitionOperation(long partitionTimestamp, int between, long dropFromTimestamp) {
+        this(partitionTimestamp, between, dropFromTimestamp, PartitionBy.DAY);
+    }
+
+    /**
+     * Detaches the partition of a table partitioned by {@code partitionBy} that starts at {@code partitionTimestamp}.
+     */
+    public FuzzDetachAttachPartitionOperation(long partitionTimestamp, int between, long dropFromTimestamp, int partitionBy) {
         this.partitionTimestamp = partitionTimestamp;
+        this.partitionBy = partitionBy;
         this.between = between;
         this.dropFromTimestamp = dropFromTimestamp;
     }
@@ -102,7 +112,7 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
             context.with(AllowAllSecurityContext.INSTANCE);
             final TableRecordMetadata metadata = wApi.getMetadata();
             final StringSink partitionName = new StringSink();
-            PartitionBy.setSinkForPartition(partitionName, metadata.getTimestampType(), PartitionBy.DAY, partitionTimestamp);
+            PartitionBy.setSinkForPartition(partitionName, metadata.getTimestampType(), partitionBy, partitionTimestamp);
             final String tableName = TestUtils.randomiseCase(rnd, wApi.getTableToken().getTableName());
             final int detached = apply(compiler, context, wApi, "ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + '\'');
             if (detached == TABLE_GONE) {
