@@ -101,8 +101,9 @@ public final class PhysicalProperties {
             case FilterPlan _ -> true;
             case LimitPlan limit -> limit.getApplication() != LimitPlan.Application.SORT;
             case SortPlan sort -> sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder();
-            case ProjectPlan project -> PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.VIRTUAL
-                    || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
+            case ProjectPlan project ->
+                    PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.VIRTUAL
+                            || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
             default -> false;
         };
     }
@@ -246,10 +247,12 @@ public final class PhysicalProperties {
             case DistinctPlan distinct -> distinct.getChild();
             case WindowPlan window -> window.getChild();
             case LimitPlan limit -> limit.getChild();
-            case SortPlan sort -> sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() ? sort.getChild() : null;
+            case SortPlan sort ->
+                    sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() ? sort.getChild() : null;
             case WindowJoinPlan windowJoin -> windowJoin.getMaster();
             case HorizonJoinPlan horizon -> horizon.getMaster();
-            case JoinPlan join -> masterOrder(join, join.getOrderedInputs().size()) == Capability.YES ? join.getOrderedInputs().getQuick(0).getInput() : null;
+            case JoinPlan join ->
+                    masterOrder(join, join.getOrderedInputs().size()) == Capability.YES ? join.getOrderedInputs().getQuick(0).getInput() : null;
             case SetOperationPlan operation -> operation.getOperation().isUnion() ? null : operation.getLeft();
             default -> null;
         };

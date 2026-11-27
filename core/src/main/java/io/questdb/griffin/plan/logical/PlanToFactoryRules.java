@@ -291,7 +291,8 @@ public final class PlanToFactoryRules {
             case JoinPlan join -> joinInputRead(join.getOrderedInputs(), index);
             case HorizonJoinPlan _ -> index == 0 ? InputRead.BY_ROW_ID : InputRead.ONCE;
             case FillPlan fill -> switch (fill.getAlgorithm()) {
-                case SAMPLE_BY_ROWS -> isKeyedSampleBy((SampleByPlan) fill.getChild()) ? InputRead.REREAD : InputRead.ONCE;
+                case SAMPLE_BY_ROWS ->
+                        isKeyedSampleBy((SampleByPlan) fill.getChild()) ? InputRead.REREAD : InputRead.ONCE;
                 case INPUT_ORDER -> isPrevRowRead(fill) ? InputRead.BY_ROW_ID : InputRead.ONCE;
                 case null, default -> InputRead.ONCE;
             };
@@ -756,7 +757,8 @@ public final class PlanToFactoryRules {
         return switch (plan) {
             case JoinPlan join -> join.getOrderedInputs().getQuick(index).getInput();
             case LatestByPlan latest -> latestByBase(latest);
-            case FillPlan fill when fill.getAlgorithm() == FillPlan.Algorithm.SAMPLE_BY_ROWS -> sampleByBase((SampleByPlan) fill.getChild());
+            case FillPlan fill when fill.getAlgorithm() == FillPlan.Algorithm.SAMPLE_BY_ROWS ->
+                    sampleByBase((SampleByPlan) fill.getChild());
             case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getChild())
                     && LogicalPlans.skipProjects(limit.getChild()) instanceof SortPlan sort
                     && (sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION) ->

@@ -248,7 +248,8 @@ final class OperatorPlanning implements Mutable {
             switch (plan) {
                 case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION ->
                         plan = project.getChild();
-                case SortPlan sort when sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() -> plan = sort.getChild();
+                case SortPlan sort when sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() ->
+                        plan = sort.getChild();
                 case LimitPlan limit when limit.getApplication() == LimitPlan.Application.INPUT ->
                         plan = limit.getChild();
                 case JoinPlan join when join.getOrderedInputs().size() == 1 ->
@@ -592,7 +593,8 @@ final class OperatorPlanning implements Mutable {
                     input.setOutputCopy(RowCopy.JOIN_CACHE);
                 }
             }
-            case REREAD -> copyRowsForReread(input, consumer instanceof LatestByPlan ? RowCopy.RANDOM_ACCESS : RowCopy.REPLAY);
+            case REREAD ->
+                    copyRowsForReread(input, consumer instanceof LatestByPlan ? RowCopy.RANDOM_ACCESS : RowCopy.REPLAY);
             case ONCE -> {
             }
         }

@@ -801,7 +801,8 @@ final class PivotBinder implements Mutable {
     private ConstantExpression pivotInConstant(Record record, int type, boolean isNull, int position) {
         final ConstantExpression constant = ctx.planNodes.constants.next();
         final ConstantExpression value = isNull ? constant.ofNull(position) : switch (ColumnType.tagOf(type)) {
-            case ColumnType.STRING, ColumnType.ARRAY_STRING -> constant.ofString(Chars.toString(record.getStrA(0)), position);
+            case ColumnType.STRING, ColumnType.ARRAY_STRING ->
+                    constant.ofString(Chars.toString(record.getStrA(0)), position);
             case ColumnType.SYMBOL -> constant.ofString(Chars.toString(record.getSymA(0)), position);
             case ColumnType.VARCHAR -> constant.ofString(Utf8s.toString(record.getVarcharA(0)), position);
             case ColumnType.CHAR -> constant.ofChar(record.getChar(0), position);

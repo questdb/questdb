@@ -550,7 +550,8 @@ final class PhysicalChoiceVerifier {
             case RANDOM_ACCESS, RANDOM_ACCESS_IN_BATCHES ->
                     PhysicalProperties.isRandomAccessLostToStreamWithoutCopy(plan) == PhysicalProperties.Capability.YES;
             case JOIN_CACHE -> plan instanceof JoinPlan;
-            case JOIN_RANDOM_ACCESS -> PhysicalProperties.supportsRandomAccessWithoutCopy(plan) == PhysicalProperties.Capability.NO;
+            case JOIN_RANDOM_ACCESS ->
+                    PhysicalProperties.supportsRandomAccessWithoutCopy(plan) == PhysicalProperties.Capability.NO;
         };
         return isNeeded && PlanToFactoryRules.copyRejectedColumn(plan.getOutput()) < 0 ? null : PlanVerifier.OUTPUT_COPY;
     }
