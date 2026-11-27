@@ -742,6 +742,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             tableWriter.fsyncPartitionDirUnderSync(tableWriter.getPartitionTimestamp(partitionIndex), tableWriter.getPartitionNameTxn(partitionIndex));
         }
         tableWriter.markPartitionDataChanged(partitionIndex);
+        tableWriter.markPartitionDataActivity(partitionIndex);
     }
 
     /**

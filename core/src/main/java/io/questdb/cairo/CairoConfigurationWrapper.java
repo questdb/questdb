@@ -2190,6 +2190,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isTtlWallClockEnabled() {
+        return getDelegate().isTtlWallClockEnabled();
+    }
+
+    @Override
     public boolean isValidateSampleByFillType() {
         return getDelegate().isValidateSampleByFillType();
     }

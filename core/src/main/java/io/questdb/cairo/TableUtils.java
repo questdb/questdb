@@ -80,6 +80,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -240,6 +241,7 @@ public final class TableUtils {
     // Magic of the save point file header (_epoch.manifest.0/1), at its start and again before the header
     // checksum. Spells "EPOCHKSM" in little-endian order.
     public static final long SNAPSHOT_CHECKSUM_MAGIC = 0x4D534B4843504F45L;
+    public static final int TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC = 0x41504354; // "APCT"
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -251,11 +253,22 @@ public final class TableUtils {
     // bytes [116,128). The txn-derived stamp distinguishes this layout from files written by older binaries.
     public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_A_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4;
     public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_A_32 + 4;
+    // Last successful table-writer commit that affected the storage-policy live range (see
+    // getStoragePolicyLiveFloor), as unsigned whole seconds, 0 for none. The record body has no room left for it,
+    // so each A/B slot of the base header keeps its own copy: a validity marker in the last free word of the
+    // slot's padding, and the value in the slot's half of the unused base-header tail [56, 64). The marker is
+    // bound to the record's TXN (see getActivePartitionLastCommitValidMarker): a binary that predates the stamp
+    // publishes records without rewriting these bytes, which leaves a mismatched marker, so the stale value
+    // reads as absent.
+    public static final long TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32 + 4;
     public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4;
     public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 + 4;
+    public static final long TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32 + 4;
+    public static final long TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
+    public static final long TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32 = TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
@@ -359,6 +372,28 @@ public final class TableUtils {
     private static long txnBodyPartitionTableHashTermCount;
 
     private TableUtils() {
+    }
+
+    /**
+     * Converts the active-partition stamp to the form the {@code _txn} base header persists: unsigned whole
+     * seconds, rounded up so the IDLE window it opens never ends early. Returns 0, the "no stamp" value, for
+     * {@link Numbers#LONG_NULL}, for any other non-positive value, and for one past the unsigned 32-bit range
+     * (the year 2106).
+     */
+    public static int activePartitionLastCommitMicrosToSeconds(long micros) {
+        if (micros <= 0) {
+            return 0;
+        }
+        final long seconds = Math.ceilDiv(micros, Micros.SECOND_MICROS);
+        return seconds <= 0xFFFF_FFFFL ? (int) seconds : 0;
+    }
+
+    /**
+     * Converts a persisted active-partition stamp, unsigned whole seconds, back to micros. Returns
+     * {@link Numbers#LONG_NULL} for 0, the "no stamp" value.
+     */
+    public static long activePartitionLastCommitSecondsToMicros(int seconds) {
+        return seconds != 0 ? Integer.toUnsignedLong(seconds) * Micros.SECOND_MICROS : Numbers.LONG_NULL;
     }
 
     /**
@@ -719,13 +754,19 @@ public final class TableUtils {
             long maxTimestamp,
             int ttl
     ) {
-        assert ttl != 0 : "ttl cannot be 0, invalid value";
+        assert ttl != Numbers.INT_NULL : "ttl cannot be null, invalid value";
         // Storage policies measure age from the partition's own floor (its start), not its
         // ceiling like table TTL does. This shifts every threshold forward by one partition
         // width relative to table TTL. For an interval up to one partition width, that means a
         // partition becomes eligible as soon as the next (active) partition begins; for larger
         // intervals it simply becomes eligible one partition width sooner than table TTL would.
         final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        // A zero TTL expires any partition whose floor is not in the future. Live-range eligibility
+        // is independent of the TTL value: the storage-policy walker additionally requires every
+        // partition at or after getStoragePolicyLiveFloor() to have completed its IDLE window.
+        if (ttl == 0) {
+            return partitionFloor <= maxTimestamp;
+        }
         return isOlderThanTtl(timestampDriver, partitionFloor, maxTimestamp, ttl);
     }
 
@@ -1207,6 +1248,10 @@ public final class TableUtils {
         txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32, 0);
         txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_B_32, 0);
         txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32, 0);
         resetTxn(
                 txMem,
                 TX_BASE_HEADER_SIZE,
@@ -1300,6 +1345,10 @@ public final class TableUtils {
             return;
         }
         Unsafe.free(address, Unsafe.getInt(address), MemoryTag.NATIVE_TABLE_READER);
+    }
+
+    public static int getActivePartitionLastCommitValidMarker(long txn) {
+        return TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC ^ (int) txn;
     }
 
     public static int getColumnCount(Utf8Sequence metaPath, MemoryMR metaMem, long offset) {
@@ -1576,6 +1625,30 @@ public final class TableUtils {
             return -1;
         }
         return replacingIndex;
+    }
+
+    /**
+     * Floor of the first logical partition of the storage-policy live range, or {@code Long.MIN_VALUE}
+     * for an empty table. The range runs from here to the newest partition, and storage policies act on
+     * a partition inside it only after its IDLE window has elapsed.
+     * <p>
+     * The range starts at the partition holding the same reference timestamp the TTL checks measure age
+     * against, see {@link #getMaxTimestamp}. With {@code cairo.ttl.use.wall.clock} on (the default)
+     * that is {@code min(maxTimestamp, now)}, so the partition covering the current time stays live even
+     * when future-dated rows have made a later partition the newest: a zero TTL would otherwise expire
+     * the partition that is still being written. With it off, the reference is the table's max
+     * timestamp, and the range is the newest logical partition only.
+     */
+    public static long getStoragePolicyLiveFloor(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long wallClockMicros,
+            boolean wallClockEnabled
+    ) {
+        if (txReader.getMaxTimestamp() == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        return txReader.getPartitionFloor(getMaxTimestamp(txReader, timestampDriver, wallClockMicros, wallClockEnabled));
     }
 
     public static int getSymbolCapacity(MemoryR metaMem, int columnIndex) {
@@ -3713,7 +3786,12 @@ public final class TableUtils {
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
         // TTL < 0 means it's in months
         if (ttl <= 0) {
-            return timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
+            // monthsBetween() counts whole months in either direction, so on its own it ages a boundary
+            // N months past the reference as N months old. A boundary past the reference has no age at
+            // all, as the signed difference of the hour branch below answers. With the wall-clock
+            // reference, every partition holding future-dated rows lies there.
+            return partitionBoundary <= maxTimestamp
+                    && timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
         }
         // The parser admits hour counts far past what a nanosecond timestamp can express:
         // CommonUtils.toHoursOrMonths range-checks DAYS and WEEKS but passes the HOUR unit
@@ -4061,5 +4139,11 @@ public final class TableUtils {
     static {
         //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
+        //noinspection ConstantValue
+        assert TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32 + Integer.BYTES <= TX_BASE_OFFSET_B_32;
+        //noinspection ConstantValue
+        assert TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32 + Integer.BYTES <= TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32;
+        //noinspection ConstantValue
+        assert TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32 + Integer.BYTES <= TX_BASE_HEADER_SIZE;
     }
 }

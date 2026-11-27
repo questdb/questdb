@@ -45,9 +45,11 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -79,6 +81,35 @@ public class TableUtilsTest extends AbstractTest {
     @After
     public void tearDown() {
         Misc.free(path);
+    }
+
+    @Test
+    public void testActivePartitionLastCommitSecondsRoundTrip() {
+        // Absent and non-positive stamps persist as 0, "no stamp", which reads back as LONG_NULL.
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(Numbers.LONG_NULL));
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(0));
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(-1));
+        Assert.assertEquals(Numbers.LONG_NULL, TableUtils.activePartitionLastCommitSecondsToMicros(0));
+
+        // A partial second rounds up, so the IDLE window the stamp opens never ends early.
+        Assert.assertEquals(1, TableUtils.activePartitionLastCommitMicrosToSeconds(1));
+        Assert.assertEquals(1, TableUtils.activePartitionLastCommitMicrosToSeconds(Micros.SECOND_MICROS));
+        Assert.assertEquals(2, TableUtils.activePartitionLastCommitMicrosToSeconds(Micros.SECOND_MICROS + 1));
+        Assert.assertEquals(Micros.SECOND_MICROS, TableUtils.activePartitionLastCommitSecondsToMicros(1));
+
+        // A wall clock reading round trips at whole-second resolution.
+        final long now = 1_767_225_600_123_456L; // 2026-01-01T00:00:00.123456Z
+        Assert.assertEquals(
+                1_767_225_601 * Micros.SECOND_MICROS,
+                TableUtils.activePartitionLastCommitSecondsToMicros(TableUtils.activePartitionLastCommitMicrosToSeconds(now))
+        );
+
+        // The value is unsigned: the top of the 32-bit range, 2106-02-07T06:28:15Z, still round trips, and a
+        // stamp past it does not fit and persists as "no stamp".
+        final long maxMicros = 0xFFFF_FFFFL * Micros.SECOND_MICROS;
+        Assert.assertEquals(-1, TableUtils.activePartitionLastCommitMicrosToSeconds(maxMicros));
+        Assert.assertEquals(maxMicros, TableUtils.activePartitionLastCommitSecondsToMicros(-1));
+        Assert.assertEquals(0, TableUtils.activePartitionLastCommitMicrosToSeconds(maxMicros + 1));
     }
 
     @Test
@@ -570,15 +601,34 @@ public class TableUtilsTest extends AbstractTest {
         Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
     }
 
+    @Test
+    public void testCheckStoragePolicyTtlMonthsFutureFloor() {
+        // A partition dated after the reference has no age, however many months ahead it is. The same distance
+        // before the reference is past a 1-month policy.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long maxTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long pastPartition = driver.fromDays(19_723 - 120); // 2023-09-03
+        long futurePartition = driver.fromDays(19_723 + 120); // 2024-04-30
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, pastPartition, maxTimestamp, -1));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, -1));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, -12));
+        // Hour and zero TTLs agree.
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, 24));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, futurePartition, maxTimestamp, 0));
+    }
+
     @Test(expected = AssertionError.class)
-    public void testCheckStoragePolicyTtlRejectsZero() {
+    public void testCheckStoragePolicyTtlRejectsNull() {
         TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
         TxReader txReader = new TxReader(FF);
         txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
         long partitionTimestamp = driver.fromDays(19_723);
         long maxTimestamp = partitionTimestamp + driver.fromHours(100);
 
-        TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 0);
+        TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, Numbers.INT_NULL);
     }
 
     @Test
@@ -596,6 +646,18 @@ public class TableUtilsTest extends AbstractTest {
 
         Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
         Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlZeroBoundary() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, partitionFloor, 0));
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, partitionFloor - 1, 0));
     }
 
     @Test
@@ -643,6 +705,21 @@ public class TableUtilsTest extends AbstractTest {
         // 2 months after ceiling: not enough for 3-month TTL
         long maxTimestamp2Months = partitionCeiling + driver.fromDays(59);
         Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
+    }
+
+    @Test
+    public void testCheckTtlMonthsFutureCeiling() {
+        // Table TTL ages a partition from its ceiling. A ceiling after the reference has no age: neither a
+        // partition dated months ahead, nor the partition holding the reference, expires.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.MONTH);
+        long maxTimestamp = driver.fromDays(19_723); // 2024-01-01, the floor of its partition
+        long futurePartition = driver.fromDays(19_723 + 121); // 2024-05-01, ceiling 2024-06-01
+
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, futurePartition, maxTimestamp, -1));
+        // Its ceiling, 2024-02-01, is a whole month after the reference.
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, maxTimestamp, maxTimestamp, -1));
     }
 
     @Test(expected = AssertionError.class)

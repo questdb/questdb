@@ -29,16 +29,19 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
@@ -420,6 +423,53 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A sealed active day takes no more rows and, with no WAL LAG parked in it, holds exactly what {@code _txn} records,
+     * so it converts like an older day. A storage policy seals the active day before it asks for the conversion, so that
+     * every instance converts the same rows. The day keeps its seal: READ ONLY, the seal bit and the seal's seqTxn in its
+     * {@code _pm}. Its native append columns close with the swap, and later rows go through O3: those aimed at the day
+     * are dropped, and the next day's open a new partition.
+     */
+    @Test
+    public void testConvertsASealedActiveDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("sa", true);
+            final TableToken token = engine.verifyTableName("sa");
+            final long sealSeqTxn;
+            try (TableWriter writer = engine.getWriter(token, "seal")) {
+                Assert.assertTrue(writer.removePartition(parse("2020-01-03T00:00:00.000000Z")));
+                sealDay(writer);
+                sealSeqTxn = writer.getTxWriter().getNativePartitionSeqTxn(0);
+            }
+            execute("CREATE TABLE sa_oracle AS (SELECT * FROM sa) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day must be the active partition", 1, tx.getPartitionCount());
+                Assert.assertTrue(tx.isLastPartitionRunFrozen(0));
+            }
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                Assert.assertTrue("the request must dispatch the conversion", job.run());
+            }
+            // The pooled writer that swapped the day in applies the next transaction too.
+            engine.releaseAllReaders();
+            assertSealedDayConverted(token, sealSeqTxn);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM sa_oracle", "SELECT * FROM sa", LOG);
+
+            execute("INSERT INTO sa (i, ts) VALUES (-1, '2020-01-01T23:59:59.000000Z'), (-2, '2020-01-04T00:00:00.000000Z')");
+            drainWalQueue();
+            Assert.assertFalse("a row aimed at the sealed day must not suspend the table", engine.getTableSequencerAPI().isSuspended(token));
+            execute("INSERT INTO sa_oracle (i, ts) VALUES (-2, '2020-01-04T00:00:00.000000Z')");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertSealedDayConverted(token, sealSeqTxn);
+            assertConvertedMatchesOracle("sa");
+        });
+    }
+
     @Test
     public void testConvertsASplitDay() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
@@ -449,6 +499,60 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     @Test
     public void testConvertsASplitDayAroundANonWalOpenTransaction() throws Exception {
         assertConvertsASplitDayAroundANonWalOpenTransaction("cn", false, true);
+    }
+
+    /**
+     * WAL LAG parked in the active day sits in its files past the committed rows, where a copy built off a reader
+     * snapshot never looks: even a sealed active day does not convert until the LAG is applied.
+     */
+    @Test
+    public void testDeclinesASealedActiveDayWithWalLag() throws Exception {
+        // A merge-append table takes no LAG at all, and the test default turns merge-append on.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            // Real clock: the apply job's time quota only trips when the clock moves between transactions.
+            setCurrentMicros(-1);
+            execute("CREATE TABLE wl (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO wl VALUES (1, '2020-01-01T00')");
+            execute("INSERT INTO wl VALUES (2, '2020-01-01T01')");
+            execute("INSERT INTO wl VALUES (3, '2020-01-01T02')");
+            execute("INSERT INTO wl VALUES (4, '2020-01-01T03')");
+            execute("INSERT INTO wl VALUES (5, '2020-01-01T02')");
+            final TableToken token = engine.verifyTableName("wl");
+
+            // One transaction per apply run: the fourth stays in LAG because the fifth is still pending.
+            node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            for (int i = 0; i < 4; i++) {
+                engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl().setMaxBlockRowCount(1);
+                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                    walApplyJob.run();
+                }
+            }
+            try (TableWriter writer = engine.getWriter(token, "seal")) {
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.bumpPartitionTableVersion();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final long nameTxnBefore = dayNameTxn("wl");
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day must be the active partition", 1, tx.getPartitionCount());
+                Assert.assertTrue(tx.isPartitionReadOnly(0));
+                Assert.assertEquals("the fourth transaction must be parked in LAG", 1, tx.getLagRowCount());
+                Assert.assertFalse(tx.isLastPartitionRunFrozen(0));
+            }
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                Assert.assertFalse("a sealed active day with WAL LAG must not be converted", job.run());
+            }
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse("the day must stay native", reader.getTxFile().isPartitionParquet(0));
+            }
+            Assert.assertEquals("the day's name txn", nameTxnBefore, dayNameTxn("wl"));
+            assertNoStagingDirectory(token);
+        });
     }
 
     /**
@@ -493,6 +597,42 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             createTable("wc", true);
             assertFolders("wc", 1, false);
             assertWriteBetweenBuildAndSwapIsKept("wc", true, "2020-01-01T04:00:07.000000Z", 1, true);
+        });
+    }
+
+    /**
+     * The copy of a sealed active day misses nothing only while the seal holds: once lifted, the day takes rows again.
+     */
+    @Test
+    public void testDiscardsTheSwapWhenAnActiveDayIsUnsealedBetweenBuildAndSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("su", true);
+            final TableToken token = engine.verifyTableName("su");
+            try (TableWriter writer = engine.getWriter(token, "seal")) {
+                Assert.assertTrue(writer.removePartition(parse("2020-01-03T00:00:00.000000Z")));
+                sealDay(writer);
+            }
+            execute("CREATE TABLE su_oracle AS (SELECT * FROM su) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final long nameTxnBefore = dayNameTxn("su");
+
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                runJobOnAnotherThread();
+                ownerWriter.getTxWriter().setPartitionReadOnly(0, false);
+                ownerWriter.bumpPartitionTableVersion();
+                ownerWriter.tick();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse("a stale swap must leave the day native", reader.getTxFile().isPartitionParquet(0));
+            }
+            Assert.assertEquals("the day's name txn", nameTxnBefore, dayNameTxn("su"));
+            assertNoStagingDirectory(token);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM su_oracle", "SELECT * FROM su", LOG);
         });
     }
 
@@ -732,6 +872,39 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A seal moves nothing the swap re-checks: not the day's name txn, row count or column version. The swap reads the
+     * seal bit instead, and the parquet file takes the seal's seqTxn rather than the stamp the build read.
+     */
+    @Test
+    public void testSwapTakesTheStampOfASealAppliedBetweenBuildAndSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("ss", true);
+            execute("CREATE TABLE ss_oracle AS (SELECT * FROM ss) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final TableToken token = engine.verifyTableName("ss");
+            final long buildSeqTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                buildSeqTxn = reader.getTxFile().getNativePartitionSeqTxn(0);
+            }
+
+            final long sealSeqTxn;
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                runJobOnAnotherThread();
+                sealDay(ownerWriter);
+                sealSeqTxn = ownerWriter.getTxWriter().getNativePartitionSeqTxn(0);
+                Assert.assertNotEquals("the build must have read another stamp", buildSeqTxn, sealSeqTxn);
+                ownerWriter.tick();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertSealedDayConverted(token, sealSeqTxn);
+            assertConvertedMatchesOracle("ss");
+        });
+    }
+
     private static void assertConverted(String tableName) {
         assertConverted(tableName, 0);
     }
@@ -774,6 +947,25 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                 final String entry = name.of(pUtf8NameZ).toString();
                 Assert.assertFalse("a declined swap must remove its staging directory: " + entry, entry.contains(TableUtils.MERGING_DIR_MARKER));
             });
+        }
+    }
+
+    private static void assertSealedDayConverted(TableToken token, long sealSeqTxn) {
+        try (TableReader reader = engine.getReader(token)) {
+            final TxReader tx = reader.getTxFile();
+            final int index = tx.getPartitionIndex(DAY);
+            Assert.assertTrue("the day must be parquet", tx.isPartitionParquet(index));
+            Assert.assertTrue("the day must stay READ ONLY", tx.isPartitionReadOnly(index));
+            Assert.assertTrue("the day must keep the seal bit", tx.isPartitionSealStamped(index));
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, tx.getTimestampType(), PartitionBy.DAY, DAY, tx.getPartitionNameTxn(index));
+                Assert.assertEquals(
+                        "the parquet file must take the seal's seqTxn",
+                        sealSeqTxn,
+                        TestUtils.readSeqTxnForVersion(configuration.getFilesFacade(), path.$(), tx.getPartitionParquetFileSize(index))
+                );
+            }
         }
     }
 
@@ -858,6 +1050,21 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         if (failure[0] != null) {
             throw new AssertionError("the job failed on its own thread", failure[0]);
         }
+    }
+
+    /**
+     * Seals 2020-01-01 as an exact storage-policy seal at the table's seqTxn does: the seal's seqTxn as the day's stamp,
+     * the seal bit and READ ONLY, in one commit.
+     */
+    private static void sealDay(TableWriter writer) {
+        final TxWriter tx = writer.getTxWriter();
+        final int partitionIndex = tx.getPartitionIndex(DAY);
+        final long sealSeqTxn = tx.getSeqTxn();
+        Assert.assertNotEquals("the seal must move the day's stamp", sealSeqTxn, tx.getNativePartitionSeqTxn(partitionIndex));
+        Assert.assertTrue(tx.setPartitionSeqTxn(partitionIndex, sealSeqTxn));
+        tx.setPartitionSealStamped(partitionIndex, true);
+        tx.setPartitionReadOnly(partitionIndex, true);
+        writer.bumpPartitionTableVersion();
     }
 
     private static long tableTxn(String tableName) {

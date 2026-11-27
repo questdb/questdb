@@ -62,6 +62,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
@@ -127,6 +128,48 @@ public class TableWriterTest extends AbstractCairoTest {
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         super.setUp();
+    }
+
+    @Test
+    public void testActivityStampCountsRowAfterAbandonedRow() throws Exception {
+        // A row left pending, neither appended nor cancelled, is cancelled by the next newRow(). ILP over UDP leaves
+        // one when a value fails to convert. The row after it must still count as activity in the live partition.
+        assertMemoryLeak(() -> {
+            final long liveDay = MicrosTimestampDriver.floor("2024-01-02");
+            setCurrentMicros(liveDay + 12 * Micros.HOUR_MICROS);
+            try {
+                execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO t VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+                final TableToken token = engine.verifyTableName("t");
+
+                final long commitMicros = liveDay + 13 * Micros.HOUR_MICROS;
+                setCurrentMicros(commitMicros);
+                try (TableWriter writer = getWriter(token)) {
+                    // Older than the max timestamp, so the writer goes O3 for this commit.
+                    appendRow(writer, "2024-01-01T02:00:00.000000Z", 3);
+                    writer.newRow(MicrosTimestampDriver.floor("2024-01-01T03:00:00.000000Z")).putLong(0, 4);
+                    // The commit's only row in the live partition.
+                    appendRow(writer, "2024-01-02T02:00:00.000000Z", 5);
+                    writer.commit();
+                }
+                try (TableReader reader = engine.getReader(token)) {
+                    Assert.assertEquals(commitMicros, reader.getTxFile().getActivePartitionLastCommitMicros());
+                }
+                assertQuery("t")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                x\tts
+                                1\t2024-01-01T01:00:00.000000Z
+                                3\t2024-01-01T02:00:00.000000Z
+                                2\t2024-01-02T01:00:00.000000Z
+                                5\t2024-01-02T02:00:00.000000Z
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     @Test
@@ -930,6 +973,27 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAppendInRangeOfParquetLastPartition() throws Exception {
+        // Dropping the newest partition leaves a parquet last partition, which has no native append
+        // columns. In-order rows inside its range must go through O3, the row after an O3 commit included.
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetLastPartitionTable();
+            try (TableWriter writer = getWriter(token)) {
+                appendRow(writer, "2024-01-01T05:00:00.000000Z", 3);
+                writer.commit();
+                appendRow(writer, "2024-01-01T06:00:00.000000Z", 4);
+                writer.commit();
+            }
+            assertParquetLastPartitionRows("""
+                    x\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    3\t2024-01-01T05:00:00.000000Z
+                    4\t2024-01-01T06:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testAppendO3() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
@@ -941,6 +1005,28 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         testO3RecordsNewerThanOlder(N, configuration);
+    }
+
+    @Test
+    public void testAutoCancelFirstRowAfterParquetLastPartition() throws Exception {
+        // The first row of the next partition is left pending, so the following newRow() cancels it and
+        // restores the parquet last partition. Its native columns must stay closed.
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetLastPartitionTable();
+            try (TableWriter writer = getWriter(token)) {
+                writer.newRow(MicrosTimestampDriver.floor("2024-01-02T03:00:00.000000Z")).putLong(0, 9);
+                final TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2024-01-01T05:00:00.000000Z"));
+                assertNoNativeColumnFile(writer, token);
+                row.putLong(0, 3);
+                row.append();
+                writer.commit();
+            }
+            assertParquetLastPartitionRows("""
+                    x\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    3\t2024-01-01T05:00:00.000000Z
+                    """);
+        });
     }
 
     @Test
@@ -1001,6 +1087,28 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertEquals(N, writer.size());
             }
+        });
+    }
+
+    @Test
+    public void testCancelFirstRowAfterParquetLastPartition() throws Exception {
+        // Cancelling the first row of the next partition restores the parquet last partition. Reopening
+        // its native columns there would put native files next to data.parquet and append to them.
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetLastPartitionTable();
+            try (TableWriter writer = getWriter(token)) {
+                final TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2024-01-02T03:00:00.000000Z"));
+                row.putLong(0, 9);
+                row.cancel();
+                assertNoNativeColumnFile(writer, token);
+                appendRow(writer, "2024-01-01T05:00:00.000000Z", 3);
+                writer.commit();
+            }
+            assertParquetLastPartitionRows("""
+                    x\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    3\t2024-01-01T05:00:00.000000Z
+                    """);
         });
     }
 
@@ -2100,6 +2208,26 @@ public class TableWriterTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
         }
+    }
+
+    @Test
+    public void testGetPartitionRowCountAfterWriterReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE partition_rows (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final TableToken tableToken = engine.verifyTableName("partition_rows");
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.newRow(0).append();
+                writer.newRow(Micros.DAY_MICROS).append();
+                writer.commit();
+            }
+            engine.releaseAllWriters();
+
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(0));
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(Micros.DAY_MICROS));
+                Assert.assertEquals(-1, writer.getPartitionRowCountByPartitionTimestamp(2 * Micros.DAY_MICROS));
+            }
+        });
     }
 
     @Test
@@ -3784,12 +3912,43 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private static long readColumnVersionFileVersion(String tableName) {
-        try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            columnVersionReader.ofRO(configuration.getFilesFacade(), path.$());
-            return columnVersionReader.readUnsafe();
+    private static void appendRow(TableWriter writer, String timestamp, long x) throws NumericException {
+        final TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        row.putLong(0, x);
+        row.append();
+    }
+
+    // The parquet last partition keeps its native append columns closed: no column file appears next to data.parquet.
+    private static void assertNoNativeColumnFile(TableWriter writer, TableToken token) throws NumericException {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    ColumnType.TIMESTAMP,
+                    PartitionBy.DAY,
+                    MicrosTimestampDriver.floor("2024-01-01"),
+                    writer.getPartitionNameTxn(0)
+            );
+            path.concat("x.d");
+            Assert.assertFalse("a native column file next to data.parquet: " + path, FF.exists(path.$()));
         }
+    }
+
+    /**
+     * A non-WAL table whose last partition, 2024-01-01, is parquet: converted, then left last by dropping
+     * the newest partition. The pooled writer that ran the drop is the one the caller gets next.
+     */
+    private static TableToken createParquetLastPartitionTable() throws SqlException {
+        execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        execute("ALTER TABLE t DROP PARTITION LIST '2024-01-02'");
+        final TableToken token = engine.verifyTableName("t");
+        try (TableReader reader = engine.getReader(token)) {
+            Assert.assertEquals(1, reader.getPartitionCount());
+            Assert.assertTrue("fixture: the last partition must be parquet", reader.getTxFile().isPartitionParquet(0));
+        }
+        return token;
     }
 
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
@@ -3830,6 +3989,14 @@ public class TableWriterTest extends AbstractCairoTest {
         r.putLong(8, rnd.nextGeoHashLong(60)); // locationLong
         r.append();
         return ts;
+    }
+
+    private static long readColumnVersionFileVersion(String tableName) {
+        try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), path.$());
+            return columnVersionReader.readUnsafe();
+        }
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
@@ -4025,6 +4192,20 @@ public class TableWriterTest extends AbstractCairoTest {
             Misc.free(rowCursor);
         }
         Assert.assertEquals(reader.size(), calculatedRowCount);
+    }
+
+    // Reads the table back through a fresh writer and reader, so the rows come from the files on disk.
+    private void assertParquetLastPartitionRows(String expected) throws Exception {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        assertQuery("t")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+        try (TableReader reader = engine.getReader("t")) {
+            Assert.assertTrue("the partition must stay parquet", reader.getTxFile().isPartitionParquet(0));
+        }
     }
 
     private void create(FilesFacade ff, int partitionBy, int N) {

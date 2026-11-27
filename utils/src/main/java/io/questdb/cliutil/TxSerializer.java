@@ -36,6 +36,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
@@ -119,6 +120,14 @@ public class TxSerializer {
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
+            rwTxMem.putInt(
+                    isA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32,
+                    activePartitionLastCommitMicrosToSeconds(tx.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT)
+            );
+            rwTxMem.putInt(
+                    isA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32,
+                    getActivePartitionLastCommitValidMarker(tx.TX_OFFSET_TXN)
+            );
 
             rwTxMem.putLong(baseOffset + TX_OFFSET_TXN_64, tx.TX_OFFSET_TXN);
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
@@ -180,6 +189,14 @@ public class TxSerializer {
                 final int partitionSegmentSize = isA ? roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
 
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN_64);
+                final boolean activePartitionLastCommitValid = roTxMem.getInt(
+                        isA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32
+                ) == getActivePartitionLastCommitValidMarker(tx.TX_OFFSET_TXN);
+                tx.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT = activePartitionLastCommitValid
+                        ? activePartitionLastCommitSecondsToMicros(roTxMem.getInt(
+                        isA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32
+                ))
+                        : Numbers.LONG_NULL;
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64);
                 tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64);
                 tx.TX_OFFSET_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64);

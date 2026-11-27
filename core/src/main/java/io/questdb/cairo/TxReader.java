@@ -127,6 +127,7 @@ public class TxReader implements Closeable, Mutable {
     protected final LongList attachedPartitions = new LongList();
     protected final FilesFacade ff;
     private final IntList symbolCountSnapshot = new IntList();
+    protected long activePartitionLastCommitMicros = Numbers.LONG_NULL;
     protected int attachedPartitionsSize = 0;
     protected long columnVersion;
     protected long dataVersion;
@@ -196,6 +197,14 @@ public class TxReader implements Closeable, Mutable {
         mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
         mem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
         mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
+        mem.putInt(
+                isA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32,
+                activePartitionLastCommitMicrosToSeconds(activePartitionLastCommitMicros)
+        );
+        mem.putInt(
+                isA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32,
+                getActivePartitionLastCommitValidMarker(txn)
+        );
 
         mem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
         mem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
@@ -270,6 +279,15 @@ public class TxReader implements Closeable, Mutable {
             return -((-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION) - 1;
         }
         return index / LONGS_PER_TX_ATTACHED_PARTITION;
+    }
+
+    /**
+     * Returns the wall-clock time of the last successful commit that affected the storage-policy live
+     * range (see {@link TableUtils#getStoragePolicyLiveFloor}), rounded up to a whole second, or
+     * {@link Numbers#LONG_NULL} for a legacy or otherwise uninitialized transaction record.
+     */
+    public long getActivePartitionLastCommitMicros() {
+        return activePartitionLastCommitMicros;
     }
 
     public int getBaseOffset() {
@@ -701,6 +719,36 @@ public class TxReader implements Closeable, Mutable {
         return lagOrdered;
     }
 
+    /**
+     * Whether the newest partition is frozen: read-only, so the writer appends nothing more to it, and with no WAL LAG
+     * parked in its files past the committed rows. Its files then hold exactly the rows {@code _txn} records, as an
+     * older partition's do, so a copy built off a reader snapshot misses nothing.
+     */
+    public boolean isLastPartitionFrozen() {
+        final int partitionCount = getPartitionCount();
+        return partitionCount > 0
+                && isPartitionReadOnly(partitionCount - 1)
+                && lagRowCount == 0
+                && lagTxnCount == 0;
+    }
+
+    /**
+     * Whether every folder from {@code lo} to the newest one is read-only, with the newest one frozen as
+     * {@link #isLastPartitionFrozen()} requires. A seal folds the newest logical partition into one folder, but a copy
+     * of the whole run misses nothing only when none of its folders takes rows.
+     */
+    public boolean isLastPartitionRunFrozen(int lo) {
+        if (lo < 0 || !isLastPartitionFrozen()) {
+            return false;
+        }
+        for (int i = lo, n = getPartitionCount() - 1; i < n; i++) {
+            if (!isPartitionReadOnly(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean isPartitionDeltaActive(int i) {
         return isPartitionDeltaActiveByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -911,6 +959,7 @@ public class TxReader implements Closeable, Mutable {
         this.lagRowCount = srcReader.lagRowCount;
         this.lagMinTimestamp = srcReader.lagMinTimestamp;
         this.lagMaxTimestamp = srcReader.lagMaxTimestamp;
+        this.activePartitionLastCommitMicros = srcReader.activePartitionLastCommitMicros;
         this.lagOrdered = srcReader.lagOrdered;
         this.lagTxnCount = srcReader.lagTxnCount;
         this.symbolColumnCount = srcReader.symbolColumnCount;
@@ -1073,6 +1122,7 @@ public class TxReader implements Closeable, Mutable {
         lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
         lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
         lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+        activePartitionLastCommitMicros = unsafeReadActivePartitionLastCommitMicros(txn);
         int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
         lagTxnCount = Math.abs(lagTxnCountRaw);
         lagOrdered = lagTxnCountRaw > -1;
@@ -1238,6 +1288,24 @@ public class TxReader implements Closeable, Mutable {
 
         clearData();
         return -1;
+    }
+
+    /**
+     * The active-partition stamp of the record whose txn (equal to the version that selects it, so also its A/B
+     * slot parity) is {@code areaTxn}, or {@link Numbers#LONG_NULL} when the slot's validity marker names another
+     * record: a binary that predates the stamp published this one without writing the slot. Touches no load state.
+     */
+    private long unsafeReadActivePartitionLastCommitMicros(long areaTxn) {
+        final boolean isA = (areaTxn & 1) == 0;
+        final int marker = roTxMemBase.getInt(isA
+                ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32
+                : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32);
+        if (marker != getActivePartitionLastCommitValidMarker(areaTxn)) {
+            return Numbers.LONG_NULL;
+        }
+        return activePartitionLastCommitSecondsToMicros(roTxMemBase.getInt(isA
+                ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32
+                : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32));
     }
 
     public long unsafeReadColumnVersion() {
@@ -1512,6 +1580,7 @@ public class TxReader implements Closeable, Mutable {
 
     void clearData() {
         // Clearing a raced snapshot does not reopen the mapping or require another integrity scan.
+        activePartitionLastCommitMicros = Numbers.LONG_NULL;
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;

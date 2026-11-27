@@ -291,6 +291,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // treats a record whose checksum stamp names it but whose geometry stamp does not as torn, falls
             // back to the previous area and can never acquire this txn, so restamp it for the new txn.
             storeGeometryVersion(writeBaseOffset);
+            // Same for the active-partition stamp: its marker still names the txn the area last carried.
+            storeActivePartitionLastCommit(writeBaseOffset);
 
             // The fast path keeps the previous record's structure, so the committed size is readRecordSize
             // and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount), the range the
@@ -643,6 +645,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             ObjList<? extends SymbolCountProvider> symbolCountProviders
     ) {
         recordStructureVersion++;
+        this.activePartitionLastCommitMicros = Numbers.LONG_NULL;
         this.fixedRowCount = fixedRowCount;
         this.maxTimestamp = maxTimestamp;
         this.transientRowCount = transientRowCount;
@@ -725,6 +728,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                     .put("_txn did not load the previous transaction after rolling back to it [txn=")
                     .put(previousVersion).put(']');
         }
+    }
+
+    /**
+     * Raises the active-partition stamp to {@code commitMicros}, at the whole-second resolution the base header
+     * persists it in (see {@link TableUtils#activePartitionLastCommitMicrosToSeconds(long)}), so this writer holds
+     * exactly the value a reader loads from the commit.
+     */
+    public void setActivePartitionLastCommitMicros(long commitMicros) {
+        activePartitionLastCommitMicros = Math.max(
+                activePartitionLastCommitMicros,
+                activePartitionLastCommitSecondsToMicros(activePartitionLastCommitMicrosToSeconds(commitMicros))
+        );
     }
 
     public void setColumnVersion(long newVersion) {
@@ -1037,6 +1052,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        activePartitionLastCommitMicros = Numbers.LONG_NULL;
         // The slot's cached partition-table hash stops describing its area as soon as the body write starts.
         partitionTableHashOfNextSlot().invalidate();
         resetTxn(
@@ -1252,6 +1268,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
         storeGeometryVersion(areaOffset);
+        storeActivePartitionLastCommit(areaOffset);
 
         // The size comes from calculateTxRecordSize and the partition-table start from TX_RECORD_HEADER_SIZE +
         // bytesSymbols (== getPartitionTableSizeOffset(symbolCount)), as the reader derives them. The checksum
@@ -1455,6 +1472,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // Set the new squash counter value
         partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
+    // Stores the active-partition stamp and its validity marker in the base-header slot of the area about to go
+    // live, before the storeFence() and version bump, like storeGeometryVersion(). The marker names the record at
+    // areaOffset, read from the record itself; a reader takes a stamp whose marker names another txn as absent,
+    // so every publication of an area must restamp it, the fast path included.
+    private void storeActivePartitionLastCommit(int areaOffset) {
+        final boolean currentIsA = (baseVersion & 1) == 0;
+        txMemBase.putInt(
+                currentIsA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32,
+                activePartitionLastCommitMicrosToSeconds(activePartitionLastCommitMicros)
+        );
+        txMemBase.putInt(
+                currentIsA ? TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32 : TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32,
+                getActivePartitionLastCommitValidMarker(txMemBase.getLong(areaOffset + TX_OFFSET_TXN_64))
+        );
     }
 
     // Stores the body checksum and its stamp. Compute the checksum after the covered fields are written and

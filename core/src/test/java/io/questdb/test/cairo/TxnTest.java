@@ -43,6 +43,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -80,6 +81,54 @@ public class TxnTest extends AbstractCairoTest {
     private static final int BC_SYMBOL_BYTES = 2 * Long.BYTES;
     private static final long BC_PARTITION_TABLE_START = TableUtils.getPartitionTableSizeOffset(BC_SYMBOL_BYTES / Long.BYTES);
     private static final long BC_RECORD_SIZE = TableUtils.calculateTxRecordSize(BC_SYMBOL_BYTES, BC_PARTITION_BYTES);
+
+    @Test
+    public void testActivePartitionActivityRestampedByFastPathCommit() throws Exception {
+        // The stamp lives in the base-header slot of the record it belongs to. An append-only commit takes the
+        // fast path, which republishes the record area of the commit before last: that area's slot still holds
+        // the older commit's stamp, with a marker naming the older txn, so the fast path has to restamp it too.
+        assertMemoryLeak(() -> {
+            final String tableName = "fast_path_activity";
+            final TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final int timestampType = TableUtils.getTimestampType(model);
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME)) {
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), timestampType, PartitionBy.DAY)) {
+                    txWriter.updatePartitionSizeByTimestamp(0, 1);
+                    txWriter.updateMaxTimestamp(1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.setActivePartitionLastCommitMicros(Micros.SECOND_MICROS);
+                    txWriter.commit(new ObjList<>());
+                    assertActivePartitionLastCommitMicros(ff, path.$(), timestampType, 1, Micros.SECOND_MICROS);
+
+                    // Append-only commits keep the record structure, so from the third commit on, each one takes
+                    // the fast path into the area, and the base-header slot, of the commit before last.
+                    for (int txn = 2; txn <= 6; txn++) {
+                        txWriter.append();
+                        txWriter.updateMaxTimestamp(txn);
+                        // Rounds up to txn whole seconds, the resolution the base header persists.
+                        txWriter.setActivePartitionLastCommitMicros((txn - 1) * Micros.SECOND_MICROS + 1);
+                        txWriter.commit(new ObjList<>());
+                        Assert.assertEquals(txn * Micros.SECOND_MICROS, txWriter.getActivePartitionLastCommitMicros());
+                        assertActivePartitionLastCommitMicros(ff, path.$(), timestampType, txn, txn * Micros.SECOND_MICROS);
+                    }
+                }
+
+                // A reopened writer carries the persisted stamp into its next commit.
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), timestampType, PartitionBy.DAY)) {
+                    Assert.assertEquals(6 * Micros.SECOND_MICROS, txWriter.getActivePartitionLastCommitMicros());
+                    txWriter.append();
+                    txWriter.updateMaxTimestamp(7);
+                    txWriter.commit(new ObjList<>());
+                }
+                assertActivePartitionLastCommitMicros(ff, path.$(), timestampType, 7, 6 * Micros.SECOND_MICROS);
+            }
+        });
+    }
 
     @Test
     public void testBodyChecksumChangesWhenCoveredByteChanges() {
@@ -816,6 +865,44 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegacyPaddingIsNotReadAsActivePartitionActivity() throws Exception {
+        // A binary that predates the activity stamp never writes the base-header bytes the stamp lives in, so
+        // they can hold anything. Only a marker that names the record makes the value count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE legacy_activity (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final FilesFacade ff = configuration.getFilesFacade();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final TableToken tableToken = engine.verifyTableName("legacy_activity");
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME)) {
+                final long txn;
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                    Assert.assertTrue(txReader.unsafeLoadAll());
+                    txn = txReader.getTxn();
+                }
+                final boolean isA = (txn & 1) == 0;
+                final long secondsOffset = isA
+                        ? TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32
+                        : TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32;
+                final long validOffset = isA
+                        ? TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32
+                        : TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32;
+
+                pokeInt(ff, path.$(), secondsOffset, 123_456);
+                pokeInt(ff, path.$(), validOffset, 0x12345678);
+                assertActivePartitionLastCommitMicros(ff, path.$(), ColumnType.TIMESTAMP, txn, Numbers.LONG_NULL);
+
+                // Positive control: with a marker that names the record, the reader takes the value from the
+                // very slot this test wrote.
+                pokeInt(ff, path.$(), validOffset, TableUtils.getActivePartitionLastCommitValidMarker(txn));
+                assertActivePartitionLastCommitMicros(ff, path.$(), ColumnType.TIMESTAMP, txn, 123_456 * Micros.SECOND_MICROS);
+            }
+        });
+    }
+
+    @Test
     public void testLoadAllFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -836,6 +923,7 @@ public class TxnTest extends AbstractCairoTest {
                         }
                         txWriter.updateMaxTimestamp(testPartitionCount * Micros.DAY_MICROS + 1);
                         txWriter.finishPartitionSizeUpdate();
+                        txWriter.setActivePartitionLastCommitMicros(1_234);
                         txWriter.commit(new ObjList<>());
                     }
 
@@ -848,6 +936,8 @@ public class TxnTest extends AbstractCairoTest {
                         txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
 
                         txReader.unsafeLoadAll();
+                        // The writer rounded the stamp up to the whole second the base header persists.
+                        Assert.assertEquals(Micros.SECOND_MICROS, txReader.getActivePartitionLastCommitMicros());
                         final String expected = """
                                 {txn: 1, attachedPartitions: [
                                 {ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},
@@ -856,6 +946,7 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals(expected, txReader.toString());
 
                         txCopyReader.loadAllFrom(txReader);
+                        Assert.assertEquals(Micros.SECOND_MICROS, txCopyReader.getActivePartitionLastCommitMicros());
                         Assert.assertEquals(expected, txCopyReader.toString());
 
                         Assert.assertTrue(txReader.getRecordSize() > 0);
@@ -869,6 +960,12 @@ public class TxnTest extends AbstractCairoTest {
 
                         txReader.dumpTo(dumpMem);
                         txCopyReader.dumpTo(dumpCopyMem);
+                        // The dumped record has txn 1, so its stamp goes to base-header slot B.
+                        Assert.assertEquals(1, dumpMem.getInt(TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32));
+                        Assert.assertEquals(
+                                TableUtils.getActivePartitionLastCommitValidMarker(1),
+                                dumpMem.getInt(TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32)
+                        );
                         Assert.assertTrue(Vect.memeq(dumpMem.addressOf(0), dumpCopyMem.addressOf(0), txReader.getRecordSize()));
                     }
                 }
@@ -999,6 +1096,97 @@ public class TxnTest extends AbstractCairoTest {
                     }
                 }
             });
+        });
+    }
+
+    @Test
+    public void testOlderBinaryCommitInvalidatesActivePartitionActivity() throws Exception {
+        // A binary that predates the activity stamp commits without touching the stamp bytes, so its
+        // fast-path commit leaves the older stamp of the reused A/B area in that area's base-header slot.
+        // The stamp must read as absent until a stamp-aware writer commits again.
+        assertMemoryLeak(() -> {
+            final String tableName = "older_binary_activity";
+            final TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final int timestampType = TableUtils.getTimestampType(model);
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME)) {
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), timestampType, PartitionBy.DAY)) {
+                    txWriter.updatePartitionSizeByTimestamp(0, 1);
+                    txWriter.updateMaxTimestamp(1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.setActivePartitionLastCommitMicros(1_234 * Micros.SECOND_MICROS);
+                    txWriter.commit(new ObjList<>());
+
+                    txWriter.updatePartitionSizeByTimestamp(0, 2);
+                    txWriter.updateMaxTimestamp(2);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.setActivePartitionLastCommitMicros(5_678 * Micros.SECOND_MICROS);
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (MemoryCMARW txnMem = Vm.getCMARWInstance()) {
+                    txnMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                    // Replay the pre-stamp TxWriter.commit() fast path: it rewrites the older A/B area, whose
+                    // base-header slot still holds the stamp of the earlier commit, and never touches the slot.
+                    final long version = txnMem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                    final boolean currentIsA = (version & 1L) == 0L;
+                    final long currentOffset = txnMem.getInt(currentIsA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                    final long olderOffset = txnMem.getInt(currentIsA ? TableUtils.TX_BASE_OFFSET_B_32 : TableUtils.TX_BASE_OFFSET_A_32);
+                    Assert.assertEquals(
+                            1_234,
+                            txnMem.getInt(currentIsA
+                                    ? TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_B_32
+                                    : TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_SECONDS_A_32)
+                    );
+                    Assert.assertEquals(
+                            TableUtils.getActivePartitionLastCommitValidMarker(version - 1),
+                            txnMem.getInt(currentIsA
+                                    ? TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_B_32
+                                    : TableUtils.TX_BASE_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_A_32)
+                    );
+
+                    final long txn = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_TXN_64) + 1;
+                    final long seqTxn = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_SEQ_TXN_64);
+                    final int lagRowCount = txnMem.getInt(currentOffset + TableUtils.TX_OFFSET_LAG_ROW_COUNT_32);
+                    final long lagMinTimestamp = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+                    final long lagMaxTimestamp = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+                    final int lagTxnCountRaw = txnMem.getInt(currentOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_TXN_64, txn);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_SEQ_TXN_64, seqTxn);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64, 3);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT_64, 3);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+                    txnMem.putInt(olderOffset + TableUtils.TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+                    txnMem.putInt(olderOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32, lagTxnCountRaw);
+                    txnMem.putInt(
+                            olderOffset + TableUtils.TX_OFFSET_CHECKSUM_32,
+                            TableUtils.calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCountRaw)
+                    );
+                    txnMem.putLong(TableUtils.TX_BASE_OFFSET_VERSION_64, version + 1);
+                    txnMem.close(false);
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), timestampType, PartitionBy.DAY);
+                    Assert.assertTrue(txReader.unsafeLoadAll());
+                    Assert.assertEquals(3, txReader.getTxn());
+                    Assert.assertEquals(3, txReader.getTransientRowCount());
+                    Assert.assertEquals(Numbers.LONG_NULL, txReader.getActivePartitionLastCommitMicros());
+                }
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), timestampType, PartitionBy.DAY)) {
+                    Assert.assertEquals(Numbers.LONG_NULL, txWriter.getActivePartitionLastCommitMicros());
+                    txWriter.setActivePartitionLastCommitMicros(9_012 * Micros.SECOND_MICROS);
+                    txWriter.commit(new ObjList<>());
+                }
+
+                assertActivePartitionLastCommitMicros(ff, path.$(), timestampType, 4, 9_012 * Micros.SECOND_MICROS);
+            }
         });
     }
 
@@ -1814,6 +2002,15 @@ public class TxnTest extends AbstractCairoTest {
             Assert.assertTrue(reloadCount.get() > 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
+    }
+
+    private static void assertActivePartitionLastCommitMicros(FilesFacade ff, LPSZ path, int timestampType, long expectedTxn, long expectedMicros) {
+        try (TxReader txReader = new TxReader(ff)) {
+            txReader.ofRO(path, timestampType, PartitionBy.DAY);
+            Assert.assertTrue(txReader.unsafeLoadAll());
+            Assert.assertEquals(expectedTxn, txReader.getTxn());
+            Assert.assertEquals(expectedMicros, txReader.getActivePartitionLastCommitMicros());
+        }
     }
 
     private void assertResetLagLeavesEmptyLag(String tableName, boolean unsafe) {
