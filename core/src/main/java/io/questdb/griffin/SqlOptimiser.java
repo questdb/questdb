@@ -193,6 +193,8 @@ public class SqlOptimiser implements Mutable {
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
 
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
+    // The aggregates whose state keeps its size whatever rows they read, see hasFixedSizeState().
+    private static final LowerCaseAsciiCharSequenceHashSet fixedSizeStateGroupByFunctions = new LowerCaseAsciiCharSequenceHashSet();
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
@@ -320,6 +322,8 @@ public class SqlOptimiser implements Mutable {
     private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
     // the models hasSampleByFill() has visited
     private final ObjHashSet<IQueryModel> tempSampleByFillModels = new ObjHashSet<>();
+    // the top-down columns of the first branch of a set operation by their position, see addSameModelOutputPositions()
+    private final ObjList<QueryColumn> tempTopDownColumns = new ObjList<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -727,6 +731,45 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
+    }
+
+    // Adds to positions the position in the SELECT of the model of each other output of it the expression of the column
+    // at columnPosition reads, a name of an output of the model that names no column of its nested model, as
+    // collectSameModelProjectionColumns() tells them apart, and returns whether it reads any. See
+    // addSameModelOutputPositions().
+    private static boolean collectSameModelOutputPositions(
+            @Nullable ExpressionNode node,
+            IQueryModel model,
+            int columnPosition,
+            IntList positions
+    ) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final IQueryModel nested = model.getNestedModel();
+            if (nested != null && nested.getAliasToColumnMap().contains(node.token)) {
+                return false;
+            }
+            final int position = model.getColumnAliasIndex(node.token);
+            if (position < 0 || position == columnPosition) {
+                return false;
+            }
+            if (!positions.contains(position)) {
+                positions.add(position);
+            }
+            return true;
+        }
+        boolean isRead = false;
+        if (node.paramCount < 3) {
+            isRead = collectSameModelOutputPositions(node.lhs, model, columnPosition, positions);
+            isRead |= collectSameModelOutputPositions(node.rhs, model, columnPosition, positions);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                isRead |= collectSameModelOutputPositions(node.args.getQuick(i), model, columnPosition, positions);
+            }
+        }
+        return isRead;
     }
 
     private static boolean columnNotExistsInJoinModels(IQueryModel baseModel, CharSequence columnName) {
@@ -1579,7 +1622,9 @@ public class SqlOptimiser implements Mutable {
 
     // Gives a model that projects, selects no column as is and has no top-down columns the one column its rows need,
     // see addRowColumnIfNoTopDownColumns(): the column it computes from the fewest bytes of each row of its source, the
-    // first of them when several read as few. Every read computes the keys of a model that groups, see
+    // first of them when several read as few. An aggregate whose state grows with the values it reads, such as
+    // count_distinct(), costs more for each row than reading a wider column does, so it comes after every column that
+    // keeps a state of a fixed size, see hasFixedSizeState(). Every read computes the keys of a model that groups, see
     // retainGroupByKeysAsTopDownColumns(), so the source reads what the keys read whichever column the model keeps, and
     // a key adds nothing to it. A column, or the keys, computed from no column of a source that projects leaves that
     // source every column, more than any column that names some of them reads, and of a table, which gives its rows
@@ -1598,6 +1643,7 @@ public class SqlOptimiser implements Mutable {
         }
         QueryColumn rowColumn = null;
         long rowColumnBytes = Long.MAX_VALUE;
+        boolean isRowColumnFixedSize = false;
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
             long bytes = isGroupingKey(model, column)
@@ -1606,9 +1652,13 @@ public class SqlOptimiser implements Mutable {
             if (bytes < 0) {
                 bytes = isRowFree ? 0 : everyColumnBytes;
             }
-            if (bytes < rowColumnBytes) {
+            final boolean isFixedSize = hasFixedSizeState(column);
+            if (rowColumn == null
+                    || (isFixedSize && !isRowColumnFixedSize)
+                    || (isFixedSize == isRowColumnFixedSize && bytes < rowColumnBytes)) {
                 rowColumn = column;
                 rowColumnBytes = bytes;
+                isRowColumnFixedSize = isFixedSize;
             }
         }
         if (rowColumn != null) {
@@ -2249,6 +2299,60 @@ public class SqlOptimiser implements Mutable {
         } else {
             addComputedRowColumn(model, source);
         }
+    }
+
+    // Adds to the positions every branch of the set operation whose first branch is model keeps, see
+    // propagateTopDownColumns0(), the positions of the outputs that the columns at those positions read of their own
+    // SELECT in any branch, such as that of a1 for a2 in SELECT i + 1 a1, a1 + 1 a2, and gives the first branch its
+    // columns at the positions this adds. Each branch keeps the columns at the same positions and no other, so a
+    // branch computes a column that reads another output of its SELECT only when every branch keeps that output too.
+    // A column reads only outputs its SELECT lists before it, and a branch computes the columns it keeps in the order
+    // it keeps them. The first branch keeps an output its column reads ahead of the column, see
+    // collectSameModelProjectionColumns(), but the other branches keep their columns in the order of the first one, so
+    // when one of them reads another output of its SELECT, every branch keeps the columns in the order of its SELECT.
+    private void addSameModelOutputPositions(IQueryModel model, IntList positions) {
+        final int keptCount = positions.size();
+        boolean isSelectOrderRequired = false;
+        // the list grows as the loop adds the outputs the columns at its positions read
+        for (int i = 0; i < positions.size(); i++) {
+            final int position = positions.getQuick(i);
+            for (IQueryModel branch = model; branch != null; branch = branch.getUnionModel()) {
+                // only a SELECT that computes its columns can read one of them in another, see addTopDownColumn()
+                if (branch.getSelectModelType() != IQueryModel.SELECT_MODEL_VIRTUAL) {
+                    continue;
+                }
+                final ObjList<QueryColumn> columns = branch.getBottomUpColumns();
+                if (position < columns.size()
+                        && collectSameModelOutputPositions(columns.getQuick(position).getAst(), branch, position, positions)
+                        && branch != model) {
+                    isSelectOrderRequired = true;
+                }
+            }
+        }
+        if (positions.size() == keptCount && !isSelectOrderRequired) {
+            return;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = keptCount, n = positions.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(positions.getQuick(i));
+            model.addTopDownColumn(column, column.getAlias());
+            // every read needs the output, as it does the keys of a branch that groups
+            recordKeptWholeOrigins(model, column.getAlias(), null);
+        }
+        final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+        tempTopDownColumns.clear();
+        for (int i = 0, n = positions.size(); i < n; i++) {
+            tempTopDownColumns.extendAndSet(positions.getQuick(i), topDownColumns.getQuick(i));
+        }
+        positions.clear();
+        for (int i = 0, n = tempTopDownColumns.size(); i < n; i++) {
+            final QueryColumn column = tempTopDownColumns.getQuick(i);
+            if (column != null) {
+                topDownColumns.setQuick(positions.size(), column);
+                positions.add(i);
+            }
+        }
+        tempTopDownColumns.clear();
     }
 
     // Adds to the outputs of the view each column of the projection of a VIRTUAL model serves, see
@@ -6763,6 +6867,16 @@ public class SqlOptimiser implements Mutable {
         return caseNode;
     }
 
+    // Whether the column does work of a fixed size for each row it reads: any column but an aggregate, and an aggregate
+    // whose state keeps its size, unlike count_distinct(), which hashes every value into a set that grows with the
+    // values it counts, see addComputedRowColumn().
+    private boolean hasFixedSizeState(QueryColumn column) {
+        final ExpressionNode ast = column.getAst();
+        return ast.type != FUNCTION
+                || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)
+                || fixedSizeStateGroupByFunctions.contains(ast.token);
+    }
+
     private boolean hasLateralCountCompensatedRef(ExpressionNode node, IQueryModel translatingModel, IQueryModel baseModel) {
         if (node == null) {
             return false;
@@ -9846,6 +9960,10 @@ public class SqlOptimiser implements Mutable {
             ObjList<QueryColumn> nestedTopDownColumns = nested.getTopDownColumns();
             for (int i = 0, n = nestedTopDownColumns.size(); i < n; i++) {
                 unionColumnIndexes.add(nested.getColumnAliasIndex(nestedTopDownColumns.getQuick(i).getAlias()));
+            }
+            if (nested.getUnionModel() != null) {
+                // a column of a branch can read another output of its SELECT, which every branch then keeps too
+                addSameModelOutputPositions(nested, unionColumnIndexes);
             }
 
             IQueryModel unionModel = nested.getUnionModel();
@@ -18454,6 +18572,20 @@ public class SqlOptimiser implements Mutable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+    }
+
+    static {
+        fixedSizeStateGroupByFunctions.add("avg");
+        fixedSizeStateGroupByFunctions.add("count");
+        fixedSizeStateGroupByFunctions.add("first");
+        fixedSizeStateGroupByFunctions.add("first_not_null");
+        fixedSizeStateGroupByFunctions.add("ksum");
+        fixedSizeStateGroupByFunctions.add("last");
+        fixedSizeStateGroupByFunctions.add("last_not_null");
+        fixedSizeStateGroupByFunctions.add("max");
+        fixedSizeStateGroupByFunctions.add("min");
+        fixedSizeStateGroupByFunctions.add("nsum");
+        fixedSizeStateGroupByFunctions.add("sum");
     }
 
     static {

@@ -646,6 +646,64 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnOutputThatReadsNoColumnOfSetOperation() throws Exception {
+        // A branch of a set operation keeps the columns at the positions the first branch keeps. A filter on an output
+        // that reads no column of the set operation gives the first branch the narrowest column, i, whose counterpart
+        // a2 reads a1 of its own SELECT, so every branch keeps the column at the position of a1 too, in the order of
+        // the SELECT, which computes a1 ahead of a2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (l LONG, i INT)");
+            execute("INSERT INTO w VALUES (1, 2)");
+            final String union = "SELECT l, i FROM w UNION ALL SELECT i + 1 AS a1, a1 + 1 AS a2 FROM w";
+            execute("CREATE VIEW labelled AS (SELECT 'all' src, l FROM (" + union + "))");
+            drainWalAndViewQueues();
+
+            final String query = "SELECT count() FROM (SELECT 'c' AS label FROM (" + union + ")) WHERE label = 'c'";
+            assertQuery(
+                    "select-group-by count() count from (select-virtual ['c' label] 'c' label from (select-choose [l, i] l, i from (select [l, i] from w) union all select-virtual [i + 1 a1, a1 + 1 a2] i + 1 a1, a1 + 1 a2 from (select [i] from w)) where label = 'c')",
+                    query
+            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            // the set operation under a SELECT of its outputs
+            assertQuery("SELECT count() FROM (SELECT 'c' AS label FROM (SELECT * FROM (" + union + "))) WHERE label = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            assertQuery("SELECT count() FROM (SELECT 'c' AS label FROM (SELECT l, i FROM (" + union + "))) WHERE label = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            // reads of a view that labels the rows of the set operation
+            assertQuery("SELECT count() FROM labelled WHERE src = 'all'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            assertQuery("SELECT src FROM labelled WHERE src = 'all'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("src\nall\nall\n");
+            // a read that names the outputs, in either order
+            assertQuery("SELECT i FROM (" + union + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("i\n2\n4\n");
+            assertQuery("SELECT i, l FROM (" + union + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("i\tl\n2\t1\n4\t3\n");
+        });
+    }
+
+    @Test
     public void testFilterOnOutputThatReadsNoColumnScansJoinColumnByItsTable() throws Exception {
         // The column a sub-query over a join keeps for its rows has the type the table of the join that holds it gives
         // it, and only the first table of the join holds the designated timestamp. A filter on a constant output named
@@ -785,6 +843,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertOneColumnScan(
                     "SELECT count() FROM (SELECT 'c' s FROM (SELECT max(v) m, sum(l) s FROM w)) WHERE s = 'c'",
                     "select-group-by count() count from (select-virtual ['c' s] 'c' s from (select-group-by [sum(l) s] max(v) m, sum(l) s from (select [l] from w timestamp (ts))) where s = 'c')",
+                    1
+            );
+            // the sum() of the LONG, rather than the count_distinct() of the narrower INT, which hashes every value
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' s FROM (SELECT count_distinct(i) cd, sum(l) s FROM w)) WHERE s = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' s] 'c' s from (select-group-by [sum(l) s] count_distinct(i) cd, sum(l) s from (select [l] from w timestamp (ts))) where s = 'c')",
                     1
             );
             // over a sub-query, which count() would leave every column, the aggregate that names a column
