@@ -76,7 +76,7 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return (SymbolTable) recordFunctions.getQuick(columnIndex);
+        return primaryCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -93,7 +93,7 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
+        return primaryCursor.newSymbolTable(columnIndex);
     }
 
     @Override
