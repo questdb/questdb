@@ -1,8 +1,24 @@
+# A PR build tests one platform and one JVM: the coverage legs (linux-x86-64, OpenJDK) run
+# every test, the lint stage runs the linters, and TriggerEnterpriseCompile checks that
+# Enterprise still compiles. The other Linux platforms (arm64, ZFS, GraalVM) run on the
+# schedule below, on master; macOS, Windows and the full Enterprise run are on
+# test-hosted-pipeline.yml's schedule. Both alert the builds Slack channel when red
+# (templates/notify-slack-stage.yml).
+#
 # Also run in the GitHub merge queue: CI trigger on the ephemeral merge-queue branches.
 trigger:
   branches:
     include:
       - gh-readonly-queue/*
+
+# always: false starts a run only when master moved since the last green scheduled run.
+schedules:
+  - cron: "0 */2 * * *"
+    displayName: "Two-hourly master run"
+    branches:
+      include:
+        - master
+    always: false
 
 pr:
   branches:
@@ -70,7 +86,8 @@ stages:
   # it instead of compiling the crate in every leg (templates/rust-build-job.yml). dependsOn []
   # starts it next to CheckChanges. Fork PRs run no code on the self-hosted pools, so this stage
   # skips them like the test stages do. The coverage legs compile the crate themselves: their
-  # library is instrumented for coverage, so it cannot be this release build.
+  # library is instrumented for coverage, so it cannot be this release build. A PR build runs
+  # none of those legs and still runs this stage: it is the PR's linux-aarch64 compile check.
   - stage: BuildRustLibrary
     displayName: "Build Rust library"
     dependsOn: []
@@ -98,7 +115,8 @@ stages:
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
     # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
+    # Not on PR builds: see the top of this file.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     dependsOn:
       - CheckChanges
       - BuildRustLibrary
@@ -110,7 +128,8 @@ stages:
   - stage: SelfHostedRunCairoA
     displayName: "SelfHosted Cairo tests (A)"
     # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
+    # Not on PR builds: see the top of this file.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     dependsOn:
       - CheckChanges
       - BuildRustLibrary
@@ -122,7 +141,8 @@ stages:
   - stage: SelfHostedRunCairoB
     displayName: "SelfHosted Cairo tests (B)"
     # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
+    # Not on PR builds: see the top of this file.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     dependsOn:
       - CheckChanges
       - BuildRustLibrary
@@ -134,7 +154,8 @@ stages:
   - stage: SelfHostedRunOtherA
     displayName: "SelfHosted Other tests (A)"
     # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
+    # Not on PR builds: see the top of this file.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     dependsOn:
       - CheckChanges
       - BuildRustLibrary
@@ -146,7 +167,8 @@ stages:
   - stage: SelfHostedRunOtherB
     displayName: "SelfHosted Other tests (B)"
     # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
+    # Not on PR builds: see the top of this file.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     dependsOn:
       - CheckChanges
       - BuildRustLibrary
@@ -157,6 +179,9 @@ stages:
 
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
+    # Not on the schedule: the GraalVM legs above already test linux-x86-64 there, and
+    # nothing reads a coverage report of master.
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'Schedule'))
     dependsOn:
       - CheckChanges
     jobs:
@@ -169,8 +194,21 @@ stages:
     jobs:
       - template: templates/aux-job.yml
 
+  # Checks that Enterprise compiles against this PR; the run reports enterprise-ci-compile.
+  # The full Enterprise run is on test-hosted-pipeline.yml.
+  - stage: TriggerEnterpriseCompile
+    displayName: "Trigger Enterprise compile"
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), ne(variables['System.PullRequest.IsFork'], 'true'))
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/trigger-enterprise-job.yml
+        parameters:
+          flavour: compile
+
   - stage: CoverageReports
     displayName: "Coverage Report"
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'Schedule'))
     dependsOn:
       - CheckChanges
       - SelfHostedRunTestsCoverageBranches
@@ -368,3 +406,16 @@ stages:
               BUILD_SOURCEBRANCH: $(Build.SourceBranch)
               PR_NUMBER_MACRO: $(System.PullRequest.PullRequestNumber)
               TARGET_BRANCH: $(System.PullRequest.targetBranchName)
+
+  - template: templates/notify-slack-stage.yml
+    parameters:
+      title: "Linux arm64, ZFS and GraalVM tests"
+      dependsOn:
+        - CheckChanges
+        - BuildRustLibrary
+        - SelfHostedRunGriffin
+        - SelfHostedRunCairoA
+        - SelfHostedRunCairoB
+        - SelfHostedRunOtherA
+        - SelfHostedRunOtherB
+        - JavaAndRustLint

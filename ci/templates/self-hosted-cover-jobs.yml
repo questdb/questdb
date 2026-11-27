@@ -6,6 +6,7 @@ jobs:
     strategy:
       matrix:
         linux-griffin-root:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -14,6 +15,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-griffin-sub:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -23,6 +25,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-fuzz1:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -31,6 +34,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-fuzz2:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -40,6 +44,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo-root:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -49,6 +54,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo-sub:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -58,6 +64,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-pgwire:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -65,6 +72,9 @@ jobs:
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
+        # The one leg that runs the whole reactor: its exclude-only pattern is where every
+        # client, compat and utils test lands. The other legs match none of those tests, so
+        # they build core and what it needs, and skip the other modules.
         linux-other:
           poolName: "hetzner-incus"
           os: Linux

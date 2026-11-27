@@ -360,12 +360,23 @@ steps:
     # nightly overrides it (165 / 315) for its long single-JVM passes.
     timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
     # succeeded() explicitly: see "Compile with Maven" above.
+    # A coverage leg takes this plain run when the change needs no coverage (no main Java
+    # and no Rust file changed, e.g. a test-only change): the coverage legs are the only
+    # test legs of a PR build, so they must run the tests either way.
     condition: |
       and(
         succeeded(),
-        eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['os'], 'Linux')
+        eq(variables['os'], 'Linux'),
+        or(
+          eq(variables['testset'], 'all'),
+          and(
+            startsWith(variables['testset'], 'coverage'),
+            ne(variables['System.PullRequest.IsFork'], 'true'),
+            ne(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+          )
+        )
       )
   - ${{ if ne(parameters.testCommitModeGroup, '') }}:
       - template: verify-test-commit-mode.yml
@@ -406,12 +417,19 @@ steps:
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
-      mavenPomFile: "core/pom.xml"
+      # The root pom, not core/pom.xml: the coverage legs are the only test legs of a PR
+      # build, so linux-other also runs the client, compat and utils tests; the other legs
+      # narrow the reactor to core with TEST_REACTOR_ARGS. Only core's coverage is read:
+      # compat and utils define no jacoco profile, and nothing collects the client's
+      # jacoco.exec.
+      mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
-      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -Dtest.include=$(includeTests)
+      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
         -P jacoco,qdbr-coverage,build-web-console
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)

@@ -1,9 +1,9 @@
 # macOS/Windows test pipeline.
-# On demand on a PR via `/azp run macwin`, and automatically in the GitHub merge
-# queue via the CI trigger on the ephemeral merge-queue branches. It also starts the
-# full Enterprise run for the PR (stage TriggerEnterpriseCI), the only Enterprise run
-# OSS starts; that run reports the required enterprise-ci check. For a PR with an open
-# same-named Enterprise PR, that run skips its tests; see templates/trigger-enterprise-job.yml.
+# Every two hours on master, on demand on a PR via `/azp run macwin`, and in the GitHub
+# merge queue via the CI trigger on the ephemeral merge-queue branches. It also starts
+# the full Enterprise run (stage TriggerEnterpriseCI), which reports the enterprise-ci
+# check. For a PR with an open same-named Enterprise PR, that run skips its tests; see
+# templates/trigger-enterprise-job.yml.
 #
 # The macOS legs run on the macOS-15-arm64 image: the plain macOS-14/15/26 Azure
 # images are Intel (x86-64), and x86-64 macOS is no longer a supported platform --
@@ -21,20 +21,25 @@ pr:
       - master
   drafts: false
 
-# Weekly run on master to seed the hosted .m2 caches. Azure pipeline caches are
-# branch-scoped: PR builds can only restore caches created on the default
-# branch, and this pipeline otherwise never runs on plain master (PR runs are
-# on-demand, merge-queue branches are one-shot, so their caches die with the
-# branch). Without a master-scoped cache every first macwin run of every PR
-# cold-downloads the whole dependency tree from Maven Central on ~16 hosted
-# agents at once, and Central answers the burst with HTTP 429 (build 266975).
+# Two-hourly run on master: PR builds no longer run these platforms (see
+# test-pipeline.yml), so this run is what tests macOS and Windows, and it alerts the
+# builds Slack channel when red (templates/notify-slack-stage.yml). It only queues the
+# Enterprise run; that run alerts the channel itself when it fails (ReportToOssPr in
+# questdb-enterprise ci/build-and-test.yaml).
+# always: false starts a run only when master moved since the last green scheduled run.
+#
+# The run also seeds the hosted .m2 caches. Azure pipeline caches are branch-scoped: PR
+# builds can only restore caches created on the default branch. Without a master-scoped
+# cache every first macwin run of every PR cold-downloads the whole dependency tree from
+# Maven Central on ~16 hosted agents at once, and Central answers the burst with HTTP 429
+# (build 266975).
 schedules:
-  - cron: "0 3 * * 1"
-    displayName: "Weekly master run to seed hosted .m2 caches"
+  - cron: "0 1-23/2 * * *"
+    displayName: "Two-hourly master run"
     branches:
       include:
         - master
-    always: true
+    always: false
 
 variables:
   # Supplies GIT_GITHUB_TOKEN, which the fetch steps feed to ci/git-auth-env.sh
@@ -124,7 +129,7 @@ stages:
   # end-to-end verification that the packaged distribution builds, starts,
   # and answers a query. It lives in this pipeline, which runs when a PR
   # author asks for it (/azp run macwin), in the merge queue, and on the
-  # weekly master schedule declared at the top of this file, so it runs once
+  # two-hourly master schedule declared at the top of this file, so it runs once
   # per PR rather than on every push. The self-hosted boxes carry the Rust
   # toolchain, a C compiler, and Docker; the stage is independent of the hosted
   # macOS/Windows test jobs above.
@@ -133,3 +138,12 @@ stages:
     dependsOn: []
     jobs:
       - template: templates/binary-smoke-test-jobs.yml
+
+  - template: templates/notify-slack-stage.yml
+    parameters:
+      title: "macOS and Windows tests"
+      dependsOn:
+        - CheckChanges
+        - TriggerEnterpriseCI
+        - HostedRunTestsBranches
+        - BinarySmokeTest
