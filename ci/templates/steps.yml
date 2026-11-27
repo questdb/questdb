@@ -65,13 +65,13 @@ steps:
       fi
       # The test commit mode. Defined here because this step runs in every job, and the test
       # tasks would otherwise pass the undefined macro to Maven as literal text.
-      #   - The coverage legs of a PR build run NOSYNC, the mode a table commits in unless it
+      #   - The coverage and plain-* legs of a PR build run NOSYNC, the mode a table commits in unless it
       #     is configured otherwise. ADAPTIVE is tested on master, where the platform legs
       #     alternate the two modes. Fuzz test classes ignore this setting and draw their own
       #     mode in every run.
       #   - Empty everywhere else, which leaves the suite default (ADAPTIVE) in place.
       # select-test-commit-mode.yml runs later and overrides this for a job in a group.
-      if [ "$(Build.Reason)" = "PullRequest" ] && [[ "$(testset)" == coverage* ]]; then
+      if [ "$(Build.Reason)" = "PullRequest" ] && [[ "$(testset)" == coverage* || "$(testset)" == plain* ]]; then
         echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]-Dquestdb.test.commit.mode=nosync"
       else
         echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
@@ -373,7 +373,8 @@ steps:
     # succeeded() explicitly: see "Compile with Maven" above.
     # A coverage leg takes this plain run when the change needs no coverage (no main Java
     # and no Rust file changed, e.g. a test-only change): the coverage legs are the only
-    # test legs of a PR build, so they must run the tests either way.
+    # test legs of a PR build, so they must run the tests either way. The plain-* legs of
+    # self-hosted-cover-jobs.yml (the fuzz tests) always take it.
     condition: |
       and(
         succeeded(),
@@ -386,6 +387,10 @@ steps:
             ne(variables['System.PullRequest.IsFork'], 'true'),
             ne(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+          ),
+          and(
+            startsWith(variables['testset'], 'plain'),
+            ne(variables['System.PullRequest.IsFork'], 'true')
           )
         )
       )

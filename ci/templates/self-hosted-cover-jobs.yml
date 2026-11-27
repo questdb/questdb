@@ -29,7 +29,10 @@ jobs:
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
-          testset: "coverage-fuzz1"
+          # plain-, not coverage-: the two fuzz legs run without coverage instrumentation.
+          # Fuzz tests run about 15 times slower under it, and they reach different lines on
+          # every run, which made the coverage report differ from build to build.
+          testset: "plain-fuzz1"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -38,7 +41,7 @@ jobs:
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
-          testset: "coverage-fuzz2"
+          testset: "plain-fuzz2"
           includeTests: "**/O3*Test**,**/**Fuzz**"
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
