@@ -948,7 +948,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             createTradesAndQuotes();
             final RecordCursorFactory masterFactory = select("TaqTrade");
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(select("TaqQuote"), 1, 1, null, null, null, masterFactory.getMetadata().getColumnCount(), null, null));
+            slaveStates.add(new HorizonJoinSlaveState(select("TaqQuote"), 1, 1, null, null, null, masterFactory.getMetadata().getColumnCount(), null, null, null));
             // The metadata and the bind variable memory of a stolen filter hold native memory.
             final JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 1);
             final MemoryCARW bindVarMemory = Vm.getCARWInstance(1_024, 1, MemoryTag.NATIVE_JIT);

@@ -348,6 +348,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
+        Assert.assertEquals(1_000, configuration.getCairoConfiguration().getSqlPageFrameRampStartRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getGroupByBatchSize());
@@ -2275,6 +2276,27 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPageFrameRampStartRowsAcceptsZero() throws Exception {
+        // 0 gives every page frame its regular size
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS.getPropertyPath(), "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getSqlPageFrameRampStartRows());
+    }
+
+    @Test
+    public void testPageFrameRampStartRowsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.page.frame.ramp.start.rows must not be negative");
+        }
+    }
+
+    @Test
     public void testPageFrameSmallMaxRowsRejectsOversize() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
@@ -4076,6 +4098,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000, configuration.getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
+        Assert.assertEquals(10, configuration.getSqlPageFrameRampStartRows());
         Assert.assertEquals(128, configuration.getPageFrameReduceShardCount());
         Assert.assertEquals(1024, configuration.getPageFrameReduceQueueCapacity());
         Assert.assertEquals(2048, configuration.getUnorderedPageFrameReduceQueueCapacity());

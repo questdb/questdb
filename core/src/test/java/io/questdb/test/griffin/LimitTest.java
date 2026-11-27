@@ -279,6 +279,33 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitAboveJoinFreesItsFunctionsOnClose() throws Exception {
+        // A LIMIT over a join stays above it, in LimitRecordCursorFactory, which adopts the LIMIT
+        // functions. alloc_ts() holds a tracked native buffer, so a LIMIT function that the factory
+        // does not free on close shows as a leak.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (i INT)");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            execute("INSERT INTO y VALUES (1), (2)");
+            final String allocLimit = "alloc_ts('2024-01-01T00:00:00.000000Z'::timestamp)::long";
+            assertQuery("SELECT x.i FROM x JOIN y ON y.i = x.i LIMIT " + allocLimit)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("i\n1\n2\n");
+            // the hi function
+            assertQuery("SELECT x.i FROM x JOIN y ON y.i = x.i LIMIT 1, " + allocLimit)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("i\n2\n");
+        });
+    }
+
+    @Test
     public void testInvalidLoTypeFreesParsedFunction() throws Exception {
         // toLimitFunction() parses the LIMIT expression before validating it, so a rejected
         // expression that owns native memory leaked it: an ARRAY constant holds a DirectArray, and

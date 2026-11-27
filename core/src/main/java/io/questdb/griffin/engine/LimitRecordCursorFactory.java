@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -190,7 +191,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
+        // The factory adopts the LIMIT functions, see SqlCodeGenerator.generateLimit(), and a LIMIT
+        // expression can own native memory, as an ARRAY constant does.
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor.leftFunction);
+        failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class LimitRecordCursor implements RecordCursor {
@@ -452,6 +458,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             remaining = -1;
             counter.clear();
             resolveBoundsCheap();
+            // A LIMIT that reads the first rows of the base lets the parallel cursors below, such as
+            // the async filter that a join reads its master through, size the page frame tasks that
+            // they dispatch ahead of the reader to the rows it reads: toTop() announces them with
+            // skipRows(). A negative bound reads the base to its end, and LIMIT 0 reads nothing.
+            if (lo >= 0 && hi > lo) {
+                base.expectLimitedIteration();
+            }
         }
     }
 }

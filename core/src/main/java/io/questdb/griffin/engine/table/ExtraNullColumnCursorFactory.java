@@ -499,6 +499,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void rampUpFrameSizes(int firstFrameRowCount) {
+            baseCursor.rampUpFrameSizes(firstFrameRowCount);
+        }
+
+        @Override
         public void releaseOpenPartitions() {
             baseCursor.releaseOpenPartitions();
         }

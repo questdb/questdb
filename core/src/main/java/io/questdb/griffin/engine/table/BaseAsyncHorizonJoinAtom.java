@@ -112,6 +112,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     // Per-worker symbol translating records for integer-based symbol key comparison.
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
+    private final boolean hasSharedKeyCheck;
     private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
     private boolean isSlaveFilterInitialized;
     private @Nullable Function ownerSlaveFilter;
@@ -129,6 +130,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -148,6 +150,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         this.perWorkerGroupByFunctions = resources.takePerWorkerGroupByFunctions();
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
+        this.hasSharedKeyCheck = sharedKeyCheckTemplate != null;
         try {
             this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
             this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
@@ -203,7 +206,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                     bwdScanMinGap,
                     bwdScanSwitchFactor,
                     ownerSlaveFilter,
-                    asOfJoinKeyTypes
+                    asOfJoinKeyTypes,
+                    sharedKeyCheckTemplate
             );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
@@ -217,7 +221,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                         bwdScanMinGap,
                         bwdScanSwitchFactor,
                         perWorkerSlaveFilters == null ? ownerSlaveFilter : perWorkerSlaveFilters.getQuick(i),
-                        asOfJoinKeyTypes
+                        asOfJoinKeyTypes,
+                        sharedKeyCheckTemplate
                 ));
             }
 
@@ -521,6 +526,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             return ownerSlaveTimeFrameHelper;
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
+    }
+
+    public boolean hasSharedKeyCheck() {
+        return hasSharedKeyCheck;
     }
 
     @Override

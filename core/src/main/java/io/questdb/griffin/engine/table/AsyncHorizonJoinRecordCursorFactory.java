@@ -115,6 +115,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
@@ -157,6 +158,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
+                    sharedKeyCheckTemplate,
                     groupByColumnFilter,
                     keyFunctions,
                     columnSources,
@@ -237,6 +239,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
+        }
+        if (frameSequence.getAtom().hasSharedKeyCheck()) {
+            sink.attr("sharedKeyCheck").val(true);
         }
         sink.child(slaveFactory);
     }

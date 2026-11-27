@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordFanOut;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -79,6 +80,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private CompiledCountOnlyFilter compiledCountOnlyFilter;
     private CompiledFilter compiledFilter;
     private AsyncFilteredRecordCursor cursor;
+    // counts the rows above the scan for a fan-out limit, see setFanOut()
+    private RecordFanOut fanOut;
+    // the negative LIMIT of the rows above the scan, see setFanOutLimit()
+    private Function fanOutLimitFunction;
     private Function filter;
     private PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
@@ -253,6 +258,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 rowsRemaining = -rowsRemaining;
             }
         } else {
+            if (fanOut != null) {
+                final long fanOutRowLimit = AsyncFilteredRecordCursorFactory.getFanOutRowLimit(
+                        fanOutLimitFunction,
+                        frameSequence.getSymbolTableSource(),
+                        executionContext,
+                        maxNegativeLimit
+                );
+                if (fanOutRowLimit > 0) {
+                    negativeLimitCursor.of(execute(executionContext, collectSubSeq, reverse(baseOrder)), fanOutRowLimit, getNegativeLimitRows(), fanOut);
+                    return negativeLimitCursor;
+                }
+            }
             rowsRemaining = Long.MAX_VALUE;
             order = baseOrder;
         }
@@ -264,15 +281,46 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             if (rowsRemaining < 0 || rowsRemaining > maxNegativeLimit) {
                 throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }
-            if (negativeLimitRows == null) {
-                negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
-            }
-            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
+            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, getNegativeLimitRows(), null);
             return negativeLimitCursor;
         }
 
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
+    }
+
+    /**
+     * Returns the number of page frame tasks that the open cursor may keep in flight when it
+     * fetches its next frame.
+     */
+    @TestOnly
+    public int getDispatchLimit() {
+        return cursor.getDispatchLimit();
+    }
+
+    /**
+     * Returns the number of page frame tasks that the open negative LIMIT cursor may keep in flight when it
+     * fetches its next frame.
+     */
+    @TestOnly
+    public int getNegativeLimitDispatchLimit() {
+        return negativeLimitCursor.getDispatchLimit();
+    }
+
+    /**
+     * Returns the page frames that the open cursor dispatches, once it has fetched its first frame.
+     */
+    @TestOnly
+    public int getFrameCount() {
+        return frameSequence.getFrameCount();
+    }
+
+    /**
+     * Returns the rows of the given page frame of the open cursor, once it has fetched its first frame.
+     */
+    @TestOnly
+    public long getFrameRowCount(int frameIndex) {
+        return frameSequence.getFrameRowCount(frameIndex);
     }
 
     @Override
@@ -308,10 +356,19 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public void halfClose() {
+        // see AsyncFilteredRecordCursorFactory.halfClose()
+        assert fanOutLimitFunction == null;
         Misc.free(frameSequence);
         Misc.free(compiledCountOnlyFilter);
         cursor.freeRecords();
         negativeLimitCursor.freeRecords();
+    }
+
+    /**
+     * Returns true when the factory holds a fan-out limit that waits for its fan-out, see setFanOutLimit().
+     */
+    public boolean hasFanOutLimit() {
+        return fanOutLimitFunction != null;
     }
 
     @Override
@@ -324,9 +381,36 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return limitLoFunction != null;
     }
 
+    /**
+     * Makes the page frames of a read that a parent may stop early, as a LIMIT above announces with
+     * RecordCursor#expectLimitedIteration(), start at cairo.sql.page.frame.ramp.start.rows rows and
+     * ramp up to their regular size, see PageFrameCursor#rampUpFrameSizes(int). SqlCodeGenerator
+     * calls it for the scan ahead of a RIGHT or FULL join, which takes no LIMIT of its own.
+     */
+    public void rampUpLimitedReads() {
+        cursor.rampUpLimitedReads();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    /**
+     * Hands over the rows above the scan that the fan-out limit counts, see setFanOutLimit().
+     */
+    public void setFanOut(RecordFanOut fanOut) {
+        assert fanOutLimitFunction != null;
+        this.fanOut = fanOut;
+    }
+
+    /**
+     * Takes over the LIMIT of the rows above the scan, for a factory without a LIMIT of its own, see
+     * AsyncFilteredRecordCursorFactory.setFanOutLimit().
+     */
+    public void setFanOutLimit(@Nullable Function fanOutLimitFunction) {
+        assert limitLoFunction == null || fanOutLimitFunction == null;
+        this.fanOutLimitFunction = fanOutLimitFunction;
     }
 
     @Override
@@ -369,6 +453,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         } else {
             rowsRemaining = Long.MAX_VALUE;
             order = baseOrder;
+            final long fanOutRowLimit = AsyncFilteredRecordCursorFactory.getFanOutRowLimitForPlan(
+                    fanOut,
+                    fanOutLimitFunction,
+                    frameSequence.getSymbolTableSource(),
+                    sink,
+                    maxNegativeLimit
+            );
+            if (fanOutRowLimit > 0) {
+                sink.attr("fan-out limit").val(fanOutRowLimit);
+                order = reverse(baseOrder);
+            }
         }
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
@@ -515,6 +610,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         // any LIMIT bound holding native memory on every successful compile.
         final Function limitLoFunction = this.limitLoFunction;
         this.limitLoFunction = null;
+        final Function fanOutLimitFunction = this.fanOutLimitFunction;
+        this.fanOutLimitFunction = null;
+        fanOut = null;
 
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, negativeLimitRows);
@@ -527,7 +625,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         failure = Misc.freeBestEffort(failure, bindVarMemory);
         failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
         failure = Misc.freeBestEffort(failure, limitLoFunction);
+        failure = Misc.freeBestEffort(failure, fanOutLimitFunction);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private DirectLongList getNegativeLimitRows() {
+        if (negativeLimitRows == null) {
+            negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
+        }
+        return negativeLimitRows;
     }
 
     private static Throwable freeRecordsBestEffort(

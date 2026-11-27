@@ -32,6 +32,13 @@ import org.junit.Test;
 public class EmptyTableRecordCursorTest {
     private static final EmptyTableRecordCursor CURSOR = new EmptyTableRecordCursor();
 
+    @Test
+    public void testIsKnownEmpty() {
+        // a join may skip the rows of its other side, see RecordCursor.isKnownEmpty()
+        Assert.assertTrue(CURSOR.isKnownEmpty());
+        Assert.assertFalse(CURSOR.hasNext());
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testRecordAt2() {
         // This cursor does not return row ids. Looking up records from cursor by rowid is most

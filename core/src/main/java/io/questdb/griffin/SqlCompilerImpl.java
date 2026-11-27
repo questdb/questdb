@@ -771,8 +771,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return engine;
     }
 
+    @TestOnly
+    public long getFromModelLinkReadsForTesting() {
+        return optimiser.getFromModelLinkReadsForTesting();
+    }
+
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    @TestOnly
+    public long getKeyMoveEdgeReadsForTesting() {
+        return optimiser.getKeyMoveEdgeReadsForTesting();
+    }
+
+    @TestOnly
+    public long getNullRejectionChecksForTesting() {
+        return optimiser.getNullRejectionChecksForTesting();
+    }
+
+    @TestOnly
+    public long getOrderingEdgeApplicationsForTesting() {
+        return optimiser.getOrderingEdgeApplicationsForTesting();
+    }
+
+    @TestOnly
+    public int getOrderingEdgeCapacityForTesting() {
+        return optimiser.getOrderingEdgeCapacityForTesting();
+    }
+
+    @TestOnly
+    public int getOrderingEdgeListSizeForTesting() {
+        return optimiser.getOrderingEdgeListSizeForTesting();
+    }
+
+    @TestOnly
+    public long getOuterJoinPinCountForTesting() {
+        return optimiser.getOuterJoinPinCountForTesting();
+    }
+
+    @TestOnly
+    public int getOuterJoinPinWordCountForTesting() {
+        return optimiser.getOuterJoinPinWordCountForTesting();
+    }
+
+    @TestOnly
+    public int getScratchReferenceCountForTesting() {
+        return optimiser.getScratchReferenceCountForTesting();
     }
 
     @TestOnly

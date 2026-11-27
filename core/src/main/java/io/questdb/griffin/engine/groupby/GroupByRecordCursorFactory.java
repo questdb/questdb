@@ -66,6 +66,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordSink mapSink;
     private ObjList<Function> recordFunctions;
     private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    // who holds the owner state that a shared cursor opened, created with the first shared cursor
+    private SharedCursorOwnership sharedCursorOwnership;
     private ObjList<GroupBySharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
@@ -168,36 +170,45 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        try {
-            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext, null);
-        } catch (Throwable th) {
-            baseCursor.close();
-            throw th;
-        }
-
-        try {
-            cursor.of(baseCursor, executionContext);
+        if (sharedCursorOwnership != null && sharedCursorOwnership.claim()) {
+            // A shared consumer opened before this primary in the current execution and already
+            // opened the owner state, which its symbol tables point into. Hand it over as is.
             return cursor;
-        } catch (Throwable th) {
-            cursor.close();
-            throw th;
         }
+        openOwner(executionContext);
+        return cursor;
     }
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
+            sharedCursorOwnership = new SharedCursorOwnership(cursor);
         }
         int idx = sharedId - 1;
+        assert sharedRecordFunctions != null;
         GroupBySharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            assert sharedRecordFunctions != null;
             assert idx < sharedRecordFunctions.size();
-            shared = new GroupBySharedCursor(cursor, sharedRecordFunctions.getQuick(idx));
+            shared = new GroupBySharedCursor(cursor, sharedRecordFunctions.getQuick(idx), sharedCursorOwnership.newHolder());
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // The consumer's parent initializes against the consumer's symbol tables while it opens,
+        // and a parent may open the consumer before the primary (a hash join opens its build side
+        // first). The owner state must therefore exist now: open it here when the primary has not.
+        final boolean isOwnerOpenedHere = !cursor.isOpen;
+        if (isOwnerOpenedHere) {
+            openOwner(executionContext);
+            sharedCursorOwnership.markOpenedBySharedCursor();
+        }
+        try {
+            GroupByUtils.initSharedKeyFunctions(sharedRecordFunctions.getQuick(idx), cursor.managedCursor, executionContext);
+        } catch (Throwable th) {
+            if (isOwnerOpenedHere) {
+                // no primary holds the owner state yet, so release it under the current tracker
+                sharedCursorOwnership.releaseUnclaimed();
+            }
+            throw th;
         }
         shared.of(cursor.dataMap);
         return shared;
@@ -253,6 +264,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.sharedCursors = null;
         final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
         this.sharedRecordFunctions = null;
+        if (sharedCursorOwnership != null) {
+            sharedCursorOwnership.clear();
+        }
 
         Throwable cleanupFailure = Misc.freeObjListBestEffort(null, recordFunctions);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
@@ -264,14 +278,40 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
+    private void openOwner(SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
+            Function.init(recordFunctions, baseCursor, executionContext, null);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
+            cursor.of(baseCursor, executionContext);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
     private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
+        private final SharedCursorOwnership.Holder ownerHolder;
         private final GroupByRecordCursor primaryCursor;
         private MapRecordCursor cachedMapCursor;
         private Map dataMap;
 
-        GroupBySharedCursor(GroupByRecordCursor cursor, ObjList<Function> functions) {
+        GroupBySharedCursor(GroupByRecordCursor cursor, ObjList<Function> functions, SharedCursorOwnership.Holder ownerHolder) {
             super(functions, true);
             this.primaryCursor = cursor;
+            this.ownerHolder = ownerHolder;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            ownerHolder.release();
         }
 
         @Override
@@ -311,6 +351,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         void of(Map dataMap) {
             this.dataMap = dataMap;
+            ownerHolder.hold();
         }
     }
 

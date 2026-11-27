@@ -646,6 +646,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.isOpen = true;
         }
 
+        @Override
+        public void rampUpFrameSizes(int firstFrameRowCount) {
+            baseCursor.rampUpFrameSizes(firstFrameRowCount);
+        }
+
         // Qodana false positive
         @SuppressWarnings("unused")
         @Override

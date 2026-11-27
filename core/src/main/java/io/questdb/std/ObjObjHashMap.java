@@ -60,6 +60,10 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         clear();
     }
 
+    public int capacity() {
+        return capacity;
+    }
+
     public final void clear() {
         free = capacity;
         Arrays.fill(keys, noEntryValue);

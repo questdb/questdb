@@ -335,8 +335,10 @@ public final class QueryFuzzDriver {
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
         LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
-        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
-                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
+        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns(QueryShape.GROUPING_SETS)).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries, ")
+                .$(runner.getReferenceAxisRuns(QueryShape.HORIZON_JOIN)).$(" across ")
+                .$(generatedByShape[QueryShape.HORIZON_JOIN.ordinal()]).$(" HORIZON JOIN queries")
                 .$();
 
         if (failures.size() > 0) {
@@ -438,7 +440,7 @@ public final class QueryFuzzDriver {
             Assert.assertTrue(
                     "the reference axis compared none of the " + groupingSetsGenerated
                             + " grouping sets queries; the UNION ALL rewrite looks out of step with the engine",
-                    runner.getReferenceAxisRuns() > 0
+                    runner.getReferenceAxisRuns(QueryShape.GROUPING_SETS) > 0
             );
         }
         // Guard the spelling axis the same way: a plain spelling that stopped compiling would

@@ -3751,6 +3751,43 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateWithJoinSetsColumnOfWiderType() throws Exception {
+        // no joins in UPDATE for WAL tables yet
+        assertMemoryLeak(() -> {
+            execute("create table up (k int, l long, ts timestamp) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("create table down (k int, i int, l long, ts timestamp) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into up values (1, 10, 0), (2, 20, 1_000_000), (3, 30, 2_000_000)");
+            execute("insert into down values (1, 5, 500, 0), (3, null, 700, 1_000_000), (4, -7, 900, 2_000_000)");
+
+            // the INT column of down widens to the LONG column of up, with NULL as NULL; k = 2 has no row in down
+            update("UPDATE up SET l = down.i FROM down WHERE up.k = down.k");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            k\tl\tts
+                            1\t5\t1970-01-01T00:00:00.000000Z
+                            2\t20\t1970-01-01T00:00:01.000000Z
+                            3\tnull\t1970-01-01T00:00:02.000000Z
+                            """);
+
+            // a LONG column of down sets the LONG column of up as it is
+            update("UPDATE up SET l = down.l FROM down WHERE up.k = down.k");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            k\tl\tts
+                            1\t500\t1970-01-01T00:00:00.000000Z
+                            2\t20\t1970-01-01T00:00:01.000000Z
+                            3\t700\t1970-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateWithJoinUnsupported() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table up as" +

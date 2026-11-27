@@ -144,6 +144,12 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     }
 
     @Override
+    public void expectLimitedIteration() {
+        // the join returns one row per master row, so a limited read of the join is a limited read of the master
+        masterCursor.expectLimitedIteration();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }

@@ -34,6 +34,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -53,6 +54,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
@@ -168,6 +171,92 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             """,
                     AsyncWindowJoinFastRecordCursorFactory.class
             );
+        });
+    }
+
+    @Test
+    public void testFanOutLimitOverBackwardScan() throws Exception {
+        // A scan in descending timestamp order collects the last rows of a negative LIMIT from its earliest
+        // rows, in ascending order, and returns them in its own order. The fan-out counts the elements of the
+        // array of each row, so the scan skips rows 1 and 2, keeps rows 3 and 4 for 3 elements and stops at
+        // row 5, which brings them to 6; a plain LIMIT keeps the last 3 rows. No SQL that the code generator
+        // compiles takes a fan-out limit over a backward scan, so the test builds the factory itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (id INT, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, ARRAY[]::DOUBLE[], '2024-01-05T01:00:00.000000Z'),
+                    (2, NULL, '2024-01-05T02:00:00.000000Z'),
+                    (3, ARRAY[3.0], '2024-01-05T03:00:00.000000Z'),
+                    (4, ARRAY[4.0, 4.5], '2024-01-05T04:00:00.000000Z'),
+                    (5, ARRAY[5.0, 5.5, 5.75], '2024-01-06T01:00:00.000000Z'),
+                    (6, ARRAY[]::DOUBLE[], '2024-01-06T02:00:00.000000Z'),
+                    (7, ARRAY[7.0], '2024-01-07T01:00:00.000000Z')
+                    """);
+            try (AsyncFilteredRecordCursorFactory factory = newBackwardScanFilter()) {
+                final int arrIndex = factory.getMetadata().getColumnIndex("arr");
+                final int arrType = factory.getMetadata().getColumnType(arrIndex);
+                factory.setFanOutLimit(LongConstant.newInstance(-5));
+                factory.setFanOut(record -> {
+                    final ArrayView array = record.getArray(arrIndex, arrType);
+                    return array.isNull() || array.isEmpty() ? 0 : array.getDimLen(0);
+                });
+                assertBackwardScanIds(factory, "5,4,3");
+            }
+            try (AsyncFilteredRecordCursorFactory factory = newBackwardScanFilter(LongConstant.newInstance(-3))) {
+                assertBackwardScanIds(factory, "3,2,1");
+                Assert.assertEquals(configuration.getSqlParallelFilterDispatchLimit(), factory.getNegativeLimitDispatchLimit());
+            }
+        });
+    }
+
+    @Test
+    public void testFanOutLimitThrowsWhenReducerCancels() throws Exception {
+        // The filter under UNNEST scans for the last rows of the negative LIMIT, and the reducer of its first
+        // frame finds the query cancelled. The scan reports the cancellation, and the table answers after it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x LONG, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ta SELECT x, ARRAY[x::DOUBLE], timestamp_sequence(0, 3_600_000_000) FROM long_sequence(7)");
+            final String sql = "SELECT t.x, u.v FROM ta t, UNNEST(t.arr) u(v) WHERE t.x > 0 LIMIT -2";
+            final SqlExecutionCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public int getStateOrYield(long millis, long fd) {
+                    return SqlExecutionCircuitBreaker.STATE_CANCELLED;
+                }
+            };
+            final SqlExecutionContext context = new DelegatingSqlExecutionContext() {
+                @Override
+                public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return circuitBreaker;
+                }
+
+                @Override
+                public int getSharedQueryWorkerCount() {
+                    return 1;
+                }
+            };
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(context)
+                ) {
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("a cancelled scan must not return rows");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+                    }
+                }
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .sizeMayVary()
+                        .withPlanContaining("fan-out limit: 2")
+                        .returns("x\tv\n6\t6.0\n7\t7.0\n");
+            }
         });
     }
 
@@ -1081,6 +1170,24 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertBackwardScanIds(AsyncFilteredRecordCursorFactory factory, String expectedIds) throws Exception {
+        Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+        final int idIndex = factory.getMetadata().getColumnIndex("id");
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            for (int pass = 0; pass < 2; pass++) {
+                final StringBuilder ids = new StringBuilder();
+                while (cursor.hasNext()) {
+                    if (ids.length() > 0) {
+                        ids.append(',');
+                    }
+                    ids.append(cursor.getRecord().getInt(idIndex));
+                }
+                Assert.assertEquals(expectedIds, ids.toString());
+                cursor.toTop();
+            }
+        }
+    }
+
     private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
         while (factory != null) {
             if (factoryClass.isInstance(factory)) {
@@ -1089,6 +1196,36 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             factory = factory.getBaseFactory();
         }
         return false;
+    }
+
+    private static AsyncFilteredRecordCursorFactory newBackwardScanFilter() throws Exception {
+        return newBackwardScanFilter(null);
+    }
+
+    // the Java filter of the code generator, which passes every row, over a scan of ta in descending
+    // timestamp order
+    private static AsyncFilteredRecordCursorFactory newBackwardScanFilter(@Nullable io.questdb.cairo.sql.Function limitLoFunction) throws Exception {
+        final RecordCursorFactory base = select("SELECT * FROM ta ORDER BY ts DESC");
+        try {
+            return new AsyncFilteredRecordCursorFactory(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    base,
+                    BooleanConstant.TRUE,
+                    new IntHashSet(),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER),
+                    null,
+                    ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0),
+                    limitLoFunction,
+                    0,
+                    1,
+                    false
+            );
+        } catch (Throwable th) {
+            Misc.free(base);
+            throw th;
+        }
     }
 
     private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {

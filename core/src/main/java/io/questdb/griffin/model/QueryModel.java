@@ -72,6 +72,10 @@ public class QueryModel implements IQueryModel {
     private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
+    // The join models that SqlOptimiser orders after this one. The pins of RIGHT/FULL OUTER join prefixes and the
+    // edges from non-equi RIGHT/FULL joins to the joins that consume their rows are not here: SqlOptimiser keeps
+    // them in OuterJoinOrderingEdges and reads the ordering graph through hasOrderingDependents() and the other
+    // ordering-graph readers.
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expiryWindowPartitionBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -136,7 +140,9 @@ public class QueryModel implements IQueryModel {
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
     private boolean cacheable = true;
-    // where clause expressions that do not reference any tables, not necessarily constants
+    // where clause expressions that do not reference any tables, not necessarily constants. On a join model
+    // other than the first, the conjuncts of its INNER join ON clause that read no table and have one value
+    // per execution, which gate the rows of that model, see SqlOptimiser.processJoinConditions()
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
@@ -162,6 +168,8 @@ public class QueryModel implements IQueryModel {
     private boolean isExpiryStructuralPolicy;
     private boolean isExpiryWindowBarrier;
     private boolean isLateralCountCoalesceRequired;
+    // see IQueryModel.isOuterRefJoinChecked()
+    private boolean isOuterRefJoinChecked;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
@@ -184,6 +192,7 @@ public class QueryModel implements IQueryModel {
     private long metadataVersion = -1;
     private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
+    private boolean movableAfterOuterJoins;
     private IQueryModel nestedModel;
     private boolean nestedModelIsSubQuery = false;
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
@@ -483,6 +492,7 @@ public class QueryModel implements IQueryModel {
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
+        movableAfterOuterJoins = false;
         unionModel = null;
         orderHash.clear();
         modelPosition = 0;
@@ -500,6 +510,7 @@ public class QueryModel implements IQueryModel {
         expiryViewNameExpr = null;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
+        isOuterRefJoinChecked = false;
         isOuterRefWildcardExcluded = false;
         lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
@@ -1447,6 +1458,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isMovableAfterOuterJoins() {
+        return movableAfterOuterJoins;
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
     }
@@ -1459,6 +1475,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
+    }
+
+    @Override
+    public boolean isOuterRefJoinChecked() {
+        return isOuterRefJoinChecked;
     }
 
     @Override
@@ -1982,6 +2003,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setMovableAfterOuterJoins(boolean movableAfterOuterJoins) {
+        this.movableAfterOuterJoins = movableAfterOuterJoins;
+    }
+
+    @Override
     public void setNestedModel(IQueryModel nestedModel) {
         this.nestedModel = nestedModel;
         if (nestedModel != null && viewNameExpr != null) {
@@ -2023,6 +2049,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
+    @Override
+    public void setOuterRefJoinChecked(boolean isOuterRefJoinChecked) {
+        this.isOuterRefJoinChecked = isOuterRefJoinChecked;
     }
 
     @Override

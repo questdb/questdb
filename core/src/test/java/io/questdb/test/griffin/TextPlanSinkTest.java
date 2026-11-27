@@ -24,6 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Decimals;
@@ -32,6 +38,25 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TextPlanSinkTest {
+
+    // A factory names the columns of a function that reads another record with the metadata of
+    // that record, as a lateral NULL check names its probe column. A scalar sub-query of the
+    // function is a child factory, which names its own columns, here the second one, x.
+    @Test
+    public void testChildFactoryNamesOwnColumns() {
+        final TextPlanSink sink = new TextPlanSink();
+        sink.of(new CheckFactory(), null);
+        final StringBuilder plan = new StringBuilder();
+        for (int i = 1, n = sink.getLineCount(); i <= n; i++) {
+            plan.append(sink.getLine(i)).append('\n');
+        }
+        Assert.assertEquals("""
+                Check
+                  check: probe = cursor\s
+                    Filter
+                      filter: x probe
+                """, plan.toString());
+    }
 
     @Test
     public void testListMetadataModeRestoredAfterException() {
@@ -112,5 +137,61 @@ public class TextPlanSinkTest {
         );
 
         Assert.assertEquals("123.00 null 2268949.521066274849224 null 772083513452561734106970858370490908534443021.732119385735180 null", sink.getSink().toString());
+    }
+
+    private static RecordMetadata metadata(String... columnNames) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (String columnName : columnNames) {
+            metadata.add(new TableColumnMetadata(columnName, ColumnType.INT));
+        }
+        return metadata;
+    }
+
+    // Renders "probe = cursor <sub-query plan> probe" under the metadata of the probe column
+    static class CheckFactory implements RecordCursorFactory {
+        private final RecordMetadata probeMetadata = metadata("probe");
+        private final RecordCursorFactory subQuery = new SubQueryFactory();
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("Check");
+            sink.setMetadata(probeMetadata);
+            sink.attr("check").val((Plannable) check -> {
+                check.putColumnName(0);
+                check.val(" = cursor ").child(subQuery);
+                check.val(" ").putColumnName(0);
+            });
+            sink.setMetadata(null);
+        }
+    }
+
+    static class SubQueryFactory implements RecordCursorFactory {
+        private final RecordMetadata metadata = metadata("id", "x");
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return metadata;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("Filter");
+            sink.attr("filter").putColumnName(1);
+        }
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordFanOut;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
@@ -39,8 +40,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
-public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
+public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory implements RecordFanOut {
     private final ObjList<CharSequence> columnNames;
     private final boolean hasOrdinality;
     private RecordCursorFactory baseFactory;
@@ -94,9 +96,41 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    /**
+     * Returns the rows that UNNEST returns for a row of the scan below it: one for each element of its longest
+     * array. The scan calls it ahead of the cursor, on its own rows, so the code generator hands UNNEST over
+     * only when its expressions read the columns of the scan alone, see SqlCodeGenerator.attachUnnestFanOut().
+     * The cursor binds the sources to each row again before it returns the row.
+     */
+    @Override
+    public long getFanOut(Record scanRecord) {
+        return initSources(sources, scanRecord);
+    }
+
     @Override
     public int getScanDirection() {
         return baseFactory.getScanDirection();
+    }
+
+    /**
+     * Returns the base factory, which the factory does not expose through getBaseFactory().
+     */
+    @TestOnly
+    public RecordCursorFactory getUnnestBaseFactory() {
+        return baseFactory;
+    }
+
+    /**
+     * Returns true when every UNNEST expression returns the same array whenever it reads the same row, so
+     * that a scan below can count the rows of UNNEST ahead of it, see getFanOut().
+     */
+    public boolean isFanOutStable() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -147,6 +181,19 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    // Binds the sources to the base row and returns the length of the longest of them, 0 when every array
+    // of the row is empty or NULL.
+    private static int initSources(ObjList<UnnestSource> sources, Record baseRecord) {
+        int maxArrayLen = 0;
+        for (int i = 0, n = sources.size(); i < n; i++) {
+            final int len = sources.getQuick(i).init(baseRecord);
+            if (len > maxArrayLen) {
+                maxArrayLen = len;
+            }
+        }
+        return maxArrayLen;
+    }
+
     private static class UnnestRecordCursor implements NoRandomAccessRecordCursor {
         private final UnnestRecord record;
         private final ObjList<UnnestSource> sources;
@@ -174,6 +221,13 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public void expectLimitedIteration() {
+            // UNNEST reads its base as it returns rows, as a join reads its master, and skips the rows of
+            // an empty array: the cap limits how far the tasks of the base run ahead, never the rows it returns
+            baseCursor.expectLimitedIteration();
         }
 
         @Override
@@ -241,14 +295,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void initSources() {
-            Record baseRecord = baseCursor.getRecord();
-            maxArrayLen = 0;
-            for (int i = 0, n = sources.size(); i < n; i++) {
-                int len = sources.getQuick(i).init(baseRecord);
-                if (len > maxArrayLen) {
-                    maxArrayLen = len;
-                }
-            }
+            maxArrayLen = UnnestRecordCursorFactory.initSources(sources, baseCursor.getRecord());
         }
 
         void of(

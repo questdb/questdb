@@ -84,6 +84,20 @@ public final class IndexFactory {
         }
     }
 
+    /**
+     * Whether {@link #createReader} makes the reader's kind for this index type. {@link IndexReader#of} reopens a
+     * reader on another column's files of its own kind only: it cannot turn a bitmap reader into a posting reader,
+     * or back.
+     */
+    public static boolean isReaderOfType(byte indexType, IndexReader reader) {
+        return switch (indexType) {
+            case IndexType.BITMAP -> reader instanceof AbstractBitmapIndexReader;
+            case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
+                    reader instanceof AbstractPostingIndexReader;
+            default -> false;
+        };
+    }
+
     public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);

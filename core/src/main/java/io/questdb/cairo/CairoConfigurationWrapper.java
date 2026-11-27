@@ -1480,6 +1480,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlPageFrameRampStartRows() {
+        return getDelegate().getSqlPageFrameRampStartRows();
+    }
+
+    @Override
     public int getSqlParallelFilterDispatchLimit() {
         return getDelegate().getSqlParallelFilterDispatchLimit();
     }

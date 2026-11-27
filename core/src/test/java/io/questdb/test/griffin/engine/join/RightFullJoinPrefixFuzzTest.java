@@ -1,0 +1,1362 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.join;
+
+import io.questdb.PropertyKey;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Compares a query that ends with a RIGHT or FULL join with the same query written with sub-queries.
+ * SQL joins are left-associative, so "t0 J1 t1 ... RIGHT JOIN tn" means "(t0 J1 t1 ...) RIGHT JOIN tn":
+ * the RIGHT/FULL join returns each unmatched row of tn once, with every column of the tables before
+ * it NULL. The optimiser cannot reorder across a sub-query, so a sub-query form is the reference for
+ * the rows of the flat form, which the optimiser reorders. The nested form wraps every join, so it
+ * evaluates the joins in the order written; it cannot express a time-series join after an outer join,
+ * which loses the designated timestamp. The prefix form wraps only the tables before the last join,
+ * so the optimiser plans the prefix as written, time-series joins included. The queries use standard
+ * SQL: every ON clause reads tables joined before it, and every name resolves to one table. The
+ * forward-read queries are the exception: an INNER join reads the table of a later INNER join, which
+ * QuestDB applies where that table joins, and their nested form writes the conjunct there. The data
+ * holds NULL keys and rows that do not match. A reference may fail only where it cannot express its
+ * query, see isUnsupportedReference(); any other failure of either query fails the test.
+ * An ON clause may also hold a conjunct cX = cY + cZ or cX = cY - cZ over earlier tables, mostly in an INNER
+ * join after a RIGHT or FULL join that NULL-extends those tables. SqlOptimiser must keep such a conjunct at its
+ * INNER join, after the outer join, see SqlOptimiser.addModelOnPredicateFromCollectedIndexes().
+ * The implied-key queries tie, in the ON clause of an INNER join, the joined table to the table of the
+ * join before it and to an earlier table, as in "JOIN t2 ON c0 = c2 AND c1 = c2", which implies
+ * c0 = c1 for the rows that the INNER join keeps, and filter on one or both tables of the implied key.
+ * SqlOptimiser hashes the outer join of t1 on such a key only when later conjuncts drop the rows that
+ * the outer join NULL-extends, see SqlOptimiser.isNullExtensionRejected().
+ * The WHERE-heavy queries always filter, with one or two conjuncts on a table, constants and INT bind
+ * variables, and sometimes LATEST ON on the first table, which the references put in a sub-query of that
+ * table. A conjunct on a table before the last join filters after it, and SqlOptimiser may also filter the
+ * scan of the table with copies of the conjuncts, see SqlOptimiser.addScanFilterCopyCandidate(), and, when a
+ * later join matches on the table, the rows of an earlier RIGHT or FULL join, see
+ * SqlOptimiser.addNullExtensionFilters(). The LIMIT-fenced reference runs the flat joins without WHERE in a
+ * sub-query that LIMIT keeps whole, and filters its rows, so it takes no such copy. The LIMIT queries end the WHERE-heavy flat form with a LIMIT,
+ * which may return any rows of the query but no fewer than it asks for, so a filter of a table before the
+ * RIGHT or FULL join must not stop at the LIMIT.
+ * A WHERE conjunct, or a conjunct of an INNER join after a RIGHT or FULL join, may name a column but fold to
+ * $1 > 0, a runtime constant that gates the joins below it once per execution, see appendFoldedPredicate().
+ * Half of the LEFT joins have no join key, and SqlOptimiser may run such a LEFT join after the RIGHT and FULL
+ * joins written after it, see OuterJoinNullCheck. Outside the queries that favour outer joins, the joins after the
+ * first of them leave it movable, and the folded predicate alone, in the ON clause of an INNER join after such an
+ * outer join or in the WHERE, gates the outer join below the LEFT join, see
+ * testQueriesPlanFoldedPredicateGateBelowKeylessLeftJoin().
+ */
+public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
+    // a join of the flat form: its type and the number of its table
+    private static final Pattern FLAT_JOIN = Pattern.compile(" (JOIN|LEFT JOIN|CROSS JOIN|RIGHT JOIN|FULL JOIN|ASOF JOIN|LT JOIN) t(\\d)");
+    // queries that the folded predicate coverage test draws from a fixed seed
+    private static final int FOLDED_PREDICATE_CORPUS_SIZE = 1_000;
+    // the end of the predicate of appendFoldedPredicate()
+    private static final String FOLDED_PREDICATE_END = " IS NULL AND false) OR $1 > 0)";
+    // queries of the fuzz test whose flat form reads a later table in the ON clause of an INNER join
+    private static final int FORWARD_READ_QUERY_COUNT = 300;
+    // a FULL join whose slave a later INNER join ties to an earlier table, with WHERE on the slave only
+    private static final Pattern FULL_JOIN_SLAVE_ONLY_REJECTED = Pattern.compile(
+            "FULL JOIN t(\\d) ON [^J]*\\d JOIN t(\\d) ON c\\d = c\\2 AND c\\1 = c\\2 [^W]*WHERE c\\1 > 0$"
+    );
+    // queries that the generator coverage test draws from a fixed seed
+    private static final int IMPLIED_KEY_CORPUS_SIZE = 1_000;
+    private static final int IMPLIED_KEY_QUERY_COUNT = 300;
+    // a conjunct of an ON clause of the flat form that compares bare columns of two tables, a join key
+    private static final Pattern KEY_CONJUNCT = Pattern.compile("(?<![+-] )[cv](\\d) = [cv](\\d)(?= AND |$)");
+    // LIMIT shapes that the LIMIT coverage test draws from a fixed seed
+    private static final int LIMIT_CORPUS_SIZE = 1_000;
+    // index of the LIMIT-fenced reference query in the array that generateQueries() returns
+    private static final int LIMIT_FENCED = 3;
+    // LIMIT n, LIMIT -n and LIMIT lo, hi, see appendLimit()
+    private static final Pattern LIMIT_FIRST_ROWS = Pattern.compile(" LIMIT \\d+$");
+    private static final Pattern LIMIT_LAST_ROWS = Pattern.compile(" LIMIT -\\d+$");
+    private static final int LIMIT_QUERY_COUNT = 300;
+    private static final Pattern LIMIT_RANGE = Pattern.compile(" LIMIT \\d+, \\d+$");
+    private static final Log LOG = LogFactory.getLog(RightFullJoinPrefixFuzzTest.class);
+    // queries that the multi-table conjunct coverage test draws from a fixed seed
+    private static final int MULTI_TABLE_CORPUS_SIZE = 1_000;
+    // cY + cZ = cX or cY - cZ = cX, see appendMultiTableCondition()
+    private static final Pattern MULTI_TABLE_SUM_ON_LEFT = Pattern.compile("c(\\d) [+-] c(\\d) = c(\\d)");
+    // cX = cY + cZ or cX = cY - cZ, see appendMultiTableCondition()
+    private static final Pattern MULTI_TABLE_SUM_ON_RIGHT = Pattern.compile("c(\\d) = c(\\d) [+-] c(\\d)");
+    // index of the reference query in the array that generateQueries() returns
+    private static final int NESTED = 1;
+    private static final int NESTED_QUERY_COUNT = 300;
+    // queries that the ordering edge shape coverage test draws from a fixed seed
+    private static final int ORDERING_EDGE_CORPUS_SIZE = 1_000;
+    private static final int PREFIX_SUB_QUERY = 2;
+    // the reordering that the prefix form checks needs four joins of particular types to line up
+    private static final int PREFIX_SUB_QUERY_COUNT = 1_000;
+    private static final int TABLE_COUNT = 10;
+    // values of the INT bind variables of the WHERE-heavy queries
+    private static final int[] WHERE_BIND_VALUES = {Numbers.INT_NULL, 0, 1, 2};
+    // queries that the WHERE shape coverage test draws from a fixed seed
+    private static final int WHERE_CORPUS_SIZE = 1_000;
+    // a WHERE with two conjuncts: an AND other than that of BETWEEN 0 AND 1 and the one inside the folded predicate
+    private static final Pattern WHERE_CONJUNCT_PAIR = Pattern.compile(" WHERE .*(?<!BETWEEN 0) AND (?!false\\))");
+    // a WHERE whose first predicate reads the first table, see appendWherePredicate()
+    private static final Pattern WHERE_ON_FIRST_TABLE = Pattern.compile("^SELECT \\* FROM t(\\d) .* WHERE (coalesce\\()?[cs]\\1[ ,]");
+    // the table that the first predicate of a WHERE reads, see appendWherePredicate()
+    private static final Pattern WHERE_TABLE = Pattern.compile(" WHERE (coalesce\\()?[cs](\\d)[ ,]");
+    private static final int WHERE_QUERY_COUNT = 300;
+    // a WHERE predicate on a SYMBOL column
+    // a WHERE predicate that reads several columns of a table, see appendWherePredicate()
+    private static final Pattern WHERE_SEVERAL_COLUMN_PREDICATE = Pattern.compile(" WHERE .*(c(\\d) [-+] v\\2 |c(\\d) \\* length\\(s\\3\\)|coalesce\\(c(\\d), v\\4,)");
+    private static final Pattern WHERE_SYMBOL_PREDICATE = Pattern.compile(" s\\d (LIKE|~|IN|NOT IN) ");
+
+    @Test
+    public void testFlatJoinKeyedThroughLaterInnerJoinReturnsRowsOfNestedJoin() throws Exception {
+        assertFlatJoinReturnsRowsOf(NESTED, IMPLIED_KEY_QUERY_COUNT, true, false, false);
+    }
+
+    @Test
+    public void testFlatJoinReadingLaterInnerJoinReturnsRowsOfNestedJoin() throws Exception {
+        assertFlatJoinReturnsRowsOf(NESTED, FORWARD_READ_QUERY_COUNT, false, false, true);
+    }
+
+    @Test
+    public void testFlatJoinReturnsRowsOfNestedJoin() throws Exception {
+        assertFlatJoinReturnsRowsOf(NESTED, NESTED_QUERY_COUNT, false, false, false);
+    }
+
+    @Test
+    public void testFlatJoinReturnsRowsOfPrefixSubQuery() throws Exception {
+        assertFlatJoinReturnsRowsOf(PREFIX_SUB_QUERY, PREFIX_SUB_QUERY_COUNT, false, false, false);
+    }
+
+    @Test
+    public void testFlatJoinWhereReturnsRowsOfLimitFencedQuery() throws Exception {
+        assertFlatJoinReturnsRowsOf(LIMIT_FENCED, WHERE_QUERY_COUNT, false, true, false);
+    }
+
+    @Test
+    public void testFlatJoinWhereReturnsRowsOfNestedJoin() throws Exception {
+        assertFlatJoinReturnsRowsOf(NESTED, WHERE_QUERY_COUNT, false, true, false);
+    }
+
+    @Test
+    public void testFlatJoinWhereWithLimitReturnsRowsOfFlatJoinWhere() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        // The scan ahead of a RIGHT or FULL join under a LIMIT n or a LIMIT lo, hi either starts with
+        // one-row page frames and grows them, or reads each partition of the small tables as one frame.
+        final int rampStartRows = rnd.nextInt(2);
+        LOG.info().$("page frame ramp-up [startRows=").$(rampStartRows).I$();
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS, rampStartRows);
+        assertMemoryLeak(() -> {
+            createTables();
+            final StringSink rows = new StringSink();
+            final StringSink limitRows = new StringSink();
+            int checkedCount = 0;
+            for (int i = 0; i < LIMIT_QUERY_COUNT; i++) {
+                final String flat = generateQueries(rnd, false, false, true, rnd.nextBoolean())[0];
+                final String limit = generateLimit(rnd);
+                String binds = "";
+                if (flat.contains("$1")) {
+                    final int first = WHERE_BIND_VALUES[rnd.nextInt(WHERE_BIND_VALUES.length)];
+                    final int second = WHERE_BIND_VALUES[rnd.nextInt(WHERE_BIND_VALUES.length)];
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, first);
+                    if (flat.contains("$2")) {
+                        bindVariableService.setInt(1, second);
+                    }
+                    binds = ", $1=" + first + ", $2=" + second;
+                }
+                final String message = "flat=" + flat + limit + binds;
+                try {
+                    rows.clear();
+                    printSql(flat, rows);
+                } catch (Throwable e) {
+                    // the flat form can write a time-series join after an outer join, see isUnsupportedReference()
+                    if (e instanceof SqlException sqlException && isUnsupportedReference(flat, NESTED, sqlException)) {
+                        continue;
+                    }
+                    throw new AssertionError("query failed [" + message + ", error=" + e + ']', e);
+                }
+                try {
+                    limitRows.clear();
+                    printSql(flat + limit, limitRows);
+                } catch (Throwable e) {
+                    throw new AssertionError("query with LIMIT failed, although the query runs [" + message + ", error=" + e + ']', e);
+                }
+                final List<String> all = rowList(rows);
+                final List<String> limited = rowList(limitRows);
+                Assert.assertEquals(message, limitedRowCount(limit, all.size()), limited.size());
+                // any rows of the query, each no more often than the query returns it
+                for (int j = 0, n = limited.size(); j < n; j++) {
+                    Assert.assertTrue(message + ", row=" + limited.get(j), all.remove(limited.get(j)));
+                }
+                checkedCount++;
+            }
+            // most flat forms run; a change that made them fail with an error that isUnsupportedReference()
+            // accepts would check few LIMIT queries and pass
+            Assert.assertTrue("only " + checkedCount + " of " + LIMIT_QUERY_COUNT + " queries were checked", checkedCount * 2 >= LIMIT_QUERY_COUNT);
+        });
+    }
+
+    @Test
+    public void testImpliedKeyQueriesRejectOnlySlaveOfFullJoin() {
+        // Without its check of the master side, SqlOptimiser keyed such a FULL join and returned the rows
+        // that it NULL-extends on the master side, which the INNER join keeps through NULL = NULL.
+        final Rnd rnd = new Rnd(42, 4242);
+        int matchCount = 0;
+        for (int i = 0; i < IMPLIED_KEY_CORPUS_SIZE; i++) {
+            if (FULL_JOIN_SLAVE_ONLY_REJECTED.matcher(generateQueries(rnd, true, true, false, false)[0]).find()) {
+                matchCount++;
+            }
+        }
+        Assert.assertTrue("only " + matchCount + " of " + IMPLIED_KEY_CORPUS_SIZE + " queries", matchCount * 25 >= IMPLIED_KEY_CORPUS_SIZE);
+    }
+
+    @Test
+    public void testLimitQueriesCoverLimitShapes() {
+        // LIMIT n and LIMIT lo, hi read the first rows of the joins, LIMIT -n reads the last rows, and half
+        // of the queries filter the first table, whose filter the LIMIT reaches as advice
+        final Rnd rnd = new Rnd(42, 4242);
+        int firstRowsCount = 0;
+        int lastRowsCount = 0;
+        int rangeCount = 0;
+        int firstTableWhereCount = 0;
+        for (int i = 0; i < LIMIT_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, true, rnd.nextBoolean())[0];
+            final String limit = generateLimit(rnd);
+            if (LIMIT_FIRST_ROWS.matcher(limit).find()) {
+                firstRowsCount++;
+            } else if (LIMIT_LAST_ROWS.matcher(limit).find()) {
+                lastRowsCount++;
+            } else if (LIMIT_RANGE.matcher(limit).find()) {
+                rangeCount++;
+            }
+            if (WHERE_ON_FIRST_TABLE.matcher(flat).find()) {
+                firstTableWhereCount++;
+            }
+        }
+        final String counts = "firstRows=" + firstRowsCount + ", lastRows=" + lastRowsCount + ", range=" + rangeCount
+                + ", firstTableWhere=" + firstTableWhereCount + " of " + LIMIT_CORPUS_SIZE;
+        Assert.assertEquals(counts, LIMIT_CORPUS_SIZE, firstRowsCount + lastRowsCount + rangeCount);
+        Assert.assertTrue(counts, firstRowsCount * 5 >= LIMIT_CORPUS_SIZE);
+        Assert.assertTrue(counts, lastRowsCount * 5 >= LIMIT_CORPUS_SIZE);
+        Assert.assertTrue(counts, rangeCount * 5 >= LIMIT_CORPUS_SIZE);
+        Assert.assertTrue(counts, firstTableWhereCount * 5 >= LIMIT_CORPUS_SIZE * 2);
+    }
+
+    @Test
+    public void testQueriesCoverFoldedConjunctsAfterKeylessLeftJoin() {
+        // A LEFT join without join keys may run after the RIGHT and FULL joins written after it and checks them for
+        // each of its rows, see OuterJoinNullCheck. The folded predicate in the ON clause of an INNER join after such
+        // an outer join gates the joins up to the INNER join, and the RIGHT or FULL join that ends the query returns
+        // rows from the gate while it is false. Before the check skipped an outer join that a false gate kept
+        // closed, the LEFT join failed with "outer join cursor is not open". A hundredth of the queries suffices for
+        // that shape: it needs a LEFT join without =, a RIGHT or FULL join and an INNER join that line up.
+        final Rnd rnd = new Rnd(42, 4242);
+        int foldedCount = 0;
+        int foldedAfterKeylessLeftJoinCount = 0;
+        for (int i = 0; i < FOLDED_PREDICATE_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, false, false)[0];
+            if (flat.contains(FOLDED_PREDICATE_END)) {
+                foldedCount++;
+            }
+            if (hasFoldedPredicateAfterKeylessLeftJoin(flat, false)) {
+                foldedAfterKeylessLeftJoinCount++;
+            }
+        }
+        final String counts = "folded=" + foldedCount + ", foldedAfterKeylessLeftJoin=" + foldedAfterKeylessLeftJoinCount
+                + " of " + FOLDED_PREDICATE_CORPUS_SIZE;
+        Assert.assertTrue(counts, foldedCount * 20 >= FOLDED_PREDICATE_CORPUS_SIZE);
+        Assert.assertTrue(counts, foldedAfterKeylessLeftJoinCount * 100 >= FOLDED_PREDICATE_CORPUS_SIZE);
+    }
+
+    @Test
+    public void testQueriesCoverMultiTableConjunctsAfterOuterJoin() {
+        // Without the multi-table branches of SqlOptimiser.addModelOnPredicateFromCollectedIndexes(), such a
+        // conjunct of an INNER join filtered below the RIGHT or FULL join, which then NULL-extended the rows
+        // that the conjunct dropped.
+        final Rnd rnd = new Rnd(42, 4242);
+        int sumOnLeftCount = 0;
+        int sumOnRightCount = 0;
+        for (int i = 0; i < MULTI_TABLE_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, false, false)[0];
+            if (hasMultiTableConjunctAfterOuterJoin(flat, MULTI_TABLE_SUM_ON_LEFT)) {
+                sumOnLeftCount++;
+            }
+            if (hasMultiTableConjunctAfterOuterJoin(flat, MULTI_TABLE_SUM_ON_RIGHT)) {
+                sumOnRightCount++;
+            }
+        }
+        final String counts = "sumOnLeft=" + sumOnLeftCount + ", sumOnRight=" + sumOnRightCount + " of " + MULTI_TABLE_CORPUS_SIZE;
+        Assert.assertTrue(counts, sumOnLeftCount * 25 >= MULTI_TABLE_CORPUS_SIZE);
+        Assert.assertTrue(counts, sumOnRightCount * 25 >= MULTI_TABLE_CORPUS_SIZE);
+    }
+
+    @Test
+    public void testQueriesCoverOuterJoinOrderingEdgeShapes() {
+        // The shapes that SqlOptimiser keeps in OuterJoinOrderingEdges other than the whole prefixes of the RIGHT and
+        // FULL joins: two RIGHT or FULL joins with join keys after a LEFT join without join keys, which they leave
+        // unpinned and pin the rest of their prefixes, and a CROSS join that a RIGHT or FULL join with a join key pins
+        // after a non-equi RIGHT or FULL join, whose rows it then consumes. The queries that read a later table add a
+        // RIGHT or FULL join with a join key between the reader and that table, which leaves the reader unpinned; a
+        // non-equi RIGHT or FULL join that reads the reader before such a join, which is a parent of every later
+        // consumer and stays unpinned as well; and an INNER join after a non-equi RIGHT or FULL join and a CROSS join,
+        // tied to the CROSS join and to another table, whose key the CROSS join may take while the edges from the
+        // RIGHT or FULL join are pending. A hundredth of the queries suffices for each shape.
+        final Rnd rnd = new Rnd(42, 4242);
+        int partialPinCount = 0;
+        int pinnedCrossConsumerCount = 0;
+        int pendingConsumerKeyCount = 0;
+        for (int i = 0; i < ORDERING_EDGE_CORPUS_SIZE; i++) {
+            final FlatJoins joins = FlatJoins.of(generateQueries(rnd, false, false, false, false)[0]);
+            if (joins.hasKeyedOuterJoinsAfterKeylessLeftJoin()) {
+                partialPinCount++;
+            }
+            if (joins.hasCrossJoinPinnedAfterNonEquiOuterJoin()) {
+                pinnedCrossConsumerCount++;
+            }
+        }
+        final Rnd forwardRnd = new Rnd(42, 4242);
+        int forwardPartialPinCount = 0;
+        int unpinnedNullingBoundaryCount = 0;
+        for (int i = 0; i < ORDERING_EDGE_CORPUS_SIZE; i++) {
+            final FlatJoins joins = FlatJoins.of(generateQueries(forwardRnd, false, false, false, false, true)[0]);
+            final int reader = joins.getForwardReader();
+            Assert.assertTrue(joins.toString(), reader != -1);
+            final int target = joins.getForwardTarget(reader);
+            if (joins.hasKeyedOuterJoinBetween(reader, target)) {
+                forwardPartialPinCount++;
+            }
+            if (joins.hasNonEquiOuterJoinReadingBeforeKeyedOuterJoin(reader, target)) {
+                unpinnedNullingBoundaryCount++;
+            }
+            if (joins.hasInnerJoinKeyedToCrossJoinAfterNonEquiOuterJoin()) {
+                pendingConsumerKeyCount++;
+            }
+        }
+        final String counts = "partialPin=" + partialPinCount + ", pinnedCrossConsumer=" + pinnedCrossConsumerCount
+                + ", pendingConsumerKey=" + pendingConsumerKeyCount + ", forwardPartialPin=" + forwardPartialPinCount
+                + ", unpinnedNullingBoundary=" + unpinnedNullingBoundaryCount + " of " + ORDERING_EDGE_CORPUS_SIZE;
+        Assert.assertTrue(counts, partialPinCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, pinnedCrossConsumerCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, pendingConsumerKeyCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, forwardPartialPinCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+        Assert.assertTrue(counts, unpinnedNullingBoundaryCount * 100 >= ORDERING_EDGE_CORPUS_SIZE);
+    }
+
+    @Test
+    public void testQueriesPlanFoldedPredicateGateBelowKeylessLeftJoin() throws Exception {
+        // The query text cannot tell whether SqlOptimiser runs a LEFT join without join keys after a RIGHT or FULL
+        // join written after it, nor whether the folded predicate gates that outer join alone, so this test reads
+        // the plans. A false gate between the two joins keeps the outer join closed, and OuterJoinNullCheck.of()
+        // then leaves out the join that it lists; before it did, the LEFT join failed with "outer join cursor is
+        // not open". A fiftieth of the queries suffices for each of the INNER join and the WHERE form: some six of
+        // the 300 queries of a fuzz run, each of which runs twice, with values of $1 that close the gate half the time.
+        assertMemoryLeak(() -> {
+            createTables();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 0);
+            bindVariableService.setInt(1, 0);
+            final int innerJoinGateCount = countFoldedPredicateGatesBelowKeylessLeftJoin(false);
+            final int whereGateCount = countFoldedPredicateGatesBelowKeylessLeftJoin(true);
+            final String counts = "innerJoinGate=" + innerJoinGateCount + ", whereGate=" + whereGateCount
+                    + " of " + FOLDED_PREDICATE_CORPUS_SIZE;
+            Assert.assertTrue(counts, innerJoinGateCount * 50 >= FOLDED_PREDICATE_CORPUS_SIZE);
+            Assert.assertTrue(counts, whereGateCount * 50 >= FOLDED_PREDICATE_CORPUS_SIZE);
+        });
+    }
+
+    @Test
+    public void testWhereQueriesCoverScanFilterShapes() {
+        // The shapes where a copy of a WHERE conjunct could change the rows: LATEST ON on the table, symbol
+        // predicates that the NULL probe parses, bind variables whose value may be NULL, predicates that read
+        // several columns of the table, several conjuncts on one table, which a NULL-rejecting conjunct takes
+        // along, and a join that matches on the table
+        // after a RIGHT or FULL join, after which a copy also filters. A twentieth of the queries suffices
+        // for the last: it needs a RIGHT or FULL join, a later ON clause and a WHERE that line up. The folded
+        // predicate gates the joins below the WHERE, which may hold an outer join that a LEFT join without join
+        // keys written before it checks, see testQueriesCoverFoldedConjunctsAfterKeylessLeftJoin; a hundredth
+        // of the queries suffices for that shape.
+        final Rnd rnd = new Rnd(42, 4242);
+        int latestOnCount = 0;
+        int symbolCount = 0;
+        int bindCount = 0;
+        int severalColumnCount = 0;
+        int conjunctPairCount = 0;
+        int nullExtensionMatchCount = 0;
+        int foldedCount = 0;
+        int foldedAfterKeylessLeftJoinCount = 0;
+        for (int i = 0; i < WHERE_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, true, false)[0];
+            if (hasJoinOnWhereTableAfterOuterJoin(flat)) {
+                nullExtensionMatchCount++;
+            }
+            final int whereIndex = flat.indexOf(" WHERE ");
+            if (whereIndex != -1 && flat.indexOf(FOLDED_PREDICATE_END, whereIndex) != -1) {
+                foldedCount++;
+            }
+            if (hasFoldedPredicateAfterKeylessLeftJoin(flat, true)) {
+                foldedAfterKeylessLeftJoinCount++;
+            }
+            if (flat.contains(" LATEST ON ts PARTITION BY k")) {
+                latestOnCount++;
+            }
+            if (WHERE_SYMBOL_PREDICATE.matcher(flat).find()) {
+                symbolCount++;
+            }
+            if (flat.contains("$1")) {
+                bindCount++;
+            }
+            if (WHERE_SEVERAL_COLUMN_PREDICATE.matcher(flat).find()) {
+                severalColumnCount++;
+            }
+            if (WHERE_CONJUNCT_PAIR.matcher(flat).find()) {
+                conjunctPairCount++;
+            }
+        }
+        final String counts = "latestOn=" + latestOnCount + ", symbol=" + symbolCount + ", bind=" + bindCount
+                + ", severalColumn=" + severalColumnCount
+                + ", conjunctPair=" + conjunctPairCount + ", nullExtensionMatch=" + nullExtensionMatchCount
+                + ", folded=" + foldedCount + ", foldedAfterKeylessLeftJoin=" + foldedAfterKeylessLeftJoinCount
+                + " of " + WHERE_CORPUS_SIZE;
+        Assert.assertTrue(counts, latestOnCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, symbolCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, bindCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, severalColumnCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, conjunctPairCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, nullExtensionMatchCount * 20 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, foldedCount * 20 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, foldedAfterKeylessLeftJoinCount * 100 >= WHERE_CORPUS_SIZE);
+    }
+
+    // Appends cL = cJ, cL < cJ or cJ > 0 over the INT or the DOUBLE columns of the table at index left and the one at
+    // index joined; with isKeyed, cL = cJ, a join key.
+    private static void appendCondition(
+            Rnd rnd,
+            StringBuilder sql,
+            int[] tables,
+            int joined,
+            int left,
+            boolean isOuterJoinHeavy,
+            boolean isKeyed
+    ) {
+        final char column = rnd.nextInt(10) < 7 ? 'c' : 'v';
+        final int shape = isKeyed ? 0 : rnd.nextInt(100);
+        if (shape < (isOuterJoinHeavy ? 45 : 75)) {
+            sql.append(column).append(tables[left]).append(" = ").append(column).append(tables[joined]);
+        } else if (shape < (isOuterJoinHeavy ? 75 : 90)) {
+            sql.append(column).append(tables[left]).append(" < ").append(column).append(tables[joined]);
+        } else {
+            sql.append(column).append(tables[joined]).append(" > 0");
+        }
+    }
+
+    // Appends a predicate that names the INT column of the table but folds to $1 > 0, a runtime constant, which is
+    // false for half of WHERE_BIND_VALUES. SqlCodeGenerator tests it once per execution in a gate over the joins
+    // below it, see RuntimeConstGateRecordCursorFactory; a false gate opens none of them. The parentheses keep it
+    // whole next to another conjunct, and hasJoinOnWhereTableAfterOuterJoin() does not take IS NULL as false on
+    // NULL.
+    private static void appendFoldedPredicate(StringBuilder sql, int table) {
+        sql.append("((c").append(table).append(FOLDED_PREDICATE_END);
+    }
+
+    // Appends a condition without a join key on the table at index joined: cX < cJ over an earlier table X, or
+    // cJ > 0, which also holds for a row of the table next to a row that a RIGHT or FULL join NULL-extends.
+    private static void appendKeylessCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined) {
+        if (rnd.nextBoolean()) {
+            sql.append('c').append(tables[rnd.nextInt(joined)]).append(" < c").append(tables[joined]);
+        } else {
+            sql.append('c').append(tables[joined]).append(" > 0");
+        }
+    }
+
+    // Appends cX = cY + cZ or cX = cY - cZ, with the sum on either side of =, over the tables before the
+    // one at index joined, Y and Z distinct. X may be Y or Z, so the conjunct reads two or three tables.
+    private static void appendMultiTableCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined) {
+        final int x = tables[rnd.nextInt(joined)];
+        final int yIndex = rnd.nextInt(joined);
+        int zIndex = rnd.nextInt(joined - 1);
+        if (zIndex >= yIndex) {
+            zIndex++;
+        }
+        final String sum = "c" + tables[yIndex] + (rnd.nextBoolean() ? " + c" : " - c") + tables[zIndex];
+        if (rnd.nextBoolean()) {
+            sql.append('c').append(x).append(" = ").append(sum);
+        } else {
+            sql.append(sum).append(" = c").append(x);
+        }
+    }
+
+    // Appends a WHERE predicate on the table, of a kind that rnd picks: comparisons of the INT column with
+    // constants and INT bind variables, IS [NOT] NULL, a function over it, predicates on the SYMBOL column,
+    // an equality with the INT column of another table of the query, predicates that read several columns
+    // of the table, and the folded predicate of appendFoldedPredicate().
+    private static void appendWherePredicate(Rnd rnd, StringBuilder where, int table, int[] tables, int modelCount) {
+        final String c = "c" + table;
+        final String s = "s" + table;
+        final String v = "v" + table;
+        switch (rnd.nextInt(22)) {
+            case 0 -> where.append(c).append(" > 0");
+            case 1 -> where.append(c).append(" IS NULL");
+            case 2 -> where.append(c).append(" IS NOT NULL");
+            case 3 -> where.append(c).append(" = c").append(tables[rnd.nextInt(modelCount)]);
+            case 4 -> where.append(c).append(" IN (0, 1)");
+            case 5 -> where.append(c).append(" BETWEEN 0 AND 1");
+            case 6 -> where.append(c).append(" != 1");
+            case 7 -> where.append("coalesce(").append(c).append(", 0) = 0");
+            case 8 -> where.append(s).append(" LIKE 'a%'");
+            case 9 -> where.append(s).append(" ~ 'a'");
+            case 10 -> where.append(s).append(" IN ('a', 'b')");
+            case 11 -> where.append(s).append(" NOT IN ('a')");
+            case 12 -> where.append(c).append(" > $1");
+            case 13 -> where.append(c).append(" >= $1");
+            case 14 -> where.append(c).append(" >= $1 AND ").append(c).append(" < $2");
+            case 15 -> where.append(c).append(" = $1");
+            // several columns of the table: false on its NULL row, false there for every value of $1, true
+            // there, and true there when $1 is NULL
+            case 16 -> where.append(c).append(" + ").append(v).append(" > 1");
+            case 17 -> where.append(c).append(" * length(").append(s).append(") = 1");
+            case 18 -> where.append(c).append(" + ").append(v).append(" > $1");
+            case 19 -> where.append("coalesce(").append(c).append(", ").append(v).append(", 0) = 0");
+            case 20 -> where.append(c).append(" - ").append(v).append(" = $1");
+            default -> appendFoldedPredicate(where, table);
+        }
+    }
+
+    // Returns LIMIT n, LIMIT -n or LIMIT lo, hi, with n from 1 to 4 and 0 <= lo < hi <= 4. The tables hold up to
+    // six rows each, so the queries return fewer rows than the LIMIT asks for as well as more.
+    private static String generateLimit(Rnd rnd) {
+        return switch (rnd.nextInt(3)) {
+            case 0 -> " LIMIT " + (1 + rnd.nextInt(4));
+            case 1 -> " LIMIT -" + (1 + rnd.nextInt(4));
+            default -> {
+                final int lo = rnd.nextInt(4);
+                yield " LIMIT " + lo + ", " + (lo + 1 + rnd.nextInt(4 - lo));
+            }
+        };
+    }
+
+    // Returns {flat, nested, prefix sub-query, LIMIT-fenced}: the same joins flat, as sub-queries nested in
+    // the order written, with the tables before the last join in a sub-query, and flat without WHERE in a
+    // sub-query that LIMIT keeps whole, with the WHERE outside. With isOuterJoinHeavy, the
+    // queries favour outer, non-equi and time-series joins, which the optimiser reorders around the
+    // RIGHT/FULL joins. With isImpliedKeyHeavy, the queries write only INNER and outer joins, every INNER
+    // join after the second table ties the table of the join before it to an earlier table, and WHERE
+    // filters on one or both tables of the last such tie. With isWhereHeavy, every query filters with one
+    // or two predicates on a table, and a quarter of them put LATEST ON on the first table: the flat form
+    // as a trailing LATEST ON, which applies to the first table, and the nested and prefix forms as a
+    // sub-query of that table. With isFirstTableWhere, the WHERE of a WHERE-heavy query filters the first
+    // table, whose filter a LIMIT over the joins reaches as advice.
+    private static String[] generateQueries(
+            Rnd rnd,
+            boolean isOuterJoinHeavy,
+            boolean isImpliedKeyHeavy,
+            boolean isWhereHeavy,
+            boolean isFirstTableWhere
+    ) {
+        return generateQueries(rnd, isOuterJoinHeavy, isImpliedKeyHeavy, isWhereHeavy, isFirstTableWhere, false);
+    }
+
+    // With isForwardReadHeavy, the queries also write an INNER join whose ON clause reads only the table of a later
+    // INNER join, c_reader = c_target, which SqlOptimiser applies where the later table joins, so the nested form
+    // writes the conjunct in the ON clause of the later join and the reader as a CROSS join. Each RIGHT or FULL join
+    // written between the two leaves the reader unpinned, and the joins there mostly are RIGHT and FULL joins, half
+    // of whose conditions read the reader's table, which leaves them unpinned at a later RIGHT or FULL join too. An
+    // INNER join after a CROSS join there, the later join included, ties the CROSS join to another table, and the
+    // conditions favour non-equi comparisons, as with isOuterJoinHeavy.
+    private static String[] generateQueries(
+            Rnd rnd,
+            boolean isOuterJoinHeavy,
+            boolean isImpliedKeyHeavy,
+            boolean isWhereHeavy,
+            boolean isFirstTableWhere,
+            boolean isForwardReadHeavy
+    ) {
+        final int modelCount = isForwardReadHeavy ? 5 + rnd.nextInt(4) : isOuterJoinHeavy ? 4 + rnd.nextInt(5) : 3 + rnd.nextInt(6);
+        final int[] tables = new int[TABLE_COUNT];
+        for (int i = 0; i < TABLE_COUNT; i++) {
+            tables[i] = i;
+        }
+        for (int i = TABLE_COUNT - 1; i > 0; i--) {
+            final int j = rnd.nextInt(i + 1);
+            final int tmp = tables[i];
+            tables[i] = tables[j];
+            tables[j] = tmp;
+        }
+        // the INNER join that reads the table of a later INNER join, and that join, with a join between them and one
+        // after the later join
+        final int forwardTarget = isForwardReadHeavy ? 3 + rnd.nextInt(modelCount - 4) : -1;
+        final int forwardReader = isForwardReadHeavy ? 1 + rnd.nextInt(forwardTarget - 2) : -1;
+        // positions in onTables of the table of the reader and of the last CROSS join between the reader and its target
+        int forwardReaderOnTable = -1;
+        int forwardCrossOnTable = -1;
+        final boolean isLatestOn = isWhereHeavy && rnd.nextInt(4) == 0;
+        final String firstTable = isLatestOn
+                ? "(SELECT * FROM t" + tables[0] + " LATEST ON ts PARTITION BY k) t" + tables[0]
+                : "t" + tables[0];
+        final StringBuilder flat = new StringBuilder("SELECT * FROM t").append(tables[0]);
+        // the joins of the flat form after its first table
+        final StringBuilder joins = new StringBuilder();
+        String nested = "SELECT * FROM " + firstTable;
+        String prefixSubQuery = null;
+        int impliedKeyMaster = -1;
+        int impliedKeySlave = -1;
+        // the tables that the ON clause of the join that the loop writes may read, in the order written: the tables
+        // before the join, except those of the movable LEFT join and the LEFT joins without = after it, followed by
+        // the table of the join at onTableCount
+        final int[] onTables = new int[TABLE_COUNT];
+        onTables[0] = tables[0];
+        int onTableCount = 1;
+        // position in onTables of the last RIGHT or FULL join so far, which NULL-extends the tables before it
+        int outerJoined = -1;
+        // index of the LEFT join without join keys that the joins after it leave movable: no ON clause reads its
+        // table, and they are INNER, CROSS and LEFT joins and RIGHT and FULL joins with a join key, so SqlOptimiser
+        // may run it after those outer joins, see OuterJoinNullCheck
+        int movableLeftJoined = -1;
+        // a RIGHT or FULL join written after the movable LEFT join so far
+        boolean isOuterJoinAfterMovableLeftJoin = false;
+        for (int joined = 1; joined < modelCount; joined++) {
+            onTables[onTableCount] = tables[joined];
+            final boolean isLast = joined == modelCount - 1;
+            final String joinType;
+            if (isLast) {
+                joinType = rnd.nextInt(3) == 0 ? "FULL JOIN" : "RIGHT JOIN";
+            } else if (joined == forwardReader || joined == forwardTarget) {
+                joinType = "JOIN";
+            } else if (joined > forwardReader && joined < forwardTarget) {
+                joinType = switch (rnd.nextInt(6)) {
+                    case 0, 1 -> "RIGHT JOIN";
+                    case 2, 3 -> "FULL JOIN";
+                    case 4 -> "JOIN";
+                    default -> "CROSS JOIN";
+                };
+            } else if (isImpliedKeyHeavy) {
+                joinType = switch (rnd.nextInt(4)) {
+                    case 0 -> "JOIN";
+                    case 1 -> "LEFT JOIN";
+                    case 2 -> "RIGHT JOIN";
+                    default -> "FULL JOIN";
+                };
+            } else {
+                // after the movable LEFT join, r stops short of the ASOF and LT joins: SqlOptimiser does not move a
+                // LEFT join that a time-series join follows
+                final int r = rnd.nextInt(movableLeftJoined == -1 ? 100 : 88);
+                if (r < (isOuterJoinHeavy ? 15 : 40)) {
+                    joinType = "JOIN";
+                } else if (r < (isOuterJoinHeavy ? 40 : 58)) {
+                    joinType = "LEFT JOIN";
+                } else if (r < (isOuterJoinHeavy ? 45 : 70)) {
+                    joinType = "CROSS JOIN";
+                } else if (r < (isOuterJoinHeavy ? 60 : 80)) {
+                    joinType = "RIGHT JOIN";
+                } else if (r < (isOuterJoinHeavy ? 70 : 88)) {
+                    joinType = "FULL JOIN";
+                } else if (r < (isOuterJoinHeavy ? 88 : 95)) {
+                    joinType = "ASOF JOIN";
+                } else {
+                    joinType = "LT JOIN";
+                }
+            }
+            final StringBuilder join = new StringBuilder().append(' ').append(joinType).append(" t").append(tables[joined]);
+            // the join of the nested form when it differs from the flat one
+            String nestedJoin = null;
+            if (joined == forwardReader) {
+                join.append(" ON c").append(tables[forwardReader]).append(" = c").append(tables[forwardTarget]);
+                nestedJoin = " CROSS JOIN t" + tables[joined];
+                forwardReaderOnTable = onTableCount;
+            } else if (!joinType.equals("CROSS JOIN") && !joinType.equals("ASOF JOIN") && !joinType.equals("LT JOIN")) {
+                join.append(" ON ");
+                if (joined > forwardReader && joined <= forwardTarget && joinType.equals("JOIN") && forwardCrossOnTable != -1) {
+                    // ties the CROSS join to another table, so that SqlOptimiser may move the key onto the CROSS join
+                    // while the edge from a non-equi RIGHT or FULL join before it is pending
+                    final int other = rnd.nextInt(onTableCount - 1);
+                    join.append('c').append(onTables[forwardCrossOnTable]).append(" = c").append(tables[joined]).append(" AND c")
+                            .append(onTables[other < forwardCrossOnTable ? other : other + 1]).append(" = c").append(tables[joined]);
+                } else if (isImpliedKeyHeavy && joinType.equals("JOIN") && joined > 1) {
+                    impliedKeyMaster = tables[rnd.nextInt(joined - 1)];
+                    impliedKeySlave = tables[joined - 1];
+                    join.append('c').append(impliedKeyMaster).append(" = c").append(tables[joined])
+                            .append(" AND c").append(impliedKeySlave).append(" = c").append(tables[joined]);
+                } else if (!isImpliedKeyHeavy && joinType.equals("LEFT JOIN") && rnd.nextBoolean()) {
+                    // half of the LEFT joins have no join key, so that SqlOptimiser often runs such a nested loop
+                    // LEFT join after the RIGHT and FULL joins written after it, see OuterJoinNullCheck, and the joins
+                    // after the first of them leave it movable in the queries that do not favour outer joins
+                    appendKeylessCondition(rnd, join, onTables, onTableCount);
+                    if (!isOuterJoinHeavy && movableLeftJoined == -1) {
+                        movableLeftJoined = joined;
+                    }
+                } else if (joinType.equals("JOIN") && isOuterJoinAfterMovableLeftJoin) {
+                    // an INNER join after a RIGHT or FULL join that the movable LEFT join may run after gets the folded
+                    // predicate alone next to a join key, so that it gates the joins below the INNER join, that outer
+                    // join among them, and the LEFT join above the gate checks that join. The key reads another table
+                    // than the predicate: the INNER hash join would take a predicate on its master key column as a
+                    // filter of its slave rows, see SqlCodeGenerator.moveSlaveConditionsIntoHashJoin()
+                    final int folded = rnd.nextInt(outerJoined);
+                    final int left = rnd.nextInt(onTableCount - 1);
+                    appendCondition(rnd, join, onTables, onTableCount, left < folded ? left : left + 1, isOuterJoinHeavy, true);
+                    join.append(" AND ");
+                    appendFoldedPredicate(join, onTables[folded]);
+                } else {
+                    // a RIGHT or FULL join after the movable LEFT join has a join key
+                    final boolean isKeyed = movableLeftJoined != -1 && (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN"));
+                    final boolean isReadingForwardReader = forwardReaderOnTable != -1 && joined < forwardTarget && rnd.nextBoolean();
+                    appendCondition(rnd, join, onTables, onTableCount, isReadingForwardReader ? forwardReaderOnTable : rnd.nextInt(onTableCount), isOuterJoinHeavy || isForwardReadHeavy, isKeyed);
+                    if (rnd.nextInt(3) == 0) {
+                        join.append(" AND ");
+                        appendCondition(rnd, join, onTables, onTableCount, rnd.nextInt(onTableCount), isOuterJoinHeavy, false);
+                    }
+                    // an INNER join after a RIGHT or FULL join mostly gets a conjunct over the tables that the
+                    // outer join NULL-extends, which must filter after the outer join; any join after the second
+                    // table may get one over all earlier tables
+                    if (joinType.equals("JOIN") && outerJoined >= 2 && rnd.nextInt(3) > 0) {
+                        join.append(" AND ");
+                        appendMultiTableCondition(rnd, join, onTables, outerJoined);
+                    } else if (onTableCount >= 2 && rnd.nextInt(3) == 0) {
+                        join.append(" AND ");
+                        appendMultiTableCondition(rnd, join, onTables, onTableCount);
+                    }
+                    // an INNER join after a RIGHT or FULL join may also get the folded predicate over a table that the
+                    // outer join NULL-extends, which gates the joins up to the INNER join
+                    if (joinType.equals("JOIN") && outerJoined != -1 && rnd.nextInt(4) == 0) {
+                        join.append(" AND ");
+                        appendFoldedPredicate(join, onTables[rnd.nextInt(outerJoined)]);
+                    }
+                }
+            }
+            if (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN")) {
+                outerJoined = onTableCount;
+                isOuterJoinAfterMovableLeftJoin = movableLeftJoined != -1;
+            } else if (joinType.equals("CROSS JOIN") && joined > forwardReader && joined < forwardTarget) {
+                forwardCrossOnTable = onTableCount;
+            }
+            // no ON clause reads the movable LEFT join, nor a LEFT join without = after it, which SqlOptimiser would
+            // then run before the outer join, and the movable LEFT join before it
+            if (joined != movableLeftJoined && (movableLeftJoined == -1 || !joinType.equals("LEFT JOIN") || join.indexOf(" = ") != -1)) {
+                onTableCount++;
+            }
+            if (joined == forwardTarget) {
+                nestedJoin = join + " AND c" + tables[forwardReader] + " = c" + tables[forwardTarget];
+            }
+            if (isLast) {
+                prefixSubQuery = "SELECT * FROM (SELECT * FROM " + firstTable + joins + ") p" + join;
+            }
+            flat.append(join);
+            joins.append(join);
+            nested = "SELECT * FROM (" + nested + ") n" + joined + (nestedJoin != null ? nestedJoin : join);
+        }
+        final String latestOn = isLatestOn ? " LATEST ON ts PARTITION BY k" : "";
+        String limitFenced = "SELECT * FROM (" + flat + latestOn + " LIMIT 1_000_000_000) f";
+        String where = null;
+        if (impliedKeySlave != -1) {
+            where = switch (rnd.nextInt(3)) {
+                case 0 -> " WHERE c" + impliedKeySlave + " > 0";
+                case 1 -> " WHERE c" + impliedKeyMaster + " > 0";
+                default -> " WHERE c" + impliedKeyMaster + " > 0 AND c" + impliedKeySlave + " > 0";
+            };
+        } else if (isWhereHeavy) {
+            final StringBuilder predicates = new StringBuilder(" WHERE ");
+            if (movableLeftJoined != -1 && !isFirstTableWhere && rnd.nextBoolean()) {
+                // half of the queries with a movable LEFT join that do not filter the first table filter with the
+                // folded predicate alone, on a table of onTables before the last join, so that it gates the last
+                // join, a RIGHT or FULL join that the LEFT join runs after and checks
+                appendFoldedPredicate(predicates, onTables[rnd.nextInt(onTableCount - 1)]);
+            } else {
+                final int table = isFirstTableWhere ? tables[0] : tables[rnd.nextInt(modelCount)];
+                appendWherePredicate(rnd, predicates, table, tables, modelCount);
+                if (rnd.nextInt(3) == 0) {
+                    predicates.append(" AND ");
+                    appendWherePredicate(rnd, predicates, table, tables, modelCount);
+                }
+            }
+            where = predicates.toString();
+        } else if (rnd.nextInt(10) < 3) {
+            final int table = tables[rnd.nextInt(modelCount)];
+            where = switch (rnd.nextInt(4)) {
+                case 0 -> " WHERE c" + table + " > 0";
+                case 1 -> " WHERE c" + table + " IS NULL";
+                case 2 -> " WHERE c" + table + " IS NOT NULL";
+                default -> " WHERE c" + table + " = c" + tables[rnd.nextInt(modelCount)];
+            };
+        }
+        if (where != null) {
+            flat.append(where);
+            nested = "SELECT * FROM (" + nested + ") n" + where;
+            prefixSubQuery += where;
+            limitFenced += where;
+        }
+        flat.append(latestOn);
+        return new String[]{flat.toString(), nested, prefixSubQuery, limitFenced};
+    }
+
+    // True when the flat query writes a LEFT join without = in its ON clause, a RIGHT or FULL join after it, and
+    // the folded predicate of appendFoldedPredicate() after that: in the WHERE when isWhere is set, else in the ON
+    // clause of a later INNER join. SqlOptimiser may run such a LEFT join after the outer join, see
+    // OuterJoinNullCheck, and the gate of the folded predicate then sits between the two joins.
+    private static boolean hasFoldedPredicateAfterKeylessLeftJoin(String flat, boolean isWhere) {
+        final int whereIndex = flat.indexOf(" WHERE ");
+        final int end = whereIndex == -1 ? flat.length() : whereIndex;
+        final List<String> joinTypes = new ArrayList<>();
+        final List<String> onClauses = new ArrayList<>();
+        final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, end);
+        int onStart = -1;
+        while (joinMatcher.find()) {
+            if (onStart != -1) {
+                onClauses.add(flat.substring(onStart, joinMatcher.start()));
+            }
+            joinTypes.add(joinMatcher.group(1));
+            onStart = joinMatcher.end();
+        }
+        if (onStart != -1) {
+            onClauses.add(flat.substring(onStart, end));
+        }
+        boolean isKeylessLeftJoin = false;
+        boolean isOuterJoinAfterLeftJoin = false;
+        for (int i = 0, n = joinTypes.size(); i < n; i++) {
+            final String joinType = joinTypes.get(i);
+            if (!isWhere && isOuterJoinAfterLeftJoin && joinType.equals("JOIN") && onClauses.get(i).contains(FOLDED_PREDICATE_END)) {
+                return true;
+            }
+            if (joinType.equals("LEFT JOIN") && !onClauses.get(i).contains(" = ")) {
+                isKeylessLeftJoin = true;
+            } else if (isKeylessLeftJoin && (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN"))) {
+                isOuterJoinAfterLeftJoin = true;
+            }
+        }
+        return isWhere && isOuterJoinAfterLeftJoin && flat.indexOf(FOLDED_PREDICATE_END, end) != -1;
+    }
+
+    // True when the plan of the flat query runs a nested loop LEFT join with an OuterJoinNullCheck above the gate of
+    // the folded predicate, and the gate holds a RIGHT or FULL join that the query writes after the LEFT join, which
+    // the check lists. The second child of a join, its slave, is the last of its lines, and the last table that
+    // they scan is the slave table of the LEFT join and the one that an outer join hashes.
+    private static boolean hasFoldedPredicateGateBelowOuterJoinCheck(String flat, PlanSink plan) {
+        final int lineCount = plan.getLineCount();
+        final String[] lines = new String[lineCount];
+        for (int i = 0; i < lineCount; i++) {
+            lines[i] = plan.getLine(i + 1).toString();
+        }
+        for (int leftJoin = 0; leftJoin < lineCount; leftJoin++) {
+            if (!lines[leftJoin].trim().equals("Nested Loop Left Join")) {
+                continue;
+            }
+            final int leftJoinEnd = planNodeEnd(lines, leftJoin);
+            boolean hasOuterJoinCheck = false;
+            for (int i = leftJoin + 1; i < leftJoinEnd && planIndent(lines[i]) == planIndent(lines[leftJoin]) + 2; i++) {
+                hasOuterJoinCheck |= lines[i].trim().equals("outerJoinCheck: true");
+            }
+            if (!hasOuterJoinCheck) {
+                continue;
+            }
+            final int leftJoinWritten = flat.indexOf(" LEFT JOIN " + lastScannedTable(lines, leftJoin, leftJoinEnd) + ' ');
+            Assert.assertNotEquals(flat, -1, leftJoinWritten);
+            for (int gate = leftJoin + 1; gate < leftJoinEnd; gate++) {
+                // the gate of $1 > 0, which the folded predicate folds to; a filter with more conjuncts prints them
+                if (!lines[gate].trim().equals("Filter filter: 0<$0::int")) {
+                    continue;
+                }
+                for (int outerJoin = gate + 1, gateEnd = planNodeEnd(lines, gate); outerJoin < gateEnd; outerJoin++) {
+                    final String node = lines[outerJoin].trim();
+                    if ((node.startsWith("Hash Right Outer Join") || node.startsWith("Hash Full Outer Join"))
+                            && flat.indexOf(" JOIN " + lastScannedTable(lines, outerJoin, planNodeEnd(lines, outerJoin)) + ' ') > leftJoinWritten) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    // True when the WHERE of the flat query filters the first table, or a table of an INNER or CROSS join, with a
+    // predicate that is false on the NULL row of the table, a RIGHT or FULL join NULL-extends the table, and the
+    // ON clause of a later join reads the table. Copies of the predicate filter the scan of the table, and the
+    // later join matches the rows that the RIGHT or FULL join NULL-extends on NULL, so a copy also filters
+    // after that join, see SqlOptimiser.addNullExtensionFilters().
+    private static boolean hasJoinOnWhereTableAfterOuterJoin(String flat) {
+        final Matcher whereMatcher = WHERE_TABLE.matcher(flat);
+        if (!whereMatcher.find()) {
+            return false;
+        }
+        final String table = whereMatcher.group(2);
+        // the predicates of appendWherePredicate() that are false on NULL for every value of $1 and $2
+        final Pattern nullRejectingPredicate = Pattern.compile("[cs]" + table
+                + " (> 0|IS NOT NULL|IN \\(|BETWEEN|LIKE|~|> \\$1|< \\$2|\\+ v" + table + " > |\\* length\\(s" + table + "\\) = 1)");
+        if (!nullRejectingPredicate.matcher(flat).region(whereMatcher.start(), flat.length()).find()) {
+            return false;
+        }
+        final Pattern tableColumn = Pattern.compile("[cv]" + table + "(?!\\d)");
+        final List<String> joinTypes = new ArrayList<>();
+        final List<String> joinedTables = new ArrayList<>();
+        final List<String> onClauses = new ArrayList<>();
+        final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, whereMatcher.start());
+        int onStart = -1;
+        while (joinMatcher.find()) {
+            if (onStart != -1) {
+                onClauses.add(flat.substring(onStart, joinMatcher.start()));
+            }
+            joinTypes.add(joinMatcher.group(1));
+            joinedTables.add(joinMatcher.group(2));
+            onStart = joinMatcher.end();
+        }
+        if (onStart != -1) {
+            onClauses.add(flat.substring(onStart, whereMatcher.start()));
+        }
+        boolean isTableJoined = flat.startsWith("SELECT * FROM t" + table + ' ');
+        // a RIGHT or FULL join after the table runs before the join that the loop reads
+        boolean isNullExtended = false;
+        for (int i = 0, n = joinTypes.size(); i < n; i++) {
+            if (isNullExtended && tableColumn.matcher(onClauses.get(i)).find()) {
+                return true;
+            }
+            final String joinType = joinTypes.get(i);
+            if (joinedTables.get(i).equals(table)) {
+                if (!joinType.equals("JOIN") && !joinType.equals("CROSS JOIN")) {
+                    // the WHERE filters the right side of an outer or time-series join after it
+                    return false;
+                }
+                isTableJoined = true;
+            } else {
+                isNullExtended |= isTableJoined && (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN"));
+            }
+        }
+        return false;
+    }
+
+    // True when an INNER join of the flat query has a conjunct that matches the pattern, and a RIGHT or FULL
+    // join sits after every table that the conjunct reads and before the INNER join, which NULL-extends
+    // those tables, so the conjunct must filter after it.
+    private static boolean hasMultiTableConjunctAfterOuterJoin(String flat, Pattern conjunct) {
+        // position in the join order of each table of the query, the first table at 0
+        final int[] tablePositions = new int[TABLE_COUNT];
+        final List<String> joinTypes = new ArrayList<>();
+        final List<String> onClauses = new ArrayList<>();
+        tablePositions[flat.charAt("SELECT * FROM t".length()) - '0'] = 0;
+        joinTypes.add("FROM");
+        onClauses.add("");
+        final int whereIndex = flat.indexOf(" WHERE ");
+        final int end = whereIndex == -1 ? flat.length() : whereIndex;
+        final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, end);
+        int onStart = -1;
+        while (joinMatcher.find()) {
+            if (onStart != -1) {
+                onClauses.add(flat.substring(onStart, joinMatcher.start()));
+            }
+            tablePositions[joinMatcher.group(2).charAt(0) - '0'] = joinTypes.size();
+            joinTypes.add(joinMatcher.group(1));
+            onStart = joinMatcher.end();
+        }
+        if (onStart != -1) {
+            onClauses.add(flat.substring(onStart, end));
+        }
+        for (int join = 2, n = joinTypes.size(); join < n; join++) {
+            if (!joinTypes.get(join).equals("JOIN")) {
+                continue;
+            }
+            final Matcher conjunctMatcher = conjunct.matcher(onClauses.get(join));
+            if (!conjunctMatcher.find()) {
+                continue;
+            }
+            int lastRead = 0;
+            for (int group = 1; group <= 3; group++) {
+                lastRead = Math.max(lastRead, tablePositions[conjunctMatcher.group(group).charAt(0) - '0']);
+            }
+            for (int outerJoin = lastRead + 1; outerJoin < join; outerJoin++) {
+                final String joinType = joinTypes.get(outerJoin);
+                if (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // an ASOF or LT join written after a RIGHT or FULL join, so that its left side has no designated
+    // timestamp
+    private static boolean hasOuterJoinBeforeTimeSeriesJoin(String sql) {
+        final int timeSeriesJoin = Math.max(sql.lastIndexOf(" ASOF JOIN "), sql.lastIndexOf(" LT JOIN "));
+        final int rightJoin = sql.indexOf(" RIGHT JOIN ");
+        final int fullJoin = sql.indexOf(" FULL JOIN ");
+        return (rightJoin != -1 && rightJoin < timeSeriesJoin) || (fullJoin != -1 && fullJoin < timeSeriesJoin);
+    }
+
+    // A reference fails only where it cannot express its query. A time-series join after a RIGHT or
+    // FULL join has no designated timestamp on its left side. The prefix form also runs into #7700:
+    // SqlOptimiser may run a table that no join key ties to the others after an outer join whose ON
+    // clause reads it, and the valid query fails with "Invalid column". The nested form joins two
+    // models per level, so each ON clause reads only the models that its own join combines.
+    private static boolean isUnsupportedReference(String reference, int referenceIndex, SqlException e) {
+        final CharSequence message = e.getFlyweightMessage();
+        if (Chars.equals(message, "TIMESTAMP column is required but not provided")
+                || Chars.equals(message, "left side of time series join has no timestamp")) {
+            return hasOuterJoinBeforeTimeSeriesJoin(reference);
+        }
+        return referenceIndex == PREFIX_SUB_QUERY && Chars.startsWith(message, "Invalid column: ");
+    }
+
+    // the table that the last of the plan lines from start to end scans
+    private static String lastScannedTable(String[] lines, int start, int end) {
+        for (int i = end - 1; i >= start; i--) {
+            final int on = lines[i].lastIndexOf(" on: ");
+            if (on != -1) {
+                return lines[i].substring(on + " on: ".length());
+            }
+        }
+        throw new AssertionError("no table scan in the plan lines " + start + " to " + end);
+    }
+
+    // the number of rows that a LIMIT of generateLimit() keeps of rowCount rows
+    private static int limitedRowCount(String limit, int rowCount) {
+        final String bounds = limit.substring(" LIMIT ".length());
+        final int comma = bounds.indexOf(',');
+        if (comma == -1) {
+            return Math.min(Math.abs(Integer.parseInt(bounds)), rowCount);
+        }
+        final int lo = Integer.parseInt(bounds.substring(0, comma));
+        final int hi = Integer.parseInt(bounds.substring(comma + 2));
+        return Math.max(0, Math.min(hi, rowCount) - lo);
+    }
+
+    private static int planIndent(String line) {
+        int indent = 0;
+        while (indent < line.length() && line.charAt(indent) == ' ') {
+            indent++;
+        }
+        return indent;
+    }
+
+    // the line after the last line of the node at the plan line, its attributes and children
+    private static int planNodeEnd(String[] lines, int node) {
+        final int indent = planIndent(lines[node]);
+        int end = node + 1;
+        while (end < lines.length && planIndent(lines[end]) > indent) {
+            end++;
+        }
+        return end;
+    }
+
+    private static List<String> rowList(StringSink sink) {
+        final String[] lines = sink.toString().split("\n");
+        // the first line is the header
+        return new ArrayList<>(Arrays.asList(lines).subList(Math.min(1, lines.length), lines.length));
+    }
+
+    private static String sortedRows(StringSink sink) {
+        final String[] lines = sink.toString().split("\n");
+        // the header differs: a sub-query renames the columns that several tables share
+        final String[] rows = Arrays.copyOfRange(lines, Math.min(1, lines.length), lines.length);
+        Arrays.sort(rows);
+        return String.join("\n", rows);
+    }
+
+    private void assertFlatJoinReturnsRowsOf(
+            int referenceIndex,
+            int queryCount,
+            boolean isImpliedKeyHeavy,
+            boolean isWhereHeavy,
+            boolean isForwardReadHeavy
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            createTables();
+            final StringSink flatRows = new StringSink();
+            final StringSink referenceRows = new StringSink();
+            int checkedCount = 0;
+            int runCount = 0;
+            for (int i = 0; i < queryCount; i++) {
+                final String[] queries = generateQueries(
+                        rnd,
+                        referenceIndex == PREFIX_SUB_QUERY || isImpliedKeyHeavy,
+                        isImpliedKeyHeavy,
+                        isWhereHeavy,
+                        false,
+                        isForwardReadHeavy
+                );
+                final String flat = queries[0];
+                final String reference = queries[referenceIndex];
+                // a query with bind variables runs with two sets of values
+                final boolean hasBindVariables = flat.contains("$1");
+                for (int run = 0, runs = hasBindVariables ? 2 : 1; run < runs; run++) {
+                    runCount++;
+                    String binds = "";
+                    if (hasBindVariables) {
+                        final int first = WHERE_BIND_VALUES[rnd.nextInt(WHERE_BIND_VALUES.length)];
+                        final int second = WHERE_BIND_VALUES[rnd.nextInt(WHERE_BIND_VALUES.length)];
+                        bindVariableService.clear();
+                        bindVariableService.setInt(0, first);
+                        if (flat.contains("$2")) {
+                            bindVariableService.setInt(1, second);
+                        }
+                        binds = ", $1=" + first + ", $2=" + second;
+                    }
+                    try {
+                        referenceRows.clear();
+                        printSql(reference, referenceRows);
+                    } catch (Throwable e) {
+                        if (e instanceof SqlException sqlException && isUnsupportedReference(reference, referenceIndex, sqlException)) {
+                            continue;
+                        }
+                        throw new AssertionError("reference failed [reference=" + reference + ", flat=" + flat + binds + ", error=" + e + ']', e);
+                    }
+                    try {
+                        flatRows.clear();
+                        printSql(flat, flatRows);
+                    } catch (Throwable e) {
+                        throw new AssertionError("flat query failed, although its reference runs [flat=" + flat
+                                + ", reference=" + reference + binds + ", error=" + e + ']', e);
+                    }
+                    Assert.assertEquals("flat=" + flat + ", reference=" + reference + binds, sortedRows(referenceRows), sortedRows(flatRows));
+                    checkedCount++;
+                }
+            }
+            // Over 80% of the references run. A change that made most of them fail with an error
+            // that isUnsupportedReference() accepts would check few rows and pass.
+            Assert.assertTrue("only " + checkedCount + " of " + runCount + " queries were checked", checkedCount * 2 >= runCount);
+        });
+    }
+
+    // The queries of a fixed seed whose plan puts the gate of the folded predicate below a LEFT join without join keys
+    // and above a RIGHT or FULL join that the LEFT join checks, see hasFoldedPredicateGateBelowOuterJoinCheck(), with
+    // the folded predicate in the WHERE of the WHERE-heavy queries, or else in the ON clause of an INNER join.
+    private int countFoldedPredicateGatesBelowKeylessLeftJoin(boolean isWhereHeavy) throws SqlException {
+        final Rnd rnd = new Rnd(42, 4242);
+        int count = 0;
+        for (int i = 0; i < FOLDED_PREDICATE_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, isWhereHeavy, false)[0];
+            final int whereIndex = flat.indexOf(" WHERE ");
+            // every folded predicate of the query is in its WHERE
+            final boolean isWhereFolded = whereIndex != -1 && flat.indexOf(FOLDED_PREDICATE_END) > whereIndex;
+            if (isWhereFolded != isWhereHeavy || !flat.contains(FOLDED_PREDICATE_END)) {
+                continue;
+            }
+            try {
+                if (hasFoldedPredicateGateBelowOuterJoinCheck(flat, getPlanSink(flat))) {
+                    count++;
+                }
+            } catch (SqlException e) {
+                // a time-series join after an outer join, see isUnsupportedReference()
+                if (!isUnsupportedReference(flat, NESTED, e)) {
+                    throw e;
+                }
+            }
+        }
+        return count;
+    }
+
+    private void createTables() throws SqlException {
+        for (int t = 0; t < TABLE_COUNT; t++) {
+            // the SYMBOL column is indexed in the even tables
+            execute("CREATE TABLE t" + t + " (c" + t + " INT, k INT, v" + t + " DOUBLE, s" + t + " SYMBOL" + (t % 2 == 0 ? " INDEX" : "")
+                    + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // NULL join keys, and a row count that leaves rows unmatched
+            execute("INSERT INTO t" + t + " SELECT CASE WHEN (x + " + t + ") % 4 = 0 THEN NULL ELSE (x + " + t + ") % 3 END, x % 3,"
+                    + " CASE WHEN (x + " + t + ") % 5 = 0 THEN NULL ELSE ((x * " + (t + 1) + ") % 4) * 1.5 END,"
+                    + " CASE WHEN (x + " + t + ") % 4 = 1 THEN NULL WHEN (x * " + (t + 1) + ") % 3 = 0 THEN 'a' WHEN (x * " + (t + 1) + ") % 3 = 1 THEN 'b' ELSE 'c' END,"
+                    + " timestamp_sequence(" + (t * 1000) + ", 1_000_000) FROM long_sequence(" + (3 + t % 4) + ")");
+        }
+    }
+
+    // The joins of a flat form, the first table included as a join of type FROM: their types, tables and ON
+    // clauses, which the shape checks of testQueriesCoverOuterJoinOrderingEdgeShapes() read.
+    private static final class FlatJoins {
+        private final List<String> onClauses = new ArrayList<>();
+        private final List<String> tables = new ArrayList<>();
+        private final List<String> types = new ArrayList<>();
+
+        static FlatJoins of(String flat) {
+            final FlatJoins joins = new FlatJoins();
+            final int whereIndex = flat.indexOf(" WHERE ");
+            final int end = whereIndex == -1 ? flat.length() : whereIndex;
+            joins.types.add("FROM");
+            joins.tables.add(String.valueOf(flat.charAt("SELECT * FROM t".length())));
+            joins.onClauses.add("");
+            final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, end);
+            int onStart = -1;
+            while (joinMatcher.find()) {
+                if (onStart != -1) {
+                    joins.onClauses.add(flat.substring(onStart, joinMatcher.start()));
+                }
+                joins.types.add(joinMatcher.group(1));
+                joins.tables.add(joinMatcher.group(2));
+                onStart = joinMatcher.end();
+            }
+            if (onStart != -1) {
+                joins.onClauses.add(flat.substring(onStart, end));
+            }
+            return joins;
+        }
+
+        // the INNER join whose ON clause compares its table with a table joined after it, or -1
+        int getForwardReader() {
+            for (int i = 1, n = types.size(); i < n; i++) {
+                if (types.get(i).equals("JOIN") && getForwardTarget(i) != -1) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        // the later join whose table the ON clause of the join at reader reads, or -1
+        int getForwardTarget(int reader) {
+            final Matcher key = KEY_CONJUNCT.matcher(onClauses.get(reader));
+            while (key.find()) {
+                for (int group = 1; group <= 2; group++) {
+                    final int target = tables.indexOf(key.group(group));
+                    if (target > reader) {
+                        return target;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        // a CROSS join between a non-equi RIGHT or FULL join and a later RIGHT or FULL join with a join key
+        boolean hasCrossJoinPinnedAfterNonEquiOuterJoin() {
+            for (int nulling = 1, n = types.size(); nulling < n; nulling++) {
+                if (isNonEquiOuterJoin(nulling)) {
+                    for (int cross = nulling + 1; cross < n; cross++) {
+                        if (types.get(cross).equals("CROSS JOIN") && hasKeyedOuterJoinBetween(cross, n)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // an INNER join after a non-equi RIGHT or FULL join and a CROSS join, with a join key on the CROSS join
+        // and one on another table
+        boolean hasInnerJoinKeyedToCrossJoinAfterNonEquiOuterJoin() {
+            for (int nulling = 1, n = types.size(); nulling < n; nulling++) {
+                if (!isNonEquiOuterJoin(nulling)) {
+                    continue;
+                }
+                for (int cross = nulling + 1; cross < n; cross++) {
+                    if (!types.get(cross).equals("CROSS JOIN")) {
+                        continue;
+                    }
+                    for (int inner = cross + 1; inner < n; inner++) {
+                        if (types.get(inner).equals("JOIN") && isKeyedTo(inner, cross) && isKeyedToOtherThan(inner, cross)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // a RIGHT or FULL join with a join key strictly between the joins at lo and hi
+        boolean hasKeyedOuterJoinBetween(int lo, int hi) {
+            for (int i = lo + 1; i < hi; i++) {
+                if (isOuterJoin(i) && KEY_CONJUNCT.matcher(onClauses.get(i)).find()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // a LEFT join without join keys, whose table no later ON clause reads, followed by two RIGHT or FULL joins
+        // with join keys, and no time-series join after it
+        boolean hasKeyedOuterJoinsAfterKeylessLeftJoin() {
+            for (int left = 1, n = types.size(); left < n; left++) {
+                if (!types.get(left).equals("LEFT JOIN") || onClauses.get(left).contains(" = ")) {
+                    continue;
+                }
+                final Pattern leftColumn = Pattern.compile("[cv]" + tables.get(left) + "(?!\\d)");
+                int keyedOuterJoinCount = 0;
+                boolean isMovable = true;
+                for (int i = left + 1; i < n && isMovable; i++) {
+                    isMovable = !leftColumn.matcher(onClauses.get(i)).find()
+                            && !types.get(i).equals("ASOF JOIN") && !types.get(i).equals("LT JOIN");
+                    if (isOuterJoin(i) && KEY_CONJUNCT.matcher(onClauses.get(i)).find()) {
+                        keyedOuterJoinCount++;
+                    }
+                }
+                if (isMovable && keyedOuterJoinCount >= 2) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // a non-equi RIGHT or FULL join between the reader and its target whose ON clause reads the reader's table,
+        // followed by a RIGHT or FULL join with a join key before the target
+        boolean hasNonEquiOuterJoinReadingBeforeKeyedOuterJoin(int reader, int target) {
+            final Pattern readerColumn = Pattern.compile("[cv]" + tables.get(reader) + "(?!\\d)");
+            for (int nulling = reader + 1; nulling < target; nulling++) {
+                if (isNonEquiOuterJoin(nulling) && readerColumn.matcher(onClauses.get(nulling)).find()
+                        && hasKeyedOuterJoinBetween(nulling, target)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            return types + " " + tables + " " + onClauses;
+        }
+
+        private boolean isKeyedTo(int join, int other) {
+            final Matcher key = KEY_CONJUNCT.matcher(onClauses.get(join));
+            while (key.find()) {
+                if (key.group(1).equals(tables.get(other)) || key.group(2).equals(tables.get(other))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean isKeyedToOtherThan(int join, int other) {
+            final Matcher key = KEY_CONJUNCT.matcher(onClauses.get(join));
+            while (key.find()) {
+                for (int group = 1; group <= 2; group++) {
+                    final String table = key.group(group);
+                    if (!table.equals(tables.get(other)) && !table.equals(tables.get(join))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private boolean isNonEquiOuterJoin(int join) {
+            return isOuterJoin(join) && !KEY_CONJUNCT.matcher(onClauses.get(join)).find();
+        }
+
+        private boolean isOuterJoin(int join) {
+            return types.get(join).equals("RIGHT JOIN") || types.get(join).equals("FULL JOIN");
+        }
+    }
+}
