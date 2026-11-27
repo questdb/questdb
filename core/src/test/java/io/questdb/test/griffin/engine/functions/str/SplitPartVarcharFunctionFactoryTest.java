@@ -49,6 +49,16 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
     }
 
     @Test
+    public void testMultiByteLastField() throws Exception {
+        assertQuery("select split_part('Zürich,München'::varchar, ','::varchar, 2) a, " +
+                "split_part('héllo'::varchar, ','::varchar, 1) b, " +
+                "split_part('ä,ö,ü'::varchar, ','::varchar, 3) c, " +
+                "split_part('日本,東京'::varchar, ','::varchar, 2) d")
+                .expectSize()
+                .returns("a\tb\tc\td\nMünchen\théllo\tü\t東京\n");
+    }
+
+    @Test
     public void testNaNIndex() throws Exception {
         assertMemoryLeak(() -> {
             callCustomised(true, true, utf8("abc~@~def~@~ghi"), utf8("~@~"), Numbers.INT_NULL).andAssert(null);
