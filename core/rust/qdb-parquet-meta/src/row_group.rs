@@ -171,6 +171,22 @@ impl RowGroupBlockBuilder {
         Ok(self)
     }
 
+    /// Flags every value of the column chunk as ASCII, see [`ChunkFlags`]. Call it after
+    /// [`Self::set_column_chunk`], which replaces the whole chunk.
+    pub fn set_column_chunk_ascii(&mut self, index: usize) -> ParquetMetaResult<&mut Self> {
+        let len = self.chunks.len();
+        let chunk = self.chunks.get_mut(index).ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "column chunk index {} out of range [0, {})",
+                index,
+                len
+            )
+        })?;
+        chunk.flags = chunk.flags().with_ascii().0;
+        Ok(self)
+    }
+
     /// Appends out-of-line stat data and patches the column chunk's min or max
     /// stat field to point into this region.
     ///
@@ -470,9 +486,9 @@ mod tests {
         let block_start = builder.write_to(&mut buf);
 
         let reader = RowGroupBlockReader::new(&buf[block_start..], 2).unwrap();
-        // _reserved field stays zero on both columns.
-        assert_eq!(reader.column_chunk(0).unwrap()._reserved, 0);
-        assert_eq!(reader.column_chunk(1).unwrap()._reserved, 0);
+        // the flags field stays zero on both columns.
+        assert_eq!(reader.column_chunk(0).unwrap().flags, 0);
+        assert_eq!(reader.column_chunk(1).unwrap().flags, 0);
 
         // Read [i32 len][bitset] from the OOL region at the recorded offset.
         let ool_start = block_start + 8 + 2 * COLUMN_CHUNK_SIZE;
@@ -549,9 +565,9 @@ mod tests {
         let block_start = builder.write_to(&mut buf);
 
         let reader = RowGroupBlockReader::new(&buf[block_start..], 3).unwrap();
-        // _reserved stays zero on all columns.
+        // the flags field stays zero on all columns.
         for i in 0..3 {
-            assert_eq!(reader.column_chunk(i).unwrap()._reserved, 0);
+            assert_eq!(reader.column_chunk(i).unwrap().flags, 0);
         }
 
         // Verify OOL bitsets via builder entries.
@@ -583,5 +599,30 @@ mod tests {
             .set_column_chunk(0, ColumnChunkRaw::zeroed())
             .unwrap();
         assert!(builder.add_bloom_filter(1, &[0u8; 32]).is_err());
+    }
+
+    #[test]
+    fn set_column_chunk_ascii_flags_one_chunk() {
+        let mut builder = RowGroupBlockBuilder::new(2);
+        builder.set_column_chunk_ascii(1).unwrap();
+        assert!(!builder.column_chunk_raw(0).flags().is_ascii());
+        assert!(builder.column_chunk_raw(1).flags().is_ascii());
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+        let reader = RowGroupBlockReader::new(&buf, 2).unwrap();
+        assert!(!reader.column_chunk(0).unwrap().flags().is_ascii());
+        assert!(reader.column_chunk(1).unwrap().flags().is_ascii());
+    }
+
+    #[test]
+    fn set_column_chunk_ascii_rejects_out_of_range_index() {
+        let mut builder = RowGroupBlockBuilder::new(2);
+        let err = builder.set_column_chunk_ascii(2).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("column chunk index 2 out of range [0, 2)"),
+            "{err}"
+        );
     }
 }

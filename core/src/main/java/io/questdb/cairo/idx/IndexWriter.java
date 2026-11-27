@@ -38,6 +38,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
+import java.util.function.BooleanSupplier;
 
 /**
  * Interface for column index writers.
@@ -380,6 +381,17 @@ public interface IndexWriter extends Closeable, Mutable {
      * setter is called again.
      */
     default void setNextTxnAtSeal(long txnAtSeal) {
+    }
+
+    /**
+     * As {@link #setNextTxnAtSeal(long)}, for a seal of the owner's commit in progress. Before such a seal waits
+     * for a value or cover file it wrote, it asks {@code isCoveredBySavePoint}. True means that the owner's next
+     * save point makes the file durable, and that a power loss before that save point makes recovery drop the
+     * seal's chain entry and delete its files, so the seal leaves the file to the save point. The key file is
+     * flushed either way. The writer asks until the next call of either overload, or until it is closed.
+     */
+    default void setNextTxnAtSeal(long txnAtSeal, BooleanSupplier isCoveredBySavePoint) {
+        setNextTxnAtSeal(txnAtSeal);
     }
 
     /**

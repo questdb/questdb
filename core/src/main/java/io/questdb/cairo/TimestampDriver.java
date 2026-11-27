@@ -69,6 +69,13 @@ public interface TimestampDriver {
             case HOUR:
                 ee.put(CommonUtils.HOUR_PATTERN);
                 break;
+            case MINUTE_5:
+            case MINUTE_10:
+            case MINUTE_15:
+            case MINUTE_20:
+            case MINUTE_30:
+                ee.put(CommonUtils.MINUTE_PATTERN);
+                break;
         }
         ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');
         return ee;
