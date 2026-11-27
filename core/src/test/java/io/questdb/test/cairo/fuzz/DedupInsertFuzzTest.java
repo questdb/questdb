@@ -1872,8 +1872,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
             }
 
-            long start = MicrosTimestampDriver.floor("2022-02-24T17");
-            long end = start + fuzzer.partitionCount * Micros.DAY_MICROS;
+            long start = fuzzer.getTransactionStartMicros();
+            long end = start + fuzzer.partitionCount * fuzzer.getPartitionDurationMicros();
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             try {
@@ -1884,8 +1884,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 }
 
                 final int dedupMode = isSkipMode ? TableUtils.DEDUP_MODE_SKIP : TableUtils.DEDUP_MODE_UPSERT;
-                // initial rows are 1 second apart, see FuzzRunner.createInitialTable()
-                long initialStep = ColumnType.getTimestampDriver(fuzzer.getTimestampType()).fromSeconds(1);
+                // initial rows are 1 second / partitions-per-day apart, see FuzzRunner.createInitialTable()
+                long initialStep = ColumnType.getTimestampDriver(fuzzer.getTimestampType()).fromSeconds(1) / fuzzer.getPartitionsPerDay();
                 transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, initialStep, dedupMode);
                 setupWriterJobs();
                 sharedWorkerPool.start(LOG);

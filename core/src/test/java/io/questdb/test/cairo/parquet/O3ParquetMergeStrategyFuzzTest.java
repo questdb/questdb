@@ -44,6 +44,7 @@ import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -68,6 +69,14 @@ import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
  */
 public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
     private static final int MAX_ADDED_IO_FAILURE_ROUNDS = 10;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        // The O3 windows span a day around the Parquet partition, so only DAY partitions send
+        // the O3 rows into it; shorter partitions would put them in new native partitions.
+        fuzzer.setPartitionBy(PartitionBy.DAY);
+    }
 
     @Test
     public void testMultiRoundO3OnAllParquetPartitions() throws Exception {
