@@ -383,9 +383,8 @@ public final class PhysicalProperties {
 
     /**
      * Whether rewinding the cursor of the factory reruns a stream GROUP BY: its rows reach the cursor without a copy,
-     * see {@link LogicalPlan#getOutputCopy()}, through operators without random access, as the master of a join or a
-     * slave the join does not hash, or as an input of a set operation, other than the right input that EXCEPT and
-     * INTERSECT hash.
+     * see {@link LogicalPlan#getOutputCopy()}, through operators without random access, as inputs their rewind reads
+     * again, see {@link PlanToFactoryRules#rewoundInput}.
      */
     public static Capability rewindRecomputes(LogicalPlan plan) {
         return streamInput(plan, false);
@@ -1303,24 +1302,10 @@ public final class PhysicalProperties {
                 case REGENERATED -> streamInput(read.getProducer(), isReplayRead);
                 case null -> Capability.UNKNOWN;
             };
-            case JoinPlan join -> {
-                final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                Capability isStreamRead = streamInput(ordered.getQuick(0).getInput(), isReplayRead);
-                for (int i = 1, n = ordered.size(); i < n; i++) {
-                    final JoinInput step = ordered.getQuick(i);
-                    if (step.getJoinType() != JoinKind.UNNEST && step.getAlgorithm() != JoinInput.Algorithm.HASH) {
-                        isStreamRead = or(isStreamRead, streamInput(step.getInput(), isReplayRead));
-                    }
-                }
-                yield isStreamRead;
-            }
-            case SetOperationPlan operation -> operation.getOperation().isUnion()
-                    ? or(streamInput(operation.getLeft(), isReplayRead), streamInput(operation.getRight(), isReplayRead))
-                    : streamInput(operation.getLeft(), isReplayRead);
             default -> {
                 Capability isStreamRead = Capability.NO;
-                for (int i = 0, n = plan.inputCount(); i < n; i++) {
-                    isStreamRead = or(isStreamRead, streamInput(plan.inputAt(i), isReplayRead));
+                for (int i = 0; PlanToFactoryRules.rewoundInput(plan, i) != null; i++) {
+                    isStreamRead = or(isStreamRead, streamInput(PlanToFactoryRules.rewoundInput(plan, i), isReplayRead));
                 }
                 yield isStreamRead;
             }

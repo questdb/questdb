@@ -146,7 +146,7 @@ public final class PlanVerifier {
     public static final String ORDER_REQUEST = "requested order names a column the node does not output";
     public static final String OUTER_COLUMN_SCOPE = "outer column outside a dependent join step";
     public static final String OUTER_COLUMN_UNRESOLVED = "outer column is not a column of a preceding join input";
-    public static final String OUTPUT_COPY = "row copy holds a column no copy holds or gives what the node it copies already offers";
+    public static final String OUTPUT_COPY = "row copy holds a column no copy holds, gives what the node it copies already offers, or copies a node the generator never builds alone";
     public static final String OUTPUT_FORWARDING = "output does not forward the input columns";
     public static final String OUTPUT_TIMESTAMP = "designated timestamp differs from the input's";
     public static final String PREDICATE_CONSTANT = "constant predicate is not folded to a literal";

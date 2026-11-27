@@ -324,14 +324,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * Asserts that every physical property the plan derives agrees with the factory codegen built for it, including the
      * empty factory codegen builds where the plan records an empty result: an empty access path, a filter it folds to
-     * false and an empty window join. A scan builds it exactly where its access path is empty.
+     * false and an empty window join. A scan builds it exactly where its access path is empty. The factory of an
+     * operator whose consumer reads a copy of its rows, see {@link LogicalPlan#getOutputCopy()}, shows the properties
+     * of the plan once copied, {@code isCopy}; before, the check reads its random access, which the copy hides from
+     * every reader but the planner, while the order, the designated timestamp and the long_sequence() source the copy
+     * keeps, and the check of the copy covers them.
      */
-    private static RecordCursorFactory verifyPhysicalProperties(LogicalPlan plan, RecordCursorFactory factory) {
+    private static RecordCursorFactory verifyPhysicalProperties(LogicalPlan plan, RecordCursorFactory factory, boolean isCopy) {
         final ScanPlan scan = plan instanceof LatestByPlan latest ? PlanToFactoryRules.latestByScan(latest) : LogicalPlans.scanThroughFilter(plan);
         final String mismatch;
         try {
-            mismatch = scan != null && scan.getAccessPath() == ScanPlan.AccessPath.EMPTY && !(factory instanceof EmptyTableRecordCursorFactory)
-                    ? "empty access path differs from the factory" : physicalPropertyMismatch(plan, factory);
+            if (isCopy) {
+                mismatch = physicalPropertyMismatch(plan, factory);
+            } else if (scan != null && scan.getAccessPath() == ScanPlan.AccessPath.EMPTY && !(factory instanceof EmptyTableRecordCursorFactory)) {
+                mismatch = "empty access path differs from the factory";
+            } else if (plan.getOutputCopy() != null) {
+                mismatch = isAgreed(PhysicalProperties.supportsRandomAccessWithoutCopy(plan), factory.recordCursorSupportsRandomAccess())
+                        ? null : "derived random access of the copied operator differs from the factory's";
+            } else {
+                mismatch = physicalPropertyMismatch(plan, factory);
+            }
         } catch (Throwable th) {
             Misc.free(factory, th);
             throw th;
@@ -346,11 +358,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Puts the copy of the rows the consumer of the plan reads, see {@link LogicalPlan#getOutputCopy()}, over the
-     * factory of the plan's own operator. Consumes the factory on entry, including on failure.
+     * factory of the plan's own operator, and checks it against the plan. Consumes the factory on entry, including on
+     * failure.
      */
     private RecordCursorFactory copyRows(LogicalPlan plan, RecordCursorFactory factory) {
         final RowCopy copy = plan.getOutputCopy();
-        return copy == null ? factory : RowCopies.copy(configuration, asm, entityColumnFilter, factory, copy, plan.isOutputCopyJoinBudgeted());
+        if (copy == null) {
+            return factory;
+        }
+        final RecordCursorFactory copied = RowCopies.copy(configuration, asm, entityColumnFilter, factory, copy);
+        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, copied, true) : copied;
     }
 
     /**
@@ -483,21 +500,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return factory;
     }
 
+    /**
+     * Builds the factory the consumer of the plan reads: the plan's own operator, see {@link #generateOperator}, under
+     * the copy of its rows the consumer reads, see {@link #copyRows}.
+     */
     RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         if (plan == frame.sharedHeadTarget) {
             frame.sharedHeadTarget = null;
             return frame.shareCursor(frame.sharedHeadEntry);
         }
-        if (plan instanceof AggregatePlan producer && producer.getReaderCount() > 0) {
-            return generateProducer(frame, producer, executionContext);
-        }
-        return generateOperator(frame, plan, executionContext);
+        return copyRows(plan, plan instanceof AggregatePlan producer && producer.getReaderCount() > 0
+                ? generateProducer(frame, producer, executionContext) : generateOperator(frame, plan, executionContext));
     }
 
     /**
-     * Builds the factory of the plan's own operator, see {@link #generate}: a decorrelation domain a read reaches before
-     * the generator reaches the domain builds the domain this way, as does a read that builds its producer's plan
-     * again.
+     * Builds the factory of the plan's own operator, without the copy its consumer reads, see {@link #generate}: a
+     * decorrelation domain a read reaches before the generator reaches the domain builds the domain this way, as does a
+     * read that builds its producer's plan again.
      */
     RecordCursorFactory generateOperator(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = switch (plan) {
@@ -530,8 +549,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SetOperationPlan operation -> setOperationGenerator.generate(frame, operation, executionContext);
             default -> generateUnary(frame, plan, executionContext);
         };
-        final RecordCursorFactory copied = copyRows(plan, factory);
-        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, copied) : copied;
+        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, factory, false) : factory;
     }
 
     /**

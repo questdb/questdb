@@ -27,24 +27,53 @@ package io.questdb.griffin.plan.logical;
 /**
  * The copy of the rows of a plan its consumer reads in place of the plan's own cursor, see
  * {@link LogicalPlan#getOutputCopy()}: the consumer reads the rows again or by row id, which the plan alone serves only
- * by computing them again, or not at all.
+ * by computing them again, or not at all. A copy outside the join budget stands in for the map of a hash GROUP BY over
+ * rows a stream GROUP BY computes, which only the query memory limit bounds; a copy within it holds rows a join
+ * reads, which the join budget bounds.
  */
 public enum RowCopy {
     /**
-     * Replays the rows after a rewind. Past its memory budget the copy releases the rows and reads the plan again.
+     * Replays the rows after a rewind.
      */
-    REPLAY,
+    REPLAY(false, false, false),
     /**
-     * Gives the rows row ids and replays them after a rewind. Past its memory budget the copy fails the query.
+     * Gives the rows row ids and replays them after a rewind.
      */
-    RANDOM_ACCESS,
+    RANDOM_ACCESS(true, false, false),
     /**
      * As {@link #RANDOM_ACCESS}, for a consumer that reads every row: the copy takes the rows in batches ahead of the
      * reads.
      */
-    RANDOM_ACCESS_IN_BATCHES;
+    RANDOM_ACCESS_IN_BATCHES(true, false, true),
+    /**
+     * Replays the rows of a slave join a nested loop reads again for each master row; past the join budget the copy
+     * releases the rows and reads the join again.
+     */
+    JOIN_CACHE(false, true, false),
+    /**
+     * Gives row ids to the rows of a join slave without random access; past the join budget the copy fails the query.
+     */
+    JOIN_RANDOM_ACCESS(true, true, false);
+
+    private final boolean isCopiedInBatches;
+    private final boolean isJoinBudgeted;
+    private final boolean isRandomAccess;
+
+    RowCopy(boolean isRandomAccess, boolean isJoinBudgeted, boolean isCopiedInBatches) {
+        this.isRandomAccess = isRandomAccess;
+        this.isJoinBudgeted = isJoinBudgeted;
+        this.isCopiedInBatches = isCopiedInBatches;
+    }
+
+    public boolean isCopiedInBatches() {
+        return isCopiedInBatches;
+    }
+
+    public boolean isJoinBudgeted() {
+        return isJoinBudgeted;
+    }
 
     public boolean isRandomAccess() {
-        return this != REPLAY;
+        return isRandomAccess;
     }
 }

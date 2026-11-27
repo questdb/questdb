@@ -160,78 +160,58 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Has the consumer of {@code input} read the copy {@code copy} of the input's rows, see
-     * {@link LogicalPlan#getOutputCopy()}, at the node {@link #copyTarget} finds, when the consumer reads the rows by
-     * row id, {@code isRandomAccessRead}, and the input lacks random access because a stream GROUP BY under it does,
-     * see {@link PhysicalProperties#isRandomAccessLostToStream}, or when it reads them again and rewinding the input
-     * computes them again, see {@link PhysicalProperties#rewindRecomputes}; returns whether it does. The copy stands in
-     * for the map of a hash GROUP BY, which gives row ids, replays its rows and only the query memory limit bounds.
+     * {@link LogicalPlan#getOutputCopy()}, at the node {@link #copyTarget} finds; returns whether it does.
      */
     private static boolean copyRows(LogicalPlan input, RowCopy copy, boolean isRandomAccessRead) {
-        if (!isCopyNeeded(input, isRandomAccessRead)) {
-            return false;
-        }
         final LogicalPlan target = copyTarget(input, isRandomAccessRead);
         if (target == null) {
             return false;
         }
-        target.setOutputCopy(copy, false);
+        target.setOutputCopy(copy);
         return true;
     }
 
     /**
-     * Has the consumer of {@code input}, which reads the input once more, read the copy {@code copy} of the input's
-     * rows where rewinding the input computes them again, see {@link #copyRows}; returns whether it reads a copy. Rows
-     * that come through filters, LIMITs and projections from a join or a set operation, whose rewind reads its inputs
-     * again, are joined or combined once more from copies of those of its inputs whose rewind computes their rows
-     * again: such copies hold fewer rows, and as they only replay them they leave the random access of the inputs, and
-     * so the choices of the operator that reads them, as they are.
+     * Has the consumer of {@code input}, which reads the input again, read the copy {@code copy} of the input's rows
+     * where rewinding the input computes them again, see {@link #copyRows}. Rows that come through filters, LIMITs and
+     * projections from a join or a set operation are joined or combined again from copies that replay those of its
+     * inputs a rewind reads again, see {@link PlanToFactoryRules#rewoundInput}, when each such input can be replayed:
+     * such copies hold fewer rows, and as they only replay them they leave the random access of the inputs, and so the
+     * choices of the operator that reads them, as they are.
      */
-    private static boolean copyRowsForReread(LogicalPlan input, RowCopy copy) {
+    private static void copyRowsForReread(LogicalPlan input, RowCopy copy) {
         if (!isCopyNeeded(input, false)) {
-            return false;
+            return;
         }
-        LogicalPlan source = input;
-        while (isRowPassedThrough(source)) {
-            source = source.inputAt(0);
+        final LogicalPlan source = rowSource(input);
+        if (!isReplayable(source)) {
+            copyRows(input, copy, false);
+            return;
         }
-        boolean isCopied = false;
-        switch (source) {
-            case JoinPlan join -> {
-                final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                isCopied = copyRowsForReread(ordered.getQuick(0).getInput(), RowCopy.REPLAY);
-                for (int i = 1, n = ordered.size(); i < n; i++) {
-                    final JoinInput step = ordered.getQuick(i);
-                    if (step.getJoinType() != JoinKind.UNNEST && step.getAlgorithm() != JoinInput.Algorithm.HASH) {
-                        isCopied |= copyRowsForReread(step.getInput(), RowCopy.REPLAY);
-                    }
-                }
-            }
-            case SetOperationPlan operation -> {
-                isCopied = copyRowsForReread(operation.getLeft(), RowCopy.REPLAY);
-                if (operation.getOperation().isUnion()) {
-                    isCopied |= copyRowsForReread(operation.getRight(), RowCopy.REPLAY);
-                }
-            }
-            default -> isCopied = copyRows(input, copy, false);
+        for (int i = 0; PlanToFactoryRules.rewoundInput(source, i) != null; i++) {
+            copyRowsForReread(PlanToFactoryRules.rewoundInput(source, i), RowCopy.REPLAY);
         }
-        return isCopied;
     }
 
     /**
-     * The node whose rows a copy of the rows of {@code plan} holds: the plan, as its consumer reads them, above filters
-     * and projections, so the copy holds the fewest and narrowest rows; unless the plan has a value no copy holds, such
-     * as a RECORD, see {@link PlanToFactoryRules#copyRejectedColumn}: then the input under a filter, a LIMIT, a sort
-     * that keeps the input order or a projection, and the master of a join, that still needs the copy, see
-     * {@link #isCopyNeeded}; null for none.
+     * The node whose rows a copy of the rows of {@code plan} holds, null when the consumer, which reads the rows by row
+     * id, {@code isRandomAccessRead}, or again, needs no copy, see {@link #isCopyNeeded}, or none can hold them: the
+     * plan, as its consumer reads them, above filters and projections, so the copy holds the fewest and narrowest rows;
+     * unless the plan has a value no copy holds, such as a RECORD, see {@link PlanToFactoryRules#copyRejectedColumn}:
+     * then the input under a filter, a LIMIT, a sort that keeps the input order or a projection, and the master of a
+     * join, that still needs the copy. A node whose rows have a copy already holds no other.
      */
     private static LogicalPlan copyTarget(LogicalPlan plan, boolean isRandomAccessRead) {
+        if (!isCopyNeeded(plan, isRandomAccessRead)) {
+            return null;
+        }
         while (PlanToFactoryRules.copyRejectedColumn(plan.getOutput()) >= 0) {
             plan = isRowPassedThrough(plan) ? plan.inputAt(0) : plan instanceof JoinPlan join ? join.getOrderedInputs().getQuick(0).getInput() : null;
             if (plan == null || !isCopyNeeded(plan, isRandomAccessRead)) {
                 return null;
             }
         }
-        return plan;
+        return plan.getOutputCopy() == null ? plan : null;
     }
 
     private static boolean hasEarlyExit(ObjList<FunctionExpression> aggregates) {
@@ -325,7 +305,10 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * True when a consumer that reads the rows of the plan by row id, {@code isRandomAccessRead}, or again, reads a
-     * copy of them, see {@link #copyRows}.
+     * copy of them, see {@link #copyRows}: the plan lacks random access because a stream GROUP BY under it does, see
+     * {@link PhysicalProperties#isRandomAccessLostToStream}, or rewinding it computes them again, see
+     * {@link PhysicalProperties#rewindRecomputes}. The copy stands in for the map of a hash GROUP BY, which gives row
+     * ids, replays its rows and only the query memory limit bounds.
      */
     private static boolean isCopyNeeded(LogicalPlan plan, boolean isRandomAccessRead) {
         return (isRandomAccessRead ? PhysicalProperties.isRandomAccessLostToStream(plan) : PhysicalProperties.rewindRecomputes(plan))
@@ -340,16 +323,6 @@ final class OperatorPlanning implements Mutable {
             }
         }
         return true;
-    }
-
-    /**
-     * True when the fill's input delivers its rows ascending by the bucket.
-     */
-    private static boolean isFillInputBucketOrdered(FillPlan fill) {
-        final LogicalPlan input = fill.getChild();
-        final int bucketIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
-        return bucketIndex >= 0 && PhysicalProperties.timestampIndex(input) == bucketIndex
-                && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.FORWARD;
     }
 
     /**
@@ -393,23 +366,6 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the join reads its master by row id: a SPLICE join, and a markout horizon, which reads the master rows
-     * of each offset again.
-     */
-    private static boolean isMasterReadByRowId(JoinPlan join) {
-        final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        if (ordered.size() > 1 && ordered.getQuick(1).getJoinType() == JoinKind.SPLICE) {
-            return true;
-        }
-        for (int i = 1, n = ordered.size(); i < n; i++) {
-            if (ordered.getQuick(i).getMarkoutTimestampColumnId() >= 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * True when the plan, of {@code rows} row bound, see {@link OptimiserContext#rowBound}, never holds more rows than
      * {@code other}, which holds at least {@code otherRows}, see {@link OptimiserContext#rowFloor}: its bound is no
      * larger, and every LIMIT whose count only execution knows that bounds {@code other} bounds the plan too, see
@@ -433,6 +389,31 @@ final class OperatorPlanning implements Mutable {
             }
             default -> false;
         };
+    }
+
+    /**
+     * True when a consumer that reads the rows of the plan by row id reads them from a copy, see {@link #copyRows}.
+     */
+    private static boolean isRandomAccessCopyable(LogicalPlan plan) {
+        return copyTarget(plan, true) != null;
+    }
+
+    /**
+     * True when the plan is a join or a set operation each of whose inputs a rewind reads again, see
+     * {@link PlanToFactoryRules#rewoundInput}, computes no rows again or can be replayed, see
+     * {@link #copyRowsForReread}.
+     */
+    private static boolean isReplayable(LogicalPlan plan) {
+        if (!(plan instanceof JoinPlan) && !(plan instanceof SetOperationPlan)) {
+            return false;
+        }
+        for (int i = 0; PlanToFactoryRules.rewoundInput(plan, i) != null; i++) {
+            final LogicalPlan input = PlanToFactoryRules.rewoundInput(plan, i);
+            if (isCopyNeeded(input, false) && !isReplayable(rowSource(input)) && copyTarget(input, false) == null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -472,6 +453,16 @@ final class OperatorPlanning implements Mutable {
         } else {
             read.setAlgorithm(DomainReadPlan.Algorithm.REGENERATED);
         }
+    }
+
+    /**
+     * The node the plan passes on the rows of, see {@link #isRowPassedThrough}.
+     */
+    private static LogicalPlan rowSource(LogicalPlan plan) {
+        while (isRowPassedThrough(plan)) {
+            plan = plan.inputAt(0);
+        }
+        return plan;
     }
 
     /**
@@ -553,39 +544,36 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Has the join step at {@code inputIndex} read a copy of its slave, see {@link LogicalPlan#getOutputCopy()}, where
-     * it reads the slave by row id or, when {@code isRewound}, again for each master row, see {@link #copyRows}: a
-     * SPLICE join reads it by row id always, and unless full-fat joins are asked for, a hash join over the rows of a
-     * stream GROUP BY, see {@link PhysicalProperties#readsStreamRows}, which reads their row ids as it would read those
-     * of a hash GROUP BY instead of copying them into memory the join budget bounds, and an ASOF or LT join, which reads
-     * them instead of carrying a slave column its full-fat join cannot carry, see
-     * {@link PlanToFactoryRules#fullFatTemporalRejectedColumn}, or exposing slave keys of another type than the
-     * master's in the master's type. Within the join budget, a nested loop caches the rows of a slave join it may
-     * materialize, see {@link #isSlaveMaterialized}, and an ASOF or LT join copies a slave without random access that
-     * has a column its full-fat join cannot carry.
+     * Has the consumer read a copy of the rows of its input {@code index}, see {@link PlanToFactoryRules#readInput},
+     * where it reads them otherwise than once, see {@link PlanToFactoryRules#inputRead}, and the input serves that read
+     * only by computing its rows again or not at all. It reads them by row id from a copy with row ids, see
+     * {@link #copyRows}, which a light hash join takes in batches, and a light temporal join copies a slave without
+     * random access within the join budget; it reads them again from copies that replay them, see
+     * {@link #copyRowsForReread}, which give row ids at its own edge to a consumer that reads them again for each row of
+     * another input, as a nested loop does, which also caches a slave join it may materialize within the join budget,
+     * see {@link #isSlaveMaterialized}, and to a LATEST BY, which passes the random access of its base on to its own
+     * consumer.
      */
-    private void copySlave(JoinPlan join, int inputIndex, JoinInput step, boolean isRewound) {
-        final LogicalPlan slave = step.getInput();
-        final JoinKind joinType = step.getJoinType();
-        final boolean isTemporal = joinType == JoinKind.ASOF || joinType == JoinKind.LT;
-        final boolean isCopied;
-        if (joinType == JoinKind.SPLICE) {
-            isCopied = copyRows(slave, RowCopy.RANDOM_ACCESS, true);
-        } else if (!isFullFatJoins && joinType.isRelational() && step.isKeyed() && PhysicalProperties.readsStreamRows(slave)) {
-            isCopied = copyRows(slave, isRewound ? RowCopy.RANDOM_ACCESS : RowCopy.RANDOM_ACCESS_IN_BATCHES, true);
-        } else if (!isFullFatJoins && isTemporal && (PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0
-                || hasMixedKeyTypes(join.getOrderedInputs().getQuick(inputIndex - 1).getOutput(), step))) {
-            isCopied = copyRows(slave, RowCopy.RANDOM_ACCESS, true);
-        } else {
-            isCopied = isRewound && copyRows(slave, RowCopy.RANDOM_ACCESS, false);
-        }
-        if (isCopied || PlanToFactoryRules.copyRejectedColumn(slave.getOutput()) >= 0) {
-            return;
-        }
-        if (joinType.isRelational() && !step.isKeyed() && isSlaveMaterialized(join, step)) {
-            slave.setOutputCopy(RowCopy.REPLAY, true);
-        } else if (isTemporal && !isFullFatJoins && !isRandomAccess(slave) && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
-            slave.setOutputCopy(RowCopy.RANDOM_ACCESS, true);
+    private void copyInput(LogicalPlan consumer, int index) {
+        final LogicalPlan input = PlanToFactoryRules.readInput(consumer, index);
+        final JoinInput step = consumer instanceof JoinPlan join && index > 0 ? join.getOrderedInputs().getQuick(index) : null;
+        switch (PlanToFactoryRules.inputRead(consumer, index)) {
+            case BY_ROW_ID -> {
+                final boolean isBatched = step != null && step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH;
+                if (!copyRows(input, isBatched ? RowCopy.RANDOM_ACCESS_IN_BATCHES : RowCopy.RANDOM_ACCESS, true)
+                        && step != null && step.getAlgorithm() == JoinInput.Algorithm.TEMPORAL && !isRandomAccess(input)) {
+                    input.setOutputCopy(RowCopy.JOIN_RANDOM_ACCESS);
+                }
+            }
+            case REWOUND -> {
+                copyRowsForReread(input, RowCopy.RANDOM_ACCESS);
+                if (step != null && input.getOutputCopy() == null && isSlaveMaterialized((JoinPlan) consumer, step)) {
+                    input.setOutputCopy(RowCopy.JOIN_CACHE);
+                }
+            }
+            case REREAD -> copyRowsForReread(input, consumer instanceof LatestByPlan ? RowCopy.RANDOM_ACCESS : RowCopy.REPLAY);
+            case ONCE -> {
+            }
         }
     }
 
@@ -620,13 +608,12 @@ final class OperatorPlanning implements Mutable {
      * How the generator reads the master of the HORIZON JOIN: in parallel over its page frames, or over the frames
      * under a filter it steals from the master, when the functions of its consumer support parallelism and a
      * projection over a master with random access stays {@link PlanToFactoryRules#isHorizonWithinSlotCap within the
-     * slot cap}; by row id otherwise, which rejects a master without random access. A master whose rows would be
-     * computed again offers neither, so the join reads a copy of them by row id, see {@link #copyRows}.
+     * slot cap}; by row id otherwise, from a copy of a master whose random access a stream GROUP BY lost, see
+     * {@link #copyInput}, which rejects any other master without random access.
      */
     private HorizonJoinPlan.Algorithm horizonAlgorithm(HorizonJoinPlan horizon, boolean hasParallelFunctions) throws SqlException {
         final LogicalPlan master = horizon.getMaster();
-        copyRows(master, RowCopy.RANDOM_ACCESS, true);
-        final boolean isRandomAccess = isRandomAccess(master);
+        final boolean isRandomAccess = isRandomAccess(master) || isRandomAccessCopyable(master);
         HorizonJoinPlan.Algorithm algorithm = HorizonJoinPlan.Algorithm.SERIAL;
         if (isParallelHorizon(horizon, hasParallelFunctions, isRandomAccess)) {
             if (isPageFrameSource(master)) {
@@ -677,40 +664,16 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Whether the fill reads its input in the order the input delivers: ascending by the bucket. A fill that reads the
-     * rows of PREV values again by row id, see {@link #isPrevRowRead}, needs an input with random access as well.
+     * rows of PREV values again by row id, see {@link PlanToFactoryRules#isPrevRowRead}, needs an input with random
+     * access as well, or a copy that gives it, see {@link #copyInput}.
      */
     static boolean isFillInputOrdered(FillPlan fill) {
-        return isFillInputBucketOrdered(fill)
-                && (!isPrevRowRead(fill) || PhysicalProperties.supportsRandomAccess(fill.getChild()) == PhysicalProperties.Capability.YES);
-    }
-
-    /**
-     * Whether the fill reads the row it takes a PREV value from again by row id: a fill without keys that repeats the
-     * PREV value of a column it cannot cache in a slot. The keyed fill copies such rows itself as it finds its keys.
-     */
-    static boolean isPrevRowRead(FillPlan fill) {
-        final OutputSchema output = fill.getChild().getOutput();
-        final int bucketIndex = output.getColumnIndexById(fill.getTimestampColumnId());
-        final int groupingKeyCount = ((GroupingPlan) LogicalPlans.skipFilters(fill.getChild())).getGroupingExpressions().size();
-        final ObjList<FillMode> modes = fill.getModes();
-        if (groupingKeyCount > (bucketIndex >= 0 && bucketIndex < groupingKeyCount ? 1 : 0)) {
-            return false;
-        }
-        for (int i = 0, n = modes.size(); i < n; i++) {
-            if (modes.getQuick(i) == FillMode.KEY) {
-                return false;
-            }
-        }
-        for (int i = 0, n = modes.size(); i < n; i++) {
-            final FillMode mode = modes.getQuick(i);
-            if (mode == FillMode.PREV || mode == FillMode.PREV_COLUMN) {
-                final int sourceId = mode == FillMode.PREV ? fill.getTargetColumnIds().getQuick(i) : fill.getSourceColumnIds().getQuick(i);
-                if (!SampleByFillRecordCursorFactory.isPrevSlotEligible(ColumnType.tagOf(output.getColumnType(output.getColumnIndexById(sourceId))))) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        final LogicalPlan input = fill.getChild();
+        final int bucketIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
+        return bucketIndex >= 0 && PhysicalProperties.timestampIndex(input) == bucketIndex
+                && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.FORWARD
+                && (!PlanToFactoryRules.isPrevRowRead(fill) || PhysicalProperties.supportsRandomAccess(input) == PhysicalProperties.Capability.YES
+                || isRandomAccessCopyable(input));
     }
 
     private boolean isFirstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
@@ -797,7 +760,7 @@ final class OperatorPlanning implements Mutable {
      * slave join is {@link LogicalPlans#isStableJoinStep stable}, so every evaluation yields its rows.
      */
     private boolean isSlaveMaterialized(JoinPlan join, JoinInput step) {
-        if (!PlanToFactoryRules.isSlaveMaterializable(join, step)) {
+        if (!PlanToFactoryRules.isSlaveMaterializable(join, step) || PlanToFactoryRules.copyRejectedColumn(step.getInput().getOutput()) >= 0) {
             return false;
         }
         final boolean isParallelGroupByEnabled = context.getExecutionContext().isParallelGroupByEnabled();
@@ -1054,6 +1017,7 @@ final class OperatorPlanning implements Mutable {
                 case PARALLEL -> AggregatePlan.Algorithm.PARALLEL;
                 case PARALLEL_STOLEN_FILTER -> AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER;
             });
+            copyInput(horizon, 0);
             return;
         }
         if (context.getExecutionContext().isParallelHashJoinGroupByEnabled()
@@ -1131,26 +1095,15 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Decides how the fill reads the buckets of its input. Over the rows of a SAMPLE BY that groups by a key besides its
-     * bucket, the SAMPLE BY reads its base again, and a fill that reads its bucket-ordered input for PREV values, see
-     * {@link #isPrevRowRead}, reads it by row id; both read a copy of rows a stream GROUP BY would compute again, see
-     * {@link #copyRowsForReread} and {@link #copyRows}.
+     * Decides how the fill reads the buckets of its input, and the copy it reads them from, see {@link #copyInput}.
      */
     private void planFill(FillPlan fill) {
-        final FillPlan.Algorithm algorithm;
         if (isSampleByRowsFill(fill)) {
-            algorithm = FillPlan.Algorithm.SAMPLE_BY_ROWS;
-            final SampleByPlan sample = (SampleByPlan) fill.getChild();
-            if (isKeyedSampleBy(sample)) {
-                copyRowsForReread(PlanToFactoryRules.sampleByBase(sample), RowCopy.REPLAY);
-            }
+            fill.setAlgorithm(FillPlan.Algorithm.SAMPLE_BY_ROWS);
         } else {
-            if (isPrevRowRead(fill) && isFillInputBucketOrdered(fill)) {
-                copyRows(fill.getChild(), RowCopy.RANDOM_ACCESS, true);
-            }
-            algorithm = isFillInputOrdered(fill) ? FillPlan.Algorithm.INPUT_ORDER : FillPlan.Algorithm.SORTED;
+            fill.setAlgorithm(isFillInputOrdered(fill) ? FillPlan.Algorithm.INPUT_ORDER : FillPlan.Algorithm.SORTED);
         }
-        fill.setAlgorithm(algorithm);
+        copyInput(fill, 0);
     }
 
     /**
@@ -1185,6 +1138,7 @@ final class OperatorPlanning implements Mutable {
         validateHorizonInputs(horizon);
         planHorizonKeyLookups(horizon);
         horizon.setAlgorithm(horizonAlgorithm(horizon, true));
+        copyInput(horizon, 0);
     }
 
     private void planHorizonKeyLookups(HorizonJoinPlan horizon) throws SqlException {
@@ -1204,25 +1158,13 @@ final class OperatorPlanning implements Mutable {
                 validateConsumedTimestamp(step.getInput());
             }
         }
-        int rewoundMasterHi = 0;
-        for (int i = ordered.size() - 1; i > 0 && rewoundMasterHi == 0; i--) {
-            if (ordered.getQuick(i).isMasterRewound()) {
-                rewoundMasterHi = i;
-            }
-        }
-        if (isMasterReadByRowId(join)) {
-            copyRows(ordered.getQuick(0).getInput(), RowCopy.RANDOM_ACCESS, true);
-        } else if (rewoundMasterHi > 0) {
-            copyRows(ordered.getQuick(0).getInput(), RowCopy.RANDOM_ACCESS, false);
-        }
+        copyInput(join, 0);
         for (int i = 1, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
-            if (step.getJoinType() != JoinKind.UNNEST) {
-                copySlave(join, i, step, i < rewoundMasterHi || step.isSlaveRewound());
-            }
             final LogicalPlan slave = step.getInput();
             if (step.getJoinType().isRelational()) {
                 planRelationalStep(join, i, step);
+                copyInput(join, i);
                 step.setFilterAlgorithm(joinFilterAlgorithm(step));
                 continue;
             }
@@ -1235,11 +1177,13 @@ final class OperatorPlanning implements Mutable {
                         validateFullFatTemporalSlave(step);
                     }
                     step.setAlgorithm(algorithm);
+                    copyInput(join, i);
                     step.setKeyCheck(planKeyLookups(step.getKeys(), ordered.getQuick(i - 1).getOutput()));
                     step.setTimeFrameScan(algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && step.getJoinType() == JoinKind.ASOF
                             && isKeyedTemporalStep(join, i, step) ? timeFrameScan(join, i, step) : null);
                 }
                 case SPLICE -> {
+                    copyInput(join, i);
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
                     validateSplice(join, i, step);
                     step.setAlgorithm(JoinInput.Algorithm.SPLICE);
@@ -1272,9 +1216,9 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Decides how a LATEST BY that does not scan a table reads its base: twice, the latest row of each key and then
-     * the rows at their positions. It reads a copy of rows that would be computed again, see
-     * {@link #copyRowsForReread}, the second time from the copy, else by row id when the base offers it.
+     * Decides how a LATEST BY that does not scan a table reads its base: by row id when the base offers it, else twice,
+     * the latest row of each key and then the rows at their positions, from a copy of rows a stream GROUP BY would
+     * compute again, see {@link #copyInput}.
      */
     private void planLatestBy(LatestByPlan latest) {
         if (PlanToFactoryRules.latestByScan(latest) != null) {
@@ -1290,9 +1234,9 @@ final class OperatorPlanning implements Mutable {
             readOrder(base, false, true);
             isAscending = PhysicalProperties.scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD;
         }
-        final boolean isCopied = copyRowsForReread(base, RowCopy.RANDOM_ACCESS);
-        latest.setAlgorithm(isCopied || !isRandomAccess(base) ? LatestByPlan.Algorithm.MATERIALIZED
+        latest.setAlgorithm(!isRandomAccess(base) ? LatestByPlan.Algorithm.MATERIALIZED
                 : isAscending ? LatestByPlan.Algorithm.ASCENDING_LIGHT : LatestByPlan.Algorithm.LIGHT);
+        copyInput(latest, 0);
     }
 
     /**
@@ -1321,19 +1265,12 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Decides which operator applies the LIMIT and, over a sort, how the sort implements it. A LIMIT operator whose
-     * bound may be negative counts the rows and reads its input again, from a copy of rows that would be computed
-     * again, see {@link #copyRowsForReread}: a copy of the input of a sort that delivers its input's order.
+     * Decides which operator applies the LIMIT and, over a sort, how the sort implements it, and the copy a LIMIT
+     * operator that counts its rows reads them again from, see {@link #copyInput}.
      */
     private void planLimit(LimitPlan limit) {
         planLimitApplication(limit);
-        final LogicalPlan limited = limit.getChild();
-        if (limit.getApplication() == LimitPlan.Application.OPERATOR
-                && (LogicalPlans.mayBeNegativeLimit(limit.getLo()) || limit.getHi() != null && LogicalPlans.mayBeNegativeLimit(limit.getHi()))
-                && PhysicalProperties.rewindRecomputes(limited) == PhysicalProperties.Capability.YES) {
-            copyRowsForReread(LogicalPlans.hasSortUnderStableProjects(limited) ? ((SortPlan) LogicalPlans.skipProjects(limited)).getChild() : limited,
-                    RowCopy.REPLAY);
-        }
+        copyInput(limit, 0);
     }
 
     private void planLimitApplication(LimitPlan limit) {
@@ -1403,14 +1340,17 @@ final class OperatorPlanning implements Mutable {
         step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master) : null);
         final int markoutIndex = master.getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
-                && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
+                && (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
+                || inputIndex == 1 && isRandomAccessCopyable(join.getOrderedInputs().getQuick(0).getInput()))
                 && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES
                 && isAscendingMasterRead(join, inputIndex)) {
             step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
+            copyInput(join, 0);
         } else if (!step.isKeyed()) {
             step.setAlgorithm(JoinInput.Algorithm.NESTED_LOOP);
         } else {
-            final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);
+            final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave)
+                    || PhysicalProperties.readsStreamRows(slave) && isRandomAccessCopyable(slave);
             step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
                 planLightBuildSide(join, inputIndex, step);
@@ -1828,21 +1768,25 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The ASOF or LT join the generator builds: full-fat when full-fat joins are asked for; a linear scan of a copy of
-     * its slave, see {@link #copySlave}; full-fat over a slave without random access, one that steals the filter of its
-     * slave, one that reads the time frames of its slave unless the {@code asof_linear} hint asks for a linear scan or
-     * an LT join is keyed, and a linear scan of the slave otherwise.
+     * The ASOF or LT join the generator builds: full-fat when full-fat joins are asked for. Over a slave without random
+     * access, a linear scan of a copy of the slave, see {@link #copyInput}, in place of a full-fat join that cannot
+     * carry a slave column, see {@link PlanToFactoryRules#fullFatTemporalRejectedColumn}, or, over the rows of a stream
+     * GROUP BY, would expose slave keys of another type than the master's in the master's type; full-fat otherwise.
+     * Over a slave with random access, one that steals the filter of its slave, one that reads the time frames of its
+     * slave unless the {@code asof_linear} hint asks for a linear scan or an LT join is keyed, and a linear scan of the
+     * slave otherwise.
      */
     private JoinInput.Algorithm temporalAlgorithm(JoinPlan join, int inputIndex, JoinInput step) {
         final LogicalPlan slave = step.getInput();
         if (isFullFatJoins) {
             return JoinInput.Algorithm.FULL_FAT_TEMPORAL;
         }
-        if (slave.getOutputCopy() != null) {
-            return JoinInput.Algorithm.TEMPORAL;
-        }
         if (!isRandomAccess(slave)) {
-            return JoinInput.Algorithm.FULL_FAT_TEMPORAL;
+            final boolean isRejected = PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0;
+            final boolean isStreamCopied = isRandomAccessCopyable(slave)
+                    && (isRejected || hasMixedKeyTypes(join.getOrderedInputs().getQuick(inputIndex - 1).getOutput(), step));
+            return isStreamCopied || isRejected && PlanToFactoryRules.copyRejectedColumn(slave.getOutput()) < 0
+                    ? JoinInput.Algorithm.TEMPORAL : JoinInput.Algorithm.FULL_FAT_TEMPORAL;
         }
         if ((step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0) {
             return JoinInput.Algorithm.TEMPORAL;
@@ -2116,19 +2060,6 @@ final class OperatorPlanning implements Mutable {
      */
     static boolean isInputLimit(LogicalPlan plan) {
         return PlanToFactoryRules.hasNativeFilterInput(plan) && PhysicalProperties.implementsLimit(plan) == PhysicalProperties.Capability.YES;
-    }
-
-    /**
-     * True when the SAMPLE BY groups by a key besides its bucket.
-     */
-    static boolean isKeyedSampleBy(SampleByPlan sample) {
-        final ObjList<BoundExpression> keys = sample.getGroupingExpressions();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (((ColumnExpression) keys.getQuick(i)).getColumnId() != sample.getTimestampColumnId()) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
