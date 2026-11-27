@@ -24,15 +24,20 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
@@ -2013,6 +2018,41 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             assertQuery("SELECT col FROM tc_ts_vc ORDER BY ts")
                     .noLeakCheck()
                     .returnsOnce("col\n2024-01-01T00:00:00.000Z\n\n2023-12-25T15:00:00.000Z\n\n2023-01-01T00:00:00.000Z\n");
+        });
+    }
+
+    @Test
+    public void testUuidToLong128ColumnIsSchemaMismatch() throws Exception {
+        // QWP cannot write a LONG128 column. The server should refuse the batch as a schema mismatch,
+        // like any other column it cannot write, so the client fails at once instead of replaying it.
+        runInContext((port) -> {
+            execute("CREATE TABLE tc_uuid_l128 (col LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            final CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+            final CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            final QwpWebSocketSender sender = connectWs(port, err -> {
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+                firstErrFut.complete(err);
+            }, 1);
+            SenderError.Category expectedTerminalCategory = null;
+            try {
+                sender.table("tc_uuid_l128")
+                        .uuidColumn("col", 1, 2)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderServerException ignored) {
+                    // the I/O thread can latch the terminal before flush() polls for it
+                }
+
+                final SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(err.getServerMessage(), SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
+            }
         });
     }
 
