@@ -196,7 +196,10 @@ stages:
       - HostedRunTestsBranches
       - BinarySmokeTest
     # not(succeeded()) rather than failed(): a timed-out job reports canceled, not failed.
-    condition: and(not(succeeded()), eq(variables['Build.Reason'], 'Schedule'))
+    # not(canceled()): succeeded() is also false once someone cancels the run, and that is
+    # not a red master. A job timeout fails its stage and the run without cancelling the
+    # run, so it still alerts.
+    condition: and(not(succeeded()), not(canceled()), eq(variables['Build.Reason'], 'Schedule'))
     jobs:
       - job: NotifyOnFailure
         displayName: "Notify Slack on failure"
