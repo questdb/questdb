@@ -2,8 +2,8 @@
 # (test-pipeline.yml) tests linux-x86-64 on OpenJDK only; this pipeline runs the arm64, ZFS
 # and GraalVM legs, the macOS and Windows legs, and the binary smoke test. A break on those
 # platforms therefore reaches master and shows here, up to two hours after the merge.
-# Enterprise tests itself against OSS master on a schedule of its own (questdb-enterprise
-# ci/build-and-test.yaml).
+# Enterprise tests itself against OSS master in its scheduled OSS compatibility check
+# (questdb-enterprise ci/build-and-test.yaml).
 #
 # always: false starts a run only when master moved since the last green scheduled run, so
 # a red master reruns, and alerts again, every slot until someone fixes it.

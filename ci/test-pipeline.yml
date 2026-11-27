@@ -4,7 +4,7 @@
 # and TriggerEnterpriseCompile checks that Enterprise still compiles. Everything else --
 # the arm64, ZFS and GraalVM legs, macOS, Windows and the binary smoke test -- runs on
 # master every two hours, in test-master-pipeline.yml. Enterprise runs its tests against
-# OSS master on a two-hourly schedule of its own.
+# OSS master in its scheduled OSS compatibility check.
 #
 # Also run in the GitHub merge queue: CI trigger on the ephemeral merge-queue branches.
 trigger:
@@ -111,8 +111,8 @@ stages:
       - template: templates/aux-job.yml
 
   # Checks that Enterprise compiles against this PR; the run reports enterprise-ci-compile.
-  # The Enterprise tests run on Enterprise's own schedule against OSS master and, on
-  # request for a PR, from test-hosted-pipeline.yml.
+  # The Enterprise tests run against OSS master in Enterprise's scheduled OSS compatibility
+  # check and, on request for a PR, from test-hosted-pipeline.yml.
   - stage: TriggerEnterpriseCompile
     displayName: "Trigger Enterprise compile"
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), ne(variables['System.PullRequest.IsFork'], 'true'))
