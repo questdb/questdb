@@ -27,6 +27,7 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -406,8 +407,12 @@ public class FuzzTransactionGenerator {
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(
                 sequencerMetadata != null ? sequencerMetadata.getTimestampType() : ColumnType.TIMESTAMP_MICRO
         );
+        // the length of one partition; the tables have fixed-length partitions: DAY, HOUR or a sub-hour size
+        final long partitionDuration = partitionDuration(timestampDriver, tableMetadata);
+        final int partitionBy = tableMetadata != null ? tableMetadata.getPartitionBy() : PartitionBy.DAY;
+        // DETACH/ATTACH and the newest-partitions DROP work on days, each of which starts a partition
         final long oneDay = timestampDriver.fromDays(1);
-        final ReplaceWindowPicker replaceWindowPicker = new ReplaceWindowPicker(timestampDriver);
+        final ReplaceWindowPicker replaceWindowPicker = new ReplaceWindowPicker(timestampDriver, partitionDuration);
 
         long lastTimestamp = minTimestamp;
 
@@ -528,7 +533,7 @@ public class FuzzTransactionGenerator {
                 continue;
             }
             if (i == setTtlIteration) {
-                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++, rnd);
+                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++, rnd, timestampDriver, partitionDuration);
                 continue;
             }
 
@@ -548,7 +553,7 @@ public class FuzzTransactionGenerator {
                 // the days go back to native, so that the late rows after the column cut them into splits and
                 // pieces; its column top covers the rows written so far, and later rows hold values
                 isNoSentinelColumnAdded = true;
-                waitBarrierVersion = generateConvertEveryDay(transactionList, metaVersion, waitBarrierVersion, minTimestamp, lastTimestamp, oneDay, false);
+                waitBarrierVersion = generateConvertEveryDay(transactionList, metaVersion, waitBarrierVersion, minTimestamp, lastTimestamp, partitionDuration, false);
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta, rnd.nextBoolean() ? ColumnType.BYTE : ColumnType.SHORT);
                 noSentinelColumnName = meta.getColumnName(meta.getColumnCount() - 1);
                 continue;
@@ -556,7 +561,7 @@ public class FuzzTransactionGenerator {
             if (!isNoSentinelWideningSpent && isNoSentinelColumnAdded && i >= noSentinelWideningIteration) {
                 isNoSentinelWideningSpent = true;
                 // the days the late rows cut into splits and pieces go to parquet, which the widening then reads
-                waitBarrierVersion = generateConvertEveryDay(transactionList, metaVersion, waitBarrierVersion, minTimestamp, lastTimestamp, oneDay, true);
+                waitBarrierVersion = generateConvertEveryDay(transactionList, metaVersion, waitBarrierVersion, minTimestamp, lastTimestamp, partitionDuration, true);
                 final RecordMetadata wideningMeta = FuzzChangeColumnTypeOperation.generateNoSentinelWidening(
                         transactionList,
                         estimatedTotalRows,
@@ -652,7 +657,7 @@ public class FuzzTransactionGenerator {
             } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
-                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, oneDay, rnd);
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, partitionDuration, rnd);
             } else if (wantToConvertPartitionToParquet && (!isNoSentinelColumnAdded || isNoSentinelWideningSpent)) {
                 // between the added column and the widening the days stay native, see the javadoc
                 final long cutoffTimestamp = generateConvertPartitionToParquet(
@@ -661,16 +666,16 @@ public class FuzzTransactionGenerator {
                         waitBarrierVersion++,
                         minTimestamp,
                         lastTimestamp,
-                        oneDay,
+                        partitionDuration,
                         rnd,
                         isNoSentinelTypeChangeEnabled
                 );
                 // the partition of the cutoff has rows when its day is not before the first day of data
                 isTextToNoSentinelChangeDue |= !isTextToNoSentinelChangeSpent
-                        && cutoffTimestamp - cutoffTimestamp % oneDay >= minTimestamp - minTimestamp % oneDay;
+                        && cutoffTimestamp - cutoffTimestamp % partitionDuration >= minTimestamp - minTimestamp % partitionDuration;
             } else if (wantToConvertPartitionToNative && !isTextToNoSentinelChangeDue && (!isNoSentinelColumnAdded || isNoSentinelWideningSpent)) {
                 // waits for the due text to BOOLEAN, BYTE or SHORT change, and for the widening after the added column
-                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, oneDay, rnd);
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, partitionDuration, rnd);
             } else if (wantToAddCoveringIndex) {
                 if (generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
                     waitBarrierVersion++;
@@ -686,6 +691,7 @@ public class FuzzTransactionGenerator {
                         lowestTimestamp,
                         lastTimestamp,
                         oneDay,
+                        partitionBy,
                         rnd,
                         detachedDays
                 );
@@ -899,13 +905,13 @@ public class FuzzTransactionGenerator {
      * Picks the active day 4 in 10, the day before it 3 in 10, else a random older day, so conversions keep
      * reaching days the O3 commits cut into splits and pieces.
      */
-    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, long oneDay, Rnd rnd) {
+    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, long partitionDuration, Rnd rnd) {
         final int target = rnd.nextInt(100);
         if (target < 30) {
-            return lastTimestamp - oneDay;
+            return lastTimestamp - partitionDuration;
         }
-        if (target < 60 && lastTimestamp - minTimestamp > oneDay) {
-            return minTimestamp + oneDay + rnd.nextLong(lastTimestamp - minTimestamp - oneDay);
+        if (target < 60 && lastTimestamp - minTimestamp > partitionDuration) {
+            return minTimestamp + partitionDuration + rnd.nextLong(lastTimestamp - minTimestamp - partitionDuration);
         }
         return lastTimestamp;
     }
@@ -1042,10 +1048,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long minTimestamp, long lastTimestamp, long oneDay, Rnd rnd
+            long minTimestamp, long lastTimestamp, long partitionDuration, Rnd rnd
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, oneDay, rnd)));
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, partitionDuration, rnd), partitionDuration));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -1053,24 +1059,24 @@ public class FuzzTransactionGenerator {
     }
 
     /**
-     * Converts the day {@link #convertCutoffTimestamp} picks, or with {@code isBeforeLastPartition} the day before
-     * the one taking writes, two days before it one time in five, and returns the cutoff timestamp.
+     * Converts the partition {@link #convertCutoffTimestamp} picks, or with {@code isBeforeLastPartition} the partition
+     * before the one taking writes, two partitions before it one time in five, and returns the cutoff timestamp.
      */
     private static long generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long minTimestamp, long lastTimestamp, long oneDay, Rnd rnd, boolean isBeforeLastPartition
+            long minTimestamp, long lastTimestamp, long partitionDuration, Rnd rnd, boolean isBeforeLastPartition
     ) {
         final long cutoffTimestamp;
         if (isBeforeLastPartition) {
-            // The WHERE clause matches partition timestamps in (cutoff - 1 day, cutoff), and the tables partition
-            // by DAY: a cutoff just before the day of lastTimestamp selects the partition before the one taking writes
-            final long dayBeforeLastPartition = lastTimestamp - lastTimestamp % oneDay - 1;
-            cutoffTimestamp = rnd.nextInt(100) <= 20 ? dayBeforeLastPartition - oneDay : dayBeforeLastPartition;
+            // The WHERE clause matches partition timestamps in (cutoff - partitionDuration, cutoff): a cutoff just
+            // before the partition of lastTimestamp selects the partition before the one taking writes
+            final long partitionBeforeLast = lastTimestamp - lastTimestamp % partitionDuration - 1;
+            cutoffTimestamp = rnd.nextInt(100) <= 20 ? partitionBeforeLast - partitionDuration : partitionBeforeLast;
         } else {
-            cutoffTimestamp = convertCutoffTimestamp(minTimestamp, lastTimestamp, oneDay, rnd);
+            cutoffTimestamp = convertCutoffTimestamp(minTimestamp, lastTimestamp, partitionDuration, rnd);
         }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp, partitionDuration));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -1080,8 +1086,8 @@ public class FuzzTransactionGenerator {
 
 
     /**
-     * Converts every day before the one that {@code lastTimestamp} falls in, to parquet or to native, one transaction a
-     * day, and returns the next wait barrier version.
+     * Converts every partition before the one that {@code lastTimestamp} falls in, to parquet or to native, one
+     * transaction a partition, and returns the next wait barrier version.
      */
     private static int generateConvertEveryDay(
             ObjList<FuzzTransaction> transactionList,
@@ -1089,16 +1095,16 @@ public class FuzzTransactionGenerator {
             int waitBarrierVersion,
             long minTimestamp,
             long lastTimestamp,
-            long oneDay,
+            long partitionDuration,
             boolean isToParquet
     ) {
-        for (long day = minTimestamp - minTimestamp % oneDay, frontDay = lastTimestamp - lastTimestamp % oneDay; day < frontDay; day += oneDay) {
+        for (long partitionTs = minTimestamp - minTimestamp % partitionDuration, frontPartitionTs = lastTimestamp - lastTimestamp % partitionDuration; partitionTs < frontPartitionTs; partitionTs += partitionDuration) {
             final FuzzTransaction transaction = new FuzzTransaction();
-            // the operations convert the day that starts in (cutoff - 1 day, cutoff)
-            final long cutoffTimestamp = day + oneDay - 1;
+            // the operations convert the partition that starts in (cutoff - partitionDuration, cutoff)
+            final long cutoffTimestamp = partitionTs + partitionDuration - 1;
             transaction.operationList.add(isToParquet
-                    ? new FuzzConvertPartitionToParquetOperation(cutoffTimestamp)
-                    : new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+                    ? new FuzzConvertPartitionToParquetOperation(cutoffTimestamp, partitionDuration)
+                    : new FuzzConvertPartitionToNativeOperation(cutoffTimestamp, partitionDuration));
             transaction.waitBarrierVersion = waitBarrierVersion++;
             transaction.structureVersion = metadataVersion;
             transaction.waitAllDone = true;
@@ -1108,16 +1114,16 @@ public class FuzzTransactionGenerator {
     }
 
     /**
-     * Detaches a day before the one taking writes, from the day of {@code lowestTimestamp}, the lowest timestamp the
-     * run wrote, on, and attaches it back, see {@link FuzzDetachAttachPartitionOperation}. Returns the first day a
-     * DROP between the two removes, or {@code Long.MIN_VALUE} when no DROP runs between them or nothing is generated.
-     * Generates nothing when there is no such day, or when the day was detached before: a WAL table keeps the detached
+     * Detaches the partition, of a table partitioned by {@code partitionBy}, that starts a day before the one taking
+     * writes, from the day of {@code lowestTimestamp}, the lowest timestamp the run wrote, on, and attaches it back,
+     * see {@link FuzzDetachAttachPartitionOperation}. Returns the first day a DROP between the two removes, or
+     * {@code Long.MIN_VALUE} when no DROP runs between them or nothing is generated. Generates nothing when there is no such day, or when the day was detached before: a WAL table keeps the detached
      * copy of a partition until a save point covers its attach under the ADAPTIVE commit mode, so a second DETACH of the
      * day could fail on the WAL table alone.
      */
     private static long generateDetachAttachPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lowestTimestamp, long lastTimestamp, long oneDay, Rnd rnd, LongHashSet detachedDays
+            long lowestTimestamp, long lastTimestamp, long oneDay, int partitionBy, Rnd rnd, LongHashSet detachedDays
     ) {
         final long firstDay = lowestTimestamp - lowestTimestamp % oneDay;
         final long frontDay = lastTimestamp - lastTimestamp % oneDay;
@@ -1135,7 +1141,7 @@ public class FuzzTransactionGenerator {
         // from two days before the detached day, which drops it, older days and every newer one, to two days after
         final long dropFrom = day + (rnd.nextInt(5) - 2) * oneDay;
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDetachAttachPartitionOperation(day, between, dropFrom));
+        transaction.operationList.add(new FuzzDetachAttachPartitionOperation(day, between, dropFrom, partitionBy));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -1156,7 +1162,7 @@ public class FuzzTransactionGenerator {
                 ? lowestTimestamp - lowestTimestamp % oneDay - oneDay
                 : lastTimestamp - lastTimestamp % oneDay - rnd.nextInt(2) * oneDay;
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDropPartitionOperation(dropFrom, true));
+        transaction.operationList.add(new FuzzDropPartitionOperation(dropFrom, 0, true));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -1166,14 +1172,14 @@ public class FuzzTransactionGenerator {
 
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, long oneDay, Rnd rnd
+            long lastTimestamp, long partitionDuration, Rnd rnd
     ) {
         long cutoffTimestamp = lastTimestamp;
         if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= oneDay;
+            cutoffTimestamp -= partitionDuration;
         }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp, partitionDuration, false));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -1310,14 +1316,26 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
     }
 
-    private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
-        int ttlDays = rnd.nextInt(2) + 1;
+    /**
+     * Sets a TTL of 1 or 2 partitions. TTLs have no unit below an hour, so sub-hour partitions round up to whole hours.
+     */
+    private static void generateSetTtl(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            TimestampDriver timestampDriver,
+            long partitionDuration
+    ) {
+        final long ttl = (rnd.nextInt(2) + 1) * partitionDuration;
+        final long oneHour = timestampDriver.fromHours(1);
+        final int ttlHours = (int) ((ttl + oneHour - 1) / oneHour);
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transaction.reopenTable = true;
-        transaction.operationList.add(new FuzzSetTtlOperation(ttlDays));
+        transaction.operationList.add(new FuzzSetTtlOperation(ttlHours));
         transactionList.add(transaction);
     }
 
@@ -1346,6 +1364,20 @@ public class FuzzTransactionGenerator {
         } else {
             return tableMetadata.getColumnCount();
         }
+    }
+
+    /**
+     * Returns the length of one partition of the table: the fuzz tables partition by DAY, HOUR or a
+     * sub-hour size, all fixed-length. Without table metadata, it's a day.
+     */
+    private static long partitionDuration(TimestampDriver timestampDriver, @Nullable TableMetadata tableMetadata) {
+        if (tableMetadata != null) {
+            final int partitionBy = tableMetadata.getPartitionBy();
+            if (partitionBy == PartitionBy.HOUR || PartitionBy.isMinutePartitioned(partitionBy)) {
+                return timestampDriver.approxPartitionDuration(partitionBy);
+            }
+        }
+        return timestampDriver.fromDays(1);
     }
 
     static RecordMetadata generateAddColumn(
@@ -1522,11 +1554,11 @@ public class FuzzTransactionGenerator {
     /**
      * Picks the range of a replace commit, in table timestamp units, one of:
      * <ul>
-     * <li>a wide window, padded by about 7.4 hours on each side of the commit's rows;</li>
+     * <li>a wide window, padded by about a third of a partition on each side of the commit's rows;</li>
      * <li>edges on, or one unit next to, the nearest committed rows: {@code lo} on a row,
      * {@code hi - 1} on a row (replaced) or {@code hi} on a row (kept);</li>
      * <li>a narrow window around the commit's rows;</li>
-     * <li>whole days, with or without the commit's rows;</li>
+     * <li>whole partitions, with or without the commit's rows;</li>
      * <li>no rows: a pure delete, or a narrow window on or next to one committed row.</li>
      * </ul>
      * The non-wide shapes reach the edge cases, partition removal and the no-op path. Every
@@ -1534,16 +1566,17 @@ public class FuzzTransactionGenerator {
      */
     static final class ReplaceWindowPicker {
         private static final int MAX_TIMESTAMPS = 100_000;
-        private final long day;
         private final long padding;
+        private final long partitionDuration;
         // a sample of the timestamps committed so far
         private final LongList timestamps = new LongList();
         private boolean isSorted = true;
         private int nextOverwrite;
 
-        ReplaceWindowPicker(TimestampDriver timestampDriver) {
-            day = timestampDriver.fromDays(1);
-            padding = timestampDriver.fromMicros((long) Math.exp(24));
+        ReplaceWindowPicker(TimestampDriver timestampDriver, long partitionDuration) {
+            this.partitionDuration = partitionDuration;
+            // about a third of a partition, enough to cover up to 2 partitions more on each side
+            padding = timestampDriver.fromMicros((long) (Math.exp(24) * partitionDuration / timestampDriver.fromDays(1)));
         }
 
         void addCommittedRows(FuzzTransaction transaction) {
@@ -1579,8 +1612,8 @@ public class FuzzTransactionGenerator {
                     hi = maxTs + 1 + rnd.nextLong(margin);
                 }
                 case 7 -> {
-                    lo = floorDay(minTs) - rnd.nextInt(2) * day;
-                    hi = floorDay(maxTs) + (1 + rnd.nextInt(2)) * day;
+                    lo = floorPartition(minTs) - rnd.nextInt(2) * partitionDuration;
+                    hi = floorPartition(maxTs) + (1 + rnd.nextInt(2)) * partitionDuration;
                     isDroppingRows = rnd.nextBoolean();
                 }
                 case 8 -> {
@@ -1611,8 +1644,8 @@ public class FuzzTransactionGenerator {
             transaction.setReplaceRange(minTs - padding, maxTs + padding);
         }
 
-        private long floorDay(long ts) {
-            return ts - Math.floorMod(ts, day);
+        private long floorPartition(long ts) {
+            return ts - Math.floorMod(ts, partitionDuration);
         }
 
         private void ensureSorted() {
@@ -1636,7 +1669,7 @@ public class FuzzTransactionGenerator {
                     high = mid;
                 }
             }
-            if (low == timestamps.size() || timestamps.getQuick(low) - maxTs > day) {
+            if (low == timestamps.size() || timestamps.getQuick(low) - maxTs > partitionDuration) {
                 return maxTs + 1 + rnd.nextLong(3);
             }
             return Math.max(timestamps.getQuick(low) + rnd.nextLong(3), maxTs + 1);
@@ -1656,7 +1689,7 @@ public class FuzzTransactionGenerator {
                     high = mid;
                 }
             }
-            if (low == 0 || minTs - timestamps.getQuick(low - 1) > day) {
+            if (low == 0 || minTs - timestamps.getQuick(low - 1) > partitionDuration) {
                 return minTs - rnd.nextLong(3);
             }
             return Math.min(timestamps.getQuick(low - 1) + rnd.nextLong(3) - 1, minTs);
