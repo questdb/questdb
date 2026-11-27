@@ -28,6 +28,7 @@ package io.questdb.std;
  * Interface for mutable objects that can be cleared.
  */
 public interface Mutable {
+    // TEMPORARY, revert before merge: makes this PR's build run the coverage legs.
     /**
      * Clears the state of this object.
      */
