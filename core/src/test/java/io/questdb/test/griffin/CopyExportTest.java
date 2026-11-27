@@ -1132,6 +1132,31 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyCursorExportSymbolLegacySampleByFirstLastNoCache() throws Exception {
+        assertMemoryLeak(() -> {
+            createFirstLastTable();
+            execute("ALTER TABLE fl ALTER COLUMN s NOCACHE");
+            final String query = "SELECT ts, first(s) f, last(s) l FROM fl WHERE k = 'x' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("SampleByFirstLast");
+            assertCursorExportOfSymbols(query, "legacy_first_last_nocache", new int[]{1, 2}, new int[]{});
+            assertQuery("SELECT ts, f, f IS NULL f_is_null, l, l IS NULL l_is_null FROM read_parquet('" + parquetPath("legacy_first_last_nocache") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tf\tf_is_null\tl\tl_is_null
+                            2024-01-01T00:00:00.000000Z\ta\tfalse\t\ttrue
+                            2024-01-01T01:00:00.000000Z\tc\tfalse\tc\tfalse
+                            2024-01-02T00:00:00.000000Z\td\tfalse\td\tfalse
+                            2024-01-02T03:00:00.000000Z\t\ttrue\t\ttrue
+                            2024-01-02T04:00:00.000000Z\tf\tfalse\tg\tfalse
+                            """);
+        });
+    }
+
+    @Test
     public void testCopyCursorExportSymbolNullsWithoutNullInMap() throws Exception {
         // sym_dim's symbol map holds no NULL, yet the outer joins return NULL for the rows they do not match.
         assertMemoryLeak(() -> {
@@ -1370,12 +1395,21 @@ public class CopyExportTest extends AbstractCairoTest {
                 assertCursorExportOfSymbols(shape.query(), "shape_" + i, shape.keptColumns(), shape.stringColumns());
             }
 
-            // STRING: the fused hash join GROUP BY resolves its keys through copies of the symbol maps.
+            // SYMBOL: the fused hash join GROUP BY resolves its keys through views of the table's symbol map.
             final String fusedQuery = "SELECT t.sym, count() c FROM sym_src t JOIN sym_dim d ON t.sym = d.sym GROUP BY t.sym";
             assertQuery(fusedQuery)
                     .noLeakCheck()
                     .assertsPlanContaining("Async Hash Join Group By");
-            assertCursorExportOfSymbols(fusedQuery, "fused", new int[]{}, new int[]{0});
+            assertCursorExportOfSymbols(fusedQuery, "fused", new int[]{0}, new int[]{});
+            assertQuery("SELECT sym, c FROM read_parquet('" + parquetPath("fused") + "') ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tc
+                            a\t2
+                            é\t1
+                            😀\t1
+                            """);
 
             // A bind variable, with two values
             final String bindQuery = "SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1) WHERE t.v > $1";

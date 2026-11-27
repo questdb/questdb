@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -119,9 +120,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     /**
      * Returns the table's symbol map that resolves the keys the cursor returns for a SYMBOL column, when the column
-     * passes a table column's keys through: the cursor's symbol table for the column is the table's map, or reaches
-     * it only through column references. Returns null for every other column, such as a SYMBOL that a function
-     * computes, an aggregate, a cast to SYMBOL or a UNION of SYMBOL columns, and for a map without memory.
+     * passes a table column's keys through: the cursor's symbol table for the column is the table's map or a view of
+     * it, or reaches it only through column references. Returns null for every other column, such as a SYMBOL that a
+     * function computes, an aggregate, a cast to SYMBOL or a UNION of SYMBOL columns, and for a map without memory.
      */
     private static @Nullable SymbolMapReader findTableSymbolMap(RecordMetadata metadata, RecordCursor cursor, int columnIndex) {
         if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isSymbolTableStatic(columnIndex)) {
@@ -139,6 +140,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 return symbolMapReader.getSymbolValuesColumn() != null && symbolMapReader.getSymbolOffsetsColumn() != null
                         ? symbolMapReader
                         : null;
+            }
+            final SymbolMapReaderImpl viewedReader = SymbolMapReaderImpl.getViewedReader(symbolTable);
+            if (viewedReader != null) {
+                symbolTable = viewedReader;
+                continue;
             }
             if (!(symbolTable instanceof SymbolFunction symbolFunction) || !symbolFunction.isSymbolTableStatic()) {
                 return null;

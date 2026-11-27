@@ -1617,6 +1617,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolCacheMaxSize() {
+        return 256 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getSymbolPatternIndexThreshold() {
         return 100;
     }

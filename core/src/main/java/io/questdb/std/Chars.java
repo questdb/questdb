@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -529,7 +530,7 @@ public final class Chars {
     }
 
     public static int hashCode(@NotNull CharSequence value) {
-        if (value instanceof String) {
+        if (value instanceof String || DirectString.isRawView(value)) {
             return value.hashCode();
         }
 

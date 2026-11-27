@@ -100,6 +100,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
     private final int rootLen;
+    private final SymbolMapCachePool symbolMapCachePool;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final int timestampType;
     private final TxReader txFile;
@@ -148,12 +149,24 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(id, configuration, tableToken, scoreboardFactory, null, null);
     }
 
+    public TableReader(
+            int id,
+            CairoConfiguration configuration,
+            @NotNull TableToken tableToken,
+            TxnScoreboardPool scoreboardPool,
+            @Nullable MessageBus messageBus,
+            @Nullable PartitionOverwriteControl partitionOverwriteControl
+    ) {
+        this(id, configuration, tableToken, scoreboardPool, null, messageBus, partitionOverwriteControl);
+    }
+
     // Don't forget to change TableReader srcReader overload when changing this constructor.
     public TableReader(
             int id,
             CairoConfiguration configuration,
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardPool,
+            @Nullable SymbolMapCachePool symbolMapCachePool,
             @Nullable MessageBus messageBus,
             @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
@@ -164,6 +177,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
         this.messageBus = messageBus;
+        this.symbolMapCachePool = symbolMapCachePool;
         try {
             this.path = new Path();
             this.path.of(configuration.getDbRoot());
@@ -199,12 +213,24 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    public TableReader(
+            int id,
+            CairoConfiguration configuration,
+            TableReader srcReader,
+            TxnScoreboardPool scoreboardPool,
+            @Nullable MessageBus messageBus,
+            @Nullable PartitionOverwriteControl partitionOverwriteControl
+    ) {
+        this(id, configuration, srcReader, scoreboardPool, null, messageBus, partitionOverwriteControl);
+    }
+
     // copyOf constructor.
     public TableReader(
             int id,
             CairoConfiguration configuration,
             TableReader srcReader,
             TxnScoreboardPool scoreboardPool,
+            @Nullable SymbolMapCachePool symbolMapCachePool,
             @Nullable MessageBus messageBus,
             @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
@@ -216,6 +242,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableToken = srcReader.getTableToken();
         this.messageBus = messageBus;
+        this.symbolMapCachePool = symbolMapCachePool;
         try {
             this.path = new Path();
             this.path.of(configuration.getDbRoot());
@@ -1849,7 +1876,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 path,
                 metadata.getColumnName(columnIndex),
                 columnVersionReader.getSymbolTableNameTxn(metadata.getWriterIndex(columnIndex)),
-                txFile.getSymbolValueCount(symbolColumnIndex)
+                txFile.getSymbolValueCount(symbolColumnIndex),
+                symbolMapCachePool,
+                txFile.getTruncateVersion()
         );
     }
 
@@ -2405,12 +2434,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
-                if (symbolMapReader instanceof SymbolMapReaderImpl) {
+                if (symbolMapReaders.getQuick(columnIndex) instanceof SymbolMapReaderImpl symbolMapReader) {
                     final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
                     final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
                     int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
-                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount);
+                    symbolMapReader.of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount, symbolMapCachePool, txFile.getTruncateVersion());
                 }
             }
         }
@@ -2702,11 +2730,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
             String columnName = metadata.getColumnName(columnIndex);
             if (!(reader instanceof SymbolMapReaderImpl symbolMapReader)) {
-                reader = new SymbolMapReaderImpl(configuration, path.trimTo(rootLen), columnName, symbolTableNameTxn, 0);
+                reader = new SymbolMapReaderImpl(configuration, path.trimTo(rootLen), columnName, symbolTableNameTxn, 0, symbolMapCachePool, txFile.getTruncateVersion());
             } else {
                 // Fully reopen the symbol map reader only when necessary
-                if (symbolMapReader.needsReopen(symbolTableNameTxn)) {
-                    symbolMapReader.of(configuration, path.trimTo(rootLen), columnName, symbolTableNameTxn, 0);
+                if (symbolMapReader.needsReopen(symbolTableNameTxn, txFile.getTruncateVersion())) {
+                    symbolMapReader.of(configuration, path.trimTo(rootLen), columnName, symbolTableNameTxn, 0, symbolMapCachePool, txFile.getTruncateVersion());
                 }
             }
         } else {

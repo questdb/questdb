@@ -44,13 +44,13 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
@@ -105,14 +105,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         return new StrInCursorFunc(symbolFunction, cursorFunction, func);
     }
 
-    private static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {
+    public static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final StringSink sink = new StringSink();
         private final Function valueArg;
-        private final CharSequenceHashSet valueSet = new CharSequenceHashSet();
-        private boolean stateInherited = false;
-        private boolean stateShared = false;
+        private boolean isStateInherited = false;
+        private boolean isStateShared = false;
+        private CharSequenceHashSet spareValueSet = new CharSequenceHashSet();
+        private CharSequenceHashSet valueSet = new CharSequenceHashSet();
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -135,33 +136,55 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             return cursorArg;
         }
 
+        @TestOnly
+        public CharSequenceHashSet getSpareValueSet() {
+            return spareValueSet;
+        }
+
+        @TestOnly
+        public CharSequenceHashSet getValueSet() {
+            return valueSet;
+        }
+
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
 
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
 
-            stateShared = false;
-            valueSet.clear();
-
-            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                final Record record = cursor.getRecord();
-                sink.clear();
-                while (cursor.hasNext()) {
-                    CharSequence value = func.get(record, 0, sink);
-                    if (value == null) {
-                        this.valueSet.addNull();
-                    } else {
-                        int toIndex = this.valueSet.keyIndex(value);
-                        if (toIndex > -1) {
-                            this.valueSet.addAt(toIndex, Chars.toString(value));
+            isStateShared = false;
+            final CharSequenceHashSet previous = valueSet;
+            valueSet = spareValueSet;
+            spareValueSet = previous;
+            try {
+                RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    final Record record = cursor.getRecord();
+                    final boolean hasPrevious = previous.size() > 0;
+                    sink.clear();
+                    while (cursor.hasNext()) {
+                        CharSequence value = func.get(record, 0, sink);
+                        if (value == null) {
+                            valueSet.addNull();
+                        } else {
+                            int toIndex = valueSet.keyIndex(value);
+                            if (toIndex > -1) {
+                                if (hasPrevious) {
+                                    int fromIndex = previous.keyIndex(value);
+                                    if (fromIndex < 0) {
+                                        value = previous.keyAt(fromIndex);
+                                    }
+                                }
+                                valueSet.addAt(toIndex, value);
+                            }
                         }
                     }
                 }
+            } finally {
+                previous.clear();
             }
         }
 
@@ -175,7 +198,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             if (that instanceof StrInCursorFunc thatF) {
                 thatF.valueSet.clear();
                 thatF.valueSet.addAll(valueSet);
-                thatF.stateInherited = this.stateShared = true;
+                thatF.isStateInherited = this.isStateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
         }
@@ -183,7 +206,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in ").val(cursorArg);
-            if (stateShared) {
+            if (isStateShared) {
                 sink.val(" [state-shared]");
             }
         }

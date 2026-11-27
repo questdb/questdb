@@ -36,6 +36,24 @@ import org.junit.Test;
 public class InVarcharArrayFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCastSymbolInVarcharArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, str STRING, v INT)");
+            execute("INSERT INTO x VALUES ('abc', 'abc', 1), ('b', 'b', 2), (NULL, NULL, 3), ('', '', 4)");
+            for (String lhs : new String[]{"s::VARCHAR::STRING", "s::STRING", "str::SYMBOL::STRING"}) {
+                final String sql = "SELECT v FROM x WHERE " + lhs + " IN ($1)";
+                bindVariableService.clear();
+                bindVariableService.setArray(0, new TestVarcharArray(new Utf8String("abc"), new Utf8String("zz")));
+                assertQuery(sql).noLeakCheck().returns("v\n1\n");
+                bindVariableService.setArray(0, new TestVarcharArray(new Utf8String("b"), null));
+                assertQuery(sql).noLeakCheck().returns("v\n2\n3\n");
+                bindVariableService.setArray(0, new TestVarcharArray(new Utf8String("")));
+                assertQuery(sql).noLeakCheck().returns("v\n4\n");
+            }
+        });
+    }
+
+    @Test
     public void testMalformedVarcharArrayMatchesNullNotDecodedPrefix() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (str STRING, sym SYMBOL)");

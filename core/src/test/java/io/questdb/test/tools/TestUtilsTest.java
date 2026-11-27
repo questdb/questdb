@@ -61,6 +61,22 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertEqualsCharSequence() {
+        TestUtils.assertEquals("abc", new StringBuilder("abc"));
+        TestUtils.assertEquals("é水🚀", new StringBuilder("é水🚀"));
+        TestUtils.assertEquals("", new StringBuilder());
+        TestUtils.assertEquals((CharSequence) null, (CharSequence) null);
+
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals("abc", new StringBuilder("aBc")));
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals("é水🚀", new StringBuilder("é水🚁")));
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals("abc", new StringBuilder("ab")));
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals((CharSequence) null, new StringBuilder("abc")));
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals("abc", (CharSequence) null));
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals((CharSequence) null, new StringBuilder()));
+        Assert.assertThrows(AssertionError.class, () -> TestUtils.assertEquals("", (CharSequence) null));
+    }
+
+    @Test
     public void testAssertEqualsOfCursorsChecksAsciiFlagOfVarchar() {
         final byte[] nonAscii = {(byte) 0xc3, (byte) 0xa9};
         final GenericRecordMetadata varchar = new GenericRecordMetadata();
