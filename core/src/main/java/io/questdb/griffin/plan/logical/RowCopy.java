@@ -29,15 +29,18 @@ package io.questdb.griffin.plan.logical;
  * {@link LogicalPlan#getOutputCopy()}: the consumer reads the rows again or by row id, which the plan alone serves only
  * by computing them again, or not at all. A copy outside the join budget stands in for the map of a hash GROUP BY over
  * rows a stream GROUP BY computes, which only the query memory limit bounds; a copy within it holds rows a join
- * reads, which the join budget bounds.
+ * reads, which the join budget bounds. At its limit, a copy that only replays the rows releases them and reads the plan
+ * again, which suits a consumer that reads them once more; a copy that gives row ids is strict and fails the query, as
+ * its consumer relies on the row ids or reads the rows again for each row of another input, which reading the plan
+ * again for each row would multiply.
  */
 public enum RowCopy {
     /**
-     * Replays the rows after a rewind.
+     * Replays the rows after a rewind; past the query memory limit the copy releases the rows and reads the plan again.
      */
     REPLAY(false, false, false),
     /**
-     * Gives the rows row ids and replays them after a rewind.
+     * Gives the rows row ids and replays them after a rewind; past the query memory limit the copy fails the query.
      */
     RANDOM_ACCESS(true, false, false),
     /**
@@ -74,6 +77,13 @@ public enum RowCopy {
     }
 
     public boolean isRandomAccess() {
+        return isRandomAccess;
+    }
+
+    /**
+     * Whether the copy fails the query at its limit rather than reading the plan again: a copy that gives row ids.
+     */
+    public boolean isStrict() {
         return isRandomAccess;
     }
 }

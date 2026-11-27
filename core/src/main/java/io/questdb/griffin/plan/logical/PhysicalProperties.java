@@ -407,7 +407,7 @@ public final class PhysicalProperties {
     /**
      * Whether rewinding the cursor of the factory reruns a stream GROUP BY: its rows reach the cursor without a copy,
      * see {@link LogicalPlan#getOutputCopy()}, through operators without random access, as inputs their rewind reads
-     * again, see {@link PlanToFactoryRules#rewoundInput}.
+     * again, see {@link PlanToFactoryRules#isRewoundInput}.
      */
     public static Capability rewindRecomputes(LogicalPlan plan) {
         return streamInput(plan, false);
@@ -1354,8 +1354,10 @@ public final class PhysicalProperties {
             };
             default -> {
                 Capability isStreamRead = Capability.NO;
-                for (int i = 0; PlanToFactoryRules.rewoundInput(plan, i) != null; i++) {
-                    isStreamRead = or(isStreamRead, streamInput(PlanToFactoryRules.rewoundInput(plan, i), isReplayRead));
+                for (int i = 0, n = PlanToFactoryRules.accessedInputCount(plan); i < n; i++) {
+                    if (PlanToFactoryRules.isRewoundInput(plan, i)) {
+                        isStreamRead = or(isStreamRead, streamInput(PlanToFactoryRules.accessedInput(plan, i), isReplayRead));
+                    }
                 }
                 yield isStreamRead;
             }

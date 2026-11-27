@@ -62,7 +62,7 @@ final class RowCopies {
             Misc.free(base, th);
             throw th;
         }
-        return new MaterializedRecordCursorFactory(configuration, base, sink, copy.isRandomAccess(), copy.isJoinBudgeted(),
+        return new MaterializedRecordCursorFactory(configuration, base, sink, copy.isStrict(), copy.isJoinBudgeted(),
                 copy.isCopiedInBatches());
     }
 }
