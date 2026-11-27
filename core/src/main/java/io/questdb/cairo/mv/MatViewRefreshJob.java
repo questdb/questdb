@@ -1008,6 +1008,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * A view whose WAL is suspended with cairo.wal.apply.suspended.write.denied on takes no write: a valid view drops
      * the range, as when a restart loses the task; an invalid view loses its backlog, unless the range reached its
      * cache as above.
+     * <p>
+     * A view that follows another base table by the time the task holds the latch, after ALTER MATERIALIZED VIEW ...
+     * WITH BASE and REFRESH ... RESUME, drops the range, which belongs to the table it no longer follows.
      */
     private void addRefreshRange(@NotNull MatViewRefreshTask refreshTask) {
         final TableToken viewToken = refreshTask.matViewToken;
@@ -1019,7 +1022,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        // Read again under the latch, see below.
+        MatViewDefinition viewDefinition = viewState.getViewDefinition();
         if (!viewState.isInvalid() && isViewWriteSuspended(viewToken)) {
             // A valid view's cache persists through the view's WAL, which takes no write while suspended. The range
             // goes, as it does when a restart loses the task. An invalid view goes on to the latch, where the view's
@@ -1042,6 +1046,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             finalizeAndUnlock(viewToken, viewState, false);
             return;
         }
+        // The definition read before the latch can name the old base table of a view that ALTER ... WITH BASE moved and
+        // RESUME made valid on its new base meanwhile: the identity check would take the new base for a replaced one.
+        // Read under the latch, the definition names the base table the view follows now.
+        viewDefinition = viewState.getViewDefinition();
 
         // The view's validity cannot change while the task holds the latch.
         final boolean isBacklog = viewState.isInvalid();
@@ -1134,11 +1142,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
 
         // The range belongs to the table that applied the operation. A table now under the base's name with another
-        // id replaced it: the base was dropped and re-created, or renamed while a new table took its name.
+        // id replaced it: the base was dropped and re-created, or renamed while a new table took its name. Or the view
+        // follows another base table now, after ALTER MATERIALIZED VIEW ... WITH BASE.
         final TableToken baseTableToken = engine.getTableTokenIfExists(viewDefinition.getBaseTableName());
         if (baseTableToken == null || baseTableToken.getTableId() != refreshTask.baseTableToken.getTableId()) {
-            LOG.info().$("dropping base table range, base table was replaced [view=").$(viewToken)
+            LOG.info().$("dropping base table range, base table was replaced or is no longer the view's [view=").$(viewToken)
                     .$(", baseTable=").$(refreshTask.baseTableToken)
+                    .$(", viewBaseTable=").$safe(viewDefinition.getBaseTableName())
                     .$(", from=").$ts(driver, refreshTask.rangeFrom)
                     .$(", to=").$ts(driver, refreshTask.rangeTo)
                     .I$();
@@ -3902,6 +3912,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             finalizeAndUnlock(viewToken, viewState, false);
             return false;
         }
+        // The definition read before the latch can name the old base table of a view that ALTER ... WITH BASE moved and
+        // RESUME made valid on its new base meanwhile: the identity check would take the new base for a replaced one.
+        // Under the latch, the base table of a valid view's definition stays put: a base change takes the latch and
+        // makes the view invalid before its definition event applies, and RESUME waits for that event before it makes
+        // the view valid again. The range is refreshed from the base table the view follows now.
+        viewDefinition = viewState.getViewDefinition();
 
         final long prevRefreshStartTimestamp = viewState.getLastRefreshStartTimestampUs();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
@@ -4132,6 +4148,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
 
                 if (!lockForIncrementalRefresh(viewToken, viewState)) {
+                    continue;
+                }
+                // The list of views and the definition read above predate the latch. ALTER MATERIALIZED VIEW ... WITH
+                // BASE, the apply of its events and RESUME can move the view to another base table and make it valid
+                // there meanwhile. The view then no longer depends on the table that committed, and the identity check
+                // below would take its new base for a replaced one, so the refresh skips the view. Under the latch, the
+                // base table of a valid view's definition stays put: a base change takes the latch and makes the view
+                // invalid before its definition event applies, and RESUME waits for that event before it makes the view
+                // valid again.
+                final String lockedBaseTableName = viewState.getViewDefinition().getBaseTableName();
+                if (!Chars.equalsIgnoreCase(lockedBaseTableName, baseTableToken.getTableName())) {
+                    LOG.info().$("skipping incremental refresh, materialized view follows another base table now [view=").$(viewToken)
+                            .$(", baseTable=").$(baseTableToken)
+                            .$(", viewBaseTable=").$safe(lockedBaseTableName)
+                            .I$();
+                    releaseLockLoggingFailure(viewToken, viewState, true);
                     continue;
                 }
 

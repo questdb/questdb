@@ -1996,6 +1996,114 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewMovedToAnotherBaseBeforeLatchStaysValid() throws Exception {
+        // A refresh task of the old base reads the view's definition before it takes the view latch. When ALTER ...
+        // WITH BASE, the apply of its events and RESUME SKIP BACKLOG all land in between, the view is valid on the new
+        // base by the time the task holds the latch. The task must not take the view's new base table id for a replaced
+        // base: the old base's incremental refresh and its UPDATE / ATTACH range skip the view, which no longer
+        // depends on that table, and a RANGE refreshes from the new base. The control, a base that really was
+        // replaced, is testReplacedBaseInvalidatesRangeRefreshAndIntervalUpdates().
+        assertMemoryLeak(() -> {
+            for (int op = 0; op < 3; op++) {
+                execute("DROP MATERIALIZED VIEW IF EXISTS price_1h");
+                execute("DROP TABLE IF EXISTS base");
+                execute("DROP TABLE IF EXISTS base2");
+                drainWalAndMatViewQueues();
+                createBase();
+                insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+                createView(op == 0 ? "IMMEDIATE" : "MANUAL");
+                drainWalQueue();
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO base2 VALUES ('c', 5.0, '2024-01-01T05:10:00.000000Z')");
+                // the old base's commit, whose incremental refresh is queued for op 0
+                insertBaseRow("b", 2.0, "2024-01-01T01:10:00.000000Z");
+                drainWalQueue();
+                final int base2Id = engine.verifyTableName("base2").getTableId();
+                Assert.assertNotEquals(base2Id, viewState().getBaseTableId());
+
+                switch (op) {
+                    case 0 -> {
+                        // the incremental refresh of the old base is already queued
+                    }
+                    case 1 -> execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01' TO '2024-01-02'");
+                    default -> engine.getMatViewStateStore().enqueueAddRefreshRange(
+                            viewToken(),
+                            engine.verifyTableName("base"),
+                            parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z"),
+                            parseFloorPartialTimestamp("2024-01-01T23:59:59.999999Z"),
+                            2
+                    );
+                }
+                final AtomicBoolean isArmed = new AtomicBoolean(true);
+                try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
+                    job.setOnBeforeRefreshLockForTesting(() -> {
+                        if (isArmed.compareAndSet(true, false)) {
+                            try {
+                                execute("ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h)");
+                                drainWalQueue();
+                                execute("REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG");
+                                drainWalQueue();
+                            } catch (SqlException e) {
+                                throw new AssertionError(e);
+                            }
+                            Assert.assertFalse(viewState().isInvalid());
+                            Assert.assertEquals(base2Id, viewState().getBaseTableId());
+                        }
+                    });
+                    drainMatViewQueue(job);
+                }
+                Assert.assertFalse("op=" + op, isArmed.get());
+                drainWalAndMatViewQueues();
+                // a RANGE refresh records no refresh finish time, so the view reports it refreshing
+                assertViewStatus(op == 1 ? "refreshing" : "valid", "");
+                Assert.assertFalse(viewState().isInvalid());
+                Assert.assertNull(viewState().getLastRefreshError());
+                Assert.assertEquals(base2Id, viewState().getBaseTableId());
+                Assert.assertNull(viewState().getBacklogLostReason());
+                if (op == 1) {
+                    // the RANGE recomputed the bucket that base2 holds a row for in its range
+                    assertViewRows("""
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T05:00:00.000000Z\tc\t5.0
+                            """);
+                } else {
+                    // the old base's row b reached the view neither through the refresh nor through the range
+                    assertViewRows("""
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            """);
+                }
+
+                // base2's next commit reaches the view, the old base's does not
+                execute("INSERT INTO base2 VALUES ('d', 7.0, '2024-01-03T00:10:00.000000Z')");
+                insertBaseRow("e", 9.0, "2024-01-04T00:10:00.000000Z");
+                drainWalQueue();
+                if (op != 0) {
+                    execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                }
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid", "");
+                assertViewRows(op == 1
+                        ? """
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-01T05:00:00.000000Z\tc\t5.0
+                        2024-01-03T00:00:00.000000Z\td\t7.0
+                        """
+                        : """
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-03T00:00:00.000000Z\td\t7.0
+                        """
+                );
+            }
+        });
+    }
+
     // Fails the open for write of the view's _mv.s once the given number of such opens passed; -1 never fails.
     private static TestFilesFacadeImpl newStateWriteFailingFacade(AtomicInteger stateOpensToPass, AtomicInteger stateWriteFailures) {
         return new TestFilesFacadeImpl() {
