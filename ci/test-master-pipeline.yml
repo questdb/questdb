@@ -6,12 +6,13 @@
 # (questdb-enterprise ci/build-and-test.yaml).
 #
 # always: false starts a run only when master moved since the last green scheduled run, so
-# a red master reruns, and alerts again, every slot until someone fixes it.
+# a red master reruns every slot until someone fixes it. The builds Slack channel is
+# subscribed to this definition's failures through the Azure Pipelines Slack app, like the
+# other scheduled pipelines; nothing in this file posts to Slack.
 #
 # ADO setup: the definition is named Master CI and its default branch is master. It needs
 # the variables SCCACHE_AZURE_BLOB_CONTAINER and SCCACHE_AZURE_CONNECTION_STRING, as on the
-# macwin definition, access to the github-public-read variable group, and
-# BUILDS_SLACK_HOOK_URL for the alert (stage NotifyOnFailure).
+# macwin definition, and access to the github-public-read variable group.
 trigger: none
 
 pr: none
@@ -179,46 +180,3 @@ stages:
       MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=120000"
     jobs:
       - template: templates/binary-smoke-test-jobs.yml
-
-  # Alerts the builds Slack channel when a scheduled run goes red; a run queued by hand
-  # never alerts. The webhook is the BUILDS_SLACK_HOOK_URL secret variable, set in the
-  # pipeline settings UI; until it is set, the job skips cleanly.
-  - stage: NotifyOnFailure
-    displayName: "Notify Slack on failure"
-    dependsOn:
-      - CheckChanges
-      - BuildRustLibrary
-      - SelfHostedRunGriffin
-      - SelfHostedRunCairoA
-      - SelfHostedRunCairoB
-      - SelfHostedRunOtherA
-      - SelfHostedRunOtherB
-      - HostedRunTestsBranches
-      - BinarySmokeTest
-    # not(succeeded()) rather than failed(): a timed-out job reports canceled, not failed.
-    # not(canceled()): succeeded() is also false once someone cancels the run, and that is
-    # not a red master. A job timeout fails its stage and the run without cancelling the
-    # run, so it still alerts.
-    condition: and(not(succeeded()), not(canceled()), eq(variables['Build.Reason'], 'Schedule'))
-    jobs:
-      - job: NotifyOnFailure
-        displayName: "Notify Slack on failure"
-        pool: hetzner-incus
-        steps:
-          - checkout: none
-          - bash: |
-              # While the secret variable is missing from the pipeline settings, the env
-              # mapping below passes the macro through unexpanded; skip instead of
-              # curl-ing a literal "$(...)".
-              case "$BUILDS_SLACK_HOOK_URL" in
-                '' | '$('*)
-                  echo "BUILDS_SLACK_HOOK_URL is not configured; skipping Slack alert"
-                  exit 0
-                  ;;
-              esac
-              curl -sS --fail -X POST -H 'Content-type: application/json' \
-                --data '{"text":"🚨 *master is red (OSS)*\n\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)> (its Changes tab lists the commits since the previous run)\nCommit: <https://github.com/questdb/questdb/commits/$(Build.SourceVersion)|$(Build.SourceVersion)>"}' \
-                "$BUILDS_SLACK_HOOK_URL"
-            displayName: "Notify Slack on failure"
-            env:
-              BUILDS_SLACK_HOOK_URL: $(BUILDS_SLACK_HOOK_URL)
