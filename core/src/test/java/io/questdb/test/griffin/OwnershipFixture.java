@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
@@ -75,7 +76,7 @@ final class OwnershipFixture implements AutoCloseable {
     private static final int OOM_SWEEP_SLACK_MAX = 16 * 1024 * 1024;
     private static final int OOM_SWEEP_STEP = 64;
     private static final String TABLE_FUNCTION = "owned_table";
-    private final CairoEngine engine;
+    private final FunctionFactoryCache functionFactoryCache;
     private final ObjList<TrackingLong> longs = new ObjList<>();
     private final ObjList<TableSpec> specs = new ObjList<>();
     private final ObjList<TrackingFactory> tables = new ObjList<>();
@@ -83,6 +84,7 @@ final class OwnershipFixture implements AutoCloseable {
     private int failingColumnTypeCall = -1;
     private int failingLongInstantiation = -1;
     private boolean isLongInstantiationFaultRaised;
+    private boolean isLongRuntimeConstant = true;
     private RuntimeException longCloseFailure;
     private RuntimeException longInitFailure;
     private int longInstantiations;
@@ -90,7 +92,14 @@ final class OwnershipFixture implements AutoCloseable {
     private RuntimeException metadataFailure;
 
     OwnershipFixture(CairoEngine engine) {
-        this.engine = engine;
+        this(engine.getFunctionFactoryCache());
+    }
+
+    /**
+     * Registers the functions in {@code functionFactoryCache}, such as the one the legacy planner binds.
+     */
+    OwnershipFixture(FunctionFactoryCache functionFactoryCache) {
+        this.functionFactoryCache = functionFactoryCache;
         register(new FunctionFactory() {
             @Override
             public String getSignature() {
@@ -127,6 +136,7 @@ final class OwnershipFixture implements AutoCloseable {
                 function.closeFailure = longCloseFailure;
                 function.initFailure = longInitFailure;
                 function.readFailure = longReadFailure;
+                function.isRuntimeConstant = isLongRuntimeConstant;
                 longs.add(function);
                 return function;
             }
@@ -311,8 +321,8 @@ final class OwnershipFixture implements AutoCloseable {
 
     @Override
     public void close() {
-        engine.getFunctionFactoryCache().getFactories().remove(TABLE_FUNCTION);
-        engine.getFunctionFactoryCache().getFactories().remove(LONG_FUNCTION);
+        functionFactoryCache.getFactories().remove(TABLE_FUNCTION);
+        functionFactoryCache.getFactories().remove(LONG_FUNCTION);
     }
 
     void failLongClose(RuntimeException failure) {
@@ -337,6 +347,14 @@ final class OwnershipFixture implements AutoCloseable {
 
     void failLongRead(RuntimeException failure) {
         longReadFailure = failure;
+    }
+
+    /**
+     * Makes every {@code owned_long} instantiated from now on a per-row function rather than a runtime constant, so
+     * a filter over it stays a row filter, such as the one a parallel factory steals.
+     */
+    void setLongRuntimeConstant(boolean isLongRuntimeConstant) {
+        this.isLongRuntimeConstant = isLongRuntimeConstant;
     }
 
     int longCount() {
@@ -420,8 +438,8 @@ final class OwnershipFixture implements AutoCloseable {
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
-        Assert.assertNull(engine.getFunctionFactoryCache().getFactories().get(name));
-        engine.getFunctionFactoryCache().getFactories().put(name, descriptors);
+        Assert.assertNull(functionFactoryCache.getFactories().get(name));
+        functionFactoryCache.getFactories().put(name, descriptors);
     }
 
     static final class TableSpec {
@@ -501,6 +519,7 @@ final class OwnershipFixture implements AutoCloseable {
         private int closeCount;
         private RuntimeException closeFailure;
         private RuntimeException initFailure;
+        private boolean isRuntimeConstant;
         private RuntimeException readFailure;
 
         private TrackingLong(Function arg) {
@@ -544,7 +563,7 @@ final class OwnershipFixture implements AutoCloseable {
 
         @Override
         public boolean isRuntimeConstant() {
-            return true;
+            return isRuntimeConstant;
         }
     }
 

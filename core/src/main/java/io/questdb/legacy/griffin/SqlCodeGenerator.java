@@ -79,6 +79,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
@@ -2677,9 +2678,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             LegacyRecordCursorFactory.halfClose(filterFactory);
         }
 
-        // generateOrderBy's outer catch calls recordCursorFactory.close(), which cascades
-        // through the projection wrapper's _close() into the still-referenced filterFactory's
-        // _close() and frees the stolen filter handles. Idempotent close() makes this safe.
+        // Until the top-K factory adopts them, generateOrderBy's outer catch calls
+        // recordCursorFactory.close(), which cascades through the projection wrapper's _close()
+        // into the still-referenced filterFactory's _close() and frees the stolen filter handles.
         final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
                 executionContext,
                 stolenFilter,
@@ -2688,6 +2689,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 pageFrameLeaf.getMetadata()
         );
 
+        // The top-K factory frees the stolen handles on its own failure, so filterFactory gives them up first.
+        if (stolenFilter != null) {
+            LegacyRecordCursorFactory.releaseStolenFilter(filterFactory);
+        }
         return new AsyncTopKRecordCursorFactory(
                 executionContext.getCairoEngine(),
                 configuration,
@@ -7335,6 +7340,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.free(LegacyRecordCursorFactory.getBindVarMemory(slave));
                     Misc.freeObjList(LegacyRecordCursorFactory.getBindVarFunctions(slave));
                     LegacyRecordCursorFactory.halfClose(slave);
+                    // The join frees the stolen filter on its own failure, so the slave gives it up first.
+                    final Record slaveNullRecord = NullRecordFactory.getInstance(slaveMetadata);
+                    LegacyRecordCursorFactory.releaseStolenFilter(slave);
                     return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -7342,7 +7350,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             slaveBase,
                             stolenFilter,
                             masterMetadata.getColumnCount(),
-                            NullRecordFactory.getInstance(slaveMetadata),
+                            slaveNullRecord,
                             null,
                             slaveTimestampIndex,
                             toleranceInterval
@@ -7373,6 +7381,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             Misc.freeObjList(LegacyRecordCursorFactory.getBindVarFunctions(projectionBase));
                             LegacyRecordCursorFactory.halfClose(projectionBase);
 
+                            final Record slaveNullRecord = NullRecordFactory.getInstance(slaveMetadata);
+                            LegacyRecordCursorFactory.releaseStolenFilter(projectionBase);
                             return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -7380,7 +7390,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     filterStealingBase,
                                     stolenFilter,
                                     masterMetadata.getColumnCount(),
-                                    NullRecordFactory.getInstance(slaveMetadata),
+                                    slaveNullRecord,
                                     stolenCrossIndex,
                                     slaveTimestampIndex,
                                     toleranceInterval
@@ -8906,12 +8916,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && timestampIndex == metadata.getTimestampIndex()
                     && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
 
-            // LatestByLightRecordCursorFactory's constructor does not free the base on failure, so the
-            // catch below owns it (factory stays non-null until the constructor returns successfully).
+            // LatestByLightRecordCursorFactory's constructor frees the base on failure, so null our
+            // reference before handing it off to keep the catch below from double-freeing it.
+            final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
+            final RecordCursorFactory base = factory;
+            factory = null;
             return new LatestByLightRecordCursorFactory(
                     configuration,
-                    factory,
-                    RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
+                    base,
+                    recordSink,
                     keyTypes,
                     timestampIndex,
                     orderedByTimestampAsc
@@ -9010,24 +9023,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata,
                             partitionByColumnIndexes
                     );
+                    final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                    final Function adoptedFilter = filter;
+                    partitionFrameCursorFactory = null;
+                    filter = null;
                     return new LatestByAllSymbolsFilteredRecordCursorFactory(
                             configuration,
                             metadata,
-                            partitionFrameCursorFactory,
+                            adoptedFrameFactory,
                             partitionByColumnIndexes,
                             partitionBySymbolCounts,
-                            filter,
+                            adoptedFilter,
                             columnIndexes,
                             columnSizeShifts
                     );
                 }
+                final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
+                final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                final Function adoptedFilter = filter;
+                partitionFrameCursorFactory = null;
+                filter = null;
                 return new LatestByAllFilteredRecordCursorFactory(
                         configuration,
                         metadata,
-                        partitionFrameCursorFactory,
-                        RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
+                        adoptedFrameFactory,
+                        recordSink,
                         keyTypes,
-                        filter,
+                        adoptedFilter,
                         columnIndexes,
                         columnSizeShifts
                 );
@@ -9048,13 +9070,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw th;
                     }
 
+                    final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                    final Function adoptedFilter = filter;
+                    partitionFrameCursorFactory = null;
+                    filter = null;
                     return new LatestBySubQueryRecordCursorFactory(
                             configuration,
                             metadata,
-                            partitionFrameCursorFactory,
+                            adoptedFrameFactory,
                             latestByIndex,
                             rcf,
-                            filter,
+                            adoptedFilter,
                             indexed,
                             func,
                             columnIndexes,
@@ -9091,6 +9117,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     final Function sharedKeyFunc = symbolValueFunc;
                                     final Function sharedFilter = filter;
                                     RecordCursorFactory backup = null;
+                                    // The backup, and the covering factory after it, own them from the
+                                    // call on, freeing them on their own failure; clear the references the
+                                    // outer catch and the finally would otherwise free a second time.
+                                    partitionFrameCursorFactory = null;
+                                    filter = null;
+                                    symbolValueFunc = null;
                                     if (isBackupNeeded(sharedKeyFunc, model)) {
                                         backup = buildLatestByIndexScan(
                                                 configuration,
@@ -9102,35 +9134,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndexes,
                                                 columnSizeShifts
                                         );
-                                        // The backup owns them now; clear the references the outer
-                                        // catch and the finally would otherwise free a second time.
-                                        partitionFrameCursorFactory = null;
-                                        filter = null;
-                                        symbolValueFunc = null;
                                     }
-                                    try {
-                                        RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
-                                                metadata,
-                                                sharedDfc,
-                                                keyReaderColIdx,
-                                                sharedKeyFunc,
-                                                columnIndexes,
-                                                coveringMapping,
-                                                null,
-                                                true,
-                                                sharedFilter,
-                                                null,
-                                                backup,
-                                                backup == null && canKeyBeNull(sharedKeyFunc)
-                                        );
-                                        symbolValueFunc = null;
-                                        partitionFrameCursorFactory = null;
-                                        filter = null;
-                                        return coveringFactory;
-                                    } catch (Throwable th) {
-                                        Misc.free(backup);
-                                        throw th;
-                                    }
+                                    return new CoveringIndexRecordCursorFactory(
+                                            metadata,
+                                            sharedDfc,
+                                            keyReaderColIdx,
+                                            sharedKeyFunc,
+                                            columnIndexes,
+                                            coveringMapping,
+                                            null,
+                                            true,
+                                            sharedFilter,
+                                            null,
+                                            backup,
+                                            backup == null && canKeyBeNull(sharedKeyFunc)
+                                    );
                                 }
                             }
 
@@ -9140,10 +9158,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         symbolValueFunc
                                 );
                                 symbolValueFunc = null;
+                                final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                                partitionFrameCursorFactory = null;
                                 return new PageFrameRecordCursorFactory(
                                         configuration,
                                         metadata,
-                                        partitionFrameCursorFactory,
+                                        adoptedFrameFactory,
                                         rcf,
                                         false,
                                         null,
@@ -9186,6 +9206,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final PartitionFrameCursorFactory sharedDfc = partitionFrameCursorFactory;
                             final Function sharedFilter = filter;
                             RecordCursorFactory backup = null;
+                            partitionFrameCursorFactory = null;
+                            filter = null;
                             if (isBackupNeededForList(intrinsicModel.keyValueFuncs, model)) {
                                 backup = new LatestByValuesIndexedFilteredRecordCursorFactory(
                                         configuration,
@@ -9197,42 +9219,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         columnIndexes,
                                         columnSizeShifts
                                 );
-                                partitionFrameCursorFactory = null;
-                                filter = null;
                             }
-                            try {
-                                RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
-                                        metadata,
-                                        sharedDfc,
-                                        keyReaderColIdx,
-                                        null,
-                                        columnIndexes,
-                                        coveringMapping,
-                                        intrinsicModel.keyValueFuncs,
-                                        true,
-                                        sharedFilter,
-                                        null,
-                                        backup,
-                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs)
-                                );
-                                partitionFrameCursorFactory = null;
-                                filter = null;
-                                return coveringFactory;
-                            } catch (Throwable th) {
-                                Misc.free(backup);
-                                throw th;
-                            }
+                            return new CoveringIndexRecordCursorFactory(
+                                    metadata,
+                                    sharedDfc,
+                                    keyReaderColIdx,
+                                    null,
+                                    columnIndexes,
+                                    coveringMapping,
+                                    intrinsicModel.keyValueFuncs,
+                                    true,
+                                    sharedFilter,
+                                    null,
+                                    backup,
+                                    backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs)
+                            );
                         }
                     }
 
 
+                    final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                    final Function adoptedFilter = filter;
+                    partitionFrameCursorFactory = null;
+                    filter = null;
                     return new LatestByValuesIndexedFilteredRecordCursorFactory(
                             configuration,
                             metadata,
-                            partitionFrameCursorFactory,
+                            adoptedFrameFactory,
                             latestByIndex,
                             intrinsicModel.keyValueFuncs,
-                            filter,
+                            adoptedFilter,
                             columnIndexes,
                             columnSizeShifts
                     );
@@ -9243,14 +9259,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we have "latest by" column values, but no index
 
                 if (nKeyValues > 1 || nExcludedKeyValues > 0) {
+                    final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                    final Function adoptedFilter = filter;
+                    partitionFrameCursorFactory = null;
+                    filter = null;
                     return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                             configuration,
                             metadata,
-                            partitionFrameCursorFactory,
+                            adoptedFrameFactory,
                             latestByIndex,
                             intrinsicModel.keyValueFuncs,
                             intrinsicModel.keyExcludedValueFuncs,
-                            filter,
+                            adoptedFilter,
                             columnIndexes,
                             columnSizeShifts
                     );
@@ -9284,23 +9304,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (indexed && filter == null && configuration.useWithinLatestByOptimisation()
                     && metadata.getColumnIndexType(latestByIndex) == IndexType.BITMAP) {
+                final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                partitionFrameCursorFactory = null;
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
                         metadata,
-                        partitionFrameCursorFactory,
+                        adoptedFrameFactory,
                         latestByIndex,
                         columnIndexes,
                         columnSizeShifts,
                         prefixes
                 );
             } else {
+                final PartitionFrameCursorFactory adoptedFrameFactory = partitionFrameCursorFactory;
+                final Function adoptedFilter = filter;
+                partitionFrameCursorFactory = null;
+                filter = null;
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         metadata,
-                        partitionFrameCursorFactory,
+                        adoptedFrameFactory,
                         latestByIndex,
-                        filter,
+                        adoptedFilter,
                         columnIndexes,
                         columnSizeShifts
                 );
@@ -10237,9 +10263,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     final int index = listColumnFilterA.getQuick(0);
                                     final int columnIndex = (index > 0 ? index : -index) - 1;
                                     if (recordCursorFactory.recordCursorSupportsLongTopK(columnIndex)) {
+                                        final RecordCursorFactory sortBase = recordCursorFactory;
+                                        recordCursorFactory = null;
                                         return new LongTopKRecordCursorFactory(
                                                 orderedMetadata,
-                                                recordCursorFactory,
+                                                sortBase,
                                                 columnIndex,
                                                 (int) lo,
                                                 index > 0
@@ -10313,32 +10341,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
                         if (isEncodedSortSupported) {
+                            final long sortValueMaxBytes = configuration.getSqlSortValueMaxBytes();
+                            final LimitBounds bounds = LegacyRuntimeArguments.limitBounds(loFunc, hiFunc, getLimitPosition(model));
+                            final RecordCursorFactory sortBase = recordCursorFactory;
+                            recordCursorFactory = null;
                             return new EncodedSortLimitedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
-                                    recordCursorFactory,
-                                    LegacyRuntimeArguments.limitBounds(loFunc, hiFunc, getLimitPosition(model)),
+                                    sortBase,
+                                    bounds,
                                     listColumnFilterA.copy(),
                                     baseCursorTimestampIndex,
                                     null,
-                                    configuration.getSqlSortValueMaxBytes()
+                                    sortValueMaxBytes
                             );
                         }
+                        final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+                        final LimitBounds bounds = LegacyRuntimeArguments.limitBounds(loFunc, hiFunc, getLimitPosition(model));
+                        final RecordCursorFactory sortBase = recordCursorFactory;
+                        recordCursorFactory = null;
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
-                                recordCursorFactory,
-                                recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
-                                LegacyRuntimeArguments.limitBounds(loFunc, hiFunc, getLimitPosition(model)),
+                                sortBase,
+                                comparator,
+                                bounds,
                                 listColumnFilterA.copy(),
                                 baseCursorTimestampIndex
                         );
                     } else {
                         if (isEncodedSortSupported) {
+                            final RecordCursorFactory sortBase = recordCursorFactory;
+                            recordCursorFactory = null;
                             return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
-                                    recordCursorFactory,
+                                    sortBase,
                                     listColumnFilterA.copy()
                             );
                         }
@@ -10371,11 +10409,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // closes the wrapper too; otherwise a throw from
                                 // the comparator compilation below leaks the
                                 // materializing cursor's native buffers
-                                // (NATIVE_TREE_CHAIN).
+                                // (NATIVE_TREE_CHAIN). The constructor frees the
+                                // base on its own failure, so hand it over first.
+                                final RecordCursorFactory materializedBase = recordCursorFactory;
+                                recordCursorFactory = null;
                                 recordCursorFactory = new SortKeyMaterializingRecordCursorFactory(
                                         configuration,
                                         orderedMetadata,
-                                        recordCursorFactory,
+                                        materializedBase,
                                         materializedColIndices,
                                         materializedColTypes
                                 );
@@ -10408,26 +10449,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (isEncodedSortSupported) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         // copies only the rows that can enter the LIMIT window
+                        final int sortTimestampIndex = firstOrderByColumnIndex == timestampIndex
+                                && recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER
+                                ? timestampIndex : -1;
+                        final RecordSink sortSink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+                        final long sortValueMaxBytes = sortValueMaxBytes(recordCursorFactory);
+                        final LimitBounds bounds = LegacyRuntimeArguments.limitBounds(loFunc, hiFunc, getLimitPosition(model));
+                        final RecordCursorFactory sortBase = recordCursorFactory;
+                        recordCursorFactory = null;
                         return new EncodedSortLimitedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
-                                recordCursorFactory,
-                                LegacyRuntimeArguments.limitBounds(loFunc, hiFunc, getLimitPosition(model)),
+                                sortBase,
+                                bounds,
                                 listColumnFilterA.copy(),
-                                firstOrderByColumnIndex == timestampIndex
-                                        && recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER
-                                        ? timestampIndex : -1,
-                                RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
-                                sortValueMaxBytes(recordCursorFactory)
+                                sortTimestampIndex,
+                                sortSink,
+                                sortValueMaxBytes
                         );
                     }
+                    final RecordSink sortSink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+                    final long sortValueMaxBytes = sortValueMaxBytes(recordCursorFactory);
+                    final RecordCursorFactory sortBase = recordCursorFactory;
+                    recordCursorFactory = null;
                     return new EncodedSortRecordCursorFactory(
                             configuration,
                             orderedMetadata,
-                            recordCursorFactory,
-                            RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
+                            sortBase,
+                            sortSink,
                             listColumnFilterA.copy(),
-                            sortValueMaxBytes(recordCursorFactory)
+                            sortValueMaxBytes
                     );
                 }
                 // Null-before-risky: SortedRecordCursorFactory's ctor catch
@@ -12550,14 +12601,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Transfer ownership to the factory constructor.
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 final ObjList<ObjList<Function>> sharedOuterProjectionFunctions0 = sharedOuterProjectionFunctions;
+                final RecordCursorFactory groupByBase = factory;
                 innerProjectionFunctions = null;
                 outerProjectionFunctions = null;
                 sharedOuterProjectionFunctions = null;
+                factory = null;
 
                 return new GroupByNotKeyedRecordCursorFactory(
                         asm,
                         configuration,
-                        factory,
+                        groupByBase,
                         outerProjectionMetadata,
                         groupByFunctions0,
                         valueTypes.getColumnCount(),
@@ -13056,7 +13109,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         final ArrayColumnTypes chainTypes = new ArrayColumnTypes();
         final ObjObjHashMap<IntList, ObjList<WindowFunction>> groupedWindow = new ObjObjHashMap<>();
-        final RecordCursorFactory base = generateSubQuery(model, executionContext);
+        RecordCursorFactory base = generateSubQuery(model, executionContext);
         final RecordMetadata baseMetadata = base.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
@@ -13801,9 +13854,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sourceMap.add(columnIndexes.getQuick(c));
                     }
                 }
+                // The cached factories adopt the base and the map groups before anything can throw and
+                // free them on their own failure, so the catch below must not.
+                final RecordCursorFactory windowBase = base;
+                base = null;
+                final CachedWindowMapGroups windowMapGroups = cachedWindowMapGroups;
+                cachedWindowMapGroups = null;
                 final CachedWindowLightRecordCursorFactory lightFactory = new CachedWindowLightRecordCursorFactory(
                         configuration,
-                        base,
+                        windowBase,
                         factoryMetadata,
                         narrowChainTypes,
                         functionGroups,
@@ -13812,10 +13871,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keys,
                         chainMetadata,
                         sourceMap,
-                        cachedWindowMapGroups,
+                        windowMapGroups,
                         windowSymbolFunctions
                 );
-                cachedWindowMapGroups = null;
                 return lightFactory;
             }
 
@@ -13830,9 +13888,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     null
             );
 
+            final RecordCursorFactory windowBase = base;
+            base = null;
+            final CachedWindowMapGroups windowMapGroups = cachedWindowMapGroups;
+            cachedWindowMapGroups = null;
             final CachedWindowRecordCursorFactory cachedFactory = new CachedWindowRecordCursorFactory(
                     configuration,
-                    base,
+                    windowBase,
                     recordSink,
                     factoryMetadata,
                     chainTypes,
@@ -13842,10 +13904,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes,
                     keys,
                     chainMetadata,
-                    cachedWindowMapGroups,
+                    windowMapGroups,
                     windowSymbolFunctions
             );
-            cachedWindowMapGroups = null;
             return cachedFactory;
         } catch (Throwable th) {
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {

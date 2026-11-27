@@ -332,6 +332,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public void releaseStolenFilter() {
+        filter = null;
+        compiledFilter = null;
+        bindVarMemory = null;
+        bindVarFunctions = null;
+    }
+
+    @Override
     public boolean supportsFilterStealing() {
         return limitLoFunction == null;
     }
