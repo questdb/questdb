@@ -376,6 +376,101 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDeclaredSubQueryUnusedOverridesDoNotReachTheView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a LONG, b LONG)");
+            execute("CREATE VIEW v_in AS (DECLARE OVERRIDABLE @c := a SELECT @c AS a FROM t)");
+            drainWalAndViewQueues();
+            // The view declares values that set @c of v_in, and reads none of them, so no read of the view sets @c.
+            final ObjList<String> queries = new ObjList<>();
+            queries.add("""
+                    DECLARE @unused := (DECLARE @c := a SELECT a FROM v_in)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            queries.add("""
+                    DECLARE @c := a, @unused := (SELECT a FROM v_in)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            // a value that only an unread value reads
+            queries.add("""
+                    DECLARE @q := (DECLARE @c := a SELECT a FROM v_in), @unused := (SELECT * FROM @q)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            // a value of a sub-query the view reads
+            queries.add("""
+                    SELECT 1 one, a FROM (DECLARE @unused := (DECLARE @c := a SELECT a FROM v_in) SELECT * FROM t)
+                    """);
+            for (boolean hasRows : new boolean[]{false, true}) {
+                if (hasRows) {
+                    execute("INSERT INTO t VALUES (1, 2), (NULL, 4)");
+                }
+                for (int i = 0; i < queries.size(); i++) {
+                    final String viewSql = queries.getQuick(i);
+                    forEachViewStatement(viewSql, statement -> {
+                        assertViewDependencies(viewSql, "{t=[?*, a]}", null, statement);
+                        try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                            assertQuery("SELECT one FROM v").withContext(context).noLeakCheck().expectSize().inferRandomAccess()
+                                    .returns("one\n" + (hasRows ? "1\n1\n" : ""));
+                            assertQuery("SELECT a FROM v").withContext(context).noLeakCheck().expectSize().inferRandomAccess()
+                                    .returns("a\n" + (hasRows ? "1\nnull\n" : ""));
+                            assertQuery("SELECT count() FROM v").withContext(context).noLeakCheck().expectSize().noRandomAccess()
+                                    .returns("count\n" + (hasRows ? 2 : 0) + '\n');
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeclaredSubQueryUsedOverridesReachTheView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String innerSql = "SELECT l.k, l.a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l";
+            execute("CREATE VIEW v_in AS (" + innerSql + ")");
+            drainWalAndViewQueues();
+            final ObjList<String> queries = new ObjList<>();
+            queries.add("""
+                    DECLARE @q := (DECLARE @c := l.b SELECT k, a, z FROM v_in)
+                    SELECT * FROM @q
+                    """);
+            // the second read parses a copy of the value
+            queries.add("""
+                    DECLARE @q := (DECLARE @c := l.b SELECT k, a, z FROM v_in)
+                    SELECT * FROM @q UNION ALL SELECT * FROM @q
+                    """);
+            // a value that a read value reads
+            queries.add("""
+                    DECLARE @q := (DECLARE @c := l.b SELECT k, a, z FROM v_in), @r := (SELECT * FROM @q)
+                    SELECT * FROM @r
+                    """);
+            for (int i = 0; i < queries.size(); i++) {
+                final String viewSql = queries.getQuick(i);
+                final int repetitions = i == 1 ? 2 : 1;
+                forEachViewStatement(viewSql, statement -> {
+                    assertViewDependencies(viewSql, "{v_in=[], x=[?b, ?ts, a, k]}", null, statement);
+                    // The outer map predates the variable. A read of the value must still mark the read overridden.
+                    execute("""
+                            ALTER VIEW v_in AS (
+                                DECLARE OVERRIDABLE @c := l.a
+                                SELECT l.k, @c AS a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l
+                            )
+                            """);
+                    drainWalAndViewQueues();
+                    assertQuery("SELECT a FROM v").noLeakCheck().inferRandomAccess().sizeMayVary()
+                            .returns("a\n" + "2\n4\n".repeat(repetitions));
+                    try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                        assertQuery("SELECT a FROM v").withContext(context).noLeakCheck()
+                                .failsWith("permission denied [table=x, columns=b]");
+                    }
+                    execute("ALTER VIEW v_in AS (" + innerSql + ")");
+                    drainWalAndViewQueues();
+                });
+            }
+        });
+    }
+
+    @Test
     public void testExplicitTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
