@@ -214,6 +214,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     // This can happen as a resul of partition drop.
                     // Move the initial partition record to the last partition, as if column was added there.
                     cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, lastPartitionTimestamp);
+                    // The move can be the only change to _cv: the dropped partition may have no records, and
+                    // the new last partition may already have one for this column. commit() must still write
+                    // it, or _cv on disk keeps naming the dropped partition, while this writer stops adding
+                    // explicit records for new partitions before it - which then read as "column absent".
+                    hasChanges = true;
                     // Because column we not really added there, put the column top to the value
                     // of the last partition row count (e.g. transientRowCount)
                     // Add the column top if there is no explicit record for this column, if there is one

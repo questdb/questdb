@@ -250,10 +250,13 @@ public class FiberAffinitySchedulingTest {
             final AtomicInteger mountedWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
             pool.start();
             try {
-                // The ready Worker has observed an empty OPEN runtime through drainOwned() and is
-                // now inside the ready/park handshake. Publishing after that fast return must
-                // still claim and wake it; otherwise the task waits for the 60-second timeout.
-                awaitReadyCount(pool, 1);
+                // The Worker has observed an empty OPEN runtime through drainOwned(), set its
+                // ready bit, found no work in its last check and blocked in its 60-second park.
+                // The ready bit alone is not enough: the Worker sets it before that check, so a
+                // publication landing in between is found by the Worker itself and no wake is
+                // claimed. Publishing now must claim the bit and unpark the Worker; otherwise
+                // the task waits for the 60-second timeout.
+                awaitWorkerParked(pool, 0);
                 Assert.assertEquals(0, runtime.getOutstandingTaskCount());
                 final long start = System.nanoTime();
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {

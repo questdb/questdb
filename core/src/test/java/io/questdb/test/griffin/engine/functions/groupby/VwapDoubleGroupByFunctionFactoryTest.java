@@ -148,16 +148,16 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             // - Fourth bucket (03:00): Interpolated
             // - Fifth bucket (04:00): Actual calculations
             String expected = "ts\tticker\tvwap\n" +
-                    "2024-01-01T00:00:00.000000Z\tAAPL\t100.375\n" +
                     "2024-01-01T00:00:00.000000Z\tGOOGL\t99.0\n" +
-                    "2024-01-01T01:00:00.000000Z\tAAPL\t102.6875\n" +  // Interpolated
+                    "2024-01-01T00:00:00.000000Z\tAAPL\t100.375\n" +
                     "2024-01-01T01:00:00.000000Z\tGOOGL\t100.5\n" +    // Interpolated
-                    "2024-01-01T02:00:00.000000Z\tAAPL\t105.0\n" +
+                    "2024-01-01T01:00:00.000000Z\tAAPL\t102.6875\n" +  // Interpolated
                     "2024-01-01T02:00:00.000000Z\tGOOGL\t102.0\n" +
-                    "2024-01-01T03:00:00.000000Z\tAAPL\t107.5\n" +     // Interpolated
+                    "2024-01-01T02:00:00.000000Z\tAAPL\t105.0\n" +
                     "2024-01-01T03:00:00.000000Z\tGOOGL\t105.0\n" +    // Interpolated
-                    "2024-01-01T04:00:00.000000Z\tAAPL\t110.0\n" +
-                    "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n";
+                    "2024-01-01T03:00:00.000000Z\tAAPL\t107.5\n" +     // Interpolated
+                    "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n" +
+                    "2024-01-01T04:00:00.000000Z\tAAPL\t110.0\n";
 
             assertQuery("select ts, ticker, vwap(price, volume) " +
                     "from trades " +

@@ -2247,10 +2247,6 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static void oldPartitionName(Path path, long txn) {
-        path.put("-x-").put(txn);
-    }
-
     public static long openAppend(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openAppend(path);
         if (fd > -1) {
@@ -2612,10 +2608,9 @@ public final class TableUtils {
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
 
                     final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-                    long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
-                    if (columnNameTxn == -1) {
-                        columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
-                    }
+                    final long columnNameTxn = versionRecordIndex > -1
+                            ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex)
+                            : columnVersionReader.getDefaultColumnNameTxn(writerIndex);
                     final long columnTop = columnVersionReader.getColumnTopByIndexOrDefault(versionRecordIndex, partitionTimestamp, writerIndex, -1L);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = tableColumnMetadata.getParquetEncodingConfig();

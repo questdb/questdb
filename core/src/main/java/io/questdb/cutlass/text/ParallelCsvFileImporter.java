@@ -650,17 +650,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 updateImportStatus(CopyImportTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
 
                 try {
-                    fd = TableUtils.openRO(ff, inputFilePath.$(), LOG);
-                } catch (CairoException e) {
-                    throw TextImportException.instance(CopyImportTask.PHASE_SETUP, e.getFlyweightMessage(), e.getErrno());
-                }
+                    try {
+                        fd = TableUtils.openRO(ff, inputFilePath.$(), LOG);
+                    } catch (CairoException e) {
+                        throw TextImportException.instance(CopyImportTask.PHASE_SETUP, e.getFlyweightMessage(), e.getErrno());
+                    }
 
-                long length = ff.length(fd);
-                if (length < 1) {
-                    throw TextImportException.instance(CopyImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
-                }
+                    long length = ff.length(fd);
+                    if (length < 1) {
+                        throw TextImportException.instance(CopyImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
+                    }
 
-                try {
                     parseStructure(fd, securityContext);
                     phaseBoundaryCheck(length);
                     phaseIndexing();

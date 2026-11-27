@@ -25,15 +25,20 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
+import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
@@ -49,6 +54,13 @@ import static io.questdb.cairo.SqlJitMode.JIT_MODE_DISABLED;
 import static org.junit.Assert.*;
 
 class AbstractViewTest extends AbstractCairoTest {
+    // 2025-06-19T11:00:00.000000Z
+    static final long ALTER_MICROS = 1_750_330_800_000_000L;
+    // 2025-06-19T10:00:00.000000Z
+    static final long CREATE_MICROS = 1_750_327_200_000_000L;
+    // A PIVOT over the table t (k SYMBOL, x INT). Its compile runs the IN sub-query over the rows of
+    // t for the names of the columns it produces, so the compile fails while t is empty.
+    static final String PIVOT_SQL = "SELECT * FROM t PIVOT (sum(x) FOR k IN (SELECT DISTINCT k FROM t ORDER BY k))";
     static final String TABLE1 = "table1";
     static final String TABLE2 = "table2";
     static final String TABLE3 = "table3";
@@ -85,6 +97,38 @@ class AbstractViewTest extends AbstractCairoTest {
             }
         }
         assertEquals(0, expectedRefViews.size());
+    }
+
+    // The view compile busy retries that the view state store keeps, one line per view in the order
+    // of the view names, each as pendingCompileBusyRetry() prints it.
+    static void assertPendingCompileBusyRetries(String expected) {
+        final ObjList<TableToken> viewTokens = new ObjList<>();
+        final LongList updateTimestamps = new LongList();
+        final LongList dueTimestamps = new LongList();
+        ((ViewStateStoreImpl) engine.getViewStateStore()).getPendingCompileBusyRetries(viewTokens, updateTimestamps, dueTimestamps);
+        final ObjList<String> lines = new ObjList<>();
+        for (int i = 0, n = viewTokens.size(); i < n; i++) {
+            lines.add(pendingCompileBusyRetry(viewTokens.getQuick(i).getTableName(), updateTimestamps.getQuick(i), dueTimestamps.getQuick(i)));
+        }
+        lines.sort(String::compareTo);
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = lines.size(); i < n; i++) {
+            sink.put(lines.getQuick(i));
+        }
+        Assert.assertEquals(expected, sink.toString());
+    }
+
+    static void assertViewColumns(String viewName, String expectedColumns) {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
+            Assert.assertEquals(expectedColumns, columnsOf(metadata));
+        }
+    }
+
+    // the view's columns in the catalogue are those of the query compiled now
+    static void assertViewColumnsOfQuery(String viewName, String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            assertViewColumns(viewName, columnsOf(factory.getMetadata()));
+        }
     }
 
     static void assertViewDefinition(String name, String query, String... expectedDependencies) {
@@ -161,6 +205,37 @@ class AbstractViewTest extends AbstractCairoTest {
         }
     }
 
+    // the delay of a view compile busy retry, which cairo.view.compile.busy.retry.timeout sets
+    static long busyRetryTimeoutMicros() {
+        return configuration.getViewCompileBusyRetryTimeout() * 1_000;
+    }
+
+    // the columns of the metadata as name:TYPE, separated by commas
+    static String columnsOf(RecordMetadata metadata) {
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i)));
+        }
+        return sink.toString();
+    }
+
+    // creates the non-WAL table t (k SYMBOL, x INT) with the rows ('a', 1) and ('b', 2), which PIVOT_SQL reads
+    static void createPivotTable() throws SqlException {
+        execute("CREATE TABLE t (k SYMBOL, x INT)");
+        execute("INSERT INTO t VALUES ('a', 1), ('b', 2)");
+        Assert.assertFalse(engine.verifyTableName("t").isWal());
+    }
+
+    // creates a non-partitioned table (a INT), which is never a WAL table, with the rows 1 and 2
+    static void createTableWithRows(String tableName) throws SqlException {
+        execute("CREATE TABLE " + tableName + " (a INT)");
+        execute("INSERT INTO " + tableName + " VALUES (1), (2)");
+        Assert.assertFalse(engine.verifyTableName(tableName).isWal());
+    }
+
     @NotNull
     static String getView1DefinitionSql() {
         final ViewDefinition viewDefinition = getViewDefinition(VIEW1);
@@ -176,6 +251,12 @@ class AbstractViewTest extends AbstractCairoTest {
             return null;
         }
         return engine.getViewGraph().getViewDefinition(viewToken);
+    }
+
+    // a line of assertPendingCompileBusyRetries(): the view name, the update timestamp the retry
+    // compiles the view with, and the time the retry is due at
+    static String pendingCompileBusyRetry(String viewName, long updateTimestamp, long dueTimestamp) {
+        return viewName + '\t' + updateTimestamp + '\t' + dueTimestamp + '\n';
     }
 
     void alterView(String viewQuery, String... expectedDependencies) throws SqlException {
@@ -214,6 +295,15 @@ class AbstractViewTest extends AbstractCairoTest {
             TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
         }
         assertViewDefinition(VIEW1, sqlBefore, TABLE1);
+    }
+
+    void assertViewStatus(String viewName, String status, String reason, String updateTime) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason, view_status_update_time FROM views() WHERE view_name = '" + viewName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize(false)
+                .returns("view_status\tinvalidation_reason\tview_status_update_time\n"
+                        + status + '\t' + reason + '\t' + updateTime + '\n');
     }
 
     void compileView(String viewName) throws SqlException {

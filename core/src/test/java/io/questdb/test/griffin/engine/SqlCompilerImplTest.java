@@ -84,6 +84,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -106,6 +107,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class SqlCompilerImplTest extends AbstractCairoTest {
+    private static final String FIRST_LAST_TIMESTAMP_MAX = "2022-02-24T00:00:09.000000Z";
+    private static final String FIRST_LAST_TIMESTAMP_MIN = "2022-02-24T00:00:00.000000Z";
     private static final Log LOG = LogFactory.getLog(SqlCompilerImplTest.class);
     private static Path path;
 
@@ -4958,6 +4961,64 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstLastTimestampPlanIsOutOfDateAfterDropColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                assertFirstLastTimestampOutOfDateAfterDropColumn(walMode, "SELECT max(ts) FROM tab", FIRST_LAST_TIMESTAMP_MAX);
+                assertFirstLastTimestampOutOfDateAfterDropColumn(walMode, "SELECT min(ts) FROM tab", FIRST_LAST_TIMESTAMP_MIN);
+                assertFirstLastTimestampOutOfDateAfterDropColumn(walMode, "SELECT first(ts) FROM tab", FIRST_LAST_TIMESTAMP_MIN);
+                assertFirstLastTimestampOutOfDateAfterDropColumn(walMode, "SELECT last(ts) FROM tab", FIRST_LAST_TIMESTAMP_MAX);
+                assertFirstLastTimestampOutOfDateAfterDropColumn(walMode, "SELECT max(ts) FROM tab WHERE b > 2_000", FIRST_LAST_TIMESTAMP_MAX);
+                assertFirstLastTimestampOutOfDateAfterDropColumn(walMode, "SELECT min(ts) FROM tab WHERE b > 2_000", "2022-02-24T00:00:02.000000Z");
+            }
+        });
+    }
+
+    @Test
+    public void testFirstLastTimestampPlanIsOutOfDateAfterRenameAndAddColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createFirstLastTimestampTable("WAL");
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile("SELECT max(ts) FROM tab", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertFirstLastTimestampCursor(factory, FIRST_LAST_TIMESTAMP_MAX);
+
+                execute("ALTER TABLE tab RENAME COLUMN a TO c");
+                drainWalQueue();
+                assertFirstLastTimestampPlanOutOfDate(factory);
+
+                execute("ALTER TABLE tab ADD COLUMN d LONG");
+                drainWalQueue();
+                assertFirstLastTimestampPlanOutOfDate(factory);
+            }
+            assertQuery("SELECT max(ts) FROM tab")
+                    .noLeakCheck()
+                    .timestampDesc("max")
+                    .expectSize()
+                    .returns("max\n" + FIRST_LAST_TIMESTAMP_MAX + '\n');
+        });
+    }
+
+    @Test
+    public void testFirstLastTimestampPlanIsOutOfDateAfterTableRecreated() throws Exception {
+        assertMemoryLeak(() -> {
+            createFirstLastTimestampTable("BYPASS WAL");
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile("SELECT last(ts) FROM tab", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertFirstLastTimestampCursor(factory, FIRST_LAST_TIMESTAMP_MAX);
+
+                execute("DROP TABLE tab");
+                execute("CREATE TABLE tab (a LONG, ts TIMESTAMP, b LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO tab VALUES (1, '2023-01-01T00:00:00.000000Z', 1)");
+                assertFirstLastTimestampPlanOutOfDate(factory);
+            }
+        });
+    }
+
+    @Test
     public void testFreesMemoryOnClose() {
         // NATIVE_SQL_COMPILER is excluded from TestUtils#assertMemoryLeak(),
         // so here we make sure that SQL compiler releases its memory on close.
@@ -7431,6 +7492,30 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertFirstLastTimestampCursor(RecordCursorFactory factory, String expectedTs) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            Assert.assertTrue(cursor.hasNext());
+            sink.putISODate(cursor.getRecord().getTimestamp(0));
+            TestUtils.assertEquals(expectedTs, sink);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    private static void assertFirstLastTimestampPlanOutOfDate(RecordCursorFactory factory) throws Exception {
+        try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+            Assert.fail("stale plan ran");
+        } catch (TableReferenceOutOfDateException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed");
+        }
+    }
+
+    private static void createFirstLastTimestampTable(String walMode) throws Exception {
+        execute("CREATE TABLE tab (a LONG, ts TIMESTAMP, b LONG) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("INSERT INTO tab SELECT x, timestamp_sequence('2022-02-24', 1_000_000L), x * 1_000 FROM long_sequence(10)");
+        drainWalQueue();
+    }
+
     private void addColumnAndAssertType(String alterSql, String expectedIndexType) throws Exception {
         execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
         execute(alterSql);
@@ -8868,6 +8953,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> assertQuery(sql)
                 .noLeakCheck()
                 .fails(13, message));
+    }
+
+    private void assertFirstLastTimestampOutOfDateAfterDropColumn(String walMode, String query, String expectedTs) throws Exception {
+        createFirstLastTimestampTable(walMode);
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            assertFirstLastTimestampCursor(factory, expectedTs);
+            assertFirstLastTimestampCursor(factory, expectedTs);
+
+            execute("ALTER TABLE tab DROP COLUMN a");
+            drainWalQueue();
+            assertFirstLastTimestampPlanOutOfDate(factory);
+        }
+        final String column = query.substring(7, query.indexOf('('));
+        final QueryAssertion assertion = assertQuery(query).noLeakCheck();
+        if (column.equals("max") || column.equals("last")) {
+            assertion.timestampDesc(column);
+        } else {
+            assertion.timestamp(column);
+        }
+        assertion
+                .expectSize(!query.contains("WHERE"))
+                .returns(column + '\n' + expectedTs + '\n');
+        execute("DROP TABLE tab");
     }
 
     private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws Exception {

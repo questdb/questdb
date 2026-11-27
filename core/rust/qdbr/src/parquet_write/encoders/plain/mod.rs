@@ -20,6 +20,7 @@ pub use primitive::{
     boolean_to_page, encode_boolean, encode_boolean_nullable, encode_decimal,
     encode_designated_timestamp_strided, encode_int_notnull, encode_int_nullable, encode_simd,
 };
+pub(crate) use varlen::varchar_to_page_checking_ascii;
 pub use varlen::{
     binary_to_page, encode_binary, encode_string, encode_varchar, string_to_page, varchar_to_page,
 };

@@ -27,16 +27,22 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
@@ -50,6 +56,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -125,6 +132,8 @@ public class FuzzRunnerTest extends AbstractCairoTest {
                     0.3, 0.1, 0.1, 0.05, 0.0, 0.0, 0.0, 0.0, 1.0, 0.01, 0.0, 0.05, 0.0, 0.0, 0.0, 0.0
             );
             runner.setAbandonedRowsEnabled(true);
+            // the seeds were found on DAY partitions, from before the fuzz picked the partitioning
+            runner.setPartitionBy(PartitionBy.DAY);
             final String tableName = "abandoned_rows_" + i;
             // the seeds of the run, its schema and its apply, so the run repeats
             final Rnd runRnd = runner.generateRandom(LOG, seeds[0], seeds[1]);
@@ -236,6 +245,27 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyNonWalFailsWhenWriterColumnVersionsAreNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn("t", false);
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            final FuzzTransaction transaction = new FuzzTransaction();
+            // changes the cached records of the writer as a change that commit() does not write would
+            transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+                changeCachedColumnTop(((TableWriter) writer).columnVersionReader().getCachedColumnVersionList());
+                return false;
+            });
+            transactions.add(transaction);
+            try {
+                newRunner().applyNonWal(transactions, "t", new Rnd());
+                Assert.fail("the check must find the writer's records missing from _cv");
+            } catch (AssertionError e) {
+                TestUtils.assertContains(e.getMessage(), "the writer's _cv records are not on disk [table=t, writer=");
+            }
+        });
+    }
+
+    @Test
     public void testApplyNonWalKeepsColumnPurgeOffWhilePlantedFailurePending() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
         final FuzzRunner runner = newRunner();
@@ -268,6 +298,37 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             newRunner().applyNonWal(transactions, "t", new Rnd());
 
             assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testApplyNonWalRecoversFromFailureAtEveryCallOfReopen() throws Exception {
+        // A pooled reader that fails to go passive in close() is closed and dropped from the pool. Fail each file
+        // call in turn, from the point the runner's readers hold an old txn to the end of the reopen that closes them.
+        final FuzzRunner runner = newRunner();
+        final FailureFileFacade ff = runner.getFileFacade();
+        final AtomicInteger expelledReaders = new AtomicInteger();
+        assertMemoryLeak(ff, () -> {
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_READER && event == PoolListener.EV_OUT_OF_POOL_CLOSE) {
+                    expelledReaders.incrementAndGet();
+                }
+            });
+            try {
+                final AtomicBoolean isFired = new AtomicBoolean();
+                int failAfter = 0;
+                do {
+                    failAfter++;
+                    execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute("INSERT INTO t VALUES (0, '1970-01-01')");
+                    runner.applyNonWal(reopenAfterReadersFallBehind(ff, failAfter, isFired), "t", newLaggingReloadRnd());
+                    assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+                    execute("DROP TABLE t");
+                } while (isFired.get());
+            } finally {
+                engine.setPoolListener(null);
+            }
+            Assert.assertTrue("no failure closed a reader", expelledReaders.get() > 0);
         });
     }
 
@@ -310,6 +371,25 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
             // no transactions: applyToWal() draws nothing, so the drains must leave applyRnd at its seeds
             Assert.assertEquals(new Rnd(7, 11).nextLong(), applyRnd.nextLong());
+        });
+    }
+
+    @Test
+    public void testApplyWalFailsWhenPooledWriterColumnVersionsAreNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn("t", true);
+            final FuzzRunner runner = newRunner();
+            // the drain checks the writer the WAL apply leaves in the pool, which agrees with _cv
+            runner.applyWal(new ObjList<>(), "t", 1, new Rnd());
+            try (TableWriter writer = getWriter("t")) {
+                changeCachedColumnTop(writer.columnVersionReader().getCachedColumnVersionList());
+            }
+            try {
+                runner.applyWal(new ObjList<>(), "t", 1, new Rnd());
+                Assert.fail("the check must find the pooled writer's records missing from _cv");
+            } catch (AssertionError e) {
+                TestUtils.assertContains(e.getMessage(), "the writer's _cv records are not on disk [table=t, writer=");
+            }
         });
     }
 
@@ -465,6 +545,8 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             // which a row writes first, and its first page in a new partition
             runner.setIoFailureOnAllocate(true, i % 2 == 0 ? "ts.d" : null);
             runner.setIoFailureRecoveryRnd(new Rnd(seeds[1], seeds[0]));
+            // the seeds were found on DAY partitions, from before the fuzz picked the partitioning
+            runner.setPartitionBy(PartitionBy.DAY);
             final String tableName = "io_failure_shapes_" + i;
             // the seeds of the run, its schema and its apply, so the run repeats
             final Rnd runRnd = runner.generateRandom(LOG, seeds[0], seeds[1]);
@@ -729,6 +811,13 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         return transaction;
     }
 
+    // moves the column top of the last record, the one ADD COLUMN gave the partition it was added at
+    private static void changeCachedColumnTop(LongList records) {
+        final int columnTopIndex = records.size() - ColumnVersionReader.BLOCK_SIZE + ColumnVersionReader.COLUMN_TOP_OFFSET;
+        Assert.assertNotEquals(ColumnVersionReader.COL_TOP_DEFAULT_PARTITION, records.getQuick(records.size() - ColumnVersionReader.BLOCK_SIZE));
+        records.setQuick(columnTopIndex, records.getQuick(columnTopIndex) + 1);
+    }
+
     // A reader pins the first version of x while UPDATE replaces it, so the writer queues its purge instead of
     // purging it, and no job of the test runs that purge.
     private static File createStaleColumnVersion(String tableName, boolean isWal) throws SqlException {
@@ -760,6 +849,14 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         return false;
     }
 
+    private void createTableWithAddedColumn(String tableName, boolean isWal) throws Exception {
+        execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " VALUES (1, '2024-01-01T00:00:00Z')");
+        // a column top record for 2024-01-01, which holds a row without y
+        execute("ALTER TABLE " + tableName + " ADD COLUMN y INT");
+        drainWalQueue();
+    }
+
     private void createWalTable(String tableName) throws Exception {
         execute("CREATE TABLE " + tableName + " (sym SYMBOL, str STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
@@ -780,10 +877,64 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         return retryingFuzzer;
     }
 
+    // reload probability 0.25: the readers keep their txn after the first transaction and reload after every later one
+    private static Rnd newLaggingReloadRnd() {
+        return new Rnd() {
+            private int doubleDraws;
+
+            @Override
+            public boolean nextBoolean() {
+                return true;
+            }
+
+            @Override
+            public double nextDouble() {
+                return doubleDraws++ == 0 ? 0.9 : 0.0;
+            }
+        };
+    }
+
     private FuzzRunner newRunner() {
         final FuzzRunner runner = new FuzzRunner();
         runner.withDb(engine, sqlExecutionContext);
         return runner;
+    }
+
+    // The first transaction adds partitions and reads its own txn, so closing the runner's readers of the older txn
+    // extends their _txn mapping, then arms the failure. The second reopens the table. The last one reports whether
+    // the failure fired before it and disarms it.
+    private static ObjList<FuzzTransaction> reopenAfterReadersFallBehind(FailureFileFacade ff, int failAfter, AtomicBoolean isFired) {
+        final ObjList<FuzzTransaction> transactions = new ObjList<>();
+        final FuzzTransaction growTransaction = new FuzzTransaction();
+        // a failure in the commit after the operation runs the transaction again
+        final AtomicBoolean isGrown = new AtomicBoolean();
+        growTransaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+            if (isGrown.compareAndSet(false, true)) {
+                for (int day = 1; day <= 4; day++) {
+                    final TableWriter.Row row = writer.newRow(day * Micros.DAY_MICROS);
+                    row.putInt(0, day);
+                    row.append();
+                }
+                writer.commit();
+                try (TableReader reader = cairoEngine.getReader("t")) {
+                    Assert.assertEquals(5, reader.size());
+                }
+                ff.setToFailAfterOnCurrentThread(failAfter);
+            }
+            return false;
+        });
+        transactions.add(growTransaction);
+        final FuzzTransaction reopenTransaction = new FuzzTransaction();
+        reopenTransaction.reopenTable = true;
+        transactions.add(reopenTransaction);
+        final FuzzTransaction endTransaction = new FuzzTransaction();
+        endTransaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+            isFired.set(ff.getOsCallsCount() <= 0);
+            ff.setToFailAfterOnCurrentThread(Integer.MAX_VALUE);
+            return false;
+        });
+        transactions.add(endTransaction);
+        return transactions;
     }
 
     // Counts every open the harness routes through the retry helper, along with the policy each caller

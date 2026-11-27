@@ -486,6 +486,76 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyIntoExistingTableSubHourPartitions() throws Exception {
+        // Several 5-minute partitions share an hour. The indexer must keep their rows apart,
+        // otherwise the hour's rows all land in its first partition and attach rejects it.
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("sub-hour-existing" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "sub-hour.csv"),
+                    """
+                            ts,v
+                            2024-01-01T09:58:00.000000Z,4
+                            2024-01-01T09:01:00.000000Z,1
+                            2024-01-01T10:03:00.000000Z,5
+                            2024-01-01T09:06:00.000000Z,2
+                            2024-01-01T09:12:00.000000Z,3
+                            2024-01-01T09:07:00.000000Z,6
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute("CREATE TABLE x (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY 5 MINUTES");
+                runAndFetchCopyID(
+                        "COPY x FROM 'sub-hour.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR ABORT;",
+                        sqlExecutionContext
+                );
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, message, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                        .noLeakCheck()
+                        .returns("""
+                                status\tmessage\trows_handled\trows_imported\terrors
+                                started\t\tnull\tnull\t0
+                                finished\t\t6\t6\t0
+                                """);
+                assertQuery("SELECT name, numRows FROM table_partitions('x')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01T0900\t1
+                                2024-01-01T0905\t2
+                                2024-01-01T0910\t1
+                                2024-01-01T0955\t1
+                                2024-01-01T1000\t1
+                                """);
+                assertQuery("SELECT ts, v FROM x")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tv
+                                2024-01-01T09:01:00.000000000Z\t1
+                                2024-01-01T09:06:00.000000000Z\t2
+                                2024-01-01T09:07:00.000000000Z\t6
+                                2024-01-01T09:12:00.000000000Z\t3
+                                2024-01-01T09:58:00.000000000Z\t4
+                                2024-01-01T10:03:00.000000000Z\t5
+                                """);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
+    }
+
+    @Test
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
@@ -582,6 +652,71 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyIntoNewTableSubHourPartitions() throws Exception {
+        // Several 15-minute partitions share an hour. The indexer must keep their rows apart,
+        // otherwise the hour's rows all land in its first partition and attach rejects it.
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("sub-hour-new" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "sub-hour.csv"),
+                    """
+                            ts,v
+                            2024-01-01T09:40:00.000000Z,3
+                            2024-01-01T09:05:00.000000Z,1
+                            2024-01-01T10:10:00.000000Z,4
+                            2024-01-01T09:20:00.000000Z,2
+                            2024-01-01T09:07:00.000000Z,5
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> runAndFetchCopyID(
+                    "COPY x FROM 'sub-hour.csv' WITH HEADER true TIMESTAMP 'ts' FORMAT 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' " +
+                            "PARTITION BY 15 MINUTES ON ERROR ABORT;",
+                    sqlExecutionContext
+            );
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, message, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                        .noLeakCheck()
+                        .returns("""
+                                status\tmessage\trows_handled\trows_imported\terrors
+                                started\t\tnull\tnull\t0
+                                finished\t\t5\t5\t0
+                                """);
+                assertQuery("SELECT name, numRows FROM table_partitions('x')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01T0900\t2
+                                2024-01-01T0915\t1
+                                2024-01-01T0930\t1
+                                2024-01-01T1000\t1
+                                """);
+                assertQuery("SELECT ts, v FROM x")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tv
+                                2024-01-01T09:05:00.000000Z\t1
+                                2024-01-01T09:07:00.000000Z\t5
+                                2024-01-01T09:20:00.000000Z\t2
+                                2024-01-01T09:40:00.000000Z\t3
+                                2024-01-01T10:10:00.000000Z\t4
+                                """);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
+    }
+
+    @Test
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
@@ -653,6 +788,29 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyNonExistingFileReleasesTableName() throws Exception {
+        CopyRunnable insert = () -> runAndFetchCopyID(
+                "COPY t FROM 'does-not-exist.csv' WITH HEADER true TIMESTAMP 'ts' FORMAT 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        CopyRunnable assertion = () -> {
+            assertQuery("select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfailed\n");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\n2024-01-01T00:00:00.000000Z\t1\n");
+        };
+        testCopy(insert, assertion);
+    }
+
+    @Test
     public void testParallelCopyRequiresWithBeforeOptions() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -683,7 +841,7 @@ public class CopyImportTest extends AbstractCairoTest {
                 runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with partition by jiffy;", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
             }
         });
     }

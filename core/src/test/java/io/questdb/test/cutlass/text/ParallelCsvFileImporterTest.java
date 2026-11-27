@@ -649,6 +649,26 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportEmptyCsvReleasesTableName() throws Exception {
+        executeWithPool(
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
+                    assertImportFailsTwiceWithoutTable(engine, "test-quotes-empty.csv", "ignored empty input file [file='");
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                        importer.setMinChunkSize(10);
+                        importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+                    refreshTablesInBaseEngine();
+                    assertQuery("select count(*) from t")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns("count\n1000\n");
+                }
+        );
+    }
+
+    @Test
     public void testImportFailsOnBoundaryScanningIO() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
@@ -1649,6 +1669,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "import cancelled [phase=boundary_check, msg=`Cancelled`]");
                     }
+                }
+        );
+    }
+
+    @Test
+    public void testImportMissingFileReleasesTableName() throws Exception {
+        executeWithPool(
+                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    assertImportFailsTwiceWithoutTable(engine, "does-not-exist.csv", "could not open");
+                    execute(compiler, "CREATE TABLE IF NOT EXISTS t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                    execute(compiler, "INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)", sqlExecutionContext);
+                    refreshTablesInBaseEngine();
+                    assertQuery("t")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("ts\tx\n2024-01-01T00:00:00.000000Z\t1\n");
                 }
         );
     }
@@ -3050,6 +3087,21 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
+    }
+
+    private static void assertImportFailsTwiceWithoutTable(CairoEngine engine, String fileName, String expectedError) {
+        for (int i = 0; i < 2; i++) {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("t", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+                Assert.fail();
+            } catch (TextImportException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+            }
+            final TableToken token = engine.lockTableName("t");
+            Assert.assertNotNull(token);
+            engine.unlockTableName(token);
+        }
     }
 
     private static boolean stackContains(String klass) {

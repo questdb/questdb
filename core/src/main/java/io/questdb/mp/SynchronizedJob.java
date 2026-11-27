@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class SynchronizedJob implements Job {
     private static final long LOCKED_OFFSET = Unsafe.getFieldOffset(SynchronizedJob.class, "locked");
 
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    @SuppressWarnings("FieldCanBeLocal")
     private volatile int locked = 0;
 
     @Override
@@ -59,6 +59,10 @@ public abstract class SynchronizedJob implements Job {
     protected abstract boolean runSerially();
 
     private boolean tryAcquireRunLock() {
-        return Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
+        // Read first, then attempt CAS: the CAS takes exclusive ownership of the
+        // locked's cache line, whether or not it succeeds. So without the read, every
+        // failed lock attempt would steal the cache line from the owner thread, as
+        // well as from any previous thread that failed to acquire it.
+        return locked == 0 && Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -64,6 +65,7 @@ public class FailureFileFacade implements FilesFacade {
     // when true, a planted failure counts and fails allocate() calls only: the allocation of disk space for a new
     // page of a column file, or for a file that a partition switch opens
     private volatile boolean isAllocateOnly;
+    private volatile boolean isDetachCopied;
     // the names of the files that openRW() opened, by fd, for allocateFileName
     private final ConcurrentHashMap<Long, String> openRWFileNames = new ConcurrentHashMap<>();
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
@@ -344,6 +346,9 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        if (isDetachCopied && Utf8s.endsWithAscii(dst, TableUtils.DETACHING_DIR_MARKER)) {
+            return ff.copyRecursive(src, dst, dirMode);
+        }
         return ff.hardLinkDirRecursive(src, dst, dirMode);
     }
 
@@ -632,6 +637,15 @@ public class FailureFileFacade implements FilesFacade {
     public void setAllocateOnly(boolean isAllocateOnly, @Nullable String fileName) {
         this.isAllocateOnly = isAllocateOnly;
         this.allocateFileName = fileName;
+    }
+
+    /**
+     * While on, hardLinkDirRecursive() copies into a directory whose name ends with
+     * {@link TableUtils#DETACHING_DIR_MARKER}, the temporary directory of DETACH PARTITION, and links every other
+     * directory. Off by default. The detach/attach fuzz copies on DETACH, see questdb-enterprise#1575.
+     */
+    public void setDetachCopied(boolean isDetachCopied) {
+        this.isDetachCopied = isDetachCopied;
     }
 
     public void setToFailAfter(int ioFailureCallCount) {

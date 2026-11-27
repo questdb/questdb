@@ -3342,7 +3342,7 @@ pub(super) fn resize_decompress_buffer(
     Ok(())
 }
 
-pub(super) fn decompress_sliced_dict<'a>(
+pub(crate) fn decompress_sliced_dict<'a>(
     page: SlicedDictPage<'a>,
     buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DictPage<'a>> {
@@ -3360,7 +3360,7 @@ pub(super) fn decompress_sliced_dict<'a>(
     })
 }
 
-pub(super) fn decompress_sliced_data<'a>(
+pub(crate) fn decompress_sliced_data<'a>(
     page: &'a SlicedDataPage<'a>,
     decompress_buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DataPage<'a>> {

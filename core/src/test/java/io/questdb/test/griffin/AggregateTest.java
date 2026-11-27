@@ -1686,12 +1686,13 @@ public class AggregateTest extends AbstractCairoTest {
         );
     }
 
-    // triggers OOM in wrapUp() with multiple workers
-    // some implementations of wrapUp() add null entry and could trigger resize for columns added after table creation (with column tops)
+    // Each frame waits for the other in updateMemoryUsage(), so the column-top frame puts the NULL key into its own
+    // rosti and the merge inserts it into the full one after OOM is armed.
     @Test
-    public void testOOMInRostiWrapUpWithMultipleWorkersResetsAllocatedNativeMemoryToMinSizes() throws Exception {
+    public void testOOMInRostiMergeOfColumnTopKeyResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         final int WORKER_COUNT = 2;
         final AtomicInteger sizeCounter = new AtomicInteger(0);
+        final AtomicReference<CountDownLatch> frameLatch = new AtomicReference<>(new CountDownLatch(0));
 
         final RostiAllocFacade raf = new RostiAllocFacadeImpl() {
             @Override
@@ -1712,6 +1713,17 @@ public class AggregateTest extends AbstractCairoTest {
             @Override
             public void updateMemoryUsage(long pRosti, long oldSize) {
                 super.updateMemoryUsage(pRosti, oldSize);
+                final CountDownLatch latch = frameLatch.get();
+                if (latch.getCount() > 0) {
+                    latch.countDown();
+                    try {
+                        if (!latch.await(30, TimeUnit.SECONDS)) {
+                            throw new RuntimeException("the two frames did not reach two rostis");
+                        }
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
             }
         };
 
@@ -1750,6 +1762,7 @@ public class AggregateTest extends AbstractCairoTest {
                     for (String function : functions) {
                         String query = "select s, " + function + " from tab group by s";
                         LOG.infoW().$(function).$();
+                        frameLatch.set(new CountDownLatch(2));
                         assertRostiMemory(engine, query, sqlExecutionContext);
                         sizeCounter.set(0);
                     }
@@ -1758,7 +1771,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOOMInRostiWrapUpWithOneWorkerResetsAllocatedNativeMemoryToMinSizes() throws Exception {
+    public void testOOMInRostiWithOneWorkerResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         final int WORKER_COUNT = 1;
 
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {

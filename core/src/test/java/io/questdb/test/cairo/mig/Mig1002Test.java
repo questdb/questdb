@@ -45,6 +45,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -135,6 +136,69 @@ public class Mig1002Test extends AbstractCairoTest {
     @Test
     public void testEngineMigrationSkipsTableOfNewerRelease() throws Exception {
         assertEngineMigrationOnStorageVersion(ColumnType.MAX_STORAGE_VERSION + 1, false);
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithEmptyColumnVersionFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.COLUMN_VERSION_FILE_NAME, (ff, fd) -> Assert.assertTrue(ff.truncate(fd, 0)));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithEmptyMetaFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> Assert.assertTrue(ff.truncate(fd, 0)));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithEmptyTxnFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.TXN_FILE_NAME, (ff, fd) -> Assert.assertTrue(ff.truncate(fd, 0)));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithNegativeMetaColumnCount() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> putInt(ff, fd, TableUtils.META_OFFSET_COUNT, -1));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithNegativeMetaColumnNameLength() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> putInt(ff, fd, TableUtils.getColumnNameOffset(3), -1));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithTruncatedMetaColumnNameLength() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> Assert.assertTrue(ff.truncate(fd, TableUtils.getColumnNameOffset(3) + 2)));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithTruncatedMetaColumnNames() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> Assert.assertTrue(ff.truncate(fd, TableUtils.getColumnNameOffset(3) + Integer.BYTES + 2)));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithTruncatedMetaColumns() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> Assert.assertTrue(ff.truncate(fd, TableUtils.getColumnNameOffset(1))));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithUnreadableTxnFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.TXN_FILE_NAME, (ff, fd) -> fill(ff, fd, TableUtils.TX_BASE_HEADER_SIZE, 0x5A));
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithZeroedMetaFile() throws Exception {
+        assertEngineMigrationSkipsDamagedTable(TableUtils.META_FILE_NAME, (ff, fd) -> fill(ff, fd, 0, 0));
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long mem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("damaged")).concat(TableUtils.META_FILE_NAME)) {
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                Assert.assertEquals(0, TableUtils.readIntOrFail(ff, fd, TableUtils.META_OFFSET_VERSION, mem, path));
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(mem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -547,6 +611,18 @@ public class Mig1002Test extends AbstractCairoTest {
         unsetSymbolNullFlag("t", "s");
     }
 
+    private static void fill(FilesFacade ff, long fd, long offset, int value) {
+        final long length = ff.length(fd) - offset;
+        Assert.assertTrue(length > 0);
+        final long buf = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Vect.memset(buf, length, value);
+            Assert.assertEquals(length, ff.write(fd, buf, length, offset));
+        } finally {
+            Unsafe.free(buf, length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private static void makeFirstPartitionRemote() {
         final FilesFacade ff = configuration.getFilesFacade();
         final long partitionTs;
@@ -588,6 +664,16 @@ public class Mig1002Test extends AbstractCairoTest {
             final int writerIndex = reader.getMetadata().getWriterIndex(columnIndex);
             final long columnNameTxn = reader.getColumnVersionReader().getSymbolTableNameTxn(writerIndex);
             return configuration.getFilesFacade().length(TableUtils.offsetFileName(path, "s", columnNameTxn));
+        }
+    }
+
+    private static void putInt(FilesFacade ff, long fd, long offset, int value) {
+        final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putInt(buf, value);
+            Assert.assertEquals(Integer.BYTES, ff.write(fd, buf, Integer.BYTES, offset));
+        } finally {
+            Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -696,6 +782,39 @@ public class Mig1002Test extends AbstractCairoTest {
         });
     }
 
+    private void assertEngineMigrationSkipsDamagedTable(String fileName, FileDamage damage) throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithStaleNullFlag();
+            execute("CREATE TABLE damaged (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO damaged VALUES ('2024-01-05T00:00:00Z', 1)");
+            execute("ALTER TABLE damaged ADD COLUMN s SYMBOL");
+            execute("INSERT INTO damaged VALUES ('2024-01-06T00:00:00Z', 2, 'A')");
+            unsetSymbolNullFlag("damaged", "s");
+            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            engine.clear();
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("damaged")).concat(fileName)) {
+                final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                Assert.assertTrue(fd > -1);
+                try {
+                    damage.apply(ff, fd);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            for (int i = 0; i < 2; i++) {
+                EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+                Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());
+                Assert.assertTrue(containsSymbolNullValue("t", "s"));
+                engine.clear();
+            }
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
+        });
+    }
+
     private void assertNativeTopZeroAndFullScan(String expected) throws Exception {
         engine.clear();
         try (TableReader reader = getReader("t")) {
@@ -748,5 +867,10 @@ public class Mig1002Test extends AbstractCairoTest {
             }
             return super.openRO(name);
         }
+    }
+
+    @FunctionalInterface
+    private interface FileDamage {
+        void apply(FilesFacade ff, long fd);
     }
 }

@@ -106,7 +106,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
     public void setView(ArrayView view) {
         if (view == null) {
-            clear();
+            this.view = null;
             return;
         }
 

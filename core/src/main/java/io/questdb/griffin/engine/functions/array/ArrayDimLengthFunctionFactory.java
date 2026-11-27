@@ -108,14 +108,26 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
      * Returns the column index when the argument reads a plain array column, so the function can take
      * the dimension length straight out of the shape header: materializing the array loads its shape,
      * resets its strides and builds a flat view, and all of that is thrown away to return one int.
-     * Returns -1 for any other argument, which then takes the {@code ArrayView} route.
+     * Returns -1 for any other argument, which then takes the {@code ArrayView} route, and for a
+     * column of unknown dimensionality, such as a subquery column that selects an array bind
+     * variable: the fast path reads the shape header without a bounds check.
      */
     private static int arrayColumnIndex(Function arrayArg) {
         // unwrap() rather than a bare instanceof: it peels the memoizer wrappers the code generator
         // inserts around a projection referenced more than once, which a bare check would send down
         // the slow ArrayView route.
         final ColumnFunction cf = ColumnFunction.unwrap(arrayArg);
-        return cf != null ? cf.getColumnIndex() : -1;
+        return cf != null && ColumnType.decodeKnownArrayDimensionality(arrayArg.getType()) > 0 ? cf.getColumnIndex() : -1;
+    }
+
+    private static CairoException dimOutOfBounds(int position, int dim, int dims) {
+        return CairoException.nonCritical()
+                .position(position)
+                .put("array dimension out of bounds [dim=")
+                .put(dim)
+                .put(", dims=")
+                .put(dims)
+                .put(']');
     }
 
     private static class ConstFunc extends IntFunction implements UnaryFunction {
@@ -149,6 +161,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             if (array.isNull()) {
                 return Numbers.INT_NULL;
             }
+            if (dim > array.getDimCount()) {
+                throw dimOutOfBounds(dimArgPos, dim, array.getDimCount());
+            }
             return array.getDimLen(dim - 1);
         }
 
@@ -156,7 +171,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
 
-            final int dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
+            final int dims = ColumnType.decodeKnownArrayDimensionality(arrayArg.getType());
             if (dims > 0 && dim > dims) {
                 throw SqlException.position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
@@ -165,10 +180,6 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .put(dims)
                         .put(']');
             }
-            // getInt()'s arrayColumnIndex >= 0 fast path hands dim to an unchecked shape read, so a
-            // plain array column must decode to a concrete dimensionality. Parity with Func.init().
-            assert arrayColumnIndex < 0 || dims > 0
-                    : "array column with no concrete dimensionality: " + ColumnType.nameOf(arrayArg.getType());
         }
 
         @Override
@@ -202,13 +213,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             if (dim < 1 || (dims > 0 && dim > dims)) {
-                throw CairoException.nonCritical()
-                        .position(dimArgPos)
-                        .put("array dimension out of bounds [dim=")
-                        .put(dim)
-                        .put(", dims=")
-                        .put(dims)
-                        .put(']');
+                throw dimOutOfBounds(dimArgPos, dim, dims);
             }
             if (arrayColumnIndex >= 0) {
                 return rec.getArrayDimLen(arrayColumnIndex, arrayColumnType, dim);
@@ -216,6 +221,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             ArrayView array = arrayArg.getArray(rec);
             if (array.isNull()) {
                 return Numbers.INT_NULL;
+            }
+            if (dim > array.getDimCount()) {
+                throw dimOutOfBounds(dimArgPos, dim, array.getDimCount());
             }
             return array.getDimLen(dim - 1);
         }
@@ -239,13 +247,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             // init() is for. Decoding a compile-time snapshot here would read -1 dimensions and reject
             // every index. arrayColumnType above stays a snapshot because it is only read on the
             // arrayColumnIndex >= 0 fast path, where the arg is a plain column whose type is final.
-            this.dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
-            // getInt()'s fast path hands dim to an unchecked shape read, so it may only run once dim
-            // has been bounds-checked against a real dimensionality. decodeWeakArrayDimensionality
-            // yields -1 for weak dims and 0 for a NULL type, either of which disables that check - so
-            // the fast path is only sound while a plain array column always decodes to dims >= 1.
-            assert arrayColumnIndex < 0 || dims > 0
-                    : "array column with no concrete dimensionality: " + ColumnType.nameOf(arrayArg.getType());
+            this.dims = ColumnType.decodeKnownArrayDimensionality(arrayArg.getType());
         }
 
         @Override

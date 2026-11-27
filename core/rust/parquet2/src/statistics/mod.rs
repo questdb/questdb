@@ -129,10 +129,8 @@ pub fn serialize_statistics(statistics: &dyn Statistics) -> ParquetStatistics {
         PhysicalType::Int96 => {
             primitive::write::<[u32; 3]>(statistics.as_any().downcast_ref().unwrap())
         }
-        PhysicalType::Float => primitive::write::<f32>(statistics.as_any().downcast_ref().unwrap()),
-        PhysicalType::Double => {
-            primitive::write::<f64>(statistics.as_any().downcast_ref().unwrap())
-        }
+        PhysicalType::Float => primitive::write_f32(statistics.as_any().downcast_ref().unwrap()),
+        PhysicalType::Double => primitive::write_f64(statistics.as_any().downcast_ref().unwrap()),
         PhysicalType::ByteArray => binary::write(statistics.as_any().downcast_ref().unwrap()),
         PhysicalType::FixedLenByteArray(_) => {
             fixed_len_binary::write(statistics.as_any().downcast_ref().unwrap())

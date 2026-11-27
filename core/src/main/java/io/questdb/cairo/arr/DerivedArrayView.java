@@ -104,7 +104,7 @@ public class DerivedArrayView extends ArrayView {
      * @param count Number of dimensions to add
      */
     public void appendDimensions(int count) {
-        if (count == 0) {
+        if (count == 0 || isNull()) {
             return;
         }
 
@@ -207,7 +207,7 @@ public class DerivedArrayView extends ArrayView {
      * to repeat at all positions along the dimension with no additional storage.
      */
     public void prependDimensions(int count) {
-        if (count == 0) {
+        if (count == 0 || isNull()) {
             return;
         }
 
