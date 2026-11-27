@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameSequence;
@@ -52,7 +53,10 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.jit.JitUtil;
@@ -104,6 +108,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
 public class StreamGroupByTest extends AbstractCairoTest {
+    // A keyed query, as only keys take span maps and lanes, see FrameHolder.
+    private static final String HELD_FRAME_SQL = "SELECT timestamp_floor('1s', ts) bucket, x % 3 k, count() c, sum(x) s FROM t WHERE test_latched_counter()";
     private static final String SKEWED_KEYS_SQL = "SELECT timestamp_floor('1m', ts) bucket, k, count(*), sum(v) FROM trades";
     private final int frameRows;
     private final boolean parallel;
@@ -1053,29 +1059,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testPartlyReadCursorLeavesShardFree() throws Exception {
-        // With no workers the owners reduce every frame, so the count of frames a query reduces itself because its
-        // shard has no room for them is exact.
-        Assume.assumeTrue(parallel && workers == 0);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
-        run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
-                    + 200 * frameRows + ")) TIMESTAMP(ts)", context);
-            final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s";
-            context.setStreamGroupByEnabled(false);
-            final String expected = compileAndRead(compiler, context, sql);
-            context.setStreamGroupByEnabled(true);
-            try (
-                    RecordCursorFactory holderFactory = compiler.compile(sql, context).getRecordCursorFactory();
-                    RecordCursor holder = holderFactory.getCursor(context);
-                    RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()
-            ) {
-                // The holder reads ahead, returns its first row and idles, as a client that fetches in batches does.
-                Assert.assertTrue(holder.hasNext());
-                Assert.assertEquals(expected, read(factory, context));
-                Assert.assertEquals(0, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount());
-            }
-        });
+        assertPartlyReadLeavesShardFree("SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s", AsyncStreamGroupByRecordCursorFactory.class);
     }
 
     @Test
@@ -1089,28 +1073,306 @@ public class StreamGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testPartlyReadFilterLeavesShardFree() throws Exception {
-        // A parallel filter that its consumer stops reading keeps no queue slot of its shard either. With no workers
-        // the owners reduce every frame, so the count of frames a query reduces itself because its shard has no room
-        // for them is exact.
-        Assume.assumeTrue(parallel && workers == 0);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
-        run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence("
-                    + 200 * frameRows + ")) TIMESTAMP(ts)", context);
-            final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s";
-            context.setStreamGroupByEnabled(false);
-            final String expected = compileAndRead(compiler, context, sql);
-            context.setStreamGroupByEnabled(true);
-            try (
-                    RecordCursorFactory holderFactory = compiler.compile("SELECT * FROM t WHERE x > 0", context).getRecordCursorFactory();
-                    RecordCursor holder = holderFactory.getCursor(context);
-                    RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()
-            ) {
-                Assert.assertTrue(holder.hasNext());
-                Assert.assertEquals(expected, read(factory, context));
-                Assert.assertEquals(0, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount());
+        assertPartlyReadLeavesShardFree("SELECT * FROM t WHERE x > 0", null);
+    }
+
+    @Test
+    public void testPartlyReadHorizonJoinLeavesShardFree() throws Exception {
+        assertPartlyReadLeavesShardFree(
+                "SELECT t.ts, h.offset, p.price FROM t HORIZON JOIN p ON (t.sym = p.sym) LIST (0s) AS h",
+                AsyncHorizonJoinProjectionRecordCursorFactory.class
+        );
+    }
+
+    @Test
+    public void testPartlyReadKeyedWindowJoinLeavesShardFree() throws Exception {
+        assertPartlyReadLeavesShardFree(
+                "SELECT t.ts, sum(p.price) s FROM t WINDOW JOIN p ON (t.sym = p.sym) RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING",
+                AsyncWindowJoinFastRecordCursorFactory.class
+        );
+    }
+
+    @Test
+    public void testPartlyReadWindowJoinLeavesShardFree() throws Exception {
+        assertPartlyReadLeavesShardFree(
+                "SELECT t.ts, sum(p.price) s FROM t WINDOW JOIN p RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING",
+                AsyncWindowJoinRecordCursorFactory.class
+        );
+    }
+
+    @Test
+    public void testPartlyReadCursorAwaitsOnlyFramesInFlight() throws Exception {
+        // A PostgreSQL wire client that fetches in pages makes its connection await the frames in flight before it binds
+        // the variables of the next fetch. Here the worker ends frame h without taking frame h + L, as a worker whose frame
+        // spends the lane budget, or an owner that steals the frame, does. Only the owner can publish frame h + L then, and
+        // it is the thread that waits, so it must not wait for that frame.
+        // Frame 0 returns the first row on its own only when it holds more than one bucket.
+        Assume.assumeTrue(parallel && workers > 0 && frameRows > 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Integer.MAX_VALUE);
+        PageFrameSequence.setLaneRowBudgetForTesting(0);
+        try {
+            assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(workers, WorkerPoolMode.LEGACY), (engine, compiler, context) -> {
+                final String expected = createHeldFrameTable(engine, compiler, context, "");
+                final FrameHolder holder = new FrameHolder(frameRows);
+                TestLatchedCounterFunctionFactory.reset(holder);
+                try (RecordCursorFactory factory = compiler.compile(HELD_FRAME_SQL, context).getRecordCursorFactory()) {
+                    final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                    final RecordMetadata metadata = factory.getMetadata();
+                    final StringSink sink = new StringSink();
+                    CursorPrinter.println(metadata, sink);
+                    try (RecordCursor cursor = openWithHeldFrame(factory, context, holder)) {
+                        try {
+                            CursorPrinter.println(cursor.getRecord(), metadata, sink);
+                        } finally {
+                            holder.release();
+                        }
+                        awaitPageFrameSequences(context);
+                        // Every frame ended but the staged ones, among them frame h + L, which the owner still holds.
+                        Assert.assertEquals(stream.getDispatchedFrameCount(), stream.getReducedFrameCount());
+                        Assert.assertEquals(holder.getHeldFrame() + holder.getLaneCount(), stream.getStagedFrame(holder.getHeldLane()));
+                        while (cursor.hasNext()) {
+                            CursorPrinter.println(cursor.getRecord(), metadata, sink);
+                        }
+                    }
+                    Assert.assertEquals(expected, sortedLines(sink));
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }, configuration, LOG));
+        } finally {
+            PageFrameSequence.setLaneRowBudgetForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testClosedCursorForgetsFramesWorkersTook() throws Exception {
+        // Closing a partly read cursor, the owner ends the staged frames that no worker took, then waits for the frames in
+        // flight. Frame h is in flight when the owner looks at its lane. Its worker then ends it, takes frame h + L and ends
+        // that one unreduced, all before the owner checks whether every frame ended. The owner must not keep frame h + L as
+        // staged: the next run of the query would find it there.
+        // Frame 0 returns the first row on its own only when it holds more than one bucket.
+        Assume.assumeTrue(parallel && workers > 0 && frameRows > 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Integer.MAX_VALUE);
+        // Workers take the next frame of their lanes.
+        PageFrameSequence.setLaneRowBudgetForTesting(Long.MAX_VALUE);
+        try {
+            assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(workers, WorkerPoolMode.LEGACY), (engine, compiler, context) -> {
+                final String expected = createHeldFrameTable(engine, compiler, context, "");
+                final FrameHolder holder = new FrameHolder(frameRows);
+                TestLatchedCounterFunctionFactory.reset(holder);
+                final AtomicBoolean isArmed = new AtomicBoolean();
+                try (RecordCursorFactory factory = compiler.compile(HELD_FRAME_SQL, context).getRecordCursorFactory()) {
+                    final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                    PageFrameSequence.setStagedTasksSkippedHookForTesting(() -> {
+                        if (isArmed.compareAndSet(true, false)) {
+                            holder.release();
+                            // The workers end every frame, the staged ones included, while the owner waits here.
+                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                            while (stream.getReducedFrameCount() < stream.getDispatchedFrameCount() || getStagedFrameCount(stream) > 0) {
+                                if (System.nanoTime() > deadline) {
+                                    throw new AssertionError("the frames in flight did not end");
+                                }
+                                Os.pause();
+                            }
+                        }
+                    });
+                    final RecordCursor cursor = openWithHeldFrame(factory, context, holder);
+                    isArmed.set(true);
+                    try {
+                        cursor.close();
+                    } finally {
+                        holder.release();
+                    }
+                    Assert.assertFalse(isArmed.get());
+                    Assert.assertEquals(0, getStagedFrameCount(stream));
+                    holder.disarm();
+                    Assert.assertEquals(expected, sortedLines(read(factory, context)));
+                } finally {
+                    PageFrameSequence.setStagedTasksSkippedHookForTesting(null);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }, configuration, LOG));
+        } finally {
+            PageFrameSequence.setLaneRowBudgetForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testReducerErrorLeavesLaneToOwner() throws Exception {
+        // A fiber fails to reduce frame h with an Error, which ends the fiber, while frame h + L is staged behind frame h.
+        // The fiber must leave frame h + L to the owner: a fiber that took it would drop it, and close() would wait for it
+        // for good. The hook ends a frame taken that way, so that the test fails rather than hang.
+        // Frame 0 returns the first row on its own only when it holds more than one bucket.
+        Assume.assumeTrue(parallel && workers > 0 && frameRows > 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Integer.MAX_VALUE);
+        final AtomicLong successor = new AtomicLong(-1);
+        final AtomicInteger takenSuccessorCount = new AtomicInteger();
+        PageFrameSequence.setLaneClaimHookForTesting(taskIndex -> {
+            if (taskIndex == successor.get()) {
+                takenSuccessorCount.incrementAndGet();
+                throw CairoException.nonCritical().put("frame taken after an error");
             }
+        });
+        try {
+            assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(workers, WorkerPoolMode.FIBER_HOST), (engine, compiler, context) -> {
+                final String expected = createHeldFrameTable(engine, compiler, context, "");
+                final FrameHolder holder = new FrameHolder(frameRows);
+                TestLatchedCounterFunctionFactory.reset(holder);
+                try (RecordCursorFactory factory = compiler.compile(HELD_FRAME_SQL, context).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = openWithHeldFrame(factory, context, holder)) {
+                        successor.set(holder.getHeldFrame() + holder.getLaneCount());
+                        holder.failWith(new StackOverflowError("frame failed"));
+                        holder.release();
+                        try {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
+                            Assert.fail("the query ignored the error of frame " + holder.getHeldFrame());
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "frame failed");
+                        }
+                    }
+                    Assert.assertEquals(0, takenSuccessorCount.get());
+                    successor.set(-1);
+                    holder.disarm();
+                    Assert.assertEquals(expected, sortedLines(read(factory, context)));
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }, configuration, LOG));
+        } finally {
+            PageFrameSequence.setLaneClaimHookForTesting(null);
+        }
+    }
+
+    @Test
+    public void testFrameFailingAsOwnerChecksItFailsQuery() throws Exception {
+        // Waiting for frame 1, the owner checks whether the frame is reduced and whether the query still runs. A worker
+        // fails frame 1 between the two checks. The owner must throw the worker's error rather than return frame 1: the
+        // frame's slot still holds the segments that the previous run left, whose first key closes the last bucket of
+        // frame 0, and LIMIT ends the query on that bucket.
+        Assume.assumeTrue(parallel && workers > 0 && frameRows > 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Integer.MAX_VALUE);
+        // The worker that fails frame 1 takes frame 1 + L next, right after it marks frame 1 ended.
+        PageFrameSequence.setLaneRowBudgetForTesting(Long.MAX_VALUE);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean isChecking = new AtomicBoolean();
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final AtomicBoolean isFrameEnded = new AtomicBoolean();
+        final AtomicBoolean isStolen = new AtomicBoolean();
+        final AtomicReference<Thread> failingWorker = new AtomicReference<>();
+        final AtomicInteger laneCount = new AtomicInteger(-1);
+        PageFrameSequence.setReducedCheckHookForTesting(taskIndex -> {
+            if (taskIndex == 1 && isArmed.compareAndSet(true, false)) {
+                // The owner waits here, so only a worker can still start frame 1.
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                while (failingWorker.get() == null && !isStolen.get()) {
+                    if (System.nanoTime() > deadline) {
+                        throw new AssertionError("no thread started frame 1");
+                    }
+                    Os.pause();
+                }
+                if (failingWorker.get() != null) {
+                    isChecking.set(true);
+                    while (!isFrameEnded.get()) {
+                        if (System.nanoTime() > deadline) {
+                            throw new AssertionError("frame 1 did not end");
+                        }
+                        Os.pause();
+                    }
+                }
+            }
+        });
+        PageFrameSequence.setLaneClaimHookForTesting(taskIndex -> {
+            if (taskIndex == 1 + laneCount.get() && Thread.currentThread() == failingWorker.get()) {
+                isFrameEnded.set(true);
+            }
+        });
+        try {
+            assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(workers, WorkerPoolMode.LEGACY), (engine, compiler, context) -> {
+                // Each row is a bucket of its own, so the first rows are those of frame 0.
+                final String expected = createHeldFrameTable(engine, compiler, context, " AND x <= " + frameRows);
+                final Thread owner = Thread.currentThread();
+                TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                    @Override
+                    public boolean onGet(Record rec, int count) {
+                        if (rec.getLong(1) == frameRows + 1 && isFailing.get()) {
+                            // The owner may steal frame 1 while it waits for frame 0; the run then starts over.
+                            if (Thread.currentThread() == owner) {
+                                isStolen.set(true);
+                                return true;
+                            }
+                            failingWorker.set(Thread.currentThread());
+                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                            while (!isChecking.get()) {
+                                if (System.nanoTime() > deadline) {
+                                    throw new AssertionError("the owner did not check frame 1");
+                                }
+                                Os.pause();
+                            }
+                            throw CairoException.nonCritical().put("frame 1 failed");
+                        }
+                        return true;
+                    }
+                });
+                try (RecordCursorFactory factory = compiler.compile(HELD_FRAME_SQL + " LIMIT " + frameRows, context).getRecordCursorFactory()) {
+                    laneCount.set(((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getLaneCount());
+                    // The first run leaves its segments of frame 1 in the frame's slot.
+                    Assert.assertEquals(expected, sortedLines(read(factory, context)));
+                    for (int run = 0; run < 100 && failingWorker.get() == null; run++) {
+                        isStolen.set(false);
+                        isFailing.set(true);
+                        isArmed.set(true);
+                        try {
+                            final String rows = sortedLines(read(factory, context));
+                            Assert.assertNull("the query returned rows past frame 1, which failed", failingWorker.get());
+                            Assert.assertEquals(expected, rows);
+                        } catch (CairoException e) {
+                            Assert.assertNotNull(failingWorker.get());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "frame 1 failed");
+                        } finally {
+                            isFailing.set(false);
+                            isArmed.set(false);
+                        }
+                    }
+                    Assert.assertNotNull("no worker failed frame 1", failingWorker.get());
+                    Assert.assertTrue(isFrameEnded.get());
+                    Assert.assertEquals(expected, sortedLines(read(factory, context)));
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }, configuration, LOG));
+        } finally {
+            PageFrameSequence.setReducedCheckHookForTesting(null);
+            PageFrameSequence.setLaneClaimHookForTesting(null);
+            PageFrameSequence.setLaneRowBudgetForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testLimitAndFillRewindLaxCopyUnderThem() throws Exception {
+        // A negative LIMIT or a keyed FILL rewinds its input, so it copies a stream GROUP BY under it, which a rewind would
+        // run again. Over a copy that a LIMIT or FILL under it made, it rewinds that copy and makes none of its own.
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT ((x - 1) * 60_000_000)::TIMESTAMP ts, x % 5 k, x v FROM long_sequence(4_320)) TIMESTAMP(ts)", context);
+            assertCopyCount(compiler, context, "SELECT * FROM (SELECT ts, k, count() c FROM t SAMPLE BY 1h LIMIT -10) LIMIT -5", 1);
+            assertCopyCount(compiler, context, "WITH s AS (SELECT ts, k, count() c FROM t SAMPLE BY 1h LIMIT -10) SELECT * FROM s LIMIT -5", 1);
+            assertCopyCount(compiler, context, "SELECT * FROM (SELECT ts, k, max(v) m FROM t SAMPLE BY 1h LIMIT -10) LIMIT -5", 1);
+            for (String fill : new String[]{"PREV", "NULL", "0"}) {
+                assertCopyCount(compiler, context, "SELECT ts, k, sum(c) s FROM (SELECT ts, k, count() c FROM t SAMPLE BY 1m) SAMPLE BY 1h FILL(" + fill + ") LIMIT -5", 1);
+                assertCopyCount(compiler, context, "SELECT ts, k, sum(c) s FROM (SELECT ts, k, count() c FROM t SAMPLE BY 1m LIMIT -100) SAMPLE BY 1h FILL(" + fill + ")", 1);
+            }
+            // A SAMPLE BY over the copy computes its rows from the copy again, as it did before the copy.
+            assertCopyCount(compiler, context, "SELECT ts, k, sum(c) s FROM (SELECT ts, k, count() c FROM t SAMPLE BY 1m LIMIT -100) SAMPLE BY 1h LIMIT -5", 1);
+            // A UNION ALL shows no copy under it, so the LIMIT over it makes one. Its last rows are those of its second
+            // query, which a hash GROUP BY returns in order only outside a UNION.
+            assertCopyCount(
+                    compiler,
+                    context,
+                    "SELECT * FROM (SELECT ts, k, count() c FROM t SAMPLE BY 1h UNION ALL SELECT ts, k, count() c FROM t SAMPLE BY 1h) LIMIT -5",
+                    "SELECT ts, k, count() c FROM t SAMPLE BY 1h LIMIT -5",
+                    1
+            );
         });
     }
 
@@ -3926,7 +4188,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
         final AtomicBoolean isFailureArmed = new AtomicBoolean();
         final AtomicBoolean isBlocked = new AtomicBoolean();
         final String queryFailure = blocker != null ? blocker.getQueryFailure() : failure;
-        PageFrameSequence.setLaneClaimHookForTesting(() -> {
+        PageFrameSequence.setLaneClaimHookForTesting(taskIndex -> {
             claimCount.incrementAndGet();
             if (isFailureArmed.compareAndSet(true, false)) {
                 throw CairoException.nonCritical().put(failure);
@@ -4052,6 +4314,92 @@ public class StreamGroupByTest extends AbstractCairoTest {
         }
     }
 
+    // Runs context.awaitPageFrameSequences() on another thread while this one, the owner, idles, and fails rather than
+    // hang when it does not end.
+    private static void awaitPageFrameSequences(SqlExecutionContext context) throws InterruptedException {
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread waiter = new Thread(() -> {
+            try {
+                context.awaitPageFrameSequences();
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        }, "page-frame-sequence-waiter");
+        waiter.start();
+        waiter.join(TimeUnit.SECONDS.toMillis(60));
+        Assert.assertFalse("the wait for the frames in flight did not end", waiter.isAlive());
+        Assert.assertNull(failure.get());
+    }
+
+    // Asserts the count of the copies in the plan of the query, and the rows it returns, against a hash GROUP BY.
+    private static void assertCopyCount(SqlCompiler compiler, SqlExecutionContext context, String sql, int expectedCount) throws Exception {
+        assertCopyCount(compiler, context, sql, sql, expectedCount);
+    }
+
+    private static void assertCopyCount(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            String sql,
+            String expectedSql,
+            int expectedCount
+    ) throws Exception {
+        context.setStreamGroupByEnabled(false);
+        final String expected;
+        try {
+            expected = sortedLines(compileAndRead(compiler, context, expectedSql));
+        } finally {
+            context.setStreamGroupByEnabled(true);
+        }
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            final String plan = plan(factory, context);
+            int count = 0;
+            for (int i = plan.indexOf("Materialize"); i > -1; i = plan.indexOf("Materialize", i + 1)) {
+                count++;
+            }
+            Assert.assertEquals(sql + '\n' + plan, expectedCount, count);
+            Assert.assertEquals(sql, expected, sortedLines(read(factory, context)));
+            Assert.assertEquals(sql, expected, sortedLines(read(factory, context)));
+        }
+    }
+
+    // A cursor that its consumer stops reading, as a client that fetches in batches does, keeps no queue slot of its
+    // shard. With no workers the owners reduce every frame, so the count of frames that a query reduces itself because its
+    // shard has no room for them is exact.
+    private void assertPartlyReadLeavesShardFree(
+            String holderSql,
+            @Nullable Class<? extends RecordCursorFactory> holderFactoryClass
+    ) throws Exception {
+        Assume.assumeTrue(parallel && workers == 0);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x, "
+                    + "CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END::SYMBOL sym FROM long_sequence("
+                    + 200 * frameRows + ")) TIMESTAMP(ts)", context);
+            engine.execute("CREATE TABLE p AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x price, "
+                    + "CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END::SYMBOL sym FROM long_sequence(100)) TIMESTAMP(ts)", context);
+            final String sql = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1s";
+            context.setStreamGroupByEnabled(false);
+            final String expected = compileAndRead(compiler, context, sql);
+            context.setStreamGroupByEnabled(true);
+            context.setParallelHorizonJoinEnabled(true);
+            context.setParallelWindowJoinEnabled(true);
+            try (
+                    RecordCursorFactory holderFactory = compiler.compile(holderSql, context).getRecordCursorFactory();
+                    RecordCursor holder = holderFactory.getCursor(context);
+                    RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()
+            ) {
+                if (holderFactoryClass != null) {
+                    TestUtils.assertFactoryInTree(holderFactory, holderFactoryClass);
+                }
+                // The holder reads ahead, returns its first row and idles.
+                Assert.assertTrue(holder.hasNext());
+                Assert.assertEquals(expected, read(factory, context));
+                Assert.assertEquals(0, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getLocallyReducedFrameCount());
+            }
+        });
+    }
+
     private void assertMatchesHash(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
         assertMatchesHash(compiler, context, sql, parallel);
     }
@@ -4107,6 +4455,54 @@ public class StreamGroupByTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(expected, found);
+    }
+
+    // Creates the table of HELD_FRAME_SQL and returns the sorted rows of the query, with the suffix, that a hash GROUP BY
+    // reads.
+    private String createHeldFrameTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, String suffix) throws Exception {
+        engine.execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(" + 16 * frameRows + ")) TIMESTAMP(ts)", context);
+        TestLatchedCounterFunctionFactory.reset(null);
+        context.setStreamGroupByEnabled(false);
+        try {
+            return sortedLines(compileAndRead(compiler, context, HELD_FRAME_SQL + suffix));
+        } finally {
+            context.setStreamGroupByEnabled(true);
+        }
+    }
+
+    private static int getStagedFrameCount(AsyncStreamGroupByRecordCursorFactory stream) {
+        int count = 0;
+        for (int lane = 0, n = stream.getAtom().getLaneCount(); lane < n; lane++) {
+            if (stream.getStagedFrame(lane) > -1) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // Opens a cursor of HELD_FRAME_SQL and reads its first row while a worker holds frame h and the owner stages frame h + L
+    // behind it. The owner may reduce the first frames of the lanes itself, and then no worker holds one: the run starts
+    // over. The caller releases frame h.
+    private static RecordCursor openWithHeldFrame(RecordCursorFactory factory, SqlExecutionContext context, FrameHolder holder) throws SqlException {
+        final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+        for (int run = 0; run < 100; run++) {
+            holder.arm(stream.getAtom().getLaneCount());
+            final RecordCursor cursor = factory.getCursor(context);
+            try {
+                Assert.assertTrue(cursor.hasNext());
+                final long heldFrame = holder.getHeldFrame();
+                if (heldFrame > 0 && stream.getStagedFrame(holder.getHeldLane()) == heldFrame + holder.getLaneCount()) {
+                    return cursor;
+                }
+            } catch (Throwable th) {
+                holder.release();
+                cursor.close();
+                throw th;
+            }
+            holder.release();
+            cursor.close();
+        }
+        throw new AssertionError("no worker held a frame");
     }
 
     private static void convertFirstDayToParquet(CairoEngine engine, SqlExecutionContext context) throws Exception {
@@ -4360,6 +4756,77 @@ public class StreamGroupByTest extends AbstractCairoTest {
 
     private void run(CustomisableRunnable runnable) throws Exception {
         assertMemoryLeak(() -> TestUtils.execute(workers == 0 ? null : new TestWorkerPool(workers), runnable, configuration, LOG));
+    }
+
+    // Makes the first worker that starts one of the frames 1 to L - 1, the first frames of their lanes, hold it, as frame h,
+    // until release(). Frame h keeps its lane busy, so the owner stages frame h + L once it dispatches that far, see
+    // PageFrameSequence.stagedTasks, and meanwhile returns the first row of the query from frame 0.
+    private static final class FrameHolder implements TestLatchedCounterFunctionFactory.Callback {
+        private final int frameRows;
+        private final AtomicLong heldFrame = new AtomicLong(-1);
+        private final AtomicBoolean isReleased = new AtomicBoolean();
+        private final Thread owner = Thread.currentThread();
+        private volatile Error error;
+        private volatile int laneCount;
+
+        private FrameHolder(int frameRows) {
+            this.frameRows = frameRows;
+        }
+
+        @Override
+        public boolean onGet(Record rec, int count) {
+            final long x = rec.getLong(1);
+            final long frame = (x - 1) / frameRows;
+            if ((x - 1) % frameRows == 0 && frame > 0 && frame < laneCount && Thread.currentThread() != owner && heldFrame.compareAndSet(-1, frame)) {
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                while (!isReleased.get()) {
+                    if (System.nanoTime() > deadline) {
+                        throw new AssertionError("frame " + frame + " was not released");
+                    }
+                    Os.pause();
+                }
+                final Error error = this.error;
+                if (error != null) {
+                    throw error;
+                }
+            }
+            return true;
+        }
+
+        // Makes the next run hold a frame.
+        void arm(int laneCount) {
+            this.error = null;
+            this.laneCount = laneCount;
+            isReleased.set(false);
+            heldFrame.set(-1);
+        }
+
+        // No frame is held from now on.
+        void disarm() {
+            laneCount = 0;
+            error = null;
+        }
+
+        // Frame h fails with the error once released.
+        void failWith(Error error) {
+            this.error = error;
+        }
+
+        long getHeldFrame() {
+            return heldFrame.get();
+        }
+
+        int getHeldLane() {
+            return (int) (heldFrame.get() % laneCount);
+        }
+
+        int getLaneCount() {
+            return laneCount;
+        }
+
+        void release() {
+            isReleased.set(true);
+        }
     }
 
     private interface LaneLaunchBlocker {

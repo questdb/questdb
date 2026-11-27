@@ -164,6 +164,12 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         return frameSequence.getReducedTaskCount();
     }
 
+    // The frame staged on the lane, or -1: a task holds a single frame.
+    @TestOnly
+    public int getStagedFrame(int lane) {
+        return frameSequence.getStagedTask(lane);
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();

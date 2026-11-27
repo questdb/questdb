@@ -369,7 +369,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     } else {
                         try {
                             endTask(task, frameSequence, subSeq, cursor, dispatcher);
-                            PageFrameSequence.onLaneTaskClaimed();
+                            PageFrameSequence.onLaneTaskClaimed(laneTask);
                         } catch (Throwable th) {
                             frameSequence.failLaneTask(laneTask, th);
                             throw th;

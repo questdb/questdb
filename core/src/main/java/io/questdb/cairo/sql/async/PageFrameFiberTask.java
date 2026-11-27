@@ -361,6 +361,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             PageFrameSequence<?> frameSequence
     ) {
         PageFrameReduceTask laneTask = null;
+        boolean isLaneContinued = frameSequence.hasLanes();
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
@@ -382,6 +383,9 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 frameSequence.onReducerError(reduceTask, th);
             }
             if (th instanceof Error error) {
+                // The error ends the fiber, so it leaves the next task of the lane staged, for the owner to end, see
+                // PageFrameSequence.skipStagedTasks().
+                isLaneContinued = false;
                 throw error;
             }
         } finally {
@@ -392,7 +396,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
                 // Before the task is marked, see PageFrameSequence.claimLaneSuccessor().
-                if (frameSequence.hasLanes()) {
+                if (isLaneContinued) {
                     laneTask = frameSequence.claimLaneSuccessor(reduceTask.getTaskIndex());
                 }
                 if (laneTask == null) {
@@ -400,7 +404,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 } else {
                     try {
                         endOrderedTask(subSeq, cursor, reduceTask, frameSequence);
-                        PageFrameSequence.onLaneTaskClaimed();
+                        PageFrameSequence.onLaneTaskClaimed(laneTask);
                     } catch (Throwable th) {
                         frameSequence.failLaneTask(laneTask, th);
                         throw th;

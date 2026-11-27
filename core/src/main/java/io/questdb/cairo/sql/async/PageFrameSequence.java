@@ -69,6 +69,7 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntConsumer;
 
 public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final long HELD_NONE = -1;
@@ -78,9 +79,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // A lane that holds no staged task, see stagedTasks.
     private static final int STAGED_NONE = -1;
     private static final FiberLocal<int[]> UNTRACKED_SCOPE_DEPTH = new FiberLocal<>(() -> new int[1]);
-    // Runs on a worker path right after the worker takes a lane task, see onLaneTaskClaimed().
-    private static volatile Runnable laneClaimHookForTesting;
+    // Runs on a worker path right after the worker takes a lane task, with the task's index, see onLaneTaskClaimed().
+    private static volatile IntConsumer laneClaimHookForTesting;
     private static volatile long laneRowBudgetForTesting = -1;
+    private static volatile IntConsumer reducedCheckHookForTesting;
+    private static volatile Runnable stagedTasksSkippedHookForTesting;
     private final MillisecondClock clock;
     // The first reducer error of a completion-tracked sequence, whose owner never reads the failed task.
     private final AsyncQueryErrorState errorState;
@@ -209,7 +212,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     @TestOnly
-    public static void setLaneClaimHookForTesting(@Nullable Runnable hook) {
+    public static void setLaneClaimHookForTesting(@Nullable IntConsumer hook) {
         laneClaimHookForTesting = hook;
     }
 
@@ -217,6 +220,19 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     @TestOnly
     public static void setLaneRowBudgetForTesting(long budget) {
         laneRowBudgetForTesting = budget;
+    }
+
+    // Runs on the owner between its two checks of the task it waits for, with the task's index, see nextReduced().
+    @TestOnly
+    public static void setReducedCheckHookForTesting(@Nullable IntConsumer hook) {
+        reducedCheckHookForTesting = hook;
+    }
+
+    // Runs on the owner each time it ends the staged tasks that no thread took, before it checks whether every task
+    // ended, see awaitReducedTasks().
+    @TestOnly
+    public static void setStagedTasksSkippedHookForTesting(@Nullable Runnable hook) {
+        stagedTasksSkippedHookForTesting = hook;
     }
 
     public void await() {
@@ -418,6 +434,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public SqlExecutionContext getSqlExecutionContext() {
         return sqlExecutionContext;
+    }
+
+    // The task staged on the lane, see stagedTasks, or -1.
+    @TestOnly
+    public int getStagedTask(int lane) {
+        return Unsafe.arrayGetVolatile(stagedTasks, lane);
     }
 
     public long getStartTime() {
@@ -851,18 +873,20 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     // A worker path calls this right after it takes a lane task, where a failure has to end the task, see failLaneTask().
-    static void onLaneTaskClaimed() {
-        final Runnable hook = laneClaimHookForTesting;
+    static void onLaneTaskClaimed(PageFrameReduceTask laneTask) {
+        final IntConsumer hook = laneClaimHookForTesting;
         if (hook != null) {
-            hook.run();
+            hook.accept(laneTask.getTaskIndex());
         }
     }
 
+    // Waits until no thread but the owner holds a dispatched task. The owner does not wait for the staged tasks it holds,
+    // see ownedStagedTask(): only it can publish, reduce or end them, and it is the thread that waits here.
     private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean isFiberSuspendable) {
         final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            if (reduceFinishedCounter.get() >= dispatchStartTaskIndex) {
+            if (reduceFinishedCounter.get() + getOwnedStagedTaskCount() >= dispatchStartTaskIndex) {
                 break;
             }
             if (canPark) {
@@ -882,6 +906,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
             skipStagedTasks();
+            final Runnable stagedTasksSkippedHook = stagedTasksSkippedHookForTesting;
+            if (stagedTasksSkippedHook != null) {
+                stagedTasksSkippedHook.run();
+            }
             if (reduceFinishedCounter.get() >= dispatchStartTaskIndex) {
                 break;
             }
@@ -901,6 +929,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     yieldOrPause(isFiberSuspendable);
                 }
             }
+        }
+        // Every task ended, so every lane is free, and a task that the owner still records as staged is one that a thread
+        // took after skipStagedTasks() looked: ownedStagedTask() forgets it.
+        for (int lane = 0; lane < laneCount; lane++) {
+            final int taskIndex = ownedStagedTask(lane);
+            assert taskIndex == STAGED_NONE : "staged task left [lane=" + lane + ", taskIndex=" + taskIndex + ']';
         }
         // The owner stopped before it collected these tasks, so their result slots let go of the output now.
         while (collectedTaskIndex + 1 < dispatchStartTaskIndex) {
@@ -1213,6 +1247,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return reduceFinishedCounter.get() > collectedTaskIndex + 1 ? shard : -1;
     }
 
+    // The staged tasks of free lanes that no thread took, which only the owner can publish, reduce or end now.
+    private int getOwnedStagedTaskCount() {
+        int count = 0;
+        for (int lane = 0; lane < laneCount; lane++) {
+            if (ownedStagedTask(lane) != STAGED_NONE) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private PageFrameReduceTask getResultTask(int taskIndex) {
         return resultTasks.getQuick(taskIndex % resultTasks.size());
     }
@@ -1247,6 +1292,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             final long observedProgress = canPark ? getProgressVersion() : 0;
             // Keeps the workers busy while the caller reads this task's output.
             dispatchAhead(dispatchLimit, countOnly);
+            // Read before the state: a thread that fails or skips the task stops the sequence before it marks the task, so
+            // once the mark shows the task ended, the check below sees such a stop and throws rather than return the task.
+            final boolean isReduced = Unsafe.arrayGetVolatile(reducedTasks, taskIndex) != 0;
+            final IntConsumer reducedCheckHook = reducedCheckHookForTesting;
+            if (reducedCheckHook != null) {
+                reducedCheckHook.accept(taskIndex);
+            }
             if (!isActive()) {
                 if (errorState.hasError()) {
                     throw errorState.buildException();
@@ -1259,7 +1311,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     return -2;
                 }
             }
-            if (Unsafe.arrayGetVolatile(reducedTasks, taskIndex) != 0) {
+            if (isReduced) {
                 beginCollectTask(taskIndex, getResultTask(taskIndex));
                 return taskIndex;
             }
