@@ -34,6 +34,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Misc;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -74,6 +76,10 @@ public class AsyncFilterBenchmark {
     public int frameRows;
     @Param({"true", "false"})
     public boolean isJit;
+    // legacy runs the reducers on worker threads; fiber runs them on the fibers of a fiber host pool, as the server
+    // does by default.
+    @Param({"legacy"})
+    public String poolMode;
     @Param({"10_000_000"})
     public String rowCount;
     @Param({"4"})
@@ -132,8 +138,23 @@ public class AsyncFilterBenchmark {
                 }
             };
             engine = new CairoEngine(configuration);
-            workerPool = new WorkerPool(() -> workers);
-            WorkerPoolUtils.setupQueryJobs(workerPool, engine);
+            final WorkerPoolMode workerPoolMode = switch (poolMode) {
+                case "legacy" -> WorkerPoolMode.LEGACY;
+                case "fiber" -> WorkerPoolMode.FIBER_HOST;
+                default -> throw new IllegalArgumentException("unknown pool mode: " + poolMode);
+            };
+            workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return workers;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return workerPoolMode;
+                }
+            });
+            WorkerPoolUtils.setupQueryJobs(workerPool, engine, true);
             workerPool.start();
             context = new SqlExecutionContextImpl(engine, workers)
                     .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext());
