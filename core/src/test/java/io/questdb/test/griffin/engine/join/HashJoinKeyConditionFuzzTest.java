@@ -27,11 +27,13 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -50,18 +52,24 @@ import java.util.regex.Pattern;
  * columns, of one type, or of two types whose equal values the join matches: SYMBOL, STRING and VARCHAR, or
  * TIMESTAMP and TIMESTAMP_NS. Its WHERE holds random conjuncts over the joined table, the key column of the
  * table it joins, and columns of the earlier tables that are no key, with constants, an INT bind variable,
- * BETWEEN, CASE, OR, functions, extract() and a scalar sub-query. The tables have random sizes, so a light
- * hash join hashes either side, and hold NULL keys and keys that one side lacks.
+ * BETWEEN, CASE, OR, functions, extract() and a scalar sub-query. Some joins add a cast to DECIMAL that fails
+ * on some rows, and a guard that drops those rows, see appendGuardedCast(). The tables have random sizes, so a
+ * light hash join hashes either side, and hold NULL keys and keys that one side lacks.
  * <p>
  * Full-fat hash joins, which copy their slave and keep every condition in the filter after the join, give the
- * reference rows. The light hash joins must return them, again after toTop(), and calculateSize() must count
- * them. The test counts the queries whose plan moves a condition into a join and those whose plan keeps one
- * after a join, so that a generator that stopped making either fails.
+ * reference rows, or fail on the cast. The light hash joins must return those rows, again after toTop(), and
+ * calculateSize() must count them, or fail as the full-fat joins do. The test counts the queries whose plan moves
+ * a condition into a join, those whose plan keeps one after a join, those that a guard keeps from failing, and
+ * those that fail, so that a generator that stopped making any of them fails.
  */
 public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
     // values of the INT bind variable
     private static final int[] BIND_VALUES = {Numbers.INT_NULL, 0, 2};
+    // the error of the cast of the text of a row of a NULL v, see appendGuardedCast()
+    private static final String CAST_FAILURE = "inconvertible value: `x` [VARCHAR -> DECIMAL(10,2)]";
     private static final int DEFAULT_QUERY_COUNT = 300;
+    // the guard of appendGuardedCast() before its cast, with the AND that joins them
+    private static final Pattern GUARD = Pattern.compile("t\\d\\.v - t\\d\\.v > 0 AND ");
     private static final String[] KEY_COLUMNS = {"i", "l", "sy", "st", "vc", "ts", "tn", "d"};
     private static final Log LOG = LogFactory.getLog(HashJoinKeyConditionFuzzTest.class);
     // pairs of key columns of two types whose equal values the join matches
@@ -82,6 +90,8 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
             String tables = null;
             int movedCount = 0;
             int keptCount = 0;
+            int guardedCount = 0;
+            int failedCount = 0;
             try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
                 fullFatCompiler.setFullFatJoins(true);
                 for (int q = 0; q < queryCount; q++) {
@@ -109,16 +119,38 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
                             bindVariableService.setInt(0, value);
                             context = ", $1=" + (value == Numbers.INT_NULL ? "NULL" : value) + context;
                         }
+                        // the rows of the full-fat join, or null when it fails on a cast
                         final String expected;
                         try (RecordCursorFactory factory = fullFatCompiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            CursorPrinter.println(cursor, factory.getMetadata(), sink);
-                            expected = sortedRows(sink);
+                            final FlyweightMessageContainer castFailure = printRowsOrCastFailure(cursor, factory.getMetadata(), sink);
+                            if (castFailure == null) {
+                                expected = sortedRows(sink);
+                            } else {
+                                expected = null;
+                                assertCastPosition(castFailure, sql + context);
+                            }
                         } catch (Throwable e) {
                             throw new AssertionError("full-fat join failed [sql=" + sql + context + ", error=" + e + ']', e);
                         }
+                        // the query without the guards before the casts fails on a cast when a guard drops its rows
+                        if (run == 0 && expected != null && GUARD.matcher(sql).find()
+                                && hasCastFailure(fullFatCompiler, GUARD.matcher(sql).replaceAll(""))) {
+                            guardedCount++;
+                        }
                         try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                            final FlyweightMessageContainer castFailure = printRowsOrCastFailure(cursor, factory.getMetadata(), sink);
+                            if (expected == null) {
+                                // a query of two casts may fail on either, as a light join can read its rows in
+                                // another order
+                                Assert.assertNotNull("light join did not fail as the full-fat join did, sql=" + sql + context, castFailure);
+                                assertCastPosition(castFailure, sql + context);
+                                failedCount++;
+                                continue;
+                            }
+                            if (castFailure != null) {
+                                throw new AssertionError("light join failed where the full-fat join did not [sql=" + sql + context + ']', (Throwable) castFailure);
+                            }
                             Assert.assertEquals("sql=" + sql + context, expected, sortedRows(sink));
                             cursor.toTop();
                             CursorPrinter.println(cursor, factory.getMetadata(), secondPass);
@@ -133,11 +165,30 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
                     }
                 }
             }
-            final String counts = "moved=" + movedCount + ", kept=" + keptCount + " of " + queryCount;
+            final String counts = "moved=" + movedCount + ", kept=" + keptCount + ", guarded=" + guardedCount
+                    + ", failed=" + failedCount + " of " + queryCount;
             LOG.info().$(counts).$();
             Assert.assertTrue(counts, movedCount * 4 >= queryCount);
             Assert.assertTrue(counts, keptCount * 4 >= queryCount);
+            // each comes with about 6% of the queries; once per 300 queries keeps the check from failing by chance
+            Assert.assertTrue(counts, guardedCount * 300 >= queryCount);
+            Assert.assertTrue(counts, failedCount * 300 >= queryCount);
         });
+    }
+
+    // Joins the next conjunct to those before it
+    private static void appendAnd(StringBuilder where) {
+        if (!where.isEmpty()) {
+            where.append(" AND ");
+        }
+    }
+
+    // The failure of a cast of appendGuardedCast() points at the column that it casts, tN.dt, in the query that
+    // starts the text
+    private static void assertCastPosition(FlyweightMessageContainer castFailure, String sqlAndContext) {
+        final int position = castFailure.getPosition();
+        Assert.assertTrue("cast failure position " + position + ", sql=" + sqlAndContext,
+                sqlAndContext.startsWith("t", position) && sqlAndContext.startsWith(".dt::DECIMAL(10,2)", position + 2));
     }
 
     // Appends a conjunct over the slave's value column v, the master key column, and the v column of an earlier
@@ -198,13 +249,27 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // Appends a cast to DECIMAL of the slave's text column dt, which fails on the rows of a NULL v, ORed with a check
+    // of the master key column, so that only a join can evaluate it, and a guard that drops those rows: the
+    // difference of the slave's v and the v of an earlier table, which is no key, so that the guard stays after the
+    // join. With the guard first, the cast fails only where it runs before the guard.
+    private static void appendGuardedCast(Rnd rnd, StringBuilder where, int slave, String masterKey, int other) {
+        final String guard = "t" + slave + ".v - t" + other + ".v > 0";
+        final String cast = "(t" + slave + ".dt::DECIMAL(10,2) > 3 OR " + masterKey + " IS NULL)";
+        if (rnd.nextBoolean()) {
+            where.append(guard).append(" AND ").append(cast);
+        } else {
+            where.append(cast).append(" AND ").append(guard);
+        }
+    }
+
     // Drops and creates the tables, each with 0 to 12 rows of random keys and values, and returns the statements
     // that create them
     private static String createTables(Rnd rnd) throws SqlException {
         final StringBuilder statements = new StringBuilder();
         for (int t = 0; t < TABLE_COUNT; t++) {
             execute("DROP TABLE IF EXISTS t" + t);
-            final String create = "CREATE TABLE t" + t + " (i INT, l LONG, sy SYMBOL, st STRING, vc VARCHAR, ts TIMESTAMP, tn TIMESTAMP_NS, d DOUBLE, v INT)";
+            final String create = "CREATE TABLE t" + t + " (i INT, l LONG, sy SYMBOL, st STRING, vc VARCHAR, ts TIMESTAMP, tn TIMESTAMP_NS, d DOUBLE, v INT, dt VARCHAR)";
             execute(create);
             statements.append(create).append(";\n");
             final int rowCount = rnd.nextInt(13);
@@ -220,7 +285,13 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
                 for (String column : KEY_COLUMNS) {
                     insert.append(keyValue(rnd, column)).append(", ");
                 }
-                insert.append(rnd.nextInt(6) == 0 ? "NULL" : String.valueOf(rnd.nextInt(10))).append(')');
+                // dt holds the text of v plus 0.25, and text that is no DECIMAL when v is NULL
+                final int v = rnd.nextInt(6) == 0 ? Numbers.INT_NULL : rnd.nextInt(10);
+                if (v == Numbers.INT_NULL) {
+                    insert.append("NULL, 'x')");
+                } else {
+                    insert.append(v).append(", '").append(v).append(".25')");
+                }
             }
             execute(insert);
             statements.append(insert).append(";\n");
@@ -229,7 +300,7 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
     }
 
     // A query that joins two or three tables, each table after the first on one or two key pairs to an earlier
-    // table, with one or two conjuncts per join
+    // table, with one or two conjuncts per join, and for some joins a guarded cast before or after them
     private static String generateQuery(Rnd rnd) {
         final int tableCount = 2 + rnd.nextInt(TABLE_COUNT - 1);
         final StringBuilder sql = new StringBuilder("SELECT * FROM t0");
@@ -243,14 +314,30 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
                 final String[] secondKey = pickKeyPair(rnd);
                 sql.append(" AND t").append(slave).append('.').append(secondKey[0]).append(" = t").append(master).append('.').append(secondKey[1]);
             }
+            // 0 adds no guarded cast, 1 adds one before the conjuncts and 2 after them
+            final int guardedCast = rnd.nextBoolean() ? 1 + rnd.nextInt(2) : 0;
+            if (guardedCast == 1) {
+                appendAnd(where);
+                appendGuardedCast(rnd, where, slave, masterKey, rnd.nextInt(slave));
+            }
             for (int c = 0, n = 1 + rnd.nextInt(2); c < n; c++) {
-                if (!where.isEmpty()) {
-                    where.append(" AND ");
-                }
+                appendAnd(where);
                 appendConjunct(rnd, where, slave, masterKey, key[1], rnd.nextInt(slave));
+            }
+            if (guardedCast == 2) {
+                appendAnd(where);
+                appendGuardedCast(rnd, where, slave, masterKey, rnd.nextInt(slave));
             }
         }
         return sql.append(" WHERE ").append(where).toString();
+    }
+
+    // Whether the full-fat join of the query fails on the cast
+    private static boolean hasCastFailure(SqlCompiler fullFatCompiler, String sql) throws SqlException {
+        try (RecordCursorFactory factory = fullFatCompiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            return printRowsOrCastFailure(cursor, factory.getMetadata(), new StringSink()) != null;
+        }
     }
 
     // A value of the key column, or NULL. The tables share the values, so that every key type matches rows.
@@ -275,6 +362,19 @@ public class HashJoinKeyConditionFuzzTest extends AbstractCairoTest {
         }
         final String[] pair = MIXED_KEY_PAIRS[rnd.nextInt(MIXED_KEY_PAIRS.length)];
         return rnd.nextBoolean() ? pair : new String[]{pair[1], pair[0]};
+    }
+
+    // Prints the rows of the cursor, and returns null, or the failure of a cast of appendGuardedCast() that stops it
+    private static FlyweightMessageContainer printRowsOrCastFailure(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
+        try {
+            CursorPrinter.println(cursor, metadata, sink);
+            return null;
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer failure && Chars.equals(failure.getFlyweightMessage(), CAST_FAILURE)) {
+                return failure;
+            }
+            throw e;
+        }
     }
 
     // the lines of the rows, without the header

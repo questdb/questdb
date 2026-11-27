@@ -17305,11 +17305,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a condition that reads such master columns as well reads them from the slave instead, when the two
     // columns have one type whose equal values are the same, see collectSlaveKeyColumns(). Moves each conjunct of
     // the filter after the join that reads no other master column, and has one value per row however often it
-    // runs, into the join, see HashJoinLightRecordCursorFactory.setSlaveFilter(). A conjunct that reads no
-    // column stays, as the filter after the join evaluates a runtime constant once per execution. Returns the
-    // rest of the filter, or null when no conjunct stays. The join keeps the function that decided that a conjunct
-    // moves, so such a conjunct compiles once; one that this check finds unstable compiles again, in the filter after
-    // the join.
+    // runs, into the join, see HashJoinLightRecordCursorFactory.setSlaveFilter(), until one stays. The join
+    // evaluates the conjuncts that it takes before the filter after the join evaluates the rest, and AND stops at
+    // its first false conjunct, so a conjunct that stays may guard a later one that fails on the rows it drops,
+    // such as a cast to DECIMAL: the conjuncts after it stay too, in their order. A conjunct that reads no column
+    // stays, as the filter after the join evaluates a runtime constant once per execution. Returns the rest of the
+    // filter, or null when no conjunct stays. The join keeps the function that decided that a conjunct moves, so
+    // such a conjunct compiles once; the first one that this check keeps compiles again, in the filter after the
+    // join.
     private @Nullable ExpressionNode moveSlaveConditionsIntoHashJoin(
             HashJoinLightRecordCursorFactory hashJoin,
             ExpressionNode filterExpr,
@@ -17326,16 +17329,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             for (int i = 0, n = conjuncts.size(); i < n; i++) {
                 final ExpressionNode conjunct = conjuncts.getQuick(i);
-                final ExpressionNode rewritten = deepClone(expressionNodePool, conjunct);
-                condition = readsColumn(conjunct) && rewriteMasterKeysOntoSlave(rewritten, joinMetadata, slaveKeyColumns)
-                        ? compileStableJoinCondition(rewritten, joinMetadata, executionContext)
-                        : null;
-                if (condition == null) {
-                    keptFilterExpr = conjoin(keptFilterExpr, conjunct);
-                } else {
-                    slaveFilter = conjoin(slaveFilter, condition, rewritten.position, executionContext);
-                    condition = null;
+                // a conjunct after one that stays stays too, see above
+                if (keptFilterExpr == null) {
+                    final ExpressionNode rewritten = deepClone(expressionNodePool, conjunct);
+                    condition = readsColumn(conjunct) && rewriteMasterKeysOntoSlave(rewritten, joinMetadata, slaveKeyColumns)
+                            ? compileStableJoinCondition(rewritten, joinMetadata, executionContext)
+                            : null;
+                    if (condition != null) {
+                        slaveFilter = conjoin(slaveFilter, condition, rewritten.position, executionContext);
+                        condition = null;
+                        continue;
+                    }
                 }
+                keptFilterExpr = conjoin(keptFilterExpr, conjunct);
             }
         } catch (Throwable th) {
             Misc.free(condition, th);

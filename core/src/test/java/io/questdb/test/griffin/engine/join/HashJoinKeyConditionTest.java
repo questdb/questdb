@@ -31,11 +31,13 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -48,10 +50,11 @@ import java.util.function.LongFunction;
 
 // A condition after an INNER hash join that reads slave columns and master key columns, where each such
 // master column has a slave key column of its type that the join equates with it, moves into the join,
-// which reads the slave key column instead. When the join hashes its master, it evaluates the condition
-// once per slave row whose key the master has; otherwise, once per row of the join, as the filter after
-// the join does. The tables of createTables() give the expected rows by hand: m has 5 rows, s 8, so
-// "FROM m JOIN s" hashes m, and "FROM s JOIN m" hashes m as well, as its slave.
+// which reads the slave key column instead, unless a condition before it stays after the join: the
+// conditions run in the order of the query, as one may guard another. When the join hashes its master, it
+// evaluates the condition once per slave row whose key the master has; otherwise, once per row of the
+// join, as the filter after the join does. The tables of createTables() give the expected rows by hand:
+// m has 5 rows, s 8, so "FROM m JOIN s" hashes m, and "FROM s JOIN m" hashes m as well, as its slave.
 public class HashJoinKeyConditionTest extends AbstractCairoTest {
     private static final String NULL_KEY_TYPE_ROWS = """
             id\tid1
@@ -309,6 +312,42 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
         });
     }
 
+    // Only the conditions before the first one that stays after the join move into it: AND stops at its first
+    // false condition, so a condition that stays may guard those after it, which stay with it, in their order.
+    // s.v > m.k moves, s.v > m.y stays, as m.y is no key, and s.v < m.k + 8, which reads key columns only, stays
+    // after it. Per m row of k = 1, s rows 11 (v 4) and 13 (v 6) pass all three for m row 1 (y 0), and s row 13
+    // for m row 2 (y 5); s row 14 (v 3) passes for m row 3 (k = 2). With s.v > m.y first, nothing moves, and
+    // without s.v < m.k + 8, s row 12 (v 9) passes for m rows 1 and 2 as well.
+    @Test
+    public void testConditionsAfterStayingConditionStay() throws Exception {
+        assertMemoryLeak(() -> {
+            createConjunctTables();
+            assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v > m.k AND s.v > m.y AND s.v < m.k + 8 ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: s.k<s.v\n", "Filter filter: (m.y<s.v and s.v<m.k+8)")
+                    .returns("""
+                            id\tid1
+                            1\t11
+                            1\t13
+                            2\t13
+                            3\t14
+                            """);
+            assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v > m.y AND s.v > m.k ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: (m.y<s.v and m.k<s.v)")
+                    .withPlanNotContaining("Hash Join Light\n          condition: s.k=m.k\n          filter:")
+                    .returns("""
+                            id\tid1
+                            1\t11
+                            1\t12
+                            1\t13
+                            2\t12
+                            2\t13
+                            3\t14
+                            """);
+        });
+    }
+
     // Conditions that keep their place after the join: a master column that is no key, a random value, a value
     // that changes during the execution, a sub-query, a word that is no column, as the unit of extract(), and a
     // condition of the ON clause that reads no column, which the filter after the join evaluates once per
@@ -381,9 +420,10 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
 
     // Each conjunct that moves into the join compiles once: the join keeps the function that decided that it moves,
     // and ANDs them as FunctionParser does, one function for up to four conjuncts, so here the AND of the first four
-    // and the fifth. A conjunct that stays because it is random compiles twice, once to find that out and once after
-    // the join: rnd_int() is not stable, rnd_interval() is stable but random. One that reads a master column that is
-    // no key, or no column, compiles once, after the join, as does the whole filter when no conjunct moves.
+    // and the fifth. The first conjunct that stays because it is random compiles twice, once to find that out and once
+    // after the join: rnd_int() is not stable, rnd_interval() is stable but random. The conjuncts after it stay without
+    // that check, as a conjunct that stays may guard them, and compile once, after the join, as does one that reads a
+    // master column that is no key, or no column, and the whole filter when no conjunct moves.
     // test_close_counter('<n>')::INT is n, and the random terms are 0. Each conjunct that moves drops one s row that
     // no other drops: v >= 2 drops row 10, v < 9 row 11, v <> 6 row 12, id <> 13 row 13 and v + id < 21 row 14
     // (8 + 14). Rows 15 and 16 pass every conjunct, and every row passes the conjuncts that stay.
@@ -411,7 +451,7 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
                     AND s.v + s.id < m.k + test_close_counter('20')::INT
                     AND %s
                     ORDER BY 1, 2""".formatted(keptConjuncts);
-            assertCompiledFunctions(sql, new String[]{"1", "8", "5", "12", "20", "50", "7"}, new String[]{"99", "98"});
+            assertCompiledFunctions(sql, new String[]{"1", "8", "5", "12", "20", "98", "50", "7"}, new String[]{"99"});
             assertQuery(sql)
                     .noLeakCheck()
                     .withPlanContaining(
@@ -427,7 +467,15 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
                             """);
             final String keptOnlySql = "SELECT m.id, s.id FROM m JOIN s ON s.k = m.k AND test_close_counter('7')::INT > 0 WHERE "
                     + keptConjuncts + " ORDER BY 1, 2";
-            assertCompiledFunctions(keptOnlySql, new String[]{"50", "7"}, new String[]{"99", "98"});
+            assertCompiledFunctions(keptOnlySql, new String[]{"98", "50", "7"}, new String[]{"99"});
+            // rnd_interval() first: it compiles twice, and the conjunct after it, which could move on its own, once
+            assertCompiledFunctions(
+                    "SELECT m.id, s.id FROM m JOIN s ON s.k = m.k "
+                            + "WHERE s.v < m.k + test_close_counter('98')::INT + interval_start(rnd_interval())::LONG * 0 "
+                            + "AND s.v >= m.k + test_close_counter('1')::INT",
+                    new String[]{"1"},
+                    new String[]{"98"}
+            );
             assertQuery(keptOnlySql)
                     .noLeakCheck()
                     .withPlanContaining(keptFilter)
@@ -594,6 +642,76 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
             assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE test_timestamp_counter(s.ts) > m.k::TIMESTAMP")
                     .noLeakCheck()
                     .assertsPlanContaining("filter: s.k::timestamp<test_timestamp_counter");
+        });
+    }
+
+    // A condition that fails on some rows stays after a condition before it that stays after the join and drops those
+    // rows, so the filter after the join evaluates it only where the first one passes, as the filter of a full-fat
+    // join does. s row 10 holds what each condition fails on: text that is no DECIMAL and no TIMESTAMP, a DECIMAL that
+    // m.k - 1 = 0 divides, and arrays of shapes [2] and [3]. s.v > m.y drops it, for m row 1 as 1.0 > 10.0 fails and
+    // for m row 3 as its y is NULL, and keeps s row 11 (v 5.0) for m row 2 (y 3.0). For that pair, 3.50 + 2 > 0,
+    // 2.50 / 1 > 0, 2.50 % 1 = 0.50 > 0, 2024 + 2us is after 2020, and the arrays add up to [4.0, 6.0]. Written
+    // first, the condition moves into the join and fails there, as it fails after a full-fat join. The join hashes
+    // s, the smaller side, and then m, once two s rows of a key that m lacks make s the larger side.
+    @Test
+    public void testFailingConditionAfterStayingCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, k INT, y DOUBLE)");
+            execute("CREATE TABLE s (id INT, k INT, v DOUBLE, txt VARCHAR, tstxt VARCHAR, d DECIMAL(10,2), ts TIMESTAMP, a DOUBLE[], a2 DOUBLE[])");
+            execute("INSERT INTO m VALUES (1, 1, 10.0), (2, 2, 3.0), (3, 1, NULL)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, 1, 1.0, 'abc', 'abc', '1.00', '2024-01-01', ARRAY[1.0, 2.0], ARRAY[1.0, 2.0, 3.0]),
+                    (11, 2, 5.0, '3.50', '2020-01-01', '2.50', '2024-01-01', ARRAY[1.0, 2.0], ARRAY[3.0, 4.0])
+                    """);
+            // the condition, as the filter after the join prints it, and the error that it fails with on s row 10
+            final String[][] conditions = {
+                    {"s.txt::DECIMAL(10,2) + m.k > 0", "0.00<s.txt::DECIMAL(10,2)+m.k::DECIMAL(10,0)", "inconvertible value: `abc` [VARCHAR -> DECIMAL(10,2)]"},
+                    {"s.d / (m.k - 1) > 0", "0.00<s.d/m.k-1::DECIMAL(10,0)", "'/' operation failed: Division by zero"},
+                    {"s.d % (m.k - 1) > 0", "0.00<s.d%m.k-1::DECIMAL(10,0)", "'%' operation failed: Division by zero"},
+                    {"s.ts + m.k > s.tstxt", "s.tstxt<s.ts+m.k", "inconvertible value: `abc` [VARCHAR -> TIMESTAMP"},
+                    {"array_sum(s.a + s.a2) + m.k > 0", "0<array_sum(s.a+s.a2)+m.k", "arrays have incompatible shapes [leftShape=[2], rightShape=[3]]"},
+            };
+            for (int pass = 0; pass < 2; pass++) {
+                for (String[] condition : conditions) {
+                    assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v > m.y AND " + condition[0])
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .withPlanContaining("Filter filter: (m.y<s.v and " + condition[1] + ")\n")
+                            .returns("id\tid1\n2\t11\n");
+                    final String sql = "SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE " + condition[0] + " AND s.v > m.y";
+                    // the join reads the slave key column for m.k
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .assertsPlanContaining("filter: " + condition[1].replace("m.k", "s.k") + '\n', "Filter filter: m.y<s.v\n");
+                    assertFailsAsAfterFullFatJoin(sql, condition[2]);
+                }
+                execute("""
+                        INSERT INTO s VALUES
+                        (12, 3, 0.0, '1', '2020-01-01', '1.00', '2024-01-01', ARRAY[1.0], ARRAY[1.0]),
+                        (13, 3, 0.0, '1', '2020-01-01', '1.00', '2024-01-01', ARRAY[1.0], ARRAY[1.0])
+                        """);
+            }
+            // the error points at the text that the cast fails on
+            final String sql = "SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.txt::DECIMAL(10,2) + m.k > 0 AND s.v > m.y";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("s.txt"), "inconvertible value: `abc` [VARCHAR -> DECIMAL(10,2)]");
+            // the conditions keep their order wherever they reach the filter after the join from, and counting
+            // the rows evaluates them as reading them does
+            final String[] contexts = {
+                    "WITH j AS (SELECT m.id mid, s.id sid, m.k, m.y, s.v, s.txt FROM m JOIN s ON s.k = m.k) "
+                            + "SELECT mid, sid FROM j WHERE v > y AND txt::DECIMAL(10,2) + k > 0",
+                    "SELECT mid, sid FROM (SELECT m.id mid, s.id sid, m.k, m.y, s.v, s.txt FROM m JOIN s ON s.k = m.k) "
+                            + "WHERE v > y AND txt::DECIMAL(10,2) + k > 0",
+                    "SELECT m.id mid, x.id sid FROM m JOIN LATERAL (SELECT s.id FROM s WHERE s.k = m.k AND s.v > m.y AND s.txt::DECIMAL(10,2) + m.k > 0) x",
+            };
+            for (String context : contexts) {
+                assertQuery(context).noLeakCheck().noRandomAccess().returns("mid\tsid\n2\t11\n");
+            }
+            assertQuery("SELECT count(*) FROM m JOIN s ON s.k = m.k WHERE s.v > m.y AND s.txt::DECIMAL(10,2) + m.k > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
         });
     }
 
@@ -871,6 +989,18 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
         Assert.assertEquals(sql, expectedEvaluations, TestTimestampCounterFactory.COUNTER.get());
     }
 
+    // The query fails as it does with full-fat joins, which keep every condition after the join, in the order of the
+    // query: with the same message, which holds the given one, at the same position
+    private static void assertFailsAsAfterFullFatJoin(String sql, String message) throws Exception {
+        final FlyweightMessageContainer fullFatFailure = failureOf(sql, true);
+        final String fullFatMessage = fullFatFailure.getFlyweightMessage().toString();
+        final int fullFatPosition = fullFatFailure.getPosition();
+        TestUtils.assertContains(fullFatMessage, message);
+        final FlyweightMessageContainer failure = failureOf(sql, false);
+        TestUtils.assertEquals(sql, fullFatMessage, failure.getFlyweightMessage());
+        Assert.assertEquals(sql, fullFatPosition, failure.getPosition());
+    }
+
     // Counts the pairs of rows of m (x from 1 to 5,000) and s (x from 1 to 20,000) that the join matches, = matching
     // NULL to NULL, and that the condition keeps
     private static long countPairs(LongFunction<Integer> masterKey, LongFunction<Integer> slaveKey, BiPredicate<Long, Long> condition) {
@@ -923,6 +1053,19 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
     private static void dropKeyTypeTables() throws Exception {
         execute("DROP TABLE m");
         execute("DROP TABLE s");
+    }
+
+    // The failure of the query, which must fail
+    private static FlyweightMessageContainer failureOf(String sql, boolean isFullFat) throws Exception {
+        try {
+            TestUtils.assertException(engine, sqlExecutionContext, isFullFat, sql, sink);
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer failure) {
+                return failure;
+            }
+            throw e;
+        }
+        throw new AssertionError("assertException() returns only on a failure: " + sql);
     }
 
     // length() of the SYMBOL that the key makes, -1 for NULL
