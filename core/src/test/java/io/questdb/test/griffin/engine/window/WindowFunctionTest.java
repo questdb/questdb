@@ -21841,12 +21841,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 CachedWindow
                                   orderedFunctions: [[id1] => [row_number()]]
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: b.k=a.k
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: ta
-                                            Hash
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: ta
+                                            Build
+                                              joinType: inner
+                                              condition: b.k=a.k
+                                              inputSwap: when the left input is smaller
+                                              buildPayload: copied when the probe is large enough
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tb
@@ -21883,12 +21888,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     VirtualRecord
                                       functions: [id,id1,id+1,id1]
                                         SelectedRecord
-                                            Hash Join Light
-                                              condition: b.k=a.k
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: ta
-                                                Hash
+                                            Async Hash Join workers: 1
+                                              stages: 1
+                                                Probe
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: ta
+                                                Build
+                                                  joinType: inner
+                                                  condition: b.k=a.k
+                                                  inputSwap: when the left input is smaller
+                                                  buildPayload: copied when the probe is large enough
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tb
@@ -21913,12 +21923,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 CachedWindow
                                   orderedFunctions: [[id desc] => [row_number()]]
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: b.k=a.k
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: ta
-                                            Hash
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: ta
+                                            Build
+                                              joinType: inner
+                                              condition: b.k=a.k
+                                              inputSwap: when the left input is smaller
+                                              buildPayload: copied when the probe is large enough
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tb

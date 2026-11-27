@@ -178,7 +178,7 @@ public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
                 tables.add(new FuzzTable(tableName, columns, "ts"));
             }
 
-            final Rnd rnd = new Rnd(0x5eed, 0x7135);
+            final Rnd rnd = new Rnd(0x5eed, 0x7142);
             // A Rnd of its own keeps the config's draws out of the generator's stream.
             final FuzzConfig config = new FuzzConfig(new Rnd(0x5eed, 0xc0f1));
             int forwardCount = 0;
@@ -196,7 +196,7 @@ public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
             int tempTableCount = 0;
             int checkedCount = 0;
             for (int i = 0; i < CORPUS_SIZE; i++) {
-                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, config).sql();
+                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, true, config).sql();
                 try (RecordCursorFactory factory = select(sql)) {
                     final int timestampIndex = factory.getMetadata().getTimestampIndex();
                     // QueryRunner asks a plan for its direction only once the plan answered, as an export does.

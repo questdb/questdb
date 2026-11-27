@@ -16684,14 +16684,17 @@ public class LateralJoinTest extends AbstractCairoTest {
                                         Hash Left Outer Join Light
                                           condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
                                           symbolKeyJoin: true
-                                            Hash Join Light
-                                              condition: t2.t1_id=t1.id
-                                                Async JIT Filter workers: 1
-                                                  filter: status='ACTIVE'
+                                            Async JIT Hash Join workers: 1
+                                              stages: 1
+                                              filter: status='ACTIVE'
+                                                Probe
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t1
-                                                Hash
+                                                Build
+                                                  joinType: inner
+                                                  condition: t2.t1_id=t1.id
+                                                  buildPayload: copied when the probe is large enough
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t2
@@ -16710,14 +16713,17 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                 GroupBy vectorized: false
                                                                   keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
                                                                     SelectedRecord
-                                                                        Hash Join Light
-                                                                          condition: t2.t1_id=t1.id
-                                                                            Async JIT Filter workers: 1
-                                                                              filter: status='ACTIVE'
+                                                                        Async JIT Hash Join workers: 1
+                                                                          stages: 1
+                                                                          filter: status='ACTIVE'
+                                                                            Probe
                                                                                 PageFrame
                                                                                     Row forward scan
                                                                                     Frame forward scan on: t1
-                                                                            Hash
+                                                                            Build
+                                                                              joinType: inner
+                                                                              condition: t2.t1_id=t1.id
+                                                                              buildPayload: copied when the probe is large enough
                                                                                 PageFrame
                                                                                     Row forward scan
                                                                                     Frame forward scan on: t2
@@ -16779,16 +16785,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                                     SelectedRecord
                                         Hash Left Outer Join Light
                                           condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
-                                            Filter filter: t2.val<t1.val
-                                                Hash Join Light
-                                                  condition: t2.t1_id=t1.id
+                                            Async Hash Join workers: 1
+                                              stages: 1
+                                                Probe
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                                Build
+                                                  joinType: inner
+                                                  condition: t2.t1_id=t1.id
+                                                  inputSwap: when the left input is smaller
+                                                  buildPayload: copied when the probe is large enough
+                                                  postJoinFilter: t2.val<t1.val
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
                                             Hash
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
@@ -16803,12 +16814,16 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                 GroupBy vectorized: false
                                                                   keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
                                                                     SelectedRecord
-                                                                        Hash Join Light
-                                                                          condition: t2.t1_id=t1.id
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t1
-                                                                            Hash
+                                                                        Async Hash Join workers: 1
+                                                                          stages: 1
+                                                                            Probe
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t1
+                                                                            Build
+                                                                              joinType: inner
+                                                                              condition: t2.t1_id=t1.id
+                                                                              buildPayload: copied when the probe is large enough
                                                                                 PageFrame
                                                                                     Row forward scan
                                                                                     Frame forward scan on: t2

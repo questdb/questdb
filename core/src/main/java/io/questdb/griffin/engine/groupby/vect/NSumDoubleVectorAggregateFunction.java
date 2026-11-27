@@ -139,6 +139,15 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        computeSum();
+        // the sum and its compensation, which the natives' merge carries into the key it merges into
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), transientSum);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), transientC);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), transientCount);
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);

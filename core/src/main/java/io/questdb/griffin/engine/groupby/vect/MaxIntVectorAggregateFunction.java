@@ -106,6 +106,12 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // INT_NULL when no frame had a value
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), max.intValue());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), Integer.MIN_VALUE);
     }

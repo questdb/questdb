@@ -151,7 +151,7 @@ public class RowIdJoinShapeCoverageTest extends AbstractCairoTest {
         }
         final ObjList<String> corpus = new ObjList<>();
         for (int i = 0; i < CORPUS_SIZE; i++) {
-            corpus.add(QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, config).sql());
+            corpus.add(QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, true, config).sql());
         }
         return corpus;
     }

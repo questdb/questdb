@@ -475,6 +475,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.setJitMode(classJitMode);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+        sqlExecutionContext.setParallelHashJoinEnabled(configuration.isSqlParallelHashJoinEnabled());
         sqlExecutionContext.setParallelHashJoinGroupByEnabled(configuration.isSqlParallelHashJoinGroupByEnabled());
         sqlExecutionContext.setStreamGroupByEnabled(configuration.isSqlStreamGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());

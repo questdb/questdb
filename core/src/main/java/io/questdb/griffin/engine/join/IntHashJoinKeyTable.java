@@ -47,6 +47,8 @@ final class IntHashJoinKeyTable implements QuietCloseable {
     private static final long MAX_BUFFER_SIZE = 1L << 48;
     // Read directly by the build and its frozen snapshots.
     final HashJoinBuffer slots = new HashJoinBuffer(MAX_BUFFER_SIZE);
+    // Times the open table grew as keys filled it, past the size that open() and reserve() gave it.
+    int growCount;
     int keyCount;
     int slotCount;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -72,6 +74,7 @@ final class IntHashJoinKeyTable implements QuietCloseable {
                 throw CairoException.nonCritical().put("hash join build capacity overflow");
             }
             grow(slotCount * 2);
+            growCount++;
             slot = findSlot(slots.address, slotCount, key);
         }
         return slot;
@@ -80,7 +83,7 @@ final class IntHashJoinKeyTable implements QuietCloseable {
     @Override
     public void close() {
         slots.close();
-        keyCount = slotCount = 0;
+        growCount = keyCount = slotCount = 0;
         circuitBreaker = null;
     }
 
@@ -101,6 +104,7 @@ final class IntHashJoinKeyTable implements QuietCloseable {
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         slots.allocate((long) slotCount * SLOT_SIZE, true);
         this.slotCount = slotCount;
+        growCount = 0;
     }
 
     /**

@@ -197,6 +197,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @Nullable
     private IntHashSet projection;
     private DirectLongList recordAtRows;
+    // Number of Parquet frames that navigateTo(int, PageFrameMemoryRecord) decoded on a cache miss
+    // since the last of() call; see getRecordFrameDecodeCount().
+    private long recordFrameDecodeCount;
 
     public PageFrameMemoryPool(CairoConfiguration configuration, long maxCacheBytes) {
         try {
@@ -303,6 +306,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
+     * Returns the number of Parquet frames that {@link #navigateTo(int, PageFrameMemoryRecord)}
+     * decoded on a cache miss since the pool was last bound with {@code of()}. A frame counts each
+     * time the pool decodes it, so a frame decoded again after eviction counts twice, while a
+     * navigation served from the cache does not count.
+     * <p>
+     * Re-decoding a frame that a windowed navigation left partially decoded does not count either;
+     * a pool navigated only by records never holds such a frame.
+     */
+    @TestOnly
+    public long getRecordFrameDecodeCount() {
+        return recordFrameDecodeCount;
+    }
+
+    /**
      * Navigates to the given frame, potentially deserializing it to in-memory format
      * (for Parquet partitions). After this call, the input record can be used to access
      * any row within the frame.
@@ -386,6 +403,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     } else {
                         decodeAndAccount(frameIndex, parquetBuffers);
                     }
+                    recordFrameDecodeCount++;
                 } catch (Throwable th) {
                     // tryHit() unpinned the record's prior buffer, so any failure here leaves
                     // it evictable. Drop the stale binding so the fast path can't read freed
@@ -694,6 +712,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         this.decodeHint = hint;
         this.projection = projection;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
+        recordFrameDecodeCount = 0;
         Misc.free(parquetMetaDecoder);
         // A later query can reuse the same addresses for different partition mappings.
         partitionFrameWindowContext = Misc.free(partitionFrameWindowContext);

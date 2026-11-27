@@ -3998,17 +3998,21 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [dateadd('s',1,ts),sym]
                                 SelectedRecord
-                                    Filter filter: dateadd('s',1,m.ts)<2024-01-01T00:01:30.000000Z
-                                        Hash Left Outer Join Light
-                                          condition: m.sym=t.sym
-                                          symbolKeyJoin: true
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: trades
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: marks
+                                        Build
+                                          joinType: left outer
+                                          condition: m.sym=t.sym
+                                          symbolKeyJoin: true
+                                          buildPayload: copied when the probe is large enough
+                                          postJoinFilter: dateadd('s',1,m.ts)<2024-01-01T00:01:30.000000Z
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: marks
                             """)
                     .returns("""
                             x\tsym
@@ -4051,13 +4055,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [dateadd('s',1,ts),sym]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: m.sym=t.sym
-                                      symbolKeyJoin: true
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades
-                                        Hash
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                        Build
+                                          joinType: inner
+                                          condition: m.sym=t.sym
+                                          symbolKeyJoin: true
+                                          buildPayload: copied when the probe is large enough
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: marks
@@ -4109,16 +4117,20 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         Interval forward scan on: t1
                                           intervals: [("2024-01-01T01:00:00.000001Z","MAX")]
                                     SelectedRecord
-                                        Filter filter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
-                                            Hash Left Outer Join Light
-                                              condition: t2.id=t1.id
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                            Build
+                                              joinType: left outer
+                                              condition: t2.id=t1.id
+                                              buildPayload: copied when the probe is large enough
+                                              postJoinFilter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
                             """)
                     .returns("""
                             x\tid
@@ -4188,16 +4200,20 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         VirtualRecord
                                           functions: [dateadd('h',1,ts),id]
                                             SelectedRecord
-                                                Filter filter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
-                                                    Hash Left Outer Join Light
-                                                      condition: t2.id=t1.id
+                                                Async Hash Join workers: 1
+                                                  stages: 1
+                                                    Probe
                                                         PageFrame
                                                             Row forward scan
                                                             Frame forward scan on: t1
-                                                        Hash
-                                                            PageFrame
-                                                                Row forward scan
-                                                                Frame forward scan on: t2
+                                                    Build
+                                                      joinType: left outer
+                                                      condition: t2.id=t1.id
+                                                      buildPayload: copied when the probe is large enough
+                                                      postJoinFilter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tx

@@ -243,6 +243,20 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return httpConnectionContext.getFd();
     }
 
+    /**
+     * Returns the number of rows a CSV export reads from the query's cursor, or Long.MAX_VALUE when
+     * it may read them all, as it does when it counts rows. Without a row count, it reads up to the
+     * larger of skip and stop, plus one more row, which ends the export. A Parquet export ignores
+     * this value and reads every row.
+     */
+    public long getFirstReadRows() {
+        if (countRows) {
+            return Long.MAX_VALUE;
+        }
+        final long lastRow = Math.max(stop, skip);
+        return lastRow < Long.MAX_VALUE ? lastRow + 1 : Long.MAX_VALUE;
+    }
+
     public HttpConnectionContext getHttpConnectionContext() {
         return httpConnectionContext;
     }

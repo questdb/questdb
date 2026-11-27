@@ -1226,6 +1226,31 @@ public interface CairoConfiguration {
      */
     double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio();
 
+    /**
+     * Maximum number of rows in a native page frame of a parallel hash join's probe scan. The
+     * effective limit is the smaller of this value and {@link #getSqlPageFrameMaxRows()}.
+     * <p>
+     * Each probe frame is one task for the query workers and the unit of joined rows the join
+     * holds in flight, so smaller frames return the first rows sooner and use less memory.
+     * Parquet row groups are not split.
+     */
+    int getSqlParallelHashJoinPageFrameMaxRows();
+
+    /**
+     * Maximum number of joined rows a parallel hash join task emits for its probe frame before it
+     * leaves the rest of the frame to a continuation task. A task may always emit at least as many
+     * rows as its frame holds, so the effective limit is the larger of this value and the frame's
+     * row count.
+     */
+    int getSqlParallelHashJoinTaskOutputMaxRows();
+
+    /**
+     * Memory budget, in bytes, for the joined rows a parallel hash join query holds in flight. The
+     * budget determines how many probe frames the join dispatches at once; the join always
+     * dispatches at least one frame, whatever the budget.
+     */
+    long getSqlParallelHashJoinTupleRingMaxSize();
+
     long getSqlParallelWorkStealingSpinTimeout();
 
     int getSqlParallelWorkStealingThreshold();
@@ -1689,6 +1714,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelGroupByEnabled();
+
+    boolean isSqlParallelHashJoinEnabled();
 
     boolean isSqlParallelHashJoinGroupByEnabled();
 

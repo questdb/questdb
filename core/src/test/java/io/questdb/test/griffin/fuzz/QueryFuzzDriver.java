@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -111,19 +112,40 @@ public final class QueryFuzzDriver {
     // guards it: no budget lifts POSTING off zero, because it needs the run's random schema to
     // carry a posting-indexed SYMBOL.
     static final int MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR = 25;
+    // Share of the parallel join axis's completed comparisons that a working planner runs on the
+    // parallel hash join, as run()'s guard models it. The share is below 100% because the
+    // generator sends a minority of its queries through inputs the operator refuses, LIMIT barriers
+    // and sorted right inputs, and the optimiser keeps the ordinary plan for some filters. A default
+    // run of 1_000 queries measured 19 of 27, and a 20_000-query run 414 of 589, both 70%. The
+    // baseline sits well below that, and the guard fails a run with the fused axis's false-alarm
+    // rate, FUSED_SHARE_FALSE_ALARM, while it still fails every guarded run of a planner that stops
+    // running the operator (0.5^25 = 3e-8 at the smallest guarded sample).
+    private static final double PARALLEL_JOIN_SHARE_BASELINE = 0.5;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
     private static final int SERIAL_PROBABILITY_PCT = 5;
+    // Share of the comparisons that ran the parallel hash join in which the operator stacked two
+    // joins or more, as run()'s guard models it. About half of the equi-join queries are stars,
+    // and the operator stacks a star's later join unless the join keeps the ordinary plan: a
+    // snowflake key, an input that exposes no page frames, a residual the workers cannot run. Two
+    // 20_000-query runs measured 155 of 383 and 163 of 453, 36% to 40%. The baseline sits below
+    // that, and the guard fails a run with the fused axis's false-alarm rate, while it fails a
+    // planner that stops stacking from 33 operator runs on (0.7^33 = 7.7e-6), which a default run of
+    // 1_000 queries reaches only now and then and a large run always.
+    private static final double STACKED_SHARE_BASELINE = 0.3;
 
     private QueryFuzzDriver() {
     }
 
-    public static void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext, FuzzConfig config, Rnd rnd,
-                           ObjList<FuzzTable> tables, String queryWorkerNamePrefix, Phase phase, Consumer<Rnd> querySetup) throws Exception {
+    /**
+     * Runs the campaign and returns its runner, whose counters tell what the run met.
+     */
+    public static QueryRunner run(CairoEngine engine, SqlExecutionContext sqlExecutionContext, FuzzConfig config, Rnd rnd,
+                                  ObjList<FuzzTable> tables, String queryWorkerNamePrefix, Phase phase, Consumer<Rnd> querySetup) throws Exception {
         for (int i = 0; i < tables.size(); i++) {
-            logSchema(tables.getQuick(i));
+            logSchema(tables.getQuick(i), config.getTableRows(i));
             if (tables.getQuick(i).getShadow() != null) {
-                logSchema(tables.getQuick(i).getShadow());
+                logSchema(tables.getQuick(i).getShadow(), config.getTableRows(i));
             }
         }
         QueryRunner runner = new QueryRunner(
@@ -132,8 +154,10 @@ public final class QueryFuzzDriver {
                 config.isDiffJitEnabled(),
                 config.isDiffShadowEnabled(),
                 config.isDiffFusedEnabled(),
+                config.isDiffParallelJoinEnabled(),
                 config.isDiffStreamEnabled(),
                 config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null,
+                AbstractCairoTest.staticOverrides,
                 config.isVerifyCursorEnabled(),
                 tables,
                 queryWorkerNamePrefix
@@ -141,11 +165,15 @@ public final class QueryFuzzDriver {
         // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
-        // HORIZON JOIN and WINDOW JOIN must be included: without them the
-        // serial control arm still runs those joins in parallel, defeating the
-        // determinism the serial arm exists to provide.
+        // HORIZON JOIN, WINDOW JOIN and the fused hash join GROUP BY must be
+        // included: without them the serial control arm still runs those joins
+        // in parallel, defeating the determinism the serial arm exists to
+        // provide. isParallelHashJoinGroupByEnabled() also requires parallel
+        // GROUP BY and query workers, both on at this point, so the snapshot
+        // reads the context's own flag.
         final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
+        final boolean savedParallelHashJoin = sqlExecutionContext.isParallelHashJoinEnabled();
         final boolean savedParallelHashJoinGroupBy = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
         final boolean savedParallelHorizonJoin = sqlExecutionContext.isParallelHorizonJoinEnabled();
         final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
@@ -166,6 +194,8 @@ public final class QueryFuzzDriver {
         int budget = phase == Phase.FAULTS
                 ? Math.max(1, config.getNumQueries() * config.getFaultProbabilityPct() / 100)
                 : config.getNumQueries();
+        // True when the run injects faults at all.
+        final boolean isFaultPhase = phase == Phase.FAULTS || (phase == Phase.MIXED && config.isFaultInjectionEnabled());
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < budget; q++) {
                 querySetup.accept(rnd);
@@ -178,7 +208,7 @@ public final class QueryFuzzDriver {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config.isEquiJoinEnabled(), config);
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -197,18 +227,35 @@ public final class QueryFuzzDriver {
                     if (!runFaultParallel) {
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHashJoinEnabled(false);
                         sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
                         sqlExecutionContext.setParallelTopKEnabled(false);
                         sqlExecutionContext.setParallelWindowJoinEnabled(false);
                     }
+                    final boolean isPressured = query.shape() == QueryShape.EQUI_JOIN;
+                    applyParallelJoinPressure(sqlExecutionContext, config, isPressured);
                     try {
                         result = runner.runFault(query, faultType, rnd, runFaultParallel);
+                        // A query that its own fault left whole also runs under a cancellation,
+                        // which draws nothing from the run's generator. A cancelled query that
+                        // fails the fault's oracle fails the run; any other outcome leaves the
+                        // result of the query's own fault as it is.
+                        if (!result.isFailed() && !result.isSkipped() && runner.isFaultTypeAvailable(FaultType.CANCEL)) {
+                            final QueryRunner.Result cancelResult = runner.runCancelFault(query, runFaultParallel);
+                            if (cancelResult.isFailed()) {
+                                result = cancelResult;
+                            }
+                        }
                     } finally {
+                        if (isPressured) {
+                            applyParallelJoinPressure(sqlExecutionContext, config, false);
+                        }
                         if (!runFaultParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHashJoinEnabled(savedParallelHashJoin);
                             sqlExecutionContext.setParallelHashJoinGroupByEnabled(savedParallelHashJoinGroupBy);
                             sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
@@ -225,7 +272,7 @@ public final class QueryFuzzDriver {
                     final long postGenS0 = rnd.getSeed0();
                     final long postGenS1 = rnd.getSeed1();
                     rnd.reset(preGenS0, preGenS1);
-                    final String spellingSql = QueryGenerator.generate(rnd, tables, BindContext.plainSpelling(), injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config).sql();
+                    final String spellingSql = QueryGenerator.generate(rnd, tables, BindContext.plainSpelling(), injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config.isEquiJoinEnabled(), config).sql();
                     Assert.assertTrue(
                             "plain spelling drew a different rnd stream for: " + query.sql(),
                             rnd.getSeed0() == postGenS0 && rnd.getSeed1() == postGenS1
@@ -254,9 +301,9 @@ public final class QueryFuzzDriver {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
-                        if (ctx.getBindValues().size() > 0) {
-                            query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config.isEquiJoinEnabled(), config);
+                        if (ctx.getBindValues().size() > 0 || ctx.getLimitValue() != null) {
+                            query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues(), ctx.getLimitValue());
                             bindGen++;
                             LOG.info().$("fuzz bind: ").$safe(query.bindSql()).$();
                         }
@@ -267,6 +314,7 @@ public final class QueryFuzzDriver {
                         serial++;
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHashJoinEnabled(false);
                         sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
@@ -274,12 +322,32 @@ public final class QueryFuzzDriver {
                         sqlExecutionContext.setParallelWindowJoinEnabled(false);
                         LOG.info().$("fuzz serial: ").$safe(query.sql()).$();
                     }
+                    final boolean isPressured = query.shape() == QueryShape.EQUI_JOIN;
+                    applyParallelJoinPressure(sqlExecutionContext, config, isPressured);
                     try {
                         result = runner.run(query);
+                        // Every equi-join query that the axes found whole also runs under a
+                        // cancellation, so that the run cancels the parallel hash join far more
+                        // often than the fault queries, one in twenty of which is an equi-join,
+                        // would: in its builds, its probe tasks, its continuations and its
+                        // counts, alone, stacked and swapped. A cancelled query that fails the
+                        // fault's oracle fails the run; any other outcome leaves the result of the
+                        // comparisons as it is.
+                        if (isPressured && isFaultPhase && !result.isFailed() && !result.isSkipped()
+                                && runner.isFaultTypeAvailable(FaultType.CANCEL)) {
+                            final QueryRunner.Result cancelResult = runner.runCancelFault(query, !disableParallel);
+                            if (cancelResult.isFailed()) {
+                                result = cancelResult;
+                            }
+                        }
                     } finally {
+                        if (isPressured) {
+                            applyParallelJoinPressure(sqlExecutionContext, config, false);
+                        }
                         if (disableParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHashJoinEnabled(savedParallelHashJoin);
                             sqlExecutionContext.setParallelHashJoinGroupByEnabled(savedParallelHashJoinGroupBy);
                             sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
@@ -308,16 +376,18 @@ public final class QueryFuzzDriver {
         }
         LOG.info().$("fuzz done: ").$(budget).$(" queries, ")
                 .$(serial).$(" serial, ")
-                .$(faultGen).$(" with fault injection (").$(runner.getFaultsFired()).$(" fired), ")
+                .$(faultGen).$(" with fault injection (").$(runner.getFaultsFired() - runner.getFaultsFired(FaultType.CANCEL)).$(" fired), ")
                 .$(bindGen).$(" with bind variant, ")
                 .$(spellingGen).$(" with plain spelling (").$(runner.getSpellingAxisRuns()).$(" compared), ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
                 .$();
         LOG.info().$("fuzz faults by type: ")
-                .$("FILE ").$(runner.getFaultsFired(FaultType.FILE)).$('/').$(runner.getFaultsArmed(FaultType.FILE))
+                .$("CANCEL ").$(runner.getFaultsFired(FaultType.CANCEL)).$('/').$(runner.getFaultsArmed(FaultType.CANCEL))
+                .$(", FILE ").$(runner.getFaultsFired(FaultType.FILE)).$('/').$(runner.getFaultsArmed(FaultType.FILE))
                 .$(", MALLOC ").$(runner.getFaultsFired(FaultType.MALLOC)).$('/').$(runner.getFaultsArmed(FaultType.MALLOC))
                 .$(", FUNCTION ").$(runner.getFaultsFired(FaultType.FUNCTION)).$('/').$(runner.getFaultsArmed(FaultType.FUNCTION))
+                .$(", QUERY_MEMORY_LIMIT ").$(runner.getFaultsFired(FaultType.QUERY_MEMORY_LIMIT)).$('/').$(runner.getFaultsArmed(FaultType.QUERY_MEMORY_LIMIT))
                 .$(" (fired/armed)")
                 .$();
         LogRecord shapeLog = LOG.info().$("fuzz shapes (compared/accepted/generated): ");
@@ -332,6 +402,42 @@ public final class QueryFuzzDriver {
                 .$(runner.getFusedAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
+                .$();
+        LOG.info().$("fuzz parallel join axis: ").$(runner.getParallelJoinAxisSelected()).$(" of ")
+                .$(runner.getParallelJoinAxisCompletedRuns()).$(" completed comparisons used the parallel hash join, ")
+                .$(runner.getParallelJoinAxisStacked()).$(" of them stacking two joins or more (at most ")
+                .$(runner.getParallelJoinAxisMaxStages()).$("), ")
+                .$(runner.getParallelJoinAxisSwapCandidates()).$(" whose first join may swap its inputs, ")
+                .$(runner.getParallelJoinAxisSwapped()).$(" whose execution swapped them; ")
+                .$(runner.getParallelJoinAxisRuns()).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.EQUI_JOIN.ordinal()]).$(" equi-join queries; ")
+                .$(runner.getUntypedLimitAxisRuns()).$(" comparisons of bind forms whose LIMIT and SELECT list share an untyped $1")
+                .$();
+        LOG.info().$("fuzz parallel join pressure: ").$(runner.getParallelJoinAliasedRuns()).$(" executions with more frames than ring entries, ")
+                .$(runner.getParallelJoinNarrowedWindowRuns()).$(" with a window that narrowed, ")
+                .$(runner.getParallelJoinSingleFrameWindowRuns()).$(" ending with a window of one frame; ")
+                .$(runner.getParallelJoinPartialReadChecks()).$(" partial reads checked (")
+                .$(runner.getParallelJoinPartialReadStacked()).$(" stacked, ")
+                .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
+                .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
+                .$(runner.getParallelJoinReexecutionChecks()).$(" factories executed again (")
+                .$(runner.getParallelJoinReexecutionAbandoned()).$(" after an execution left part of the way); ")
+                .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first, ")
+                .$(runner.getParallelJoinFirstReadFormRuns()).$(" of which reached the join through an operator over it, ")
+                .$(runner.getParallelJoinLimitFormRuns()).$(" whose LIMIT reached the join from outside its own query; ")
+                .$(runner.getParallelJoinStepperCopyRuns()).$(" queries ran the stages' stepper copies (")
+                .$(runner.getParallelJoinStepperCopyStackedRuns()).$(" stacked in the query's orientation, ")
+                .$(runner.getParallelJoinStepperCopySwappedRuns()).$(" swapped on copies defined as they compiled, ")
+                .$(runner.getParallelJoinStepperCopySwappedStackedRuns()).$(" of them stacked), ")
+                .$(runner.getParallelJoinStepperSwitchRuns()).$(" of them defined after the compile (")
+                .$(runner.getParallelJoinStepperSwitchSwappedRuns()).$(" swapped, ")
+                .$(runner.getParallelJoinStepperFirstPassSwitchRuns()).$(" switched within the first pass)")
+                .$();
+        LOG.info().$("fuzz parallel join storage: ").$(runner.getParallelJoinOverColumnTopKeys()).$(" executions over a column top join key, ")
+                .$(runner.getParallelJoinOverParquetColumnTops()).$(" over column tops in Parquet tables, ")
+                .$(runner.getParallelJoinOverNonPartitioned()).$(" over non-partitioned tables, ")
+                .$(runner.getParallelJoinOverNonWal()).$(" over non-WAL tables, ")
+                .$(runner.getParallelJoinOverDroppedColumns()).$(" over tables with a dropped column")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
         LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
@@ -422,6 +528,39 @@ public final class QueryFuzzDriver {
                 );
             }
         }
+        // Guard the parallel join axis against going vacuous, as the fused axis is guarded above: it
+        // compares two different plans only when the pivot selected the parallel hash join.
+        final int parallelJoinCompleted = runner.getParallelJoinAxisCompletedRuns();
+        if (config.isDiffParallelJoinEnabled() && generatedByShape[QueryShape.EQUI_JOIN.ordinal()] > 0) {
+            if (parallelJoinCompleted < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+                LOG.info().$("fuzz parallel join axis below the sample size, NOT guarded this run: ")
+                        .$(parallelJoinCompleted).$('/').$(MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR)
+                        .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
+                        .$();
+            } else {
+                final int parallelJoinSelected = runner.getParallelJoinAxisSelected();
+                Assert.assertFalse(
+                        "the parallel hash join ran on only " + parallelJoinSelected + " of " + parallelJoinCompleted
+                                + " completed comparisons, which a planner that runs it on " + Math.round(100 * PARALLEL_JOIN_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(parallelJoinSelected, parallelJoinCompleted, PARALLEL_JOIN_SHARE_BASELINE)
+                                + "; the parallel join axis looks vacuous",
+                        isParallelJoinShareImplausible(parallelJoinSelected, parallelJoinCompleted)
+                );
+                // The same for the stacking: a planner that stops absorbing a star's later joins runs
+                // every one of them as an ordinary join over a one-stage operator, which the axis
+                // still finds equal to the ordinary plan.
+                final int parallelJoinStacked = runner.getParallelJoinAxisStacked();
+                Assert.assertFalse(
+                        "the parallel hash join stacked two joins or more in only " + parallelJoinStacked + " of its "
+                                + parallelJoinSelected + " runs, which a planner that stacks " + Math.round(100 * STACKED_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(parallelJoinStacked, parallelJoinSelected, STACKED_SHARE_BASELINE)
+                                + "; the star joins look unstacked",
+                        isStackedShareImplausible(parallelJoinStacked, parallelJoinSelected)
+                );
+            }
+        }
         // SAMPLE BY plans the stream GROUP BY by default, so the axis should run on a large enough sample.
         final int sampleByGenerated = generatedByShape[QueryShape.SAMPLE_BY.ordinal()];
         if (config.isDiffStreamEnabled() && sampleByGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
@@ -459,7 +598,7 @@ public final class QueryFuzzDriver {
         // engine's FilesFacade is not a FailureFileFacade - so it reads as "armed 0, fired 0" and no
         // fire-count floor can see it. Assert the type is on offer instead.
         if (phase == Phase.DIFFERENTIAL || (phase == Phase.MIXED && !config.isFaultInjectionEnabled())) {
-            return;
+            return runner;
         }
         for (FaultType type : FaultType.values()) {
             Assert.assertTrue(
@@ -468,9 +607,11 @@ public final class QueryFuzzDriver {
             );
         }
         if (faultGen >= MIN_FAULT_QUERIES_FOR_FIRE_FLOOR) {
+            // The cancellations, which run next to the fault that each of these queries drew, do
+            // not stand in for it.
             Assert.assertTrue(
                     "fault injection ran on " + faultGen + " queries but no fault fired; the injector looks disarmed",
-                    runner.getFaultsFired() > 0
+                    runner.getFaultsFired() - runner.getFaultsFired(FaultType.CANCEL) > 0
             );
         }
         // The aggregate floor above cannot tell a live FUNCTION injector from a dead FILE one: a single
@@ -492,6 +633,7 @@ public final class QueryFuzzDriver {
                 );
             }
         }
+        return runner;
     }
 
     /**
@@ -520,6 +662,24 @@ public final class QueryFuzzDriver {
         return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }
 
+    /**
+     * Says whether a working planner, one that runs PARALLEL_JOIN_SHARE_BASELINE of the completed
+     * comparisons on the parallel hash join, would run {@code selected} or fewer of
+     * {@code completed} on it with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    static boolean isParallelJoinShareImplausible(int selected, int completed) {
+        return binomialLowerTail(selected, completed, PARALLEL_JOIN_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
+    }
+
+    /**
+     * Says whether a working planner, one that stacks two joins or more into STACKED_SHARE_BASELINE
+     * of the parallel hash joins it runs, would stack {@code stacked} or fewer of {@code selected}
+     * with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    static boolean isStackedShareImplausible(int stacked, int selected) {
+        return binomialLowerTail(stacked, selected, STACKED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
+    }
+
     static AssertionError buildFailure(ObjList<QueryRunner.Result> failures) {
         StringBuilder sb = new StringBuilder("query fuzz found ").append(failures.size())
                 .append(" unexpected failure(s):\n");
@@ -532,6 +692,24 @@ public final class QueryFuzzDriver {
         }
         // Chain the first cause so the stack trace still points at real source.
         return new AssertionError(sb.toString(), failures.getQuick(0).getFailure());
+    }
+
+    // Puts the run's equi-join queries under the frame pressure that the config picked, or lifts it.
+    private static void applyParallelJoinPressure(SqlExecutionContext sqlExecutionContext, FuzzConfig config, boolean isOn) {
+        if (config.getParallelJoinFrameMaxRows() > 0) {
+            if (isOn) {
+                sqlExecutionContext.changePageFrameSizes(1, config.getParallelJoinFrameMaxRows());
+            } else {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        }
+        if (config.getParallelJoinDispatchLimit() > -1) {
+            if (isOn) {
+                AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, config.getParallelJoinDispatchLimit());
+            } else {
+                AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, (String) null);
+            }
+        }
     }
 
     /**
@@ -556,6 +734,9 @@ public final class QueryFuzzDriver {
      */
     private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
         return switch (shape) {
+            case EQUI_JOIN -> config.isEquiJoinEnabled()
+                    ? describeMissingJoinTables(tables)
+                    : "-D" + FuzzConfig.EQUI_JOIN_PROP + "=false";
             case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
             case GROUPING_SETS -> config.isGroupingSetsEnabled()
                     ? null
@@ -642,15 +823,17 @@ public final class QueryFuzzDriver {
         }
     }
 
-    static void logSchema(FuzzTable t) {
+    static void logSchema(FuzzTable t, int rows) {
         StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
-                .append(" (parquet=").append(t.getParquetMode());
+                .append(" (rows=").append(rows)
+                .append(" parquet=").append(t.getParquetMode());
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
         }
         if (t.getCompositeDay() != null) {
             sb.append(" composite=").append(t.getCompositeDay());
         }
+        sb.append(" storage=").append(t.getStorage().describe());
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);

@@ -638,12 +638,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
+    private final boolean sqlParallelHashJoinEnabled;
     private final long sqlParallelHashJoinGroupByBuildParallelMinRows;
     private final long sqlParallelHashJoinGroupByBuildRowsPerPartition;
     private final boolean sqlParallelHashJoinGroupByEnabled;
     private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
     private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
     private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
+    private final int sqlParallelHashJoinPageFrameMaxRows;
+    private final int sqlParallelHashJoinTaskOutputMaxRows;
+    private final long sqlParallelHashJoinTupleRingMaxSize;
     private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
@@ -2708,9 +2712,32 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio < 0 || !Double.isFinite(sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
             }
+            this.sqlParallelHashJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, 100_000);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, sqlParallelHashJoinPageFrameMaxRows);
+            // The maximum number of rows in a native probe frame of a parallel hash join.
+            final int parallelHashJoinFrameMaxRows = Math.min(sqlPageFrameMaxRows, sqlParallelHashJoinPageFrameMaxRows);
+            this.sqlParallelHashJoinTaskOutputMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, parallelHashJoinFrameMaxRows);
+            if (sqlParallelHashJoinTaskOutputMaxRows < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS.getPropertyPath(),
+                        Integer.toString(sqlParallelHashJoinTaskOutputMaxRows));
+            }
+            // Room for every probe frame the join can have in flight, each at full size with six
+            // 8-byte slots per row: the probe row index plus one build locator per join. That fits
+            // stacks of up to five joins in the wide layout, or up to eleven in the narrow 4-byte
+            // layout that most executions use.
+            final long parallelHashJoinRingFrames = Math.max(0, Math.min(sqlParallelFilterDispatchLimit, cairoPageFrameReduceQueueCapacity));
+            this.sqlParallelHashJoinTupleRingMaxSize = getLongSize(
+                    properties,
+                    env,
+                    PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE,
+                    parallelHashJoinRingFrames * parallelHashJoinFrameMaxRows * 6 * Long.BYTES,
+                    0
+            );
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
-                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
+                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled
+                    && !sqlParallelHashJoinEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
@@ -5810,6 +5837,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlParallelHashJoinPageFrameMaxRows() {
+            return sqlParallelHashJoinPageFrameMaxRows;
+        }
+
+        @Override
+        public int getSqlParallelHashJoinTaskOutputMaxRows() {
+            return sqlParallelHashJoinTaskOutputMaxRows;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinTupleRingMaxSize() {
+            return sqlParallelHashJoinTupleRingMaxSize;
+        }
+
+        @Override
         public long getSqlParallelWorkStealingSpinTimeout() {
             return sqlParallelWorkStealingSpinTimeout;
         }
@@ -6421,6 +6463,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelHashJoinEnabled() {
+            return sqlParallelHashJoinEnabled;
         }
 
         @Override

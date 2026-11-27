@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
@@ -512,6 +513,61 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
     @Test
     public void testOpeningReadsNoBuildRowWithoutWorkers() throws Exception {
         forEachShape(null, this::assertOpeningReadsNoBuildRow);
+    }
+
+    @Test
+    public void testPoisonedBuildFilterFailsInRoundsWhateverMinRows() throws Exception {
+        // No build holds the configured rows, so only a filter that runs interpreted over more than
+        // one frame builds in rounds.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
+        assertMemoryLeak(() -> TestUtils.execute(null, (db, compiler, ctx) -> {
+            createLifecycleTables(db, ctx);
+            try (SqlExecutionContextImpl context = context(db, 4)) {
+                // Day partitions of 1,440 rows in frames of up to 500.
+                context.changePageFrameSizes(500, 500);
+                for (String shape : SHAPES) {
+                    // The INNER shapes, whose condition on lb is the build scan's filter. The JIT does
+                    // not compile DECIMAL casts, so it runs interpreted, in the build's first round,
+                    // and fails there on lb's poisoned row.
+                    if (!shape.contains("{W}")) {
+                        continue;
+                    }
+                    final String sql = poisoned(shape);
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        TestUtils.assertContains(plan(factory, context), "buildFilter: ");
+                        final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                        final HashJoinBuildStage stage = atom.getBuildingStage();
+                        for (int execution = 0; execution < 2; execution++) {
+                            final long rounds = stage.getRoundCount();
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                cursor.hasNext();
+                                Assert.fail("expected the build to fail the query: " + sql);
+                            } catch (CairoException | ImplicitCastException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 10000 [INT -> DECIMAL(4,0)]");
+                            }
+                            Assert.assertEquals(sql, rounds + 1, stage.getRoundCount());
+                            Assert.assertNull(sql, atom.getFrozenBuild());
+                            Assert.assertEquals(sql, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertNull(sql, context.getMemoryTracker());
+                        }
+                    }
+                    // A condition that every row passes builds in rounds and reads the ordinary plan's
+                    // rows; without it, the owner builds.
+                    final String passing = shape.replace("{W}", " WHERE (lb.j * 10)::DECIMAL(6,0) > 0::DECIMAL(6,0)");
+                    final String unfiltered = healthy(shape);
+                    for (String query : new String[]{passing, unfiltered}) {
+                        final List<String> expected = rowsOfOrdinaryPlan(db, query, context);
+                        try (RecordCursorFactory factory = db.select(query, context)) {
+                            final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                Assert.assertEquals(query, expected, readRows(cursor, factory.getMetadata()));
+                                Assert.assertEquals(query, query.equals(passing), atom.isBuiltInRounds());
+                            }
+                        }
+                    }
+                }
+            }
+        }, configuration, LOG));
     }
 
     private static void assertNotBuilt(String sql, AsyncHashJoinGroupByAtom atom, long idle) {

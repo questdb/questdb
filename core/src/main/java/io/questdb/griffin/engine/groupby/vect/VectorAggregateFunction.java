@@ -33,7 +33,9 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
      * Non-keyed aggregation that doesn't use rosti.
-     * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
+     * Used for truly non-keyed aggregation and, in a keyed aggregation, for page frames whose key
+     * column holds no data: a column top, or a Parquet row group whose key column is all NULL. All
+     * rows of such a frame belong to the NULL key; see {@link #initNullKeyRosti(long)}.
      *
      * @param address       address
      * @param frameRowCount row count int the frame; this is provided to "count" functions
@@ -70,6 +72,20 @@ public interface VectorAggregateFunction extends Function, Mutable {
     int getValueOffset();
 
     /**
+     * Used for keyed aggregates only. Writes what {@link #aggregate(long, long, int)} accumulated over
+     * the page frames whose key column holds no data into the initial slot values of the given rosti,
+     * which has the same value columns as the keyed map. The values use the layout that the keyed
+     * natives use for a key; if nothing was accumulated, they are the values of a key with no rows.
+     * <p>
+     * The caller then inserts the NULL key into that rosti, so the key starts with these values, and
+     * {@link #merge(long, long)} merges it into the keyed map the same way it merges the NULL key of
+     * a worker's map.
+     *
+     * @param pRosti pointer to rosti
+     */
+    void initNullKeyRosti(long pRosti);
+
+    /**
      * Set initial/default slot values (e.g. 0 for count())
      *
      * @param pRosti pointer to rosti
@@ -99,7 +115,13 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
      * Used for keyed aggregates only.
-     * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.
+     * Merges the value that {@link #aggregate(long, long, int)} accumulated into the null key, and
+     * (optionally) replaces null values with constant in rosti.
+     * <p>
+     * The keyed GROUP BY does not rely on this merge: it merges the accumulated value through
+     * {@link #initNullKeyRosti(long)} and {@link #merge(long, long)}, then calls {@link #clear()}
+     * before this method, so there is nothing left to merge here. The NULL key of the frames whose
+     * key column holds no data then merges the same way as the NULL key of a worker's map.
      *
      * @param pRosti pointer to rosti
      * @return true if wrapUp was fine and false if it failed on memory allocation

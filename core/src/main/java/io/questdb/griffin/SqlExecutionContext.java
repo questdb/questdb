@@ -163,6 +163,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return null;
     }
 
+    /**
+     * Returns the number of rows the client is expected to read first from the cursor that the
+     * query's factory opens next, as bounded by the wire protocol: an HTTP page or CSV export
+     * without a row count, or a PostgreSQL Execute's row limit. Returns Long.MAX_VALUE when the
+     * protocol sets no bound.
+     * <p>
+     * This is a hint, not a limit: the client may read further, as a PostgreSQL portal does on its
+     * next Execute. The protocol sets the value only around the factory's {@code getCursor()} call;
+     * see {@link #setFirstReadRows(long)}.
+     */
+    default long getFirstReadRows() {
+        return Long.MAX_VALUE;
+    }
+
     int getIntervalFunctionType();
 
     /**
@@ -413,6 +427,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelGroupByEnabled();
 
+    boolean isParallelHashJoinEnabled();
+
     boolean isParallelHashJoinGroupByEnabled();
 
     boolean isParallelHorizonJoinEnabled();
@@ -619,6 +635,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         setExpiryReadFilterEnabled(policy == ExpiryReadPolicy.FILTER);
     }
 
+    /**
+     * Sets the number of rows the client is expected to read first; see {@link #getFirstReadRows()}.
+     * The value is a positive count, or Long.MAX_VALUE for no bound. A protocol sets it right before
+     * the query's factory opens its cursor and resets it to Long.MAX_VALUE right after, whether the
+     * open succeeds or fails, so that the hint reaches no other cursor. A context that does not
+     * serve a client ignores it.
+     */
+    default void setFirstReadRows(long rows) {
+    }
+
     void setIntervalFunctionType(int intervalType);
 
     default void setIntervalPlanGeneration(long generation) {
@@ -649,6 +675,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelHashJoinEnabled(boolean isEnabled);
 
     void setParallelHashJoinGroupByEnabled(boolean isEnabled);
 

@@ -3806,12 +3806,13 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery(directRegexSql)
                     .noLeakCheck()
                     .sizeMayVary()
+                    // The parallel hash join runs the join, with a.x ~ '^foo$' as the filter of its
+                    // build scan of b.
                     .withPlanContaining(
-                            "                Async Filter workers: 1\n"
-                                    + "                  filter: x ~ ^foo$\n"
-                                    + "                    PageFrame\n"
-                                    + "                        Row forward scan\n"
-                                    + "                        Frame forward scan on: b"
+                            "              buildFilter: x ~ ^foo$\n"
+                                    + "                PageFrame\n"
+                                    + "                    Row forward scan\n"
+                                    + "                    Frame forward scan on: b"
                     )
                     .returns("id\n1\n");
             assertQuery(directRegexSql)
@@ -3916,13 +3917,13 @@ public class JoinTest extends AbstractCairoTest {
                         ORDER BY c.k
                         """.formatted(predicate))
                         .noLeakCheck()
+                        // The parallel hash join runs the join to d, with the pushed-down x = 4 as
+                        // the filter of its build scan.
                         .withPlanContaining(
-                                "                        Hash\n"
-                                        + "                            Async JIT Filter workers: 1\n"
-                                        + "                              filter: x=4\n"
-                                        + "                                PageFrame\n"
-                                        + "                                    Row forward scan\n"
-                                        + "                                    Frame forward scan on: d"
+                                "                          buildJitFilter: x=4\n"
+                                        + "                            PageFrame\n"
+                                        + "                                Row forward scan\n"
+                                        + "                                Frame forward scan on: d"
                         )
                         .returns(expectedValue);
             }
@@ -4025,7 +4026,7 @@ public class JoinTest extends AbstractCairoTest {
                     ORDER BY c.k
                     """)
                     .noLeakCheck()
-                    .withPlanContaining("filter: x='1.1.1.1'", "Frame forward scan on: di")
+                    .withPlanContaining("buildJitFilter: x='1.1.1.1'", "Frame forward scan on: di")
                     .returns("k\tax\tdx\tbx\n1\t1.1.1.1\t1.1.1.1\t1.1.1.1\n");
 
             assertQuery("""
@@ -7506,12 +7507,15 @@ public class JoinTest extends AbstractCairoTest {
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: fact_table
-                                            Hash
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: fact_table
+                                            Build
+                                              joinType: left outer
+                                              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature

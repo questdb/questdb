@@ -2360,6 +2360,8 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 runVectorEntry(engine, mode, fixture, null, null);
                 Assert.assertFalse(fixture.error.hasError());
                 Assert.assertEquals(42, fixture.function.getLong(null));
+                // A non-keyed aggregation (no maps) has no NULL key to merge its frames into.
+                Assert.assertEquals(0, fixture.nullKeyFrameCounter.get());
             }
         });
     }
@@ -5189,6 +5191,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         private final AsyncQueryErrorState error = new AsyncQueryErrorState();
         private final CountVectorAggregateFunction function = new CountVectorAggregateFunction(0);
         private final PerWorkerLocks locks;
+        private final AtomicLong nullKeyFrameCounter = new AtomicLong();
         private final PageFrameMemoryPool pool;
         private final AtomicInteger started = new AtomicInteger();
 
@@ -5234,12 +5237,12 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 final Method of = VectorAggregateEntry.class.getDeclaredMethod(
                         "of", int.class, long.class, int.class, int.class, VectorAggregateFunction.class,
                         long[].class, ObjList.class, AtomicInteger.class, CountDownLatchSPI.class,
-                        AtomicInteger.class, AsyncQueryErrorState.class, RostiAllocFacade.class,
+                        AtomicInteger.class, AtomicLong.class, AsyncQueryErrorState.class, RostiAllocFacade.class,
                         PerWorkerLocks.class, SqlExecutionCircuitBreaker.class, AsyncQueryProgressState.class
                 );
                 of.setAccessible(true);
                 of.invoke(entry, 0, 42L, -1, -1, function, null, pools, started, latch, oomCounter,
-                        error, null, locks, breaker, new AsyncQueryProgressState());
+                        nullKeyFrameCounter, error, null, locks, breaker, new AsyncQueryProgressState());
             } catch (Throwable th) {
                 pool.close();
                 throw th;

@@ -1,0 +1,497 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
+
+/**
+ * The joined rows a parallel hash join has in flight: one entry per probe frame the join may have
+ * dispatched and not yet collected, owned by the join's atom rather than by the reduce tasks.
+ * <p>
+ * A task holds on to the capacity of its lists until the query's last frames, and over a long query
+ * a query's tasks cycle through every slot of the shared reduce queue, so lists of joined rows owned
+ * by the tasks would keep the queue's capacity times a frame's tuples, untracked. The ring instead
+ * keeps {@code R} {@link HashJoinTupleList}s bound to the execution's memory tracker, where {@code R}
+ * is the execution's effective dispatch limit:
+ * <pre>
+ * R = max(1, min(dispatch limit, queue capacity, ring budget / (max task tuples * tuple bytes)))
+ * </pre>
+ * with {@code N} stages, a tuple of {@code (1 + N) * 4} bytes in a narrow execution and of
+ * {@code (1 + N) * 8} otherwise, see {@link #of(PageFrameSequence, boolean, boolean, long, long)}, the
+ * ring budget, {@code cairo.sql.parallel.hash.join.tuple.ring.max.size},
+ * capped at a quarter of a configured per-query memory limit, and the most tuples that a frame's task
+ * writes: the rows of the largest probe frame, or, for an execution whose stages fan out, the task's
+ * cap, the larger of those rows and {@code cairo.sql.parallel.hash.join.task.output.max.rows}. The
+ * task of frame {@code f} writes entry {@code f % R}, or, with a dynamic window, see below, {@code f}
+ * modulo the entry count. That is safe because {@link PageFrameSequence#next(int, boolean)} and
+ * {@link PageFrameSequence#dispatchAhead(int)} keep the tasks dispatched and not collected by the
+ * owner, the one the owner reads included, to a contiguous window of at most the dispatch limit
+ * they receive, and next() reduces a task locally only when that window is empty. The join's
+ * sequence makes every frame a task of its own, so the window bounds the frames too. The owner
+ * therefore passes {@code R}, or less, to every {@code next()} and {@code dispatchAhead()} that
+ * dispatches tuple-producing tasks. Count-only tasks never touch the ring,
+ * neither its tuples nor its per-entry state, because a count-only {@code next()} may pass a wider
+ * limit, so that count-only frame {@code f + R} can run while the owner still reads entry
+ * {@code f % R}.
+ * <p>
+ * The owner binds the ring with {@link #of(PageFrameSequence, boolean, boolean, long, long)}, with a dynamic
+ * window, once per execution, after {@link PageFrameSequence#prepareForDispatch()} and before the first
+ * dispatch, and keeps it bound across {@code toTop()}. Binding creates the entries' list objects, so no worker grows the ring's
+ * own lists, but allocates no native memory: an entry's memory grows on the thread that first
+ * writes it, charged to the execution's tracker. {@link #clear()} frees it all.
+ * <p>
+ * Each entry also keeps its frame's resume position, -1 when the task joined every row of the
+ * frame, and its kept-row count, -1 when the frame had no probe filter, so that a continuation
+ * walks row indexes instead of the task's filtered rows.
+ * <p>
+ * {@code R} sizes the ring for the worst case of a frame's task: every probe row of the largest frame
+ * surviving into one tuple, or, where the stages whose matches the workers walk fan out, see
+ * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, every task writing its cap of tuples, which the
+ * frames' rows, cut to what the cap holds at the expected fan-out, are meant to fill. So a selective
+ * probe filter or INNER joins that most rows miss would hold the window at {@code R} for memory that
+ * the entries never take. A ring bound with a dynamic window, see
+ * {@link #of(PageFrameSequence, boolean, boolean, long, long)}, instead keeps {@code min(dispatch limit, queue capacity)}
+ * entries, which take no memory until a task writes them, and moves its window, the limit that
+ * {@link #getDispatchLimit()} returns, as the owner reads frames, see {@link #release(int)}: it starts
+ * at {@code R}, and each frame read makes it {@code ringBudget / the largest entry read so far},
+ * within one and the entry count. Passing a smaller limit to a later {@code next()} is safe, and so
+ * is a larger one up to the entry count, since frames in flight then still take distinct entries.
+ * While the window holds fewer frames than the ring has entries, an entry larger than its share of
+ * the budget gives its memory back once the owner has read it, so that the entries that the frames
+ * in flight do not hold keep no more than their shares, after frames that needed more too.
+ */
+public class HashJoinTupleRing implements Mutable, QuietCloseable {
+    /**
+     * The tuple layouts that {@link #setTupleLayoutForTesting(int)} forces: each execution picks its
+     * own, the narrow one regardless of its values, or the wide one.
+     */
+    public static final int TUPLE_LAYOUT_AUTO = 0;
+    public static final int TUPLE_LAYOUT_NARROW = 1;
+    public static final int TUPLE_LAYOUT_WIDE = 2;
+    // The bits of a narrow slot, as its 4 bytes hold them.
+    private static final int NARROW_SLOT_BITS = Integer.SIZE;
+    private static final int NO_FRAME = -1;
+    // Set by tests alone; see setNarrowSlotBitsForTesting().
+    private static volatile int narrowSlotBitsForTesting = NARROW_SLOT_BITS;
+    // Set by tests and benchmarks alone; see setTupleLayoutForTesting().
+    private static volatile int tupleLayoutForTesting = TUPLE_LAYOUT_AUTO;
+    private final int configuredDispatchLimit;
+    private final ObjList<HashJoinTupleList> entries = new ObjList<>();
+    // The frame whose tuples each entry holds; reads assert they find the frame they ask for.
+    private final IntList entryFrameIndexes = new IntList();
+    private final LongList keptRowCounts = new LongList();
+    private final int queueCapacity;
+    private final LongList resumePositions = new LongList();
+    private final long ringMaxSize;
+    // The tuples a task of an execution whose stages fan out writes before it leaves the rest of its
+    // frame to a continuation, unless the frame has more rows; see
+    // cairo.sql.parallel.hash.join.task.output.max.rows.
+    private final long taskOutputMaxRows;
+    private final int tupleStride;
+    // The window: the dispatch limit the owner passes to next(); 0 while the ring is not bound.
+    private int dispatchLimit;
+    // True when the execution's tuples take 4-byte slots; see of().
+    private boolean isNarrow;
+    // The entries the frames map to, frame f to entry f % entryCount; 0 while the ring is not bound.
+    private int entryCount;
+    // The largest entry, in bytes, that the owner has read since the ring was bound, 0 before.
+    private long largestEntryBytes;
+    // The bytes the entries may take, see computeRingBudget().
+    private long ringBudget;
+    // The bytes of a tuple in the execution; 0 while the ring is not bound.
+    private int tupleBytes;
+
+    /**
+     * @param stageCount the joins the operator runs, so that a tuple is a probe row and one entry
+     *                   per stage
+     */
+    public HashJoinTupleRing(CairoConfiguration configuration, int stageCount) {
+        assert stageCount > 0;
+        this.configuredDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+        this.queueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        this.ringMaxSize = configuration.getSqlParallelHashJoinTupleRingMaxSize();
+        this.taskOutputMaxRows = configuration.getSqlParallelHashJoinTaskOutputMaxRows();
+        this.tupleStride = 1 + stageCount;
+    }
+
+    /**
+     * The effective dispatch limit {@code R}, the number of ring entries:
+     * {@code max(1, min(dispatchLimit, queueCapacity, ringBudget / (maxTaskTuples * tupleBytes)))}.
+     * The floor of one keeps a dispatch limit of 0, which makes every frame reduce locally, from
+     * leaving the ring without an entry; a ring budget below one task's tuples also leaves one
+     * entry. Without probe frames the budget bounds nothing.
+     *
+     * @param dispatchLimit {@code cairo.sql.parallel.filter.dispatch.limit}
+     * @param queueCapacity the capacity of the reduce queue, which caps the window anyway
+     * @param ringBudget    the bytes the entries may take, see {@link #computeRingBudget(long, long)}
+     * @param maxTaskTuples the most tuples that the task of a probe frame writes, 0 without frames
+     * @param tupleBytes    the bytes of a tuple, see {@link #getTupleBytes()}
+     */
+    public static int computeDispatchLimit(
+            int dispatchLimit,
+            int queueCapacity,
+            long ringBudget,
+            long maxTaskTuples,
+            int tupleBytes
+    ) {
+        long limit = Math.min(dispatchLimit, queueCapacity);
+        if (maxTaskTuples > 0) {
+            final long rowBytes = tupleBytes;
+            // Tuples too many to size in a long fit no budget.
+            final long budgetFrames = maxTaskTuples > Long.MAX_VALUE / rowBytes
+                    ? 0
+                    : ringBudget / (maxTaskTuples * rowBytes);
+            limit = Math.min(limit, budgetFrames);
+        }
+        return (int) Math.max(1, limit);
+    }
+
+    /**
+     * The entries of a ring with a dynamic window: as many as the frames that the window may ever
+     * hold, {@code max(1, min(dispatchLimit, queueCapacity))}.
+     *
+     * @param dispatchLimit {@code cairo.sql.parallel.filter.dispatch.limit}
+     * @param queueCapacity the capacity of the reduce queue, which caps the window anyway
+     */
+    public static int computeEntryCount(int dispatchLimit, int queueCapacity) {
+        return Math.max(1, Math.min(dispatchLimit, queueCapacity));
+    }
+
+    /**
+     * The ring budget of an execution: {@code ringMaxSize}, capped at a quarter of the per-query
+     * memory limit when one is configured, so that the ring rarely decides whether a query that
+     * the serial plan runs fits.
+     *
+     * @param ringMaxSize      {@code cairo.sql.parallel.hash.join.tuple.ring.max.size}
+     * @param queryMemoryLimit the execution's memory limit, 0 when there is none
+     */
+    public static long computeRingBudget(long ringMaxSize, long queryMemoryLimit) {
+        return queryMemoryLimit > 0 ? Math.min(ringMaxSize, queryMemoryLimit / 4) : ringMaxSize;
+    }
+
+    /**
+     * True when every value that an execution's tuples hold fits a narrow slot of {@code slotBits}
+     * bits, the sign included: the probe rows, which are 0 or more, the locators, also 0 or more, and
+     * the tagged chain heads, which are below -1, the larger a head, the lower its tag; see
+     * {@link HashJoinStageStepper#toChainEntry(long)}.
+     *
+     * @param slotBits     the bits of a narrow slot, 32 but for tests
+     * @param maxProbeRow  the largest probe row, its index in its frame, -1 without probe rows
+     * @param maxLocator   the largest locator of the stages, -1 without build rows
+     * @param maxChainHead the largest chain head of the stages, 0 without build rows
+     */
+    public static boolean isNarrowFit(int slotBits, long maxProbeRow, long maxLocator, long maxChainHead) {
+        assert slotBits > 1 && slotBits <= NARROW_SLOT_BITS && maxChainHead >= 0;
+        final long maxValue = (1L << (slotBits - 1)) - 1;
+        return maxProbeRow <= maxValue
+                && maxLocator <= maxValue
+                && HashJoinStageStepper.toChainEntry(maxChainHead) >= -maxValue - 1;
+    }
+
+    /**
+     * Makes a narrow slot hold this many bits, from 2 to 32, for the executions bound from then on:
+     * both the narrow layout's choice and its check of each value use them, and the slots keep their
+     * 4 bytes, so that a test meets the bounds of the layout with a few rows.
+     */
+    @TestOnly
+    public static void setNarrowSlotBitsForTesting(int bits) {
+        assert bits > 1 && bits <= NARROW_SLOT_BITS;
+        narrowSlotBitsForTesting = bits;
+    }
+
+    /**
+     * Forces the tuple layout of the executions bound from then on: {@link #TUPLE_LAYOUT_AUTO}, the
+     * default, lets each execution pick its own, {@link #TUPLE_LAYOUT_WIDE} keeps 8-byte slots,
+     * which a test or a benchmark compares the narrow ones with, and {@link #TUPLE_LAYOUT_NARROW}
+     * takes 4-byte slots whatever the values, which only a test of the check of each value does.
+     */
+    @TestOnly
+    public static void setTupleLayoutForTesting(int layout) {
+        assert layout == TUPLE_LAYOUT_AUTO || layout == TUPLE_LAYOUT_NARROW || layout == TUPLE_LAYOUT_WIDE;
+        tupleLayoutForTesting = layout;
+    }
+
+    /**
+     * Frees every entry's memory and unbinds the ring from its execution. The entries' list
+     * objects stay for the next execution.
+     */
+    @Override
+    public void clear() {
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            final HashJoinTupleList entry = entries.getQuick(i);
+            entry.close();
+            // The closed list lets go of the execution's tracker; the next execution binds it anew.
+            entry.of(false, Long.BYTES, 0, null);
+        }
+        entryFrameIndexes.clear();
+        keptRowCounts.clear();
+        resumePositions.clear();
+        dispatchLimit = 0;
+        entryCount = 0;
+        isNarrow = false;
+        largestEntryBytes = 0;
+        ringBudget = 0;
+        tupleBytes = 0;
+    }
+
+    @Override
+    public void close() {
+        clear();
+        Misc.freeObjListAndClear(entries);
+    }
+
+    /**
+     * The native memory the entries hold, in bytes.
+     */
+    public long getAllocatedBytes() {
+        long bytes = 0;
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            bytes += entries.getQuick(i).getCapacityBytes();
+        }
+        return bytes;
+    }
+
+    /**
+     * The execution's effective dispatch limit, the window, which the owner passes to every
+     * {@code next()} that dispatches tuple-producing tasks: {@code R} when the ring is bound, and,
+     * with a dynamic window, what the frames the owner read since make of it, see
+     * {@link #release(int)}; 0 while the ring is not bound.
+     */
+    public int getDispatchLimit() {
+        return dispatchLimit;
+    }
+
+    /**
+     * The entries that the frames map to: {@code R} for a ring bound with a fixed window, and
+     * {@link #computeEntryCount(int, int)} for one bound with a dynamic window; 0 while the ring is
+     * not bound.
+     */
+    public int getEntryCount() {
+        return entryCount;
+    }
+
+    /**
+     * The frame's kept-row count: the probe filter's kept rows, or -1 when the frame had no probe
+     * filter.
+     */
+    public long getKeptRowCount(int frameIndex) {
+        return keptRowCounts.getQuick(entryOf(frameIndex));
+    }
+
+    /**
+     * The kept row the frame's continuation resumes at, or -1 when the frame's task joined every
+     * kept row.
+     */
+    public long getResumePosition(int frameIndex) {
+        return resumePositions.getQuick(entryOf(frameIndex));
+    }
+
+    /**
+     * The bytes of a tuple in the execution: {@link #getTupleStride()} slots of 4 bytes in a narrow
+     * execution, of 8 otherwise; 0 while the ring is not bound.
+     */
+    public int getTupleBytes() {
+        return tupleBytes;
+    }
+
+    /**
+     * The slots of a tuple: the probe row and one entry per stage.
+     */
+    public int getTupleStride() {
+        return tupleStride;
+    }
+
+    /**
+     * The tuples the frame's task, or its last continuation chunk, wrote: {@link #getTupleBytes()}
+     * bytes each.
+     */
+    public HashJoinTupleList getTuples(int frameIndex) {
+        return entries.getQuick(entryOf(frameIndex));
+    }
+
+    /**
+     * True when the execution's tuples take 4-byte slots; see
+     * {@link #of(PageFrameSequence, boolean, boolean, long, long)}.
+     */
+    public boolean isNarrow() {
+        return isNarrow;
+    }
+
+    /**
+     * Binds the ring to an execution of the probe sequence with a fixed window of {@code R}
+     * entries, for tasks that write a tuple per probe row at most, see
+     * {@link #of(PageFrameSequence, boolean, boolean, long, long)}, in 8-byte slots. The join binds its
+     * ring with a dynamic window; tests of the ring's entry reuse bind it with this one.
+     */
+    @TestOnly
+    public void of(PageFrameSequence<?> probeSequence) {
+        of(probeSequence, false, false, false, NARROW_SLOT_BITS);
+    }
+
+    /**
+     * Binds the ring to an execution of the probe sequence and sizes it: the sequence has counted
+     * its frames, in {@link PageFrameSequence#prepareForDispatch()}, and dispatched none. The
+     * entries charge their memory to the sequence's memory tracker. The window starts at
+     * {@code R}, which counts the tuples of a frame's task as the rows of the largest frame, or,
+     * when {@code isFanOut}, as the task's cap of tuples: the execution fans out when the builds of
+     * the stages whose matches the workers walk hold more rows than keys, see
+     * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, so that a probe row may yield several
+     * tuples. With a fixed window the ring keeps {@code R} entries, and the window never grows;
+     * with a dynamic one it keeps {@link #computeEntryCount(int, int)} entries, and the frames the
+     * owner reads move the window within them, see {@link #release(int)}.
+     * <p>
+     * The tuples take slots of 4 bytes rather than 8, which halves the memory of the frames in
+     * flight, when every value that they may hold fits one, see
+     * {@link #isNarrowFit(int, long, long, long)}: the probe rows, below the largest probe frame's
+     * rows, and the largest locator and chain head of the stages, which the caller passes. The bounds
+     * are exact before the first task runs and hold until the execution ends, since the builds are
+     * frozen, their payloads copied, if at all, and the probe frames cut. Each task checks its values
+     * against the slots all the same, see {@link HashJoinTupleList#putTuple}, and fails the query
+     * rather than truncate one. Only builds of a billion rows and more, or that read their payload
+     * where it lives over thousands of build frames, some of which hold hundreds of thousands of rows,
+     * keep the 8-byte slots.
+     *
+     * @param maxLocator   the largest locator of the stages, see {@link AsyncHashJoinAtom#getMaxTupleLocator()}
+     * @param maxChainHead the largest chain head of the stages, see {@link AsyncHashJoinAtom#getMaxTupleChainHead()}
+     */
+    public void of(PageFrameSequence<?> probeSequence, boolean isWindowDynamic, boolean isFanOut, long maxLocator, long maxChainHead) {
+        final int slotBits = narrowSlotBitsForTesting;
+        final boolean isNarrow = switch (tupleLayoutForTesting) {
+            case TUPLE_LAYOUT_NARROW -> true;
+            case TUPLE_LAYOUT_WIDE -> false;
+            default -> isNarrowFit(slotBits, getMaxFrameRows(probeSequence) - 1, maxLocator, maxChainHead);
+        };
+        of(probeSequence, isWindowDynamic, isFanOut, isNarrow, slotBits);
+    }
+
+    /**
+     * Hands the frame's entry, emptied, to the task that joins the frame, or to the owner for a
+     * continuation chunk, with room for at least {@code tupleCapacity} tuples (at least one), so
+     * that the slot that writes it grows it from there, see {@link HashJoinTupleList#grow(long)}. An entry with less room, the first
+     * open of an entry in an execution among them, gives its memory back and takes exactly that
+     * room, on the calling thread, with nothing to copy. A breach of the per-query memory limit
+     * throws from here, or from a later append, and leaves the entry's memory to {@link #clear()}.
+     */
+    public HashJoinTupleList openTuples(int frameIndex, long tupleCapacity) {
+        final int entry = frameIndex % entryCount;
+        entryFrameIndexes.setQuick(entry, frameIndex);
+        final HashJoinTupleList tuples = entries.getQuick(entry);
+        tuples.open(tupleCapacity);
+        return tuples;
+    }
+
+    /**
+     * Tells the ring that the owner has read the frame's entry, and will not read it again before
+     * it collects the frame. The entry's memory, which the frame's task and continuation chunks
+     * grew it to, sets the window, if it is the largest the owner has read since the ring was
+     * bound: {@code max(1, min(entry count, ring budget / entry bytes))}. The entry then gives its
+     * memory back if it holds more than its share of the budget, {@code ring budget / entry count},
+     * while the window holds fewer frames than the ring has entries: the frames cycle through every
+     * entry, so the entries that the frames in flight do not hold would otherwise keep, between
+     * them, more than the window leaves of the budget. The next frame that maps to the entry takes
+     * what it needs.
+     * <p>
+     * The owner calls it, for a frame whose task has run, before it collects the frame.
+     */
+    public void release(int frameIndex) {
+        final HashJoinTupleList tuples = entries.getQuick(entryOf(frameIndex));
+        final long entryBytes = tuples.getCapacityBytes();
+        if (entryBytes > largestEntryBytes) {
+            largestEntryBytes = entryBytes;
+            dispatchLimit = (int) Math.max(1, Math.min(entryCount, ringBudget / entryBytes));
+        }
+        if (dispatchLimit < entryCount && entryBytes > ringBudget / entryCount) {
+            tuples.close();
+        }
+    }
+
+    /**
+     * Records how far the frame's task got: its kept-row count, -1 without a probe filter, and the
+     * kept row a continuation resumes at, -1 when the task joined every kept row.
+     */
+    public void setResumePosition(int frameIndex, long keptRowCount, long resumePosition) {
+        final int entry = entryOf(frameIndex);
+        keptRowCounts.setQuick(entry, keptRowCount);
+        resumePositions.setQuick(entry, resumePosition);
+    }
+
+    // The rows of the sequence's largest frame, 0 without frames.
+    private static long getMaxFrameRows(PageFrameSequence<?> probeSequence) {
+        long maxFrameRows = 0;
+        for (int i = 0, n = probeSequence.getFrameCount(); i < n; i++) {
+            maxFrameRows = Math.max(maxFrameRows, probeSequence.getFrameRowCount(i));
+        }
+        return maxFrameRows;
+    }
+
+    private int entryOf(int frameIndex) {
+        final int entry = frameIndex % entryCount;
+        assert entryFrameIndexes.getQuick(entry) == frameIndex
+                : "frame " + frameIndex + " shares ring entry " + entry + " with frame " + entryFrameIndexes.getQuick(entry);
+        return entry;
+    }
+
+    // Binds the ring to an execution in the given layout; see of(PageFrameSequence, boolean, boolean, long, long).
+    private void of(PageFrameSequence<?> probeSequence, boolean isWindowDynamic, boolean isFanOut, boolean isNarrow, int slotBits) {
+        assert dispatchLimit == 0 : "clear() the ring before binding it to another execution";
+        final long maxFrameRows = getMaxFrameRows(probeSequence);
+        // A task writes a tuple per probe row at most, unless the execution fans out: then it writes
+        // up to its cap, the frame's rows or the configured cap if that is more, as
+        // AsyncHashJoinAtom.joinRows() applies it.
+        final long maxTaskTuples = isFanOut && maxFrameRows > 0 ? Math.max(maxFrameRows, taskOutputMaxRows) : maxFrameRows;
+        final MemoryTracker memoryTracker = probeSequence.getMemoryTracker();
+        final long ringBudget = computeRingBudget(ringMaxSize, memoryTracker != null ? memoryTracker.getLimit() : 0);
+        final int tupleBytes = tupleStride * (isNarrow ? Integer.BYTES : Long.BYTES);
+        final int dispatchLimit = computeDispatchLimit(configuredDispatchLimit, queueCapacity, ringBudget, maxTaskTuples, tupleBytes);
+        // The window's bound, R, never exceeds the dispatch limit and the queue capacity.
+        final int entryCount = isWindowDynamic ? computeEntryCount(configuredDispatchLimit, queueCapacity) : dispatchLimit;
+        assert entryCount >= dispatchLimit;
+        for (int i = entries.size(); i < entryCount; i++) {
+            // The list holds no memory: the first task that writes it allocates it.
+            entries.add(new HashJoinTupleList());
+        }
+        for (int i = 0; i < entryCount; i++) {
+            entries.getQuick(i).of(isNarrow, tupleBytes, Long.SIZE - slotBits, memoryTracker);
+        }
+        entryFrameIndexes.setAll(entryCount, NO_FRAME);
+        keptRowCounts.setAll(entryCount, -1);
+        resumePositions.setAll(entryCount, -1);
+        this.ringBudget = ringBudget;
+        this.isNarrow = isNarrow;
+        this.tupleBytes = tupleBytes;
+        this.entryCount = entryCount;
+        this.largestEntryBytes = 0;
+        this.dispatchLimit = dispatchLimit;
+    }
+}

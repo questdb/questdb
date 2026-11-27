@@ -123,13 +123,17 @@ public class AlterViewTest extends AbstractViewTest {
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join Light
-                                  condition: t2.k=t1.k
-                                  symbolKeyJoin: true
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table1
-                                    Hash
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                                    Build
+                                      joinType: inner
+                                      condition: t2.k=t1.k
+                                      symbolKeyJoin: true
+                                      buildPayload: copied when the probe is large enough
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: table2
@@ -265,13 +269,17 @@ public class AlterViewTest extends AbstractViewTest {
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join Light
-                                  condition: t2.k=t1.k
-                                  symbolKeyJoin: true
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table1
-                                    Hash
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                                    Build
+                                      joinType: inner
+                                      condition: t2.k=t1.k
+                                      symbolKeyJoin: true
+                                      buildPayload: copied when the probe is large enough
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: table2

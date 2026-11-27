@@ -1466,6 +1466,29 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelHashJoinPageFrameMaxRows() {
+        return 100_000;
+    }
+
+    @Override
+    public int getSqlParallelHashJoinTaskOutputMaxRows() {
+        // The maximum number of rows in a probe frame.
+        return Math.min(getSqlPageFrameMaxRows(), getSqlParallelHashJoinPageFrameMaxRows());
+    }
+
+    @Override
+    public long getSqlParallelHashJoinTupleRingMaxSize() {
+        // Room for every probe frame the join can have in flight (the smaller of the dispatch limit
+        // and the reduce queue capacity), each at full size with six 8-byte slots per row: the probe
+        // row index plus one build locator per join. That fits stacks of up to five joins in the wide
+        // layout, or up to eleven in the narrow 4-byte layout that most executions use. This class's
+        // dispatch limit is Integer.MAX_VALUE.
+        final long frames = Math.max(0, Math.min(getSqlParallelFilterDispatchLimit(), getPageFrameReduceQueueCapacity()));
+        final long frameRows = Math.min(getSqlPageFrameMaxRows(), getSqlParallelHashJoinPageFrameMaxRows());
+        return frames * frameRows * 6 * Long.BYTES;
+    }
+
+    @Override
     public long getSqlParallelWorkStealingSpinTimeout() {
         return 50_000; // 50us
     }
@@ -2047,6 +2070,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelGroupByEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinEnabled() {
         return true;
     }
 

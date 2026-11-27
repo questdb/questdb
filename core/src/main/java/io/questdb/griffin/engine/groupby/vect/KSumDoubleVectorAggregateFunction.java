@@ -140,6 +140,24 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // the Kahan sum of the workers' sums, as wrapUp() computes it, with its compensation
+        double sum = 0;
+        long count = 0;
+        double c = 0;
+        for (int i = 0; i < workerCount; i++) {
+            double y = this.sum[i * SUM_PADDING] - c;
+            double t = sum + y;
+            c = t - sum - y;
+            sum = t;
+            count += this.count[i * COUNT_PADDING];
+        }
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), sum);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), c);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), count);
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);

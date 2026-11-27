@@ -107,6 +107,12 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), sum.sum());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         // although the final values are double, avg() calculates sum and count for longs
         // double is derived at the very end

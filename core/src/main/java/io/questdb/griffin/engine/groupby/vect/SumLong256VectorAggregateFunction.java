@@ -140,6 +140,16 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        final long p = Rosti.getInitialValueSlot(pRosti, valueOffset);
+        Unsafe.putLong(p, sumA.getLong0());
+        Unsafe.putLong(p + Long.BYTES, sumA.getLong1());
+        Unsafe.putLong(p + 2 * Long.BYTES, sumA.getLong2());
+        Unsafe.putLong(p + 3 * Long.BYTES, sumA.getLong3());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + Long.BYTES, 0);

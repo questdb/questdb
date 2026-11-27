@@ -44,6 +44,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class VectorAggregateEntry implements Mutable {
     private AsyncQueryErrorState aggregateError;
@@ -54,6 +55,7 @@ public class VectorAggregateEntry implements Mutable {
     private long frameRowCount;
     private VectorAggregateFunction func;
     private int keyColIndex;
+    private AtomicLong nullKeyFrameCounter;
     private AtomicInteger oomCounter;
     private long[] pRosti;
     private PerWorkerLocks perWorkerLocks;
@@ -62,9 +64,17 @@ public class VectorAggregateEntry implements Mutable {
     private AtomicInteger startedCounter;
     private int valueColIndex;
 
+    /**
+     * Aggregates one page frame for one function.
+     *
+     * @param nullKeyFrameCounter in a keyed aggregation, incremented for each frame whose key column
+     *                            holds no data, since such a frame is aggregated without the map; see
+     *                            {@link VectorAggregateFunction#initNullKeyRosti(long)}
+     */
     public static void aggregateUnsafe(
             int workerId,
             @Nullable AtomicInteger oomCounter,
+            @NotNull AtomicLong nullKeyFrameCounter,
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
@@ -91,25 +101,27 @@ public class VectorAggregateEntry implements Mutable {
             // 0 and working out size differently or finding any fixed-size column and using that.
             final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
 
-            if (pRosti == null) {
-                func.aggregate(valueAddress, frameRowCount, slot);
-                return;
-            }
-            final long keyAddress = frameMemory.getPageAddress(keyColIndex);
-            final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-            final boolean isAggregated;
-            if (keyAddress != 0) {
-                isAggregated = func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount);
+            // Zero keyAddress means non-keyed aggregation, or a frame whose key column holds no data: a
+            // column top, or a Parquet row group whose key column is all NULL.
+            final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
+            if (pRosti != null && keyAddress != 0) {
+                final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
+                    if (oomCounter != null) {
+                        oomCounter.incrementAndGet();
+                    }
+                }
+                if (raf != null) {
+                    raf.updateMemoryUsage(pRosti[slot], oldSize);
+                }
             } else {
-                // A column top reads as the NULL key, which must exist even when wrapUp() has no value to add to it.
-                isAggregated = Rosti.keyedIntDistinct(pRosti[slot], Rosti.getInitialValuesSlot(pRosti[slot]), 1);
+                // In a keyed aggregation, every row of the frame has the NULL key. The SIMD kernel
+                // aggregates them into the function's accumulators, which the factory merges into the
+                // NULL key of the map once the frames are done.
+                if (pRosti != null) {
+                    nullKeyFrameCounter.incrementAndGet();
+                }
                 func.aggregate(valueAddress, frameRowCount, slot);
-            }
-            if (!isAggregated && oomCounter != null) {
-                oomCounter.incrementAndGet();
-            }
-            if (raf != null) {
-                raf.updateMemoryUsage(pRosti[slot], oldSize);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);
@@ -125,6 +137,7 @@ public class VectorAggregateEntry implements Mutable {
         this.startedCounter = null;
         this.doneLatch = null;
         this.oomCounter = null;
+        this.nullKeyFrameCounter = null;
         this.raf = null;
         this.perWorkerLocks = null;
         this.circuitBreaker = null;
@@ -186,6 +199,7 @@ public class VectorAggregateEntry implements Mutable {
     public void runDetached(int workerId) {
         AsyncQueryErrorState aggregateError = this.aggregateError;
         AtomicInteger oomCounter = this.oomCounter;
+        AtomicLong nullKeyFrameCounter = this.nullKeyFrameCounter;
         int frameIndex = this.frameIndex;
         long frameRowCount = this.frameRowCount;
         int keyColIndex = this.keyColIndex;
@@ -202,6 +216,7 @@ public class VectorAggregateEntry implements Mutable {
         aggregate(
                 workerId,
                 oomCounter,
+                nullKeyFrameCounter,
                 aggregateError,
                 frameIndex,
                 frameRowCount,
@@ -221,6 +236,7 @@ public class VectorAggregateEntry implements Mutable {
     private static void aggregate(
             int workerId,
             AtomicInteger oomCounter,
+            AtomicLong nullKeyFrameCounter,
             @NotNull AsyncQueryErrorState aggregateError,
             int frameIndex,
             long frameRowCount,
@@ -244,6 +260,7 @@ public class VectorAggregateEntry implements Mutable {
                 aggregateUnsafe(
                         workerId,
                         oomCounter,
+                        nullKeyFrameCounter,
                         frameIndex,
                         frameRowCount,
                         keyColIndex,
@@ -291,6 +308,7 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull CountDownLatchSPI doneLatch,
             // OOM is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
+            @NotNull AtomicLong nullKeyFrameCounter,
             @NotNull AsyncQueryErrorState aggregateError,
             @Nullable RostiAllocFacade raf,
             @NotNull PerWorkerLocks perWorkerLocks,
@@ -307,6 +325,7 @@ public class VectorAggregateEntry implements Mutable {
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
+        this.nullKeyFrameCounter = nullKeyFrameCounter;
         this.aggregateError = aggregateError;
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;

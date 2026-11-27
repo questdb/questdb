@@ -116,6 +116,12 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // +Infinity, the natives' value of no row, when no frame had a value
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), min.get());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
     }

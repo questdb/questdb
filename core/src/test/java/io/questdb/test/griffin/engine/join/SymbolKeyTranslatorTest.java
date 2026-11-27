@@ -37,6 +37,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -48,9 +49,18 @@ import org.junit.Test;
  * way, every probe key must translate to the same build key. The fill relies on a probe
  * dictionary that holds each text once and looks a text up cheaply, so it runs only over a
  * probe dictionary that the caller found eligible.
+ * <p>
+ * The shared cache opens only for a probe that reads at least one row per 256 keys of its
+ * dictionary. Below that, each view translates through a lazy cache of its own, and every probe
+ * key must still translate to the build key that its text has in the build dictionary.
  */
 public class SymbolKeyTranslatorTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    // The server default of cairo.sql.join.symbol.translation.cache.capacity: the entries past which a
+    // view's own cache stops allocating.
+    private static final int SLOT_CACHE_CAPACITY = 1_000_000;
+    // The reach of an execution whose probe rows the caller does not know, which keeps the shared cache.
+    private static final long UNKNOWN_REACH = Long.MAX_VALUE;
 
     @Test
     public void testAutoScaledProbeDictionaryIsEligible() throws Exception {
@@ -80,7 +90,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                  SymbolKeyTranslator translator = new SymbolKeyTranslator();
                  SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
                 CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(NOOP);
-                translator.of(probe, build, true, tracker, counting);
+                translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, counting);
                 Assert.assertEquals(buildKeyCount, probe.keyOfCalls);
                 final long checkCount = counting.getCheckCount();
                 translator.close();
@@ -90,7 +100,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 for (long tripAt = 1; tripAt <= checkCount; tripAt++) {
                     probe.keyOfCalls = 0;
                     TrippingCircuitBreaker breaker = new TrippingCircuitBreaker(tripAt);
-                    CairoException error = Assert.assertThrows(CairoException.class, () -> translator.of(probe, build, true, tracker, breaker));
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, breaker));
                     Assert.assertTrue(error.isCancellation());
                     // A trip releases the cache, whichever loop it lands in.
                     Assert.assertEquals(0, tracker.getUsed());
@@ -102,7 +112,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 Assert.assertTrue(isTrippedWhileResolving);
 
                 // The same translator opens again and translates every key.
-                translator.of(probe, build, true, tracker, NOOP);
+                translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
                 Assert.assertTrue(translator.isFilledFromBuild());
                 Assert.assertEquals(translator.getSizeInBytes(), tracker.getUsed());
                 view.of(translator, probe, build);
@@ -119,7 +129,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 // translator reusable too.
                 tracker.setLimit(1_024);
                 probe.keyOfCalls = 0;
-                CairoException error = Assert.assertThrows(CairoException.class, () -> translator.of(probe, build, true, tracker, NOOP));
+                CairoException error = Assert.assertThrows(CairoException.class, () -> translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, NOOP));
                 Assert.assertTrue(error.isOutOfMemory());
                 Assert.assertEquals(0, probe.keyOfCalls);
                 Assert.assertEquals(0, tracker.getUsed());
@@ -156,7 +166,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 Dictionary build = new Dictionary(isLastKeyPicked, "p4", "p9", "p4");
                 try (SymbolKeyTranslator translator = new SymbolKeyTranslator();
                      SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
-                    translator.of(probe, build, true, null, NOOP);
+                    translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, null, NOOP);
                     Assert.assertEquals(3, probe.keyOfCalls);
                     view.of(translator, probe, build);
                     Assert.assertEquals(isLastKeyPicked ? 2 : 0, view.translate(4));
@@ -199,7 +209,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
             Dictionary build = new Dictionary("y");
             try (SymbolKeyTranslator translator = new SymbolKeyTranslator();
                  SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
-                translator.of(probe, build, false, null, NOOP);
+                translator.of(probe, build, false, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, null, NOOP);
                 Assert.assertFalse(translator.isFilledFromBuild());
                 Assert.assertEquals(11 * Integer.BYTES, translator.getSizeInBytes());
                 Assert.assertEquals(0, probe.keyOfCalls);
@@ -218,7 +228,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 // Found eligible, the same dictionaries fill from the build, which writes y's
                 // build key at key 9 alone. This is why only a dictionary that holds each text
                 // once is eligible.
-                translator.of(probe, build, true, null, NOOP);
+                translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, null, NOOP);
                 Assert.assertTrue(translator.isFilledFromBuild());
                 Assert.assertEquals(1, probe.keyOfCalls);
                 view.of(translator, probe, build);
@@ -252,6 +262,341 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelHashJoinOpensTheSharedCacheByItsFill() throws Exception {
+        assertMemoryLeak(() -> {
+            // A cache that fills from the build, from 1,000 build keys and 8,000 probe keys up, opens once
+            // the probe reads ceil(P / 16) rows: 18,750 rows for 300,000 keys, 500 for 8,000.
+            assertJoinReach(300_000, 1_000, true, 18_749, true);
+            assertJoinReach(300_000, 1_000, true, 18_750, false);
+            assertJoinReach(300_000, 1_000, true, UNKNOWN_REACH, false);
+            assertJoinReach(8_000, 1_000, true, 499, true);
+            assertJoinReach(8_000, 1_000, true, 500, false);
+            // A cache that opens unresolved opens once the probe reads a row per probe key: when the probe
+            // dictionary holds fewer than eight keys per build key, the build more than 32,768 keys, or
+            // the probe dictionary is ineligible.
+            assertJoinReach(7_999, 1_000, true, 7_998, true);
+            assertJoinReach(7_999, 1_000, true, 7_999, false);
+            assertJoinReach(300_000, 32_769, true, 299_999, true);
+            assertJoinReach(300_000, 32_769, true, 300_000, false);
+            assertJoinReach(300_000, 1_000, false, 299_999, true);
+            assertJoinReach(300_000, 1_000, false, 300_000, false);
+            assertJoinReach(300_000, 1_000, false, UNKNOWN_REACH, false);
+            assertJoinReach(16, 3, true, 15, true);
+            assertJoinReach(16, 3, true, 16, false);
+            // Two build keys fill the cache of 16 probe keys, which a single probe row opens.
+            assertJoinReach(16, 2, true, 0, true);
+            assertJoinReach(16, 2, true, 1, false);
+            // A dictionary without keys opens it, empty, for a probe without rows.
+            assertJoinReach(0, 1_000, true, 0, false);
+            assertJoinReach(1, 1_000, true, 0, true);
+            // ceil(Integer.MAX_VALUE / 16) is 134,217,728, so a probe of one row fewer translates through
+            // the views, and an unresolved cache of Integer.MAX_VALUE keys needs as many rows. A rule
+            // that overflowed an int would open a shared cache of 8 GiB, which the tracker's limit of
+            // 16 MiB fails.
+            assertJoinReach(Integer.MAX_VALUE, 1_000, true, 134_217_727, true);
+            assertJoinReach(Integer.MAX_VALUE, 1_000, false, Integer.MAX_VALUE - 1L, true);
+        });
+    }
+
+    @Test
+    public void testSharedCacheOpensAtOneProbeRowPer256Keys() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fused GROUP BY's shared cache opens once the probe reads ceil(P / 256) rows, whether it
+            // fills from the build or not: 1,172 rows for 300,000 keys, one for 256 keys and two for
+            // 257. A dictionary without keys opens it, empty, for a probe without rows.
+            assertReach(300_000, 1_171, true);
+            assertReach(300_000, 1_172, false);
+            assertReach(300_000, UNKNOWN_REACH, false);
+            assertReach(256, 1, false);
+            assertReach(257, 1, true);
+            assertReach(257, 2, false);
+            assertReach(1, 0, true);
+            assertReach(0, 0, false);
+            // ceil(Integer.MAX_VALUE / 256) is 8,388,608, so a probe of one row fewer translates through
+            // the views and allocates nothing. A rule that overflowed an int would open a shared cache
+            // of 8 GiB, which the tracker's limit of 16 MiB fails.
+            assertReach(Integer.MAX_VALUE, 8_388_607, true);
+            // Neither the probe dictionary's eligibility nor the build's size moves the bound.
+            assertReach(300_000, 32_769, true, 1_171, false, true);
+            assertReach(300_000, 32_769, true, 1_172, false, false);
+            assertReach(300_000, 1_000, false, 1_171, false, true);
+            assertReach(300_000, 1_000, false, 1_172, false, false);
+        });
+    }
+
+    @Test
+    public void testSlotCacheMemoryLimitFailsTranslationAndReleases() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1,000 probe keys and a probe of 3 rows: ceil(1,000 / 256) = 4 rows open the shared cache.
+            GeneratedDictionary probe = new GeneratedDictionary(1_000, 1);
+            GeneratedDictionary build = new GeneratedDictionary(1_000, 3);
+            GeneratedDictionary oracleProbe = new GeneratedDictionary(1_000, 1);
+            GeneratedDictionary oracleBuild = new GeneratedDictionary(1_000, 3);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(100);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                translator.of(probe, build, true, 3, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                view.of(translator, probe, build);
+                Assert.assertEquals(0, tracker.getUsed());
+                // The first miss opens the view's cache: a page table of 256 bytes, past the limit.
+                CairoException error = Assert.assertThrows(CairoException.class, () -> view.translate(0));
+                Assert.assertTrue(error.isOutOfMemory());
+                Assert.assertEquals(0, tracker.getUsed());
+                view.close();
+                Assert.assertEquals(0, tracker.getUsed());
+
+                // The page table and the page of keys 0 to 255 fit, and the 256-byte hash map that key
+                // 600 waits in, its page not allowed yet, does not.
+                tracker.setLimit(256 + 1_024 + 100);
+                view.of(translator, probe, build);
+                for (int key = 0; key < 4; key++) {
+                    Assert.assertEquals(oracleBuild.keyOf(oracleProbe.valueOf(key)), view.translate(key));
+                }
+                Assert.assertEquals(256 + 1_024, tracker.getUsed());
+                error = Assert.assertThrows(CairoException.class, () -> view.translate(600));
+                Assert.assertTrue(error.isOutOfMemory());
+                Assert.assertEquals(256 + 1_024, tracker.getUsed());
+                view.close();
+                Assert.assertEquals(0, tracker.getUsed());
+
+                // Under a limit of 1 MiB, the same view binds again and translates every key.
+                tracker.setLimit(1 << 20);
+                view.of(translator, probe, build);
+                for (int key = 0; key < 1_000; key++) {
+                    Assert.assertEquals(oracleBuild.keyOf(oracleProbe.valueOf(key)), view.translate(key));
+                }
+                Assert.assertTrue(tracker.getUsed() > 0);
+                view.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testSlotCacheStartsEmptyOnEveryBinding() throws Exception {
+        assertMemoryLeak(() -> {
+            // A TRUNCATE renumbers a table's texts: the second probe dictionary holds other texts under
+            // the keys of the first. The build holds b0 to b4 under keys 0 to 4 and a0 to a9 under 5 to 14.
+            Dictionary first = new Dictionary(sequence("a", 10));
+            Dictionary second = new Dictionary(sequence("b", 10));
+            Dictionary build = new Dictionary(concat(sequence("b", 5), sequence("a", 10)));
+            try (SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                translator.of(first, build, false, 0, false, SLOT_CACHE_CAPACITY, null, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                view.of(translator, first, build);
+                for (int key = 0; key < 10; key++) {
+                    Assert.assertEquals(key + 5, view.translate(key));
+                }
+                translator.of(second, build, false, 0, false, SLOT_CACHE_CAPACITY, null, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                view.of(translator, second, build);
+                build.keyOfCalls = 0;
+                for (int key = 0; key < 10; key++) {
+                    Assert.assertEquals(key < 5 ? key : SymbolTable.VALUE_NOT_FOUND, view.translate(key));
+                }
+                // Every key resolved anew, through the second dictionary.
+                Assert.assertEquals(10, build.keyOfCalls);
+            }
+        });
+    }
+
+    @Test
+    public void testSlotCacheStopsAllocatingAtTheCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1,000 probe keys, every one in the build under the same key, and a probe of 3 rows.
+            GeneratedDictionary probe = new GeneratedDictionary(1_000, 1);
+            GeneratedDictionary build = new GeneratedDictionary(1_000, 1);
+            for (int capacity : new int[]{4, 0}) {
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                     SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                     SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                    translator.of(probe, build, true, 3, false, capacity, tracker, NOOP);
+                    Assert.assertTrue(translator.isSlotCached());
+                    view.of(translator, probe, build);
+                    build.keyOfCalls = 0;
+                    for (int pass = 0; pass < 2; pass++) {
+                        for (int key = 0; key < 1_000; key++) {
+                            Assert.assertEquals(key, view.translate(key));
+                        }
+                    }
+                    // With a capacity of 4, the first four keys open the page table and the page of keys
+                    // 0 to 255, which then keeps those keys at no cost, and keys 256 to 999 resolve again
+                    // on the second pass: 744 lookups. With 0, the cache never opens, and every key
+                    // resolves on both passes.
+                    Assert.assertEquals("capacity " + capacity, capacity == 4 ? 1_000 + 744 : 2_000, build.keyOfCalls);
+                    Assert.assertEquals("capacity " + capacity, capacity == 4 ? 256 + 1_024 : 0, tracker.getUsed());
+                    view.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSlotModeOverATextHeldUnderTwoKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // A live view served from memory can hold a text under two keys: y under 9, which keyOf()
+            // returns, and 10, which rows carry. The counts call for a fill from the build, which would
+            // write y's build key at key 9 alone, but a probe without rows translates through the views,
+            // which never fill, so both keys resolve by their text.
+            Dictionary probe = new Dictionary(concat(sequence("k", 9), new String[]{"y", "y"}));
+            Dictionary build = new Dictionary("y");
+            try (SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                translator.of(probe, build, true, 0, false, SLOT_CACHE_CAPACITY, null, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                Assert.assertFalse(translator.isFilledFromBuild());
+                Assert.assertEquals(0, translator.getSizeInBytes());
+                Assert.assertEquals(0, probe.keyOfCalls);
+                view.of(translator, probe, build);
+                for (int key = 0; key < 9; key++) {
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, view.translate(key));
+                }
+                Assert.assertEquals(0, view.translate(9));
+                Assert.assertEquals(0, view.translate(10));
+                Assert.assertEquals(0, probe.keyOfCalls);
+            }
+        });
+    }
+
+    @Test
+    public void testSlotModeReleasesAFilledSharedCache() throws Exception {
+        assertMemoryLeak(() -> {
+            // One translator opens a shared cache that fills from the build, then, without close(), opens
+            // for a probe that reads no row: it releases the cache, and its views translate through their
+            // own caches. Build key b holds the text of probe key 9 * b.
+            GeneratedDictionary probe = new GeneratedDictionary(300_000, 1);
+            GeneratedDictionary build = new GeneratedDictionary(1_000, 9);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(16 << 20);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
+                Assert.assertTrue(translator.isFilledFromBuild());
+                Assert.assertEquals(300_000 * Integer.BYTES, tracker.getUsed());
+
+                translator.of(probe, build, true, 0, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                Assert.assertFalse(translator.isFilledFromBuild());
+                Assert.assertEquals(0, translator.getSizeInBytes());
+                Assert.assertEquals(0, tracker.getUsed());
+                view.of(translator, probe, build);
+                build.keyOfCalls = 0;
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int key = 0; key < 10_000; key++) {
+                        Assert.assertEquals("pass " + pass + ", key " + key,
+                                key % 9 == 0 && key / 9 < 1_000 ? key / 9 : SymbolTable.VALUE_NOT_FOUND, view.translate(key));
+                    }
+                    // Each key looked its text up in the build dictionary once, on the first pass.
+                    Assert.assertEquals(10_000, build.keyOfCalls);
+                }
+                view.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testSlotModeTranslatesLikeTheDictionaries() throws Exception {
+        assertMemoryLeak(() -> {
+            final String longText = "L".repeat(1_000);
+            // The probe dictionary that the owner saw holds the empty string, a 4-byte UTF-8 text, a text
+            // of 1,000 characters, texts the build lacks and texts the build holds under other keys. The
+            // views read it grown by two texts: one the build lacks, and one it holds.
+            final String[] probeTexts = {"", "a", "\uD83D\uDE00x", longText, "absent1", "shared", "absent2"};
+            final String[] grownTexts = concat(probeTexts, new String[]{"late", "past"});
+            final String[] buildTexts = {"past", "shared", "", "\uD83D\uDE00x", "a", longText, "other"};
+            final int keyCount = grownTexts.length;
+            Dictionary oracleProbe = new Dictionary(grownTexts);
+            Dictionary oracleBuild = new Dictionary(buildTexts);
+            Dictionary firstProbe = new Dictionary(grownTexts);
+            Dictionary firstBuild = new Dictionary(buildTexts);
+            Dictionary secondProbe = new Dictionary(grownTexts);
+            Dictionary secondBuild = new Dictionary(buildTexts);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View first = new SymbolKeyTranslator.View();
+                 SymbolKeyTranslator.View second = new SymbolKeyTranslator.View()) {
+                // A probe that reads no row translates through the views.
+                translator.of(new Dictionary(probeTexts), new Dictionary(buildTexts), true, 0, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                Assert.assertEquals(0, translator.getSizeInBytes());
+                first.of(translator, firstProbe, firstBuild);
+                second.of(translator, secondProbe, secondBuild);
+                Assert.assertEquals(0, tracker.getUsed());
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int key = 0; key < keyCount; key++) {
+                        Assert.assertEquals("pass " + pass + ", key " + key, oracleBuild.keyOf(oracleProbe.valueOf(key)), first.translate(key));
+                    }
+                    // Each key, those past the owner's dictionary too, looked its text up once.
+                    Assert.assertEquals(keyCount, firstBuild.keyOfCalls);
+                }
+                Assert.assertEquals(0, secondBuild.keyOfCalls);
+                for (int key = 0; key < keyCount; key++) {
+                    Assert.assertEquals("key " + key, oracleBuild.keyOf(oracleProbe.valueOf(key)), second.translate(key));
+                }
+                // The second view caches its own lookups.
+                Assert.assertEquals(keyCount, secondBuild.keyOfCalls);
+                Assert.assertEquals(keyCount, firstBuild.keyOfCalls);
+                // NULL translates without a lookup, and the other negative keys resolve uncached on every
+                // call, as with the shared cache.
+                for (int pass = 0; pass < 2; pass++) {
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, first.translate(SymbolTable.VALUE_IS_NULL));
+                    for (int key : new int[]{-1, -2}) {
+                        Assert.assertEquals(oracleBuild.keyOf(oracleProbe.valueOf(key)), first.translate(key));
+                    }
+                }
+                Assert.assertEquals(keyCount + 4, firstBuild.keyOfCalls);
+                // Each view's cache took its page table of 256 bytes and the 1 KiB page of keys 0 to 255.
+                Assert.assertEquals(2 * (256 + 1_024), tracker.getUsed());
+                first.close();
+                Assert.assertEquals(256 + 1_024, tracker.getUsed());
+                second.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testSlotModeTranslatesWithoutHeapAllocation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p AS (SELECT ('k' || x)::SYMBOL s FROM long_sequence(1_000))");
+            execute("CREATE TABLE b AS (SELECT ('k' || (x * 2))::SYMBOL s FROM long_sequence(500))");
+            try (
+                    TableReader probeReader = getReader("p");
+                    TableReader buildReader = getReader("b");
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                    SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()
+            ) {
+                final StaticSymbolTable probe = probeReader.getSymbolMapReader(0);
+                final StaticSymbolTable build = buildReader.getSymbolMapReader(0);
+                translator.of(probe, build, true, 0, false, SLOT_CACHE_CAPACITY, null, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                long minAllocated = Long.MAX_VALUE;
+                for (int attempt = 0; attempt < 10; attempt++) {
+                    // Each attempt starts from an empty cache: 1,000 lookups, then 99,000 hits.
+                    view.of(translator, probe, build);
+                    long checksum = 0;
+                    final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                    for (int i = 0; i < 100_000; i++) {
+                        checksum += view.translate(i % 1_000);
+                    }
+                    minAllocated = Math.min(minAllocated, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+                    // Probe key i holds k(i + 1), which build key (i + 1) / 2 - 1 holds when i + 1 is even.
+                    long expected = 0;
+                    for (int key = 0; key < 1_000; key++) {
+                        expected += (key + 1) % 2 == 0 ? (key + 1) / 2 - 1 : SymbolTable.VALUE_NOT_FOUND;
+                    }
+                    Assert.assertEquals(100 * expected, checksum);
+                }
+                Assert.assertEquals(0, minAllocated);
+            }
+        });
+    }
+
+    @Test
     public void testSmallBuildDictionaryResolvesFromTheBuildSide() throws Exception {
         assertMemoryLeak(() -> {
             // 64 probe texts against 4 build texts, one of which the probe lacks: 4 * 8 <= 64.
@@ -260,7 +605,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
                  SymbolKeyTranslator translator = new SymbolKeyTranslator();
                  SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
-                translator.of(probe, build, true, tracker, NOOP);
+                translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
                 Assert.assertEquals(64 * Integer.BYTES, translator.getSizeInBytes());
                 Assert.assertEquals(translator.getSizeInBytes(), tracker.getUsed());
                 final int probeLookupsWhileOpening = probe.keyOfCalls;
@@ -297,7 +642,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
         try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(16 << 20);
              SymbolKeyTranslator translator = new SymbolKeyTranslator();
              SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
-            translator.of(probe, build, true, tracker, NOOP);
+            translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
             Assert.assertEquals(message, (long) probeKeyCount * Integer.BYTES, translator.getSizeInBytes());
             Assert.assertEquals(message, translator.getSizeInBytes(), tracker.getUsed());
             Assert.assertEquals(message, probeLookupsWhileOpening, probe.keyOfCalls);
@@ -341,7 +686,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
              SymbolKeyTranslator lazy = new SymbolKeyTranslator();
              SymbolKeyTranslator.View eagerView = new SymbolKeyTranslator.View();
              SymbolKeyTranslator.View lazyView = new SymbolKeyTranslator.View()) {
-            eager.of(snapshot, eagerBuild, true, null, NOOP);
+            eager.of(snapshot, eagerBuild, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, null, NOOP);
             // The cache filled from the build: one probe lookup per build key.
             Assert.assertEquals(scenario, buildTexts.length, snapshot.keyOfCalls);
             lazy.of(probeKeyCount, null, NOOP);
@@ -356,6 +701,60 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
             for (int key : new int[]{probeKeyCount, probeKeyCount + 1, probeKeyCount + 2, -1, SymbolTable.VALUE_IS_NULL}) {
                 Assert.assertEquals(scenario + ", probe key " + key, lazyView.translate(key), eagerView.translate(key));
             }
+        }
+    }
+
+    // assertReach() for the parallel hash join's rule.
+    private static void assertJoinReach(int probeKeyCount, int buildKeyCount, boolean isProbeDictionaryEligible, long probeRowCount, boolean isSlotCached) {
+        assertReach(probeKeyCount, buildKeyCount, isProbeDictionaryEligible, probeRowCount, true, isSlotCached);
+    }
+
+    // Opens a translator by the fused GROUP BY's rule over a probe dictionary of probeKeyCount keys and
+    // an eligible build dictionary of 1,000 keys, which fills a shared cache when the probe dictionary
+    // holds 8,000 keys or more, for a probe of probeRowCount rows, and checks which way it translates.
+    private static void assertReach(int probeKeyCount, long probeRowCount, boolean isSlotCached) {
+        assertReach(probeKeyCount, 1_000, true, probeRowCount, false, isSlotCached);
+    }
+
+    // Opens a translator by the rule of either operator over a probe dictionary of probeKeyCount keys
+    // and a build dictionary of buildKeyCount keys, for a probe of probeRowCount rows, and checks which
+    // way it translates: the views, or a shared cache, which fills from the build when the probe
+    // dictionary is eligible, the build holds at most 32,768 keys and the probe dictionary eight times
+    // as many.
+    private static void assertReach(
+            int probeKeyCount,
+            int buildKeyCount,
+            boolean isProbeDictionaryEligible,
+            long probeRowCount,
+            boolean isParallelHashJoin,
+            boolean isSlotCached
+    ) {
+        final String message = "probe keys " + probeKeyCount + ", build keys " + buildKeyCount + ", eligible " + isProbeDictionaryEligible
+                + ", probe rows " + probeRowCount + ", parallel hash join " + isParallelHashJoin;
+        GeneratedDictionary probe = new GeneratedDictionary(probeKeyCount, 1);
+        GeneratedDictionary build = new GeneratedDictionary(buildKeyCount, 9);
+        try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(16 << 20);
+             SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
+            CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(NOOP);
+            translator.of(probe, build, isProbeDictionaryEligible, probeRowCount, isParallelHashJoin, SLOT_CACHE_CAPACITY, tracker, counting);
+            Assert.assertEquals(message, isSlotCached, translator.isSlotCached());
+            if (isSlotCached) {
+                // Nothing allocated, cleared, filled or checked.
+                Assert.assertEquals(message, 0, translator.getSizeInBytes());
+                Assert.assertEquals(message, 0, tracker.getUsed());
+                Assert.assertEquals(message, 0, counting.getCheckCount());
+                Assert.assertEquals(message, 0, probe.keyOfCalls);
+                Assert.assertFalse(message, translator.isFilledFromBuild());
+            } else {
+                final boolean isFilledFromBuild = isProbeDictionaryEligible && buildKeyCount <= 32_768 && probeKeyCount >= 8L * buildKeyCount;
+                Assert.assertEquals(message, (long) probeKeyCount * Integer.BYTES, translator.getSizeInBytes());
+                Assert.assertEquals(message, translator.getSizeInBytes(), tracker.getUsed());
+                Assert.assertEquals(message, isFilledFromBuild, translator.isFilledFromBuild());
+                Assert.assertEquals(message, isFilledFromBuild ? buildKeyCount : 0, probe.keyOfCalls);
+            }
+            translator.close();
+            Assert.assertFalse(message, translator.isSlotCached());
+            Assert.assertEquals(message, 0, tracker.getUsed());
         }
     }
 

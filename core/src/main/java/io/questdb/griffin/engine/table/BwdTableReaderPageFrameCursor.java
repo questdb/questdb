@@ -76,6 +76,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int highestOpenPartitionIndex = -1;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
+    // Row cap that a consumer set on native frames since the cursor opened; see
+    // setPageFrameMaxRows().
+    private long pageFrameRowCap = Long.MAX_VALUE;
     private PartitionFrameCursor partitionFrameCursor;
     private int preparedNativeBaseWindow = -1;
     private TableReader reader;
@@ -240,6 +243,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.pageFrameRowCap = Long.MAX_VALUE;
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -262,6 +266,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         highestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    @Override
+    public void setPageFrameMaxRows(long maxRows) {
+        assert maxRows > 0;
+        pageFrameRowCap = maxRows;
     }
 
     @Override
@@ -756,7 +766,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterParquetDecoder = null;
         setReenterPartitionFrameState(partitionFrame);
         reenterPartitionFormat = PartitionFormat.NATIVE;
-        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount, pageFrameRowCap);
         if (reenterPartitionFrameState != 0) {
             clearAddresses();
             return computeNativeDeltaFrame(lo, hi);

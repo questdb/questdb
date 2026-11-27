@@ -30,14 +30,24 @@ package io.questdb.test.griffin.fuzz;
  * asserts the factory frees its resources on the error path and that the query
  * recovers once the fault is removed.
  * <ul>
+ *   <li>{@link #CANCEL} &mdash; the query is cancelled at one of the checks that
+ *       it, or a worker that runs its tasks, makes of its circuit breaker, via
+ *       {@link CancelAfterChecksCircuitBreaker}. The query then fails with the
+ *       cancellation, or, when the cancellation came after its last check,
+ *       returns every row.</li>
  *   <li>{@link #FILE} &mdash; one filesystem operation fails once, via
  *       {@code FailureFileFacade}.</li>
  *   <li>{@link #FUNCTION} &mdash; a SQL function emitted into the query throws
  *       once mid-evaluation.</li>
  *   <li>{@link #MALLOC} &mdash; a native allocation fails once, via the RSS
  *       memory limit (the same out-of-memory path production hits).</li>
+ *   <li>{@link #QUERY_MEMORY_LIMIT} &mdash; the query runs under a per-query
+ *       memory limit, {@code cairo.query.memory.limit.bytes}, which a tracked
+ *       allocation of the query breaches: the limit whose breach the operators
+ *       that charge the query's memory tracker, such as the parallel hash
+ *       join's builds and tuple ring, report.</li>
  * </ul>
  */
 public enum FaultType {
-    FILE, FUNCTION, MALLOC
+    CANCEL, FILE, FUNCTION, MALLOC, QUERY_MEMORY_LIMIT
 }

@@ -112,7 +112,7 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
             int keptThroughMapSymbolColumn = 0;
             int writtenAsStringThroughAggregate = 0;
             for (int i = 0; i < CORPUS_SIZE; i++) {
-                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, config).sql();
+                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, true, config).sql();
                 try (
                         RecordCursorFactory factory = select(sql);
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext);
@@ -156,13 +156,13 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createKeyCheckTable();
             final GeneratedQuery query = new GeneratedQuery("SELECT a, b FROM t WHERE v = 2", true);
-            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
             final QueryRunner.Result result = runner.run(query);
             Assert.assertFalse("must not fail: " + (result.getFailure() != null ? result.getFailure().getMessage() : ""), result.isFailed());
             Assert.assertFalse("must not be skipped: " + result.getSkipReason(), result.isSkipped());
 
             // The check resolves a through b's map, which holds no key past b0's 0, so a1's key 1 resolves to NULL.
-            final QueryRunner runnerWithWrongMap = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null) {
+            final QueryRunner runnerWithWrongMap = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null) {
                 @Override
                 void onExportedSymbolMapsCollected(IntList columns, ObjList<SymbolMapReader> symbolMaps) {
                     Assert.assertEquals("[0,1]", columns.toString());

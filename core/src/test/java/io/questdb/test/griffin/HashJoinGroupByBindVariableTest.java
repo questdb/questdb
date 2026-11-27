@@ -89,14 +89,17 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
                     Assert.assertEquals(label, isCompiled, choice.getPrimary().usesCompiledFilter());
                     Assert.assertEquals(label, isCompiled, choice.getAlternate().usesCompiledFilter());
                     // 300 interval rows of r against p's 600 build r; a whole day of r, 1_440 rows,
-                    // builds p. The filter values change on every execution.
-                    assertChoiceExecution(db, sql, factory, choice, context, label, true);
+                    // builds p. The filter values change on every execution. Either orientation's
+                    // build spans several frames, so with its filter interpreted it builds in rounds
+                    // whatever the configured rows.
+                    final boolean isBuiltInRounds = isParallelBuild || !isCompiled;
+                    assertChoiceExecution(db, sql, factory, choice, context, label, true, isBuiltInRounds);
                     bindChoice("2020-01-01T00", "2020-01-02T00", 40, 50);
-                    assertChoiceExecution(db, sql, factory, choice, context, label, false);
+                    assertChoiceExecution(db, sql, factory, choice, context, label, false, isBuiltInRounds);
                     bindChoice("2020-01-01T10", "2020-01-01T12", 60, 5);
-                    assertChoiceExecution(db, sql, factory, choice, context, label, true);
+                    assertChoiceExecution(db, sql, factory, choice, context, label, true, isBuiltInRounds);
                     bindChoice("2020-01-01T12", "2020-01-02T12", 5, 90);
-                    assertChoiceExecution(db, sql, factory, choice, context, label, false);
+                    assertChoiceExecution(db, sql, factory, choice, context, label, false, isBuiltInRounds);
                 }
             }
         });
@@ -209,15 +212,18 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
                         Assert.assertFalse(text, text.contains("Build Choice"));
                         Assert.assertEquals(text, isCompiled, text.contains("buildJitFilter: "));
                         Assert.assertEquals(text, isCompiled, fused(factory).hasCompiledBuildFilter());
-                        final String first = assertExecution(db, sql, factory, context, text);
+                        // p spans several frames, so with its filter interpreted it builds in rounds
+                        // whatever the configured rows.
+                        final boolean isBuiltInRounds = isParallelBuild || !isCompiled;
+                        final String first = assertExecution(db, sql, factory, context, text, isBuiltInRounds);
                         bindBuildFilter(80, 450);
-                        final String second = assertExecution(db, sql, factory, context, text);
+                        final String second = assertExecution(db, sql, factory, context, text, isBuiltInRounds);
                         Assert.assertNotEquals(text, first, second);
                         // No row passes, so the build is empty.
                         bindBuildFilter(1_000, 0);
-                        assertExecution(db, sql, factory, context, text);
+                        assertExecution(db, sql, factory, context, text, isBuiltInRounds);
                         bindBuildFilter(10, 7);
-                        Assert.assertEquals(text, first, assertExecution(db, sql, factory, context, text));
+                        Assert.assertEquals(text, first, assertExecution(db, sql, factory, context, text, isBuiltInRounds));
                     }
                 }
             }
@@ -297,7 +303,8 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
             HashJoinGroupByBuildChoiceRecordCursorFactory choice,
             SqlExecutionContextImpl context,
             String label,
-            boolean isAlternate
+            boolean isAlternate,
+            boolean isBuiltInRounds
     ) throws Exception {
         final String expected = ordinary(db, sql, context);
         try (RecordCursor cursor = factory.getCursor(context)) {
@@ -305,7 +312,7 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
             Assert.assertEquals(label, expected, rows(cursor, factory));
             final AsyncHashJoinGroupByRecordCursorFactory chosen = isAlternate ? choice.getAlternate() : choice.getPrimary();
             Assert.assertNotNull(label, chosen.getAtom().getFrozenBuild());
-            Assert.assertEquals(label, isParallelBuild, chosen.getAtom().isBuiltInRounds());
+            Assert.assertEquals(label, isBuiltInRounds, chosen.getAtom().isBuiltInRounds());
         }
         Assert.assertNull(label, context.getMemoryTracker());
     }
@@ -318,10 +325,21 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
             SqlExecutionContextImpl context,
             String label
     ) throws Exception {
+        return assertExecution(db, sql, factory, context, label, isParallelBuild);
+    }
+
+    private String assertExecution(
+            CairoEngine db,
+            String sql,
+            RecordCursorFactory factory,
+            SqlExecutionContextImpl context,
+            String label,
+            boolean isBuiltInRounds
+    ) throws Exception {
         final String expected = ordinary(db, sql, context);
         try (RecordCursor cursor = factory.getCursor(context)) {
             Assert.assertEquals(label, expected, rows(cursor, factory));
-            Assert.assertEquals(label, isParallelBuild, fused(factory).getAtom().isBuiltInRounds());
+            Assert.assertEquals(label, isBuiltInRounds, fused(factory).getAtom().isBuiltInRounds());
         }
         Assert.assertNull(label, context.getMemoryTracker());
         return expected;

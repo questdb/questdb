@@ -158,7 +158,7 @@ public final class HashJoinGroupByCandidate {
      * on which the holder of the factory compiles the query again. A reused RIGHT join factory
      * therefore keeps building the table before the join while that table holds between one and
      * two times the rows of the preserved table. An execution whose context tolerates row count
-     * changes keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
+     * changes keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.HashJoinBuildStage}.
      * An outer join's ON condition on the build alone that reads a build column outside
      * {@link #isSupportedValueType(int)}, and does more than compare columns, constants and bind
      * variables, qualifies only where this holds, and so does one that passes a STRING, VARCHAR,
@@ -614,7 +614,7 @@ public final class HashJoinGroupByCandidate {
      * function call. An implicit operand conversion has no node in the expression, so it passes: in
      * {@code b.vc = 5}, FunctionParser converts the VARCHAR to INT on each row.
      */
-    private static boolean isCheapShaped(ExpressionNode node) {
+    static boolean isCheapShaped(ExpressionNode node) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return false;
         }
@@ -633,6 +633,77 @@ public final class HashJoinGroupByCandidate {
         return lhs != null && rhs != null
                 && (lhs.type == ExpressionNode.LITERAL || lhs.type == ExpressionNode.CONSTANT || lhs.type == ExpressionNode.BIND_VARIABLE)
                 && (rhs.type == ExpressionNode.LITERAL || rhs.type == ExpressionNode.CONSTANT || rhs.type == ExpressionNode.BIND_VARIABLE);
+    }
+
+    /**
+     * True when an ON condition on the build alone can cost far more on a build row than the hash
+     * insert it spares, by the fused GROUP BY's rule, see analyse(): it fails
+     * {@link #isCheapShaped(ExpressionNode)}, and it reads a variable-size column, as
+     * {@code hasVarSizeColumn} tells, or it passes a variable-size value that it computes from a
+     * column to anything but a comparison; see {@link #hasVarSizeArgument}. A parallel hash join
+     * applies the rule to each conjunct of a LEFT join's ON residual that it runs over the build's
+     * rows. The check parses parts of the expression against the metadata, so pass a copy that
+     * nothing else parses.
+     *
+     * @param node             the condition, whose columns the metadata names
+     * @param hasVarSizeColumn true when the condition reads a STRING, VARCHAR, BINARY or ARRAY
+     *                         column, or another column outside {@link #isSupportedValueType(int)}
+     */
+    static boolean isExpensiveBuildOnFilter(
+            ExpressionNode node,
+            boolean hasVarSizeColumn,
+            FunctionParser parser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return !isCheapShaped(node) && (hasVarSizeColumn || hasVarSizeArgument(node, false, parser, metadata, executionContext));
+    }
+
+    /**
+     * Whether a function or an operator in the node takes as an argument a STRING, VARCHAR, BINARY
+     * or ARRAY value that a function or an operator computes from a column, as in lower(sym) ~ 'x',
+     * sym::VARCHAR LIKE 'x%' or length(lower(sym)) > 0. Such a function or operator reads the value
+     * on each row, as a regular expression over a variable-size column does. The nodes that
+     * isBooleanOperation() accepts, AND, OR, NOT and the comparisons, do not count: the rule treats a
+     * comparison of such a value, as in lower(sym) = 'x', as cheap, as isCheapShaped() treats a
+     * comparison of a variable-size column, and takes the per-row cost of computing the value; see
+     * analyse(). A column is no such value: the caller notes a variable-size one. isArgument tells
+     * whether a function or an operator that counts takes the node as an argument. The check parses
+     * only such an argument, and only one that reads a column, against the metadata, so pass a copy
+     * that nothing else parses: FunctionParser regroups the constants of the tree it parses.
+     */
+    private static boolean hasVarSizeArgument(
+            ExpressionNode node,
+            boolean isArgument,
+            FunctionParser parser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (node == null || node.type == ExpressionNode.LITERAL) {
+            return false;
+        }
+        final boolean isBooleanOperation = isBooleanOperation(node);
+        if (isArgument && !isBooleanOperation && hasColumn(node)) {
+            // Reading the parsed function's type cannot throw.
+            final Function function = parser.parseFunction(node, metadata, executionContext);
+            final boolean isVarSize = ColumnType.isVarSize(function.getType());
+            function.close();
+            if (isVarSize) {
+                return true;
+            }
+        }
+        // A function or an operator that counts takes its operands as arguments.
+        final boolean isOperandArgument = !isBooleanOperation;
+        if (hasVarSizeArgument(node.lhs, isOperandArgument, parser, metadata, executionContext)
+                || hasVarSizeArgument(node.rhs, isOperandArgument, parser, metadata, executionContext)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasVarSizeArgument(node.args.getQuick(i), isOperandArgument, parser, metadata, executionContext)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -943,39 +1014,13 @@ public final class HashJoinGroupByCandidate {
 
         /**
          * Whether a function or an operator in the resolved node takes as an argument a STRING,
-         * VARCHAR, BINARY or ARRAY value that a function or an operator computes from a column, as
-         * in lower(sym) ~ 'x', sym::VARCHAR LIKE 'x%' or length(lower(sym)) > 0. Such a function
-         * or operator reads the value on each row, as a regular expression over a variable-size
-         * column does. The nodes that isBooleanOperation() accepts, AND, OR, NOT and the
-         * comparisons, do not count: the rule treats a comparison of such a value, as in
-         * lower(sym) = 'x', as cheap, as isCheapShaped() treats a comparison of a variable-size
-         * column, and takes the per-row cost of computing the value; see analyse().
-         * A column is no such value: column() notes a variable-size one. isArgument tells whether
-         * a function or an operator that counts takes the node as an argument. The check parses
-         * only such an argument, and only one that reads a column, so it takes a copy that
-         * nothing else parses: FunctionParser regroups the constants of the tree it parses.
+         * VARCHAR, BINARY or ARRAY value that a function or an operator computes from a column;
+         * see {@link HashJoinGroupByCandidate#hasVarSizeArgument}, which parses against the
+         * analysis' metadata. A column is no such value: column() notes a variable-size one. The
+         * caller passes a copy of the node that nothing else parses.
          */
         private boolean hasVarSizeArgument(ExpressionNode node, boolean isArgument) throws SqlException {
-            if (node == null || node.type == ExpressionNode.LITERAL) {
-                return false;
-            }
-            final boolean isBooleanOperation = isBooleanOperation(node);
-            if (isArgument && !isBooleanOperation && hasColumn(node)) {
-                try (Function function = parser.parseFunction(node, metadata, executionContext)) {
-                    if (ColumnType.isVarSize(function.getType())) {
-                        return true;
-                    }
-                }
-            }
-            if (hasVarSizeArgument(node.lhs, !isBooleanOperation) || hasVarSizeArgument(node.rhs, !isBooleanOperation)) {
-                return true;
-            }
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                if (hasVarSizeArgument(node.args.getQuick(i), !isBooleanOperation)) {
-                    return true;
-                }
-            }
-            return false;
+            return HashJoinGroupByCandidate.hasVarSizeArgument(node, isArgument, parser, metadata, executionContext);
         }
 
         private boolean isBindVariableTypeDefined(CharSequence token) {

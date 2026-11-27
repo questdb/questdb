@@ -59,6 +59,9 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
+
 /**
  * General-key lookup for fused hash join aggregation, built by the owner, or, for a large build, by
  * the workers one hash partition at a time (see the last paragraph): a {@link Map} from the join
@@ -106,7 +109,11 @@ import java.io.Closeable;
  * whose raw key fits a row's eight-byte link skips the chunks as {@link IntHashJoinBuild}'s does:
  * each frame task writes its rows into its frame's region of the heap, each row's raw key in its
  * link, and the partition task inserts the key from there; see {@link #beginUnfilteredPartitioning}.
- * As there, a query that counts the key rows of a frozen parallel build counts ranges of its
+ * Either build meets each frame's rows in the row order the caller passes, the build input's scan
+ * order, as {@link IntHashJoinBuild}'s does, so each key's chain lists its rows as the serial hash
+ * join's {@link LongChain} lists them for the same cursor. A frame task stages its keys in that
+ * order, so that its scratch holds them in the order in which the placement then reads them. As
+ * there, a query that counts the key rows of a frozen parallel build counts ranges of its
  * partitions apart, on any thread; see {@link #countPartitionKeyRows} and
  * {@link #getKeyRowCountTaskCount()}.
  */
@@ -233,16 +240,19 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * Appends every row of the page frame the record is bound to. The sink stages the build key
-     * from each row; it is the owner's own, since sinks must not be shared across workers. The
-     * caller checks cancellation at frame boundaries, and the loop checks too, because the map's
-     * own growth does not. On failure all execution allocations are released.
+     * Appends every row of the page frame the record is bound to, in the given row order:
+     * {@code ORDER_ASC} from the frame's first row, {@code ORDER_DESC} from its last; see the class
+     * docs. The sink stages the build key from each row; it is the owner's own, since sinks must not
+     * be shared across workers. The caller checks cancellation at frame boundaries, and the loop
+     * checks too, because the map's own growth does not. On failure all execution allocations are
+     * released.
      */
-    public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, long rowCount) {
+    public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, long rowCount, int order) {
         requireBuilding();
         try {
-            for (long r = 0; r < rowCount; r++) {
-                if (((r + 1) & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+            final long step = rowStep(order);
+            for (long i = 0, r = firstRow(rowCount, order); i < rowCount; i++, r += step) {
+                if (((i + 1) & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 record.setRowIndex(r);
@@ -255,13 +265,16 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, RecordSink, long)}: appends the listed rows only.
+     * The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, RecordSink, long, int)}:
+     * appends the listed rows only, the list walked from its end in {@code ORDER_DESC}.
      */
-    public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, DirectLongList rows) {
+    public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, DirectLongList rows, int order) {
         requireBuilding();
         try {
-            for (long p = 0, n = rows.size(); p < n; p++) {
-                if (((p + 1) & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+            final long n = rows.size();
+            final long step = rowStep(order);
+            for (long i = 0, p = firstRow(n, order); i < n; i++, p += step) {
+                if (((i + 1) & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 record.setRowIndex(rows.get(p));
@@ -594,7 +607,7 @@ public final class MapHashJoinBuild implements Closeable {
 
     /**
      * Heap ordinal of the first row that this frame of a parallel build keeps in this partition.
-     * The frame's rows of the partition follow it in the frame's order; see
+     * The frame's rows of the partition follow it in the row order its frame task walked; see
      * {@link #getSegmentRowCount(int, int)}. Valid from the partition's build until close.
      */
     public long getSegmentStart(int frameIndex, int partition) {
@@ -632,7 +645,10 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * Reopens a closed skeleton for a fresh execution.
+     * Reopens a closed skeleton for a fresh execution. The tracker charges every allocation of the
+     * execution, and the breaker cancels the build, on the thread that opens it; a step on the frozen
+     * build that may run on another thread, such as
+     * {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}, checks its caller's.
      */
     public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         if (isOpen) {
@@ -657,28 +673,61 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * Sorts the rows of one page frame of a parallel build into the frame's chunk, grouped by
-     * bucket: every row of the frame, keyed by what the sink stages through the stager. The sink and
-     * the stager, see {@link #newKeyStager()}, belong to the calling thread. Runs on any thread, once
-     * per frame, concurrently with the other frames. On failure the caller closes the build once
-     * every frame task has stopped, and the stager at the latest at the end of the execution.
+     * {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, KeyStager, long, int)} in {@code ORDER_ASC}.
      */
+    @TestOnly
     public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, RecordSink keySink, KeyStager stager, long rowCount) {
-        if (partitions.hasFrameRegions() && rowCount != partitions.getFrameRegionRowCount(frameIndex)) {
-            throw new IllegalStateException("hash join build frame does not match its region");
-        }
-        partitionFrame(frameIndex, record, keySink, stager, null, rowCount);
+        partitionFrame(frameIndex, record, keySink, stager, rowCount, ORDER_ASC);
     }
 
     /**
-     * The filtered twin of {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, KeyStager, long)}:
-     * sorts the listed rows only. A build that {@link #beginUnfilteredPartitioning} started rejects it.
+     * Sorts the rows of one page frame of a parallel build into the frame's chunk, or its region of
+     * the heap, grouped by bucket: every row of the frame, keyed by what the sink stages through the
+     * stager, each bucket's rows in the given row order, see
+     * {@link #appendFrame(PageFrameMemoryRecord, RecordSink, long, int)}. The sink and the stager,
+     * see {@link #newKeyStager()}, belong to the calling thread. Runs on any thread, once per frame,
+     * concurrently with the other frames. On failure the caller closes the build once every frame
+     * task has stopped, and the stager at the latest at the end of the execution.
      */
+    public void partitionFrame(
+            int frameIndex,
+            PageFrameMemoryRecord record,
+            RecordSink keySink,
+            KeyStager stager,
+            long rowCount,
+            int order
+    ) {
+        if (partitions.hasFrameRegions() && rowCount != partitions.getFrameRegionRowCount(frameIndex)) {
+            throw new IllegalStateException("hash join build frame does not match its region");
+        }
+        partitionFrame(frameIndex, record, keySink, stager, null, rowCount, order);
+    }
+
+    /**
+     * {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, KeyStager, DirectLongList, int)} in {@code ORDER_ASC}.
+     */
+    @TestOnly
     public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, RecordSink keySink, KeyStager stager, DirectLongList rows) {
+        partitionFrame(frameIndex, record, keySink, stager, rows, ORDER_ASC);
+    }
+
+    /**
+     * The filtered twin of {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, KeyStager, long, int)}:
+     * sorts the listed rows only, the list walked from its end in {@code ORDER_DESC}. A build that
+     * {@link #beginUnfilteredPartitioning} started rejects it.
+     */
+    public void partitionFrame(
+            int frameIndex,
+            PageFrameMemoryRecord record,
+            RecordSink keySink,
+            KeyStager stager,
+            DirectLongList rows,
+            int order
+    ) {
         if (partitions.hasFrameRegions()) {
             throw new IllegalStateException("hash join build keeps every row of its frames");
         }
-        partitionFrame(frameIndex, record, keySink, stager, rows, rows.size());
+        partitionFrame(frameIndex, record, keySink, stager, rows, rows.size(), order);
     }
 
     /**
@@ -750,6 +799,17 @@ public final class MapHashJoinBuild implements Closeable {
         for (; i < size; i++) {
             Unsafe.putByte(dst + i, Unsafe.getByte(src + i));
         }
+    }
+
+    // The index a walk of this many rows in this row order starts at; see rowStep().
+    private static long firstRow(long rowCount, int order) {
+        return order == ORDER_DESC ? rowCount - 1 : 0;
+    }
+
+    // What a walk in this row order adds to the index of each row to reach the next one.
+    private static long rowStep(int order) {
+        assert order == ORDER_ASC || order == ORDER_DESC;
+        return order == ORDER_DESC ? -1 : 1;
     }
 
     private static long toRowLink(int head) {
@@ -828,7 +888,8 @@ public final class MapHashJoinBuild implements Closeable {
             RecordSink keySink,
             KeyStager stager,
             @Nullable DirectLongList rows,
-            long rowCount
+            long rowCount,
+            int order
     ) {
         assert isOpen && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
         // The stager's staged key and its scratch live in memory that this execution charges.
@@ -847,15 +908,19 @@ public final class MapHashJoinBuild implements Closeable {
         final int shift = partitions.getBucketShift();
         final long lengthSize = keySize == -1 ? Integer.BYTES : 0;
         final long rowIdSize = heap.hasRowId() ? Integer.BYTES : 0;
-        // The scratch holds, in the frame's order, each row's bucket in a byte, which the bucket
+        // The scratch holds, in the given row order, each row's bucket in a byte, which the bucket
         // count bounds, then its chunk entry without the row: a fixed-size key sizes it up front.
+        // A var-size entry cannot be walked from the end, so the placement below reads the scratch
+        // from its start, and this pass stages the rows in the order that the placement takes them.
         assert bucketCount <= 1 << Byte.SIZE;
         long scratch = stager.ensureScratch(rowCount * (1 + lengthSize + Math.max(keySize, 0)));
         long scratchSize = 0;
+        final long first = firstRow(rowCount, order);
+        final long step = rowStep(order);
         // Each bucket counts its rows and bytes one slot to the right of its own, so that the running
         // sums leave each bucket's starts in its own slots and the frame's totals in the last ones.
-        for (long i = 0; i < rowCount; i++) {
-            record.setRowIndex(rows != null ? rows.get(i) : i);
+        for (long i = 0, p = first; i < rowCount; i++, p += step) {
+            record.setRowIndex(rows != null ? rows.get(p) : p);
             keySink.copy(record, view.withKey());
             final int bucket = HashJoinPartitions.bucketOf(view.hash(), shift);
             final long stagedKeySize = view.getStagedKeySize();
@@ -894,7 +959,7 @@ public final class MapHashJoinBuild implements Closeable {
             final long regionStart = partitions.getFrameRegionStart(frameIndex);
             final int rowSize = heap.getRowSize();
             long scratchEntry = scratch;
-            for (long row = 0; row < rowCount; row++) {
+            for (long i = 0, row = first; i < rowCount; i++, row += step) {
                 final long cursor = counts + (long) Integer.BYTES * (Unsafe.getByte(scratchEntry) & 0xff);
                 final int position = Unsafe.getInt(cursor);
                 Unsafe.putInt(cursor, position + 1);
@@ -914,13 +979,13 @@ public final class MapHashJoinBuild implements Closeable {
         final long chunk = partitions.allocateChunk(frameIndex, Unsafe.getLong(offsets + (long) Long.BYTES * bucketCount));
         // Each bucket's byte start serves as its write cursor, which leaves it at the next bucket's start.
         long scratchEntry = scratch;
-        for (long i = 0; i < rowCount; i++) {
+        for (long i = 0, p = first; i < rowCount; i++, p += step) {
             final long cursor = offsets + (long) Long.BYTES * (Unsafe.getByte(scratchEntry) & 0xff);
             final long keyEntrySize = lengthSize != 0 ? Integer.BYTES + Unsafe.getInt(scratchEntry + 1) : keySize;
             final long entry = chunk + Unsafe.getLong(cursor);
             copyEntryBytes(scratchEntry + 1, entry, keyEntrySize);
             if (rowIdSize != 0) {
-                final long row = rows != null ? rows.get(i) : i;
+                final long row = rows != null ? rows.get(p) : p;
                 assert row <= Integer.MAX_VALUE;
                 Unsafe.putInt(entry + keyEntrySize, (int) row);
             }
@@ -1039,6 +1104,11 @@ public final class MapHashJoinBuild implements Closeable {
         }
 
         @Override
+        public long getMaxChainHead() {
+            return heap.getMaxLink(rowsCount);
+        }
+
+        @Override
         public long getRowCount() {
             return rowsCount;
         }
@@ -1052,6 +1122,20 @@ public final class MapHashJoinBuild implements Closeable {
         @Override
         public long getSizeInBytes() {
             return size;
+        }
+
+        @Override
+        public boolean hasChainLengthIndex() {
+            return heap.hasChainLengthIndex();
+        }
+
+        @Override
+        public void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker) {
+            if (frozen != this) {
+                throw new IllegalStateException("hash join build has expired");
+            }
+            // A failure leaves the links as they are, and the build to its owner to close.
+            heap.indexChainLengths(circuitBreaker);
         }
 
         void ofHeap(HashJoinPayloadSource payloads, long keysCount) {

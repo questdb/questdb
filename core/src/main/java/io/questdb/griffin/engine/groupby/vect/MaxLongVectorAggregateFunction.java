@@ -106,6 +106,12 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // LONG_NULL when no frame had a value
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), max.longValue());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
     }

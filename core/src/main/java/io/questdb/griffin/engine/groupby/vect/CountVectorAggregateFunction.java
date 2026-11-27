@@ -83,6 +83,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
     }

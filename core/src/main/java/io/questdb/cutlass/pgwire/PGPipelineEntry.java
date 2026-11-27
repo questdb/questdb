@@ -1977,7 +1977,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // portals share the context, and a cursor that initializes a function on its first read must register
     // that function with its own execution, not with the portal opened after it.
     private void openCursor(SqlExecutionContext sqlExecutionContext) throws SqlException {
-        cursor = factory.getCursor(sqlExecutionContext);
+        // An Execute's row limit is the number of rows the client reads first: the portal sends
+        // that many rows and suspends, and the client may resume it with another Execute. See
+        // SqlExecutionContext.getFirstReadRows().
+        if (sqlReturnRowCountLimit > 0) {
+            sqlExecutionContext.setFirstReadRows(sqlReturnRowCountLimit);
+        }
+        try {
+            cursor = factory.getCursor(sqlExecutionContext);
+        } finally {
+            sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
+        }
         sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
         queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
         queryExecutionResources = sqlExecutionContext.getExecutionResources();

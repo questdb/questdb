@@ -255,6 +255,42 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitBoundedInputsDoNotOutliveTheCompile() throws Exception {
+        // The generator records the master of each ASOF join and the branches of each UNION ALL, for
+        // the LIMITs of the compilation to follow to the parallel hash joins under them. The records
+        // hold the compilation's factories, so neither a compilation that returns its factory nor one
+        // that fails once it recorded some keeps any, and none pile up over the compilations of one
+        // compiler.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(64)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE d AS (SELECT (x % 4)::INT k, x * 10 w FROM long_sequence(4))");
+            execute("CREATE TABLE q AS (SELECT (x % 4)::INT k, x * 7 p, timestamp_sequence('2024-01-01', 30_000_000) ts FROM long_sequence(128)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String join = "SELECT t.v, d.w, q.p FROM t JOIN d ON t.k = d.k ASOF JOIN q ON (k)";
+            final String compiled = join + " UNION ALL " + join + " LIMIT 3";
+            final String failing = join + " UNION ALL " + join + " LIMIT 'abc'";
+            final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            try (LimitBoundedInputsCompiler compiler = new LimitBoundedInputsCompiler()) {
+                for (int i = 0; i < 2; i++) {
+                    try (RecordCursorFactory factory = select(compiler, compiled, sqlExecutionContext)) {
+                        Assert.assertEquals(0, compiler.limitBoundedInputCount());
+                        assertHasRows(factory);
+                    }
+                    try (RecordCursorFactory ignored = select(compiler, failing, sqlExecutionContext)) {
+                        Assert.fail("expected the LIMIT to fail: " + failing);
+                    } catch (SqlException e) {
+                        Assert.assertEquals(failing.indexOf("'abc'"), e.getPosition());
+                        TestUtils.assertEquals("invalid type: STRING", e.getFlyweightMessage());
+                    }
+                    Assert.assertEquals(0, compiler.limitBoundedInputCount());
+                }
+            } finally {
+                sqlExecutionContext.setParallelHashJoinEnabled(wasParallelHashJoinEnabled);
+            }
+        });
+    }
+
+    @Test
     public void testPoolSweepClosesModelDisconnectedFromTheGraph() {
         // The optimiser can rewrite a model out of the graph the caller ends up holding. The graph walk
         // then cannot reach it, while the pool still can: the sweep runs over every slot the attempt
@@ -514,6 +550,16 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
         @Override
         public void toPlan(PlanSink sink) {
             delegate.toPlan(sink);
+        }
+    }
+
+    private static class LimitBoundedInputsCompiler extends SqlCompilerImpl {
+        private LimitBoundedInputsCompiler() {
+            super(AbstractCairoTest.engine);
+        }
+
+        private int limitBoundedInputCount() {
+            return codeGenerator.getLimitBoundedInputCountForTesting();
         }
     }
 

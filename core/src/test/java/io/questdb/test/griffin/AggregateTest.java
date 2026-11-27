@@ -554,6 +554,29 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntSumAndAvgPastIntRangeOnWorkers() throws Exception {
+        // The keyed vectorized GROUP BY sums INT values into a LONG in each worker's map, and merging the
+        // maps reads those totals whole: each of the 64 hourly partitions holds two rows of
+        // 2_000_000_000 per key, so every map that aggregated a partition holds totals past the INT range.
+        executeWithPool(4, 32, (engine, compiler, sqlExecutionContext, timestampType) -> {
+            engine.execute(
+                    "CREATE TABLE t AS (SELECT (x % 2)::INT k, 2_000_000_000 i, timestamp_sequence(0, 900_000_000)::" + timestampType
+                            + " ts FROM long_sequence(256)) TIMESTAMP(ts) PARTITION BY HOUR",
+                    sqlExecutionContext
+            );
+            assertQuery(engine, sqlExecutionContext, "SELECT k, sum(i) s, avg(i) a, count(i) c FROM t ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("vectorized: true")
+                    .returns("""
+                            k\ts\ta\tc
+                            0\t256000000000\t2.0E9\t128
+                            1\t256000000000\t2.0E9\t128
+                            """);
+        });
+    }
+
+    @Test
     public void testIntSymbolAddBothMidTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");

@@ -111,6 +111,23 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
 
     // A lone count over a build that repeats its keys: every worker reads the key row counts that the
     // owner left in the build, and no reducer visits a joined pair.
+    // Builds whose filters the JIT does not compile hold fewer rows than the configured 300_000 over
+    // many frames, so each runs in rounds, while the other queries' builds live at the same time.
+    @Test
+    public void testConcurrentInterpretedBuildFiltersWithOwnerWorkStealing() throws Exception {
+        assertConcurrentInterpretedBuildFilters(null);
+    }
+
+    @Test
+    public void testConcurrentInterpretedBuildFiltersWithLegacyWorkers() throws Exception {
+        assertConcurrentInterpretedBuildFilters(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testConcurrentInterpretedBuildFiltersWithFiberWorkers() throws Exception {
+        assertConcurrentInterpretedBuildFilters(WorkerPoolMode.FIBER_HOST);
+    }
+
     @Test
     public void testConcurrentLoneCountsWithOwnerWorkStealing() throws Exception {
         assertConcurrentLoneCounts(null, false);
@@ -308,6 +325,77 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         final ProbeSlotLatch latch = hasWorkers ? new ProbeSlotLatch(atom) : null;
         atom.getPerWorkerLocks().setTestAcquireLatch(latch);
         return latch;
+    }
+
+    private void assertConcurrentInterpretedBuildFilters(WorkerPoolMode mode) throws Exception {
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = mode == null ? null : new TestWorkerPool(4, mode);
+            TestUtils.execute(pool, (db, compiler, ignored) -> {
+                // p writes the key texts in a different order from r, so equal text has different
+                // symbol keys in r and p. Its 1_006 rows span two days in frames of up to 31 rows.
+                db.execute("create table r as (select (x%509)::int id, ('k'||(x%509))::symbol k, (x%509)::long lk, "
+                        + "('k'||(x%509))::varchar vk, x::int g, x*0.25 d, ('s'||(6-x%7))::symbol s, "
+                        + "('s'||(x%5))::symbol s2, timestamp_sequence('2020-01-01', 100000000) t from long_sequence(1200)) timestamp(t) partition by day", ignored);
+                db.execute("create table p as (select ((x+250)%503)::int id, ('k'||((x+250)%503))::symbol k, ((x+250)%503)::long lk, "
+                        + "('k'||((x+250)%503))::varchar vk, x*0.5 d, ('s'||(x%7))::symbol s, "
+                        + "('s'||(4-x%5))::symbol s2, timestamp_sequence('2020-01-01', 100000000) t from long_sequence(1006)) timestamp(t) partition by day", ignored);
+                // Keyed, outer, scalar and the lone count, over the INT layout, staged keys and a
+                // translated SYMBOL key.
+                final String[] queries = {
+                        "select r.s, count(*) n, sum(r.d) d, sum(p.d) pd from r join (select * from p where k::string like 'k1%') p on r.id=p.id group by r.s order by r.s",
+                        "select r.s2, count(*) n, count(p.d) pn, sum(p.d) d from r left join (select * from p where vk like '%7%') p on r.lk=p.lk group by r.s2 order by r.s2",
+                        "select count(*) n, sum(p.d) d from r join (select * from p where s::string ~ 's[1-3]') p on r.id=p.id and r.vk=p.vk",
+                        "select count() from r join (select * from p where s2::string like 's1%') p on r.k=p.k"
+                };
+                final String[] expected = new String[queries.length];
+                for (int q = 0; q < queries.length; q++) {
+                    try (SqlExecutionContextImpl context = context(db, 4)) {
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        try (RecordCursorFactory baseline = db.select(queries[q], context)) {
+                            expected[q] = result(baseline, context);
+                        }
+                    }
+                }
+                // Each owner stops inside its first read, at its first breaker check that finds the
+                // build, until every query got there, so that every build is live at the same time.
+                CyclicBarrier acquired = new CyclicBarrier(queries.length);
+                AtomicReference<Throwable> failure = new AtomicReference<>();
+                Thread[] owners = new Thread[queries.length];
+                for (int q = 0; q < queries.length; q++) {
+                    final int query = q;
+                    owners[q] = new Thread(() -> {
+                        try (SqlExecutionContextImpl context = context(db, 4)) {
+                            try (RecordCursorFactory factory = db.select(queries[query], context)) {
+                                AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                                Assert.assertTrue(queries[query], plan(factory, context).contains("buildFilter: "));
+                                for (int run = 0; run < 3; run++) {
+                                    context.with(HashJoinBuildCircuitBreaker.meetingOnceBuilt(
+                                            db, () -> fused.getAtom().getFrozenBuild() != null, acquired, false));
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        StringSink sink = new StringSink();
+                                        CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+                                        Assert.assertTrue(queries[query], fused.getAtom().isBuiltInRounds());
+                                        Assert.assertEquals(queries[query], expected[query], sink.toString());
+                                    }
+                                    Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                    Assert.assertNull(context.getMemoryTracker());
+                                }
+                            }
+                        } catch (Throwable th) {
+                            failure.compareAndSet(null, th);
+                            acquired.reset();
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    }, "fused-query-" + q);
+                    owners[q].start();
+                }
+                TestUtils.joinThreads(owners);
+                if (failure.get() != null) {
+                    throw new AssertionError("mode=" + mode, failure.get());
+                }
+            }, configuration, LOG);
+        });
     }
 
     private void assertConcurrentLoneCounts(WorkerPoolMode mode, boolean isParallelBuild) throws Exception {

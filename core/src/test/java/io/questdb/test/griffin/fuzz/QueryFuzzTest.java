@@ -27,13 +27,16 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
@@ -47,6 +50,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestListener;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.griffin.ParallelHashJoinTestUtils;
+import io.questdb.test.griffin.fuzz.clauses.EquiJoinClause;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -64,7 +69,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
  * SELECT / GROUP BY / SAMPLE BY / LATEST ON / ASOF-LT-SPLICE / HORIZON /
- * WINDOW JOIN / equi-join GROUP BY
+ * WINDOW JOIN / equi-join GROUP BY / row-producing equi-join
  * queries and
  * materializes every result row, additionally re-iterating each cursor
  * after {@code toTop()} and cross-checking {@code size()} /
@@ -104,10 +109,20 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *         fault injection (default true). On a fraction of queries
  *         ({@code -Dquestdb.fuzz.fault.pct=N}, default 15) one fault is armed:
  *         a failing filesystem op, a native allocation that trips the RSS
- *         memory limit, or a thrown {@code test_fault()} woven into the query.
+ *         memory limit, a per-query memory limit that the query's tracked
+ *         allocations breach, or a thrown {@code test_fault()} woven into the
+ *         query, which an equi-join query may also carry in an ON residual or a
+ *         build input's WHERE clause.
  *         The runner then asserts the factory frees its resources on the error
  *         path and that the same query runs cleanly once the fault is removed.
- *         Fault queries bypass the differential oracle. All three fault types
+ *         Each of these queries that its fault leaves whole, and each equi-join
+ *         query that the comparisons below found whole, then runs once more
+ *         under a cancellation: its circuit breaker cancels it at one of its
+ *         first checks, on the owner or on a worker that runs its tasks, and the
+ *         query must fail with the cancellation or return every row. The
+ *         cancellations draw from a generator of their own, which the query's
+ *         text seeds, so they change no query that a seed generates.
+ *         Fault queries bypass the differential oracle. All fault types
  *         run with parallel SQL execution enabled by default
  *         ({@code -Dquestdb.fuzz.fault.parallel}, default true), so the parallel
  *         filter / GROUP BY / top-K reduce error paths get exercised; pass false
@@ -157,6 +172,41 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *         rows. The run asserts that the fused plan ran on enough of the
  *         comparisons whose query compiled to rule out a planner that has
  *         stopped selecting it.</li>
+ *     <li>{@code -Dquestdb.fuzz.equijoin=true|false} &mdash; generate
+ *         row-producing equi-join shapes (an INNER or LEFT join on one or two of
+ *         the shared key columns, alone or followed by up to five more joins over
+ *         the run's tables, a star the parallel hash join stacks into stages, with
+ *         ON residuals, post-join filters, intervals, window functions, ORDER BY
+ *         and LIMIT), the shape the parallel hash join runs (default true). Their
+ *         band is carved from the SIMPLE range, so the other shapes' frequencies
+ *         are unchanged; pass {@code false} to give the band back to SIMPLE.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.parallel.join=true|false} &mdash; run every
+ *         equi-join query a second time with the parallel hash join disabled and
+ *         compare the two materializations in order (default true). The run turns
+ *         the operator on for every query, and the other axes run it on both of
+ *         their sides, so only this axis sees an operator that returns wrong rows
+ *         or the right rows in another order. The run asserts that the operator ran
+ *         on enough of the comparisons whose query compiled, and stacked two joins
+ *         or more on enough of those, to rule out a planner that has stopped
+ *         selecting it or stacking it.</li>
+ *     <li>{@code -Dquestdb.fuzz.parallel.join.cap=N} &mdash; the parallel hash
+ *         join's cap of tuples per probe task (default: the seed picks one tuple,
+ *         which leaves the rest of a frame with fan-out to continuations, or the
+ *         operator's own default).</li>
+ *     <li>{@code -Dquestdb.fuzz.parallel.join.frames=N},
+ *         {@code -Dquestdb.fuzz.parallel.join.ring=BYTES} and
+ *         {@code -Dquestdb.fuzz.parallel.join.dispatch=N} &mdash; the frame
+ *         pressure that the run's equi-join queries run under: page frames of at
+ *         most N rows, a tuple ring budget and a dispatch limit, so that the
+ *         probe has more frames than the ring has entries and the ring's window
+ *         moves (default: the seed picks each, see FuzzConfig). A query's every
+ *         axis runs under the same knobs.</li>
+ *     <li>{@code -Dquestdb.fuzz.parallel.join.probe.frames=N} &mdash; the
+ *         parallel hash join's most rows of a native probe frame, which leaves
+ *         the build scans' frames as they are (default: the seed picks 1 to 8
+ *         rows, or the operator's own default).</li>
+ *     <li>{@code -Dquestdb.fuzz.parquet.row.group=N} &mdash; the rows of a
+ *         Parquet row group of the run's tables (default: the engine's).</li>
  *     <li>{@code -Dquestdb.fuzz.diff.stream=true|false} &mdash; run every
  *         query whose plan uses the stream GROUP BY a second time with it
  *         disabled and compare against the hash GROUP BY (default true). Inner
@@ -183,7 +233,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * <p>
  * Each query also has a small chance of running with parallel SQL
  * execution disabled (parallel filter, GROUP BY, fused hash join GROUP BY,
- * top-K, parquet read), so
+ * parallel hash join, top-K, parquet read), so
  * the serial code paths get exercised alongside the parallel ones. The
  * coin flip pulls from the seeded rnd, so replaying with the same seeds
  * reproduces the same on/off pattern.
@@ -201,6 +251,9 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * failure.
  */
 public class QueryFuzzTest extends AbstractCairoTest {
+    // The rows of a page frame of the concurrent run of equi-joins, unless the seed picks fewer: its
+    // tables of 60 to 150 rows then scan as 15 frames or more.
+    private static final int CONCURRENT_EQUI_JOIN_PAGE_FRAME_ROWS = 4;
     private static final int CONCURRENT_PAGE_FRAME_ROWS = 100;
     private static final long CONCURRENT_STALL_NANOS = 60_000_000_000L;
     // Per-constant chance, in percent, of substituting a bindable literal
@@ -223,7 +276,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // QUERY_POOL_NAME + '_' + workerId, which the FILE fault's query-execution
     // scope matches to admit reduce workers alongside the test thread.
     private static final String QUERY_POOL_NAME = "fuzzQuery";
-    private static final boolean[] SERIAL_FLAGS = new boolean[7];
+    private static final boolean[] SERIAL_FLAGS = new boolean[8];
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
 
@@ -244,169 +297,71 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentFiberQueryFuzz() throws Exception {
+    public void testCancelFaultOverStackedJoin() throws Exception {
+        // The CANCEL fault cancels a stacked parallel hash join at one of the first 1,023 checks of
+        // its circuit breaker: in its open, its builds, its probe tasks or the rows it returns. The
+        // cancelled query fails with the cancellation and leaves no native memory or file behind,
+        // and the query runs once the breaker is gone, which the runner's oracles check.
         assertMemoryLeak(() -> {
-            final Long s0 = Long.getLong("questdb.fuzz.s0");
-            final Long s1 = Long.getLong("questdb.fuzz.s1");
-            final Rnd rnd = s0 != null && s1 != null ? TestUtils.generateRandom(LOG, s0, s1) : TestUtils.generateRandom(LOG);
-            final FuzzConfig config = FuzzConfig.forConcurrency(rnd);
-            final int queryWorkerCount = 1 + rnd.nextInt(2);
-            final int ownerWorkerCount = 2 + rnd.nextInt(2);
-            final int ownerCount = ownerWorkerCount * (2 + rnd.nextInt(3));
-            LOG.info().$("concurrent fuzz config: tables=").$(config.getNumTables())
-                    .$(", rows=").$(config.getRowsPerTable())
-                    .$(", queries=").$(config.getNumQueries())
-                    .$(", queryWorkers=").$(queryWorkerCount)
-                    .$(", ownerWorkers=").$(ownerWorkerCount)
-                    .$(", owners=").$(ownerCount)
-                    .$();
-            if (config.getHashJoinPayloadLayout() != null) {
-                config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
+            execute("CREATE TABLE t AS (SELECT (x % 50)::INT k, (x % 7)::LONG lk, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE d AS (SELECT (x % 40)::INT k, x w FROM long_sequence(600))");
+            execute("CREATE TABLE e AS (SELECT (x % 7)::LONG lk, x ew FROM long_sequence(30))");
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            final String sql = "SELECT t.v, d.w, e.ew FROM t LEFT JOIN d ON t.k = d.k JOIN e ON t.lk = e.lk";
+            // The stack runs as one parallel hash join of two stages, which the cancellations then meet.
+            try (RecordCursorFactory factory = select(sql)) {
+                final String plan = ParallelHashJoinTestUtils.plan(factory, sqlExecutionContext);
+                TestUtils.assertContains(plan, "Async Hash Join workers:");
+                TestUtils.assertContains(plan, "stages: 2");
             }
-            config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
-            setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(rnd.nextBoolean()));
-
-            final WorkerPool queryPool = new TestWorkerPool(QUERY_POOL_NAME, queryWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
-            WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
-            final WorkerPool writerPool = TestWorkerPool.createWithRandomMode(rnd, new WorkerPoolConfiguration() {
-                @Override
-                public String getPoolName() {
-                    return "fuzzWriter";
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-            });
-            WorkerPoolUtils.setupWriterJobs(writerPool, engine);
-            final WorkerPool ownerPool = new TestWorkerPool("fuzzOwner", ownerWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
-            queryPool.start(LOG);
-            writerPool.start(LOG);
-            ownerPool.start(LOG);
-            final ObjList<SqlExecutionContextImpl> contexts = new ObjList<>();
-            try {
-                final SqlExecutionContextImpl buildContext = newFuzzContext(queryWorkerCount);
-                contexts.add(buildContext);
-                final ObjList<FuzzTable> tables = createTables(rnd, config, buildContext);
-                engine.releaseInactive();
-                writerPool.halt();
-
-                final ObjList<GeneratedQuery> queries = new ObjList<>();
-                final boolean[] isSerial = new boolean[config.getNumQueries()];
-                for (int q = 0; q < config.getNumQueries(); q++) {
-                    final long preGenS0 = rnd.getSeed0();
-                    final long preGenS1 = rnd.getSeed1();
-                    GeneratedQuery query = generateConcurrentQuery(rnd, tables, null, config);
-                    if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
-                        final long bindS0 = rnd.nextLong();
-                        final long bindS1 = rnd.nextLong();
-                        rnd.reset(preGenS0, preGenS1);
-                        final BindContext bindContext = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        final GeneratedQuery bindForm = generateConcurrentQuery(rnd, tables, bindContext, config);
-                        if (bindContext.getBindValues().size() > 0) {
-                            query = query.withBind(bindForm.sql(), bindContext.getBindNames(), bindContext.getBindValues());
-                        }
-                    }
-                    queries.add(query);
-                    isSerial[q] = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
-                }
-
-                final CountDownLatch doneLatch = new CountDownLatch(ownerCount);
-                final AtomicInteger completedCount = new AtomicInteger();
-                final AtomicReferenceArray<String> runningSql = new AtomicReferenceArray<>(ownerCount);
-                final AtomicReference<Throwable> ownerError = new AtomicReference<>();
-                final ObjList<QueryRunner.Result> failures = new ObjList<>();
-                for (int o = 0; o < ownerCount; o++) {
-                    final int ownerIndex = o;
-                    final SqlExecutionContextImpl context = newFuzzContext(queryWorkerCount);
-                    contexts.add(context);
-                    context.changePageFrameSizes(CONCURRENT_PAGE_FRAME_ROWS, CONCURRENT_PAGE_FRAME_ROWS);
-                    final QueryRunner runner = new QueryRunner(
-                            engine,
-                            context,
-                            config.isDiffJitEnabled(),
-                            config.isDiffShadowEnabled(),
-                            config.isDiffFusedEnabled(),
-                            config.isDiffStreamEnabled(),
-                            null,
-                            config.isVerifyCursorEnabled(),
-                            tables,
-                            QUERY_POOL_NAME + '_'
-                    );
-                    final FiberTask owner = new FiberTask() {
-                        @Override
-                        protected void onError(Throwable th) {
-                            ownerError.compareAndSet(null, th);
-                        }
-
-                        @Override
-                        protected boolean runStep() {
-                            try {
-                                final boolean[] parallelFlags = parallelFlags(context);
-                                for (int i = ownerIndex, n = queries.size(); i < n; i += ownerCount) {
-                                    final GeneratedQuery query = queries.getQuick(i);
-                                    runningSql.set(ownerIndex, query.sql());
-                                    final QueryRunner.Result result;
-                                    if (isSerial[i]) {
-                                        setParallelFlags(context, SERIAL_FLAGS);
-                                        try {
-                                            result = runner.run(query);
-                                        } finally {
-                                            setParallelFlags(context, parallelFlags);
-                                        }
-                                    } else {
-                                        result = runner.run(query);
-                                    }
-                                    if (result.isFailed()) {
-                                        synchronized (failures) {
-                                            failures.add(result);
-                                        }
-                                    }
-                                    completedCount.incrementAndGet();
-                                }
-                                runningSql.set(ownerIndex, null);
-                            } finally {
-                                doneLatch.countDown();
-                            }
-                            return true;
-                        }
-                    };
-                    Assert.assertSame(LaunchResult.LAUNCHED, ownerPool.getFiberRuntime().launch(owner));
-                }
-
-                int lastCompletedCount = -1;
-                long lastProgressNanos = System.nanoTime();
-                while (!doneLatch.await(100, TimeUnit.MILLISECONDS)) {
-                    final int completed = completedCount.get();
-                    if (completed != lastCompletedCount) {
-                        lastCompletedCount = completed;
-                        lastProgressNanos = System.nanoTime();
-                    } else if (System.nanoTime() - lastProgressNanos > CONCURRENT_STALL_NANOS) {
-                        TestListener.dumpThreadStacks();
-                        final StringBuilder running = new StringBuilder();
-                        for (int o = 0; o < ownerCount; o++) {
-                            final String sql = runningSql.get(o);
-                            if (sql != null) {
-                                running.append("\n  ").append(sql);
-                            }
-                        }
-                        Assert.fail("concurrent query fuzz stalled after " + completed + " of " + queries.size() + " queries, running:" + running);
-                    }
-                }
-                if (ownerError.get() != null) {
-                    throw new AssertionError("query owner failed", ownerError.get());
-                }
-                if (failures.size() > 0) {
-                    throw QueryFuzzDriver.buildFailure(failures);
-                }
-            } finally {
-                haltQuietly(queryPool);
-                haltQuietly(ownerPool);
-                haltQuietly(writerPool);
-                Misc.freeObjList(contexts);
+            final SqlExecutionCircuitBreaker contextBreaker = sqlExecutionContext.getCircuitBreaker();
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, false, new ObjList<>(), null);
+            Assert.assertTrue(runner.isFaultTypeAvailable(FaultType.CANCEL));
+            final Rnd rnd = new Rnd(0x5eed, 0xca9ce1);
+            for (int i = 0; i < 40; i++) {
+                final QueryRunner.Result result = runner.runFault(new GeneratedQuery(sql, true), FaultType.CANCEL, rnd, false);
+                Assert.assertFalse(result.getFailure() != null ? result.getFailure().toString() : "", result.isFailed());
+                Assert.assertFalse(result.isSkipped());
+            }
+            Assert.assertEquals(40, runner.getFaultsArmed(FaultType.CANCEL));
+            // The query checks its breaker at each of the matches of a key that it returns, some
+            // hundred thousand, so every cancellation lands before its last check.
+            Assert.assertEquals(40, runner.getFaultsFired(FaultType.CANCEL));
+            // Under a LIMIT of three rows the query makes a few checks only: the cancellations that
+            // the breaker makes within them fail the query, and it returns its three rows under the
+            // rest, which come after its last check or never.
+            for (int i = 0; i < 40; i++) {
+                final QueryRunner.Result result = runner.runFault(new GeneratedQuery(sql + " LIMIT 3", true), FaultType.CANCEL, rnd, false);
+                Assert.assertFalse(result.getFailure() != null ? result.getFailure().toString() : "", result.isFailed());
+                Assert.assertFalse(result.isSkipped());
+            }
+            Assert.assertEquals(80, runner.getFaultsArmed(FaultType.CANCEL));
+            final int firedUnderLimit = runner.getFaultsFired(FaultType.CANCEL) - 40;
+            Assert.assertTrue(String.valueOf(firedUnderLimit), firedUnderLimit > 0 && firedUnderLimit < 40);
+            // The fault takes its breaker off the context after each query.
+            Assert.assertSame(contextBreaker, sqlExecutionContext.getCircuitBreaker());
+            // The run's generator never draws the fault, which runs next to the others.
+            for (int i = 0; i < 64; i++) {
+                Assert.assertNotEquals(FaultType.CANCEL, runner.chooseFaultType(rnd));
             }
         });
+    }
+
+    // The concurrent run over small tables, four in five of whose queries are equi-joins: several
+    // owners at once run the parallel hash join, alone, stacked and swapped, on a few shared query
+    // workers and one set of reduce queues, next to each other and to the other shapes. Each owner
+    // compares every one of its equi-joins with the ordinary plan, in order, reads its cursor part
+    // of the way and executes its factory again. The tuple ring's entries, the build rounds, the
+    // slots that the workers and the stealing owners take and the SYMBOL key caches then meet the
+    // interleavings that a run of one owner never has.
+    @Test
+    public void testConcurrentFiberEquiJoinFuzz() throws Exception {
+        runConcurrentFiberFuzz(true);
+    }
+
+    @Test
+    public void testConcurrentFiberQueryFuzz() throws Exception {
+        runConcurrentFiberFuzz(false);
     }
 
     @Test
@@ -429,7 +384,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -528,6 +483,101 @@ public class QueryFuzzTest extends AbstractCairoTest {
         reversed.put(line("k0", "1.0")).put('\n');
         forward.put(line("k1", "1.0")).put('\n');
         Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(forward, reversed, new boolean[]{false, true}));
+    }
+
+    // A cursor that streams its result, such as the parallel GROUP BY over time buckets, runs its
+    // reduction again on toTop(), and its workers may then merge FLOAT and DOUBLE partials in another
+    // order. test_latched_counter() holds for its first evaluations alone, so each CASE below returns
+    // one value on the first pass and another on the pass after toTop(): the check takes last-digit
+    // drift in a FLOAT or DOUBLE column and fails any other difference.
+    @Test
+    public void testToTopReiterationToleratesFpDrift() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
+            try {
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.30000000000000004 ELSE 0.3 END d FROM long_sequence(1)",
+                        1,
+                        false
+                );
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.3::FLOAT ELSE 0.30000004::FLOAT END f FROM long_sequence(1)",
+                        1,
+                        false
+                );
+                // Several rows, each drifting.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT x, CASE WHEN test_latched_counter() THEN x * 0.1 * (1 + 1e-15) ELSE x * 0.1 END d FROM long_sequence(3)",
+                        3,
+                        false
+                );
+                // A DOUBLE that moves by more than drift.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.3 ELSE 0.4 END d FROM long_sequence(1)",
+                        1,
+                        true
+                );
+                // A LONG that moves by one, the smallest step it has.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 1_000_000L ELSE 1_000_001L END l FROM long_sequence(1)",
+                        1,
+                        true
+                );
+                // A DOUBLE that drifts next to a VARCHAR that changes.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT CASE WHEN test_latched_counter() THEN 0.30000000000000004 ELSE 0.3 END d,"
+                                + " CASE WHEN test_latched_counter() THEN 'a' ELSE 'b' END s FROM long_sequence(1)",
+                        2,
+                        true
+                );
+                // A pass that loses a row.
+                assertToTopReiteration(
+                        runner,
+                        "SELECT 0.3 d FROM long_sequence(2) WHERE test_latched_counter()",
+                        1,
+                        true
+                );
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
+    public void testParallelJoinShareGuard() {
+        // A working planner runs the operator on about 70% of the completed comparisons; a share at
+        // or above the baseline passes, and so does a sample at the measured share's low end.
+        Assert.assertFalse(QueryFuzzDriver.isParallelJoinShareImplausible(13, 25));
+        Assert.assertFalse(QueryFuzzDriver.isParallelJoinShareImplausible(19, 27));
+        Assert.assertFalse(QueryFuzzDriver.isParallelJoinShareImplausible(5, 25));
+        // A planner that stops running the operator fails at the smallest guarded sample.
+        Assert.assertTrue(QueryFuzzDriver.isParallelJoinShareImplausible(0, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertTrue(QueryFuzzDriver.isParallelJoinShareImplausible(2, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        // A soak's larger sample holds the share to more.
+        Assert.assertTrue(QueryFuzzDriver.isParallelJoinShareImplausible(200, 589));
+        Assert.assertFalse(QueryFuzzDriver.isParallelJoinShareImplausible(260, 589));
+    }
+
+    @Test
+    public void testStackedShareGuard() {
+        // A working planner stacks about 38% of the operator's runs; a share at or above the
+        // baseline passes, and so does a sample at the measured share's low end.
+        Assert.assertFalse(QueryFuzzDriver.isStackedShareImplausible(8, 25));
+        Assert.assertFalse(QueryFuzzDriver.isStackedShareImplausible(155, 383));
+        Assert.assertFalse(QueryFuzzDriver.isStackedShareImplausible(2, 25));
+        // A planner that stops stacking passes a small sample and fails a larger one.
+        Assert.assertFalse(QueryFuzzDriver.isStackedShareImplausible(0, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertFalse(QueryFuzzDriver.isStackedShareImplausible(0, 32));
+        Assert.assertTrue(QueryFuzzDriver.isStackedShareImplausible(0, 33));
+        // A soak's larger sample holds the share to more.
+        Assert.assertTrue(QueryFuzzDriver.isStackedShareImplausible(60, 383));
+        Assert.assertFalse(QueryFuzzDriver.isStackedShareImplausible(90, 383));
     }
 
     @Test
@@ -763,7 +813,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, null, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, false, null, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -772,6 +822,44 @@ public class QueryFuzzTest extends AbstractCairoTest {
             } finally {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
             }
+        });
+    }
+
+    @Test
+    public void testQueryMemoryLimitFaultOverStackedJoin() throws Exception {
+        // The QUERY_MEMORY_LIMIT fault puts a stacked parallel hash join under per-query memory limits
+        // from 512 bytes to 4 MiB: the limits that its builds, tuple ring and payload breach fail the
+        // query with the limit's error and leave no native memory or file behind, and the query runs
+        // once the limit is lifted, which the runner's oracles check.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (x % 50)::INT k, (x % 7)::LONG lk, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE d AS (SELECT (x % 40)::INT k, x w FROM long_sequence(600))");
+            execute("CREATE TABLE e AS (SELECT (x % 7)::LONG lk, x ew FROM long_sequence(30))");
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            final String sql = "SELECT t.v, d.w, e.ew FROM t LEFT JOIN d ON t.k = d.k JOIN e ON t.lk = e.lk";
+            // The stack runs as one parallel hash join of two stages, which the limits then meet.
+            try (RecordCursorFactory factory = select(sql)) {
+                final String plan = ParallelHashJoinTestUtils.plan(factory, sqlExecutionContext);
+                TestUtils.assertContains(plan, "Async Hash Join workers:");
+                TestUtils.assertContains(plan, "stages: 2");
+            }
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, node1.getConfigurationOverrides(), false, new ObjList<>(), null);
+            Assert.assertTrue(runner.isFaultTypeAvailable(FaultType.QUERY_MEMORY_LIMIT));
+            final Rnd rnd = new Rnd(0x5eed, 0x9e1);
+            for (int i = 0; i < 40; i++) {
+                final QueryRunner.Result result = runner.runFault(new GeneratedQuery(sql, true), FaultType.QUERY_MEMORY_LIMIT, rnd, false);
+                Assert.assertFalse(result.getFailure() != null ? result.getFailure().toString() : "", result.isFailed());
+                Assert.assertFalse(result.isSkipped());
+            }
+            Assert.assertEquals(40, runner.getFaultsArmed(FaultType.QUERY_MEMORY_LIMIT));
+            // Most limits fall below what the stack takes, and the rest leave it to complete.
+            final int fired = runner.getFaultsFired(FaultType.QUERY_MEMORY_LIMIT);
+            Assert.assertTrue(String.valueOf(fired), fired > 10 && fired < 40);
+            // The fault lifts the limit after each query.
+            Assert.assertEquals(0, engine.getConfiguration().getQueryMemoryLimitBytes());
+            // Without the configuration's overrides, the runner offers no such fault.
+            Assert.assertFalse(new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, false, new ObjList<>(), null)
+                    .isFaultTypeAvailable(FaultType.QUERY_MEMORY_LIMIT));
         });
     }
 
@@ -792,7 +880,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, false, null, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -856,8 +944,569 @@ public class QueryFuzzTest extends AbstractCairoTest {
         });
     }
 
+    // Pins the first window of the parallel hash join's executions whose builds fan out, at the
+    // default cap of a probe frame's 100,000 tuples per task. Frames of two rows and a ring budget of 192 bytes
+    // give a stack of up to five joins a first window of two frames or more, up to the ring's
+    // entries, which follow the host's query workers under the default dispatch limit; an execution
+    // whose workers walk duplicate matches instead counts each task's tuples as the cap, and starts
+    // at one frame. A pinned seed's queries over native probe frames start there, and every axis
+    // compares their rows with the ordinary plan's.
+    @Test
+    public void testParallelJoinCapBoundFirstWindowAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "300"},
+                        {"questdb.fuzz.s0", "3"},
+                        {"questdb.fuzz.s1", "100"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
+                        {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "0"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> Assert.assertTrue(
+                        "cap-bound first windows " + runner.getParallelJoinCapBoundFirstWindowRuns(),
+                        runner.getParallelJoinCapBoundFirstWindowRuns() > 0
+                ))
+        );
+    }
+
+    // Pins what the frame pressure knobs make the generated equi-join queries do to the parallel
+    // hash join: with frames of two rows and a ring budget of four such frames of one join, a pinned
+    // seed's probes have more frames than the ring has entries, and the frames of duplicate matches
+    // narrow the window, down to one frame. A cap of one tuple per task leaves frames to
+    // continuations, and the partial reads of the cursor-verify axis then meet stacked, swapped and
+    // continued executions, among them executions without a LIMIT whose first frame's task joined
+    // its first row alone, as a third of the queries compile it, and whose consumer continued the
+    // frame past it, as the window ramps up. A third of the queries run the stages' stepper copies
+    // from the first task, and another third switch to them once their first execution collected a
+    // frame, within
+    // the first pass over the cursor for some: the copies run stacked joins in the query's
+    // orientation, and swapped ones, stacked among them, on copies defined as they compiled. Half of
+    // the queries open their cursors under the rows that a client reads first, which the parallel
+    // hash join whose rows are the query's own takes.
+    @Test
+    public void testParallelJoinFramePressureAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "300"},
+                        {"questdb.fuzz.s0", "135"},
+                        {"questdb.fuzz.s1", "4192"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
+                        {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "1"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> {
+                    final String counts = "aliased " + runner.getParallelJoinAliasedRuns()
+                            + ", single frame window " + runner.getParallelJoinSingleFrameWindowRuns()
+                            + ", narrowed " + runner.getParallelJoinNarrowedWindowRuns()
+                            + ", partial reads " + runner.getParallelJoinPartialReadChecks()
+                            + " (stacked " + runner.getParallelJoinPartialReadStacked()
+                            + ", swapped " + runner.getParallelJoinPartialReadSwapped()
+                            + ", continued " + runner.getParallelJoinPartialReadContinued()
+                            + ", past a first task's head " + runner.getParallelJoinPartialReadHeadContinued() + ")"
+                            + ", stepper copies " + runner.getParallelJoinStepperCopyRuns()
+                            + " (stacked " + runner.getParallelJoinStepperCopyStackedRuns()
+                            + ", swapped " + runner.getParallelJoinStepperCopySwappedRuns()
+                            + " of which stacked " + runner.getParallelJoinStepperCopySwappedStackedRuns()
+                            + ", switched " + runner.getParallelJoinStepperSwitchRuns()
+                            + " of which swapped " + runner.getParallelJoinStepperSwitchSwappedRuns()
+                            + ", in the first pass " + runner.getParallelJoinStepperFirstPassSwitchRuns() + ")"
+                            + ", first reads " + runner.getParallelJoinFirstReadRuns()
+                            + ", wide tuples " + runner.getParallelJoinWideRuns()
+                            + " (stacked " + runner.getParallelJoinWideStackedRuns()
+                            + ", swapped " + runner.getParallelJoinWideSwappedRuns() + ")"
+                            + ", factories executed again " + runner.getParallelJoinReexecutionChecks()
+                            + " (after an execution left part of the way " + runner.getParallelJoinReexecutionAbandoned() + ")";
+                    Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinSingleFrameWindowRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinNarrowedWindowRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadStacked() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadSwapped() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadHeadContinued() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchRuns() > 0);
+                    // Some queries define their copies as they compile, apart from those that switch.
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > runner.getParallelJoinStepperSwitchRuns());
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopyStackedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopySwappedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopySwappedStackedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperFirstPassSwitchRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinFirstReadRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinWideStackedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinWideSwappedRuns() > 0);
+                    // The factories of the joins ran again, some of them after an execution that
+                    // closed with rows unread.
+                    Assert.assertTrue(counts, runner.getParallelJoinReexecutionChecks() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinReexecutionAbandoned() > 0);
+                })
+        );
+    }
+
+    // Pins the probe frames of the parallel hash join under its own cap of a probe frame's rows, two
+    // rows, while the build scans keep the context's frames: the seed's probes have more frames than
+    // the ring has entries, which the frames in flight then share, and the cursor-verify axis reads
+    // them in part. A dispatch limit of four, the run's query workers, gives the ring four entries
+    // on any host, which a probe of nine rows or more outnumbers. Under the default, which follows
+    // the host's query workers up to 32, the seed's probes of 63 rows have 32 frames of two rows:
+    // more than a small host's entries, and no more than the 32 entries of a host of many cores.
+    @Test
+    public void testParallelJoinProbeFramesAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "300"},
+                        {"questdb.fuzz.s0", "48514"},
+                        {"questdb.fuzz.s1", "630374"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_RING_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "4"},
+                        {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "1"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> {
+                    final String counts = "aliased " + runner.getParallelJoinAliasedRuns()
+                            + ", partial reads " + runner.getParallelJoinPartialReadChecks();
+                    Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadChecks() > 0);
+                })
+        );
+    }
+
+    // Pins the forms without a LIMIT of the generated equi-join queries, see EquiJoinClause: the joins
+    // under an ASOF or LT join of which they are the master, under a UNION ALL and under a WHERE
+    // that holds no column, which the rows that a client reads first reach through the operator,
+    // as the parallel join axis compares the rows with the ordinary plan's. Frames of two rows leave
+    // a short first read fewer frames to dispatch than the probe has. One query in twenty is an
+    // equi-join, and one in about forty of those runs a form of an operator without a LIMIT under
+    // the rows a client reads first: the seed draws four such executions in 600 queries, where
+    // most seeds draw none or one.
+    @Test
+    public void testParallelJoinFirstReadFormsAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "600"},
+                        {"questdb.fuzz.s0", "2"},
+                        {"questdb.fuzz.s1", "69"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> Assert.assertTrue(
+                        "first-read forms " + runner.getParallelJoinFirstReadFormRuns(),
+                        runner.getParallelJoinFirstReadFormRuns() > 0
+                ))
+        );
+    }
+
+    // Pins the LIMIT forms of the generated equi-join queries, see EquiJoinClause: the LIMIT of a
+    // sub-query or a CTE over the joins, of a UNION ALL, of an ASOF or LT join of which the joins are
+    // the master, and of the joins under a WHERE that holds no column, which the parallel hash join
+    // takes, as the parallel join axis compares the rows with the ordinary plan's. Frames of two rows
+    // leave a small LIMIT fewer frames to dispatch than the probe has.
+    @Test
+    public void testParallelJoinLimitFormsAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "600"},
+                        {"questdb.fuzz.s0", "205"},
+                        {"questdb.fuzz.s1", "6362"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> Assert.assertTrue(
+                        "LIMIT forms " + runner.getParallelJoinLimitFormRuns(),
+                        runner.getParallelJoinLimitFormRuns() > 0
+                ))
+        );
+    }
+
+    // A ring budget below one frame's tuples leaves the ring one entry, and a dispatch limit of zero
+    // reduces every frame on the owner. A query of the pinned seed swaps its first join's inputs and
+    // defines the stages' stepper copies while it runs. The dispatch limit of zero holds for every
+    // query, not only the equi-join band's, whose pressure would otherwise lift it to the default,
+    // which follows the host's query workers: two on a two-core host, which leaves rings of two
+    // entries that the frames of the other queries share.
+    @Test
+    public void testParallelJoinSingleEntryRingAxis() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 0);
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "300"},
+                        {"questdb.fuzz.s0", "8"},
+                        {"questdb.fuzz.s1", "255"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "3"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_RING_PROP, "1"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
+                        {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "0"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> {
+                    final String counts = "aliased " + runner.getParallelJoinAliasedRuns()
+                            + ", single frame window " + runner.getParallelJoinSingleFrameWindowRuns()
+                            + ", partial reads " + runner.getParallelJoinPartialReadChecks()
+                            + ", stepper copies swapped and switched " + runner.getParallelJoinStepperSwitchSwappedRuns();
+                    // A dispatch limit of zero leaves one entry, which no frame shares with another
+                    // in flight.
+                    Assert.assertEquals(counts, 0, runner.getParallelJoinAliasedRuns());
+                    Assert.assertTrue(counts, runner.getParallelJoinSingleFrameWindowRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadChecks() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchSwappedRuns() > 0);
+                })
+        );
+    }
+
+    // Pins the storage shapes of the primary tables (see FuzzStorage) under the parallel hash join: a
+    // pinned seed's tables include a non-WAL and a non-partitioned table, column tops, in join keys
+    // and in Parquet partitions of row groups of four rows, and a dropped column, and the parallel
+    // join axis runs the operator over each of them, and the diff-shadow axis compares each with its
+    // plain shadow.
+    @Test
+    public void testParallelJoinStorageAxes() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "600"},
+                        {"questdb.fuzz.s0", "15"},
+                        {"questdb.fuzz.s1", "472"},
+                        {FuzzConfig.STORAGE_PROP, "true"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "4"},
+                },
+                () -> runQueryFuzz(runner -> {
+                    final String counts = "column top keys " + runner.getParallelJoinOverColumnTopKeys()
+                            + ", Parquet column tops " + runner.getParallelJoinOverParquetColumnTops()
+                            + ", non-partitioned " + runner.getParallelJoinOverNonPartitioned()
+                            + ", non-WAL " + runner.getParallelJoinOverNonWal()
+                            + ", dropped columns " + runner.getParallelJoinOverDroppedColumns();
+                    Assert.assertTrue(counts, runner.getParallelJoinOverColumnTopKeys() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverParquetColumnTops() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverNonPartitioned() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverNonWal() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverDroppedColumns() > 0);
+                })
+        );
+    }
+
     @Test
     public void testQueryFuzz() throws Exception {
+        runQueryFuzz(runner -> {
+        });
+    }
+
+    @Test
+    public void testResultPastTheRowCapSkipped() throws Exception {
+        // A query stops being read at 250,000 rows, and is skipped: one key that every row of both
+        // tables holds, as a NULL key in many rows of a fuzz table does, pairs every row with every
+        // other. 501 x 500 rows, one row past the cap, skip on the JIT axis, whose runs read the
+        // parallel hash join, and on the parallel join axis, which reads the ordinary plan too;
+        // 500 x 500 rows, at the cap, compare as usual.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 AS (SELECT 1 k, x v FROM long_sequence(501))");
+            execute("CREATE TABLE t1 AS (SELECT 1 k, x w FROM long_sequence(500))");
+            final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            try {
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, true, false, false, true, false, null, false, new ObjList<>(), null);
+                final String pastTheCap = "SELECT l.v, r.w FROM t0 l JOIN t1 r ON l.k = r.k";
+                try (RecordCursorFactory factory = select(pastTheCap)) {
+                    Assert.assertNotNull(pastTheCap, ParallelHashJoinTestUtils.find(factory));
+                }
+                final QueryRunner.Result skipped = runner.run(new GeneratedQuery(pastTheCap, true).withShape(QueryShape.EQUI_JOIN));
+                Assert.assertFalse(skipped.getFailure() != null ? skipped.getFailure().getMessage() : "", skipped.isFailed());
+                Assert.assertTrue(skipped.isSkipped());
+                Assert.assertEquals("ResultTooLargeException: the query returned more than 250000 rows", skipped.getSkipReason());
+                final QueryRunner.Result compared = runner.run(new GeneratedQuery(pastTheCap + " WHERE l.v < 501", true).withShape(QueryShape.EQUI_JOIN));
+                Assert.assertFalse(compared.getFailure() != null ? compared.getFailure().getMessage() : "", compared.isFailed());
+                Assert.assertFalse(compared.getSkipReason(), compared.isSkipped());
+                Assert.assertEquals(2, runner.getParallelJoinAxisRuns());
+                Assert.assertEquals(1, runner.getParallelJoinAxisCompletedRuns());
+            } finally {
+                sqlExecutionContext.setParallelHashJoinEnabled(wasParallelHashJoinEnabled);
+            }
+        });
+    }
+
+    @Test
+    public void testUntypedLimitBindComparedAcrossPlans() throws Exception {
+        // The bind form of an equi-join reads its LIMIT and an expression of its SELECT list through
+        // the positional $1, which the runner leaves undefined at compile, as a PostgreSQL Parse
+        // without parameter types does, and binds after it. The runner compares the bind form with
+        // the parallel hash join on and off: $1's type and the columns' types, as the SELECT list's
+        // INT key makes them, and the rows in order, for a LIMIT and a negative LIMIT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(64)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 AS (SELECT (x % 4)::INT k, x * 10 w FROM long_sequence(4))");
+            final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            try {
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, false, null, false, new ObjList<>(), null);
+                for (String sign : new String[]{"", "-"}) {
+                    final String bindSql = "SELECT l.v AS c0, l.k + $1 AS c1 FROM t0 l JOIN t1 r ON l.k = r.k LIMIT " + sign + "$1";
+                    // The bind form runs the parallel hash join.
+                    bindVariableService.clear();
+                    try (RecordCursorFactory factory = select(bindSql)) {
+                        Assert.assertNotNull(bindSql, ParallelHashJoinTestUtils.find(factory));
+                    } finally {
+                        bindVariableService.clear();
+                    }
+                    final GeneratedQuery query = new GeneratedQuery(bindSql.replace("$1", "3"), false)
+                            .withShape(QueryShape.EQUI_JOIN)
+                            .withBind(bindSql, new ObjList<>(), new ObjList<>(), "3");
+                    final QueryRunner.Result result = runner.run(query);
+                    Assert.assertFalse(result.getFailure() != null ? result.getFailure().getMessage() : "", result.isFailed());
+                    Assert.assertFalse(result.getSkipReason(), result.isSkipped());
+                }
+                Assert.assertEquals(2, runner.getUntypedLimitAxisRuns());
+            } finally {
+                sqlExecutionContext.setParallelHashJoinEnabled(wasParallelHashJoinEnabled);
+            }
+        });
+    }
+
+    private static void withSystemProperties(String[][] properties, ThrowingRunnable code) throws Exception {
+        final String[] previous = new String[properties.length];
+        for (int i = 0; i < properties.length; i++) {
+            previous[i] = System.setProperty(properties[i][0], properties[i][1]);
+        }
+        try {
+            code.run();
+        } finally {
+            for (int i = 0; i < properties.length; i++) {
+                if (previous[i] == null) {
+                    System.clearProperty(properties[i][0]);
+                } else {
+                    System.setProperty(properties[i][0], previous[i]);
+                }
+            }
+        }
+    }
+
+    // Runs a batch of generated queries from several owner fibers at once, each on a context of
+    // its own, over shared query workers. An equi-join run draws small tables and mostly equi-join
+    // queries, see generateConcurrentQuery(), compares each with the ordinary plan, and holds the
+    // planner to the shares of the parallel hash join that the run of one owner holds it to.
+    private void runConcurrentFiberFuzz(boolean isEquiJoinRun) throws Exception {
+        assertMemoryLeak(() -> {
+            final Long s0 = Long.getLong("questdb.fuzz.s0");
+            final Long s1 = Long.getLong("questdb.fuzz.s1");
+            final Rnd rnd = s0 != null && s1 != null ? TestUtils.generateRandom(LOG, s0, s1) : TestUtils.generateRandom(LOG);
+            final FuzzConfig config = isEquiJoinRun ? FuzzConfig.forConcurrentEquiJoins(rnd) : FuzzConfig.forConcurrency(rnd);
+            final int queryWorkerCount = 1 + rnd.nextInt(2);
+            final int ownerWorkerCount = 2 + rnd.nextInt(2);
+            final int ownerCount = ownerWorkerCount * (2 + rnd.nextInt(3));
+            LOG.info().$("concurrent fuzz config: tables=").$(config.getNumTables())
+                    .$(", rows=").$(config.getRowsPerTable())
+                    .$(", queries=").$(config.getNumQueries())
+                    .$(", queryWorkers=").$(queryWorkerCount)
+                    .$(", ownerWorkers=").$(ownerWorkerCount)
+                    .$(", owners=").$(ownerCount)
+                    .$();
+            if (config.getHashJoinPayloadLayout() != null) {
+                config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
+            }
+            config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
+            setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(rnd.nextBoolean()));
+            // The frames of a context's scans: an equi-join run cuts its small tables into frames of
+            // a few rows, so that every join has many frames in flight, and takes the tuple cap, the
+            // ring budget and the probe frames that the seed picked, as the run of one owner does.
+            // It leaves the dispatch limit alone, which that run flips for each query.
+            final int pageFrameRows;
+            if (isEquiJoinRun) {
+                pageFrameRows = config.getParallelJoinFrameMaxRows() > 0 ? config.getParallelJoinFrameMaxRows() : CONCURRENT_EQUI_JOIN_PAGE_FRAME_ROWS;
+                if (config.getParallelJoinTaskOutputMaxRows() > 0) {
+                    node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, config.getParallelJoinTaskOutputMaxRows());
+                }
+                if (config.getParallelJoinRingMaxSize() > 0) {
+                    node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, config.getParallelJoinRingMaxSize());
+                }
+                if (config.getParallelJoinProbeFrameMaxRows() > 0) {
+                    node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, config.getParallelJoinProbeFrameMaxRows());
+                }
+                LOG.info().$("concurrent equi-join fuzz [pageFrameRows=").$(pageFrameRows)
+                        .$(", parallelJoinCap=").$(config.getParallelJoinTaskOutputMaxRows())
+                        .$(", parallelJoinRing=").$(config.getParallelJoinRingMaxSize())
+                        .$(", parallelJoinProbeFrames=").$(config.getParallelJoinProbeFrameMaxRows())
+                        .I$();
+            } else {
+                pageFrameRows = CONCURRENT_PAGE_FRAME_ROWS;
+            }
+
+            final WorkerPool queryPool = new TestWorkerPool(QUERY_POOL_NAME, queryWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
+            WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
+            final WorkerPool writerPool = TestWorkerPool.createWithRandomMode(rnd, new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "fuzzWriter";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+            });
+            WorkerPoolUtils.setupWriterJobs(writerPool, engine);
+            final WorkerPool ownerPool = new TestWorkerPool("fuzzOwner", ownerWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
+            queryPool.start(LOG);
+            writerPool.start(LOG);
+            ownerPool.start(LOG);
+            final ObjList<SqlExecutionContextImpl> contexts = new ObjList<>();
+            try {
+                final SqlExecutionContextImpl buildContext = newFuzzContext(queryWorkerCount);
+                contexts.add(buildContext);
+                final ObjList<FuzzTable> tables = createTables(rnd, config, buildContext);
+                engine.releaseInactive();
+                writerPool.halt();
+
+                final ObjList<GeneratedQuery> queries = new ObjList<>();
+                final boolean[] isSerial = new boolean[config.getNumQueries()];
+                final int[] cancelAfterChecks = new int[config.getNumQueries()];
+                // Keep cancellation draws independent of query generation and the serial picks.
+                final Rnd cancelRnd = new Rnd(rnd.getSeed0() ^ 0x9E3779B97F4A7C15L, rnd.getSeed1() ^ 0xC2B2AE3D27D4EB4FL);
+                for (int q = 0; q < config.getNumQueries(); q++) {
+                    final long preGenS0 = rnd.getSeed0();
+                    final long preGenS1 = rnd.getSeed1();
+                    GeneratedQuery query = generateConcurrentQuery(rnd, tables, null, config, isEquiJoinRun);
+                    if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
+                        final long bindS0 = rnd.nextLong();
+                        final long bindS1 = rnd.nextLong();
+                        rnd.reset(preGenS0, preGenS1);
+                        final BindContext bindContext = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
+                        final GeneratedQuery bindForm = generateConcurrentQuery(rnd, tables, bindContext, config, isEquiJoinRun);
+                        if (bindContext.getBindValues().size() > 0 || bindContext.getLimitValue() != null) {
+                            query = query.withBind(bindForm.sql(), bindContext.getBindNames(), bindContext.getBindValues(), bindContext.getLimitValue());
+                        }
+                    }
+                    queries.add(query);
+                    isSerial[q] = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
+                    // The ordered-row oracle needs deterministic queries. Use early checks so
+                    // the breaker trips even on these small tables.
+                    cancelAfterChecks[q] = isEquiJoinRun && !isSerial[q] && query.shape() == QueryShape.EQUI_JOIN
+                            && query.deterministic() && cancelRnd.nextBoolean() ? cancelRnd.nextInt(32) : -1;
+                }
+
+                final ObjList<QueryRunner> runners = new ObjList<>();
+                final CountDownLatch doneLatch = new CountDownLatch(ownerCount);
+                final AtomicInteger completedCount = new AtomicInteger();
+                final AtomicReferenceArray<String> runningSql = new AtomicReferenceArray<>(ownerCount);
+                final AtomicReference<Throwable> ownerError = new AtomicReference<>();
+                final ObjList<QueryRunner.Result> failures = new ObjList<>();
+                for (int o = 0; o < ownerCount; o++) {
+                    final int ownerIndex = o;
+                    final SqlExecutionContextImpl context = newFuzzContext(queryWorkerCount);
+                    contexts.add(context);
+                    context.changePageFrameSizes(pageFrameRows, pageFrameRows);
+                    if (isEquiJoinRun) {
+                        // The run turns the operator on, whatever the configuration says, as the
+                        // run of one owner does.
+                        context.setParallelHashJoinEnabled(true);
+                    }
+                    final QueryRunner runner = new QueryRunner(
+                            engine,
+                            context,
+                            config.isDiffJitEnabled(),
+                            config.isDiffShadowEnabled(),
+                            config.isDiffFusedEnabled(),
+                            // Only an equi-join run has equi-join queries to compare, see
+                            // generateConcurrentQuery().
+                            isEquiJoinRun && config.isDiffParallelJoinEnabled(),
+                            config.isDiffStreamEnabled(),
+                            null,
+                            config.isVerifyCursorEnabled(),
+                            tables,
+                            QUERY_POOL_NAME + '_'
+                    );
+                    runners.add(runner);
+                    final FiberTask owner = new FiberTask() {
+                        @Override
+                        protected void onError(Throwable th) {
+                            ownerError.compareAndSet(null, th);
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            try {
+                                final boolean[] parallelFlags = parallelFlags(context);
+                                for (int i = ownerIndex, n = queries.size(); i < n; i += ownerCount) {
+                                    final GeneratedQuery query = queries.getQuick(i);
+                                    runningSql.set(ownerIndex, query.sql());
+                                    QueryRunner.Result result;
+                                    if (isSerial[i]) {
+                                        setParallelFlags(context, SERIAL_FLAGS);
+                                        try {
+                                            result = runner.run(query);
+                                        } finally {
+                                            setParallelFlags(context, parallelFlags);
+                                        }
+                                    } else {
+                                        result = runner.run(query);
+                                        if (!result.isFailed() && !result.isSkipped() && cancelAfterChecks[i] >= 0) {
+                                            result = runner.runConcurrentCancelFault(query, cancelAfterChecks[i]);
+                                        }
+                                    }
+                                    if (result.isFailed()) {
+                                        synchronized (failures) {
+                                            failures.add(result);
+                                        }
+                                    }
+                                    completedCount.incrementAndGet();
+                                }
+                                runningSql.set(ownerIndex, null);
+                            } finally {
+                                doneLatch.countDown();
+                            }
+                            return true;
+                        }
+                    };
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerPool.getFiberRuntime().launch(owner));
+                }
+
+                int lastCompletedCount = -1;
+                long lastProgressNanos = System.nanoTime();
+                while (!doneLatch.await(100, TimeUnit.MILLISECONDS)) {
+                    final int completed = completedCount.get();
+                    if (completed != lastCompletedCount) {
+                        lastCompletedCount = completed;
+                        lastProgressNanos = System.nanoTime();
+                    } else if (System.nanoTime() - lastProgressNanos > CONCURRENT_STALL_NANOS) {
+                        TestListener.dumpThreadStacks();
+                        final StringBuilder running = new StringBuilder();
+                        for (int o = 0; o < ownerCount; o++) {
+                            final String sql = runningSql.get(o);
+                            if (sql != null) {
+                                running.append("\n  ").append(sql);
+                            }
+                        }
+                        Assert.fail("concurrent query fuzz stalled after " + completed + " of " + queries.size() + " queries, running:" + running);
+                    }
+                }
+                if (ownerError.get() != null) {
+                    throw new AssertionError("query owner failed", ownerError.get());
+                }
+                if (failures.size() > 0) {
+                    throw QueryFuzzDriver.buildFailure(failures);
+                }
+                if (isEquiJoinRun) {
+                    assertConcurrentCancellations(runners);
+                    if (config.isDiffParallelJoinEnabled()) {
+                        assertConcurrentParallelJoinShares(runners);
+                    }
+                }
+            } finally {
+                haltQuietly(queryPool);
+                haltQuietly(ownerPool);
+                haltQuietly(writerPool);
+                Misc.freeObjList(contexts);
+            }
+        });
+    }
+
+    private void runQueryFuzz(RunnerCheck check) throws Exception {
         // Enable dev mode so the test_fault() function the FUNCTION fault relies on
         // is active; it folds to the constant true otherwise.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
@@ -874,7 +1523,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // SqlExecutionContext advertises the real pool width to the planner (the
             // default test context reports getSharedQueryWorkerCount()=1).
             final int workerCount = Integer.getInteger("questdb.fuzz.workers", 4);
-            final Rnd modeRnd = TestUtils.generateRandom(LOG);
+            // The pools' modes come from seeds of their own, which -Dfuzz.s0 and -Dfuzz.s1 replay, as
+            // TestUtils.generateRandom(LOG) reads them; the log line below names both.
+            final long modeS0 = Long.getLong("fuzz.s0", System.nanoTime());
+            final long modeS1 = Long.getLong("fuzz.s1", System.currentTimeMillis());
+            final Rnd modeRnd = TestUtils.generateRandom(LOG, modeS0, modeS1);
             final WorkerPool queryPool = TestWorkerPool.createWithRandomMode(modeRnd, new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
@@ -899,6 +1552,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 }
             });
             WorkerPoolUtils.setupWriterJobs(writerPool, engine);
+            LOG.info().$("fuzz worker pools [queryMode=").$(queryPool.getWorkerPoolMode().name())
+                    .$(", writerMode=").$(writerPool.getWorkerPoolMode().name())
+                    .$(", replay=-Dfuzz.s0=").$(modeS0).$(" -Dfuzz.s1=").$(modeS1)
+                    .I$();
             queryPool.start(LOG);
             writerPool.start(LOG);
             try (
@@ -906,7 +1563,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             .with(securityContext, bindVariableService, null, -1, circuitBreaker)
             ) {
                 parallelCtx.initNow();
-                runFuzz(parallelCtx, writerPool, QUERY_POOL_NAME + '_');
+                // The run turns the parallel hash join on for every query, whatever the configuration
+                // says, so that every axis and the fault injection run it, and the parallel join axis
+                // compares it with the ordinary plan.
+                parallelCtx.setParallelHashJoinEnabled(true);
+                check.check(runFuzz(parallelCtx, writerPool, QUERY_POOL_NAME + '_'));
             } finally {
                 // Suppress halt-time failures so they don't mask the original
                 // assertion or test exception that's already on its way out. halt()
@@ -928,7 +1589,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     FuzzTableFactory.ParquetMode.NONE, null, null,
                     new FuzzTable("skip_shadow", new ObjList<>(), null)));
             QueryRunner runner = new QueryRunner(engine, sqlExecutionContext,
-                    false, true, false, false, null, true, tables, QUERY_POOL_NAME + '_');
+                    false, true, false, false, false, null, true, tables, QUERY_POOL_NAME + '_');
             QueryRunner.Result result = runner.run(new GeneratedQuery(
                     "SELECT missing_column FROM skip_primary", true));
             Assert.assertTrue("rejected storage comparisons must not count as coverage", result.isSkipped());
@@ -946,12 +1607,92 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     QueryFuzzTest::drainWalQueue
             );
             tables.add(t);
-            QueryFuzzDriver.logSchema(t);
+            QueryFuzzDriver.logSchema(t, config.getTableRows(i));
             if (t.getShadow() != null) {
-                QueryFuzzDriver.logSchema(t.getShadow());
+                QueryFuzzDriver.logSchema(t.getShadow(), config.getTableRows(i));
             }
         }
         return tables;
+    }
+
+    private static void assertToTopReiteration(QueryRunner runner, String sql, int trueEvaluations, boolean isFailureExpected) {
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                return count <= trueEvaluations;
+            }
+        });
+        final QueryRunner.Result result = runner.run(new GeneratedQuery(sql, true));
+        // The pass after toTop() evaluated the function past its first evaluations.
+        Assert.assertTrue(sql, TestLatchedCounterFunctionFactory.getCount() > trueEvaluations);
+        if (isFailureExpected) {
+            Assert.assertTrue(sql, result.isFailed());
+            TestUtils.assertContains(result.getFailure().getMessage(), "toTop re-iteration changed the row set");
+        } else {
+            Assert.assertFalse(result.getFailure() != null ? result.getFailure().getMessage() : sql, result.isFailed());
+            Assert.assertFalse(result.getSkipReason(), result.isSkipped());
+        }
+    }
+
+    private static void assertConcurrentCancellations(ObjList<QueryRunner> runners) {
+        int armed = 0;
+        int cancelled = 0;
+        int stacked = 0;
+        int swapped = 0;
+        for (int i = 0, n = runners.size(); i < n; i++) {
+            final QueryRunner runner = runners.getQuick(i);
+            armed += runner.getFaultsArmed(FaultType.CANCEL);
+            cancelled += runner.getFaultsFired(FaultType.CANCEL);
+            stacked += runner.getParallelJoinCancelledStacked();
+            swapped += runner.getParallelJoinCancelledSwapped();
+        }
+        LOG.info().$("concurrent fuzz cancellations [armed=").$(armed).$(", cancelled=").$(cancelled)
+                .$(", stacked=").$(stacked).$(", swapped=").$(swapped).I$();
+        if (armed >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue("no cancellations among " + armed + " armed concurrent joins", cancelled > 0);
+        }
+    }
+
+    // Holds the planner of a concurrent equi-join run to the shares that the run of one owner holds
+    // it to, over the comparisons of every owner's runner: a planner that stops running the parallel
+    // hash join, or stacking it, leaves every comparison ordinary against ordinary, and the run
+    // green. A run too small to tell says so.
+    private static void assertConcurrentParallelJoinShares(ObjList<QueryRunner> runners) {
+        int completed = 0;
+        int selected = 0;
+        int stacked = 0;
+        int swapped = 0;
+        int partialReads = 0;
+        int reexecutions = 0;
+        for (int i = 0, n = runners.size(); i < n; i++) {
+            final QueryRunner runner = runners.getQuick(i);
+            completed += runner.getParallelJoinAxisCompletedRuns();
+            selected += runner.getParallelJoinAxisSelected();
+            stacked += runner.getParallelJoinAxisStacked();
+            swapped += runner.getParallelJoinAxisSwapped();
+            partialReads += runner.getParallelJoinPartialReadChecks();
+            reexecutions += runner.getParallelJoinReexecutionChecks();
+        }
+        LOG.info().$("concurrent fuzz parallel join axis: ").$(selected).$(" of ").$(completed)
+                .$(" completed comparisons used the parallel hash join, ").$(stacked).$(" of them stacking two joins or more, ")
+                .$(swapped).$(" swapping their first join's inputs; ").$(partialReads).$(" partial reads checked, ")
+                .$(reexecutions).$(" factories executed again")
+                .$();
+        if (completed < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            LOG.info().$("concurrent fuzz parallel join axis below the sample size, NOT guarded this run: ")
+                    .$(completed).$('/').$(MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR)
+                    .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
+                    .$();
+            return;
+        }
+        Assert.assertFalse(
+                "the parallel hash join ran on only " + selected + " of " + completed + " completed comparisons of the concurrent run",
+                QueryFuzzDriver.isParallelJoinShareImplausible(selected, completed)
+        );
+        Assert.assertFalse(
+                "the parallel hash join stacked two joins or more in only " + stacked + " of its " + selected + " concurrent runs",
+                QueryFuzzDriver.isStackedShareImplausible(stacked, selected)
+        );
     }
 
     private static void assertBinomialLowerTail(double expected, int k, int n) {
@@ -975,7 +1716,27 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return tail;
     }
 
-    private static GeneratedQuery generateConcurrentQuery(Rnd rnd, ObjList<FuzzTable> tables, BindContext bindContext, FuzzConfig config) {
+    // EquiJoinClause sizes its stars for the default config's tables of about 150 rows. On
+    // forConcurrency()'s tables of 600 to 1,800 rows, one join over a key with NULLs returns hundreds
+    // of thousands of rows: its window functions overflow the window store and the owners' copies of
+    // the results exhaust the heap. The concurrent run over those tables therefore leaves the band to
+    // SIMPLE, and the run over forConcurrentEquiJoins()'s small tables draws an equi-join, alone or a
+    // star over the run's tables, for four queries in five, and any other shape for the fifth, so
+    // that the owners run the joins next to the other parallel operators.
+    private static GeneratedQuery generateConcurrentQuery(
+            Rnd rnd,
+            ObjList<FuzzTable> tables,
+            BindContext bindContext,
+            FuzzConfig config,
+            boolean isEquiJoinRun
+    ) {
+        if (isEquiJoinRun && config.isEquiJoinEnabled() && rnd.nextInt(5) < 4) {
+            // The run draws two tables at least, and the join's two inputs are two of them.
+            final int left = rnd.nextInt(tables.size());
+            final int right = (left + 1 + rnd.nextInt(tables.size() - 1)) % tables.size();
+            return EquiJoinClause.generate(rnd, tables.getQuick(left), tables.getQuick(right), tables, bindContext, false)
+                    .withShape(QueryShape.EQUI_JOIN);
+        }
         return QueryGenerator.generate(
                 rnd,
                 tables,
@@ -987,6 +1748,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isWindowJoinEnabled(),
                 config.isHashJoinEnabled(),
                 config.isGroupingSetsEnabled(),
+                false,
                 config
         );
     }
@@ -995,6 +1757,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return new boolean[]{
                 context.isParallelFilterEnabled(),
                 context.isParallelGroupByEnabled(),
+                context.isParallelHashJoinEnabled(),
                 context.isParallelHashJoinGroupByEnabled(),
                 context.isParallelHorizonJoinEnabled(),
                 context.isParallelReadParquetEnabled(),
@@ -1036,7 +1799,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return context;
     }
 
-    private static void runFuzz(SqlExecutionContext sqlExecutionContext, WorkerPool writerPool, String queryWorkerNamePrefix) throws Exception {
+    private static QueryRunner runFuzz(SqlExecutionContext sqlExecutionContext, WorkerPool writerPool, String queryWorkerNamePrefix) throws Exception {
         Long s0 = Long.getLong("questdb.fuzz.s0");
         Long s1 = Long.getLong("questdb.fuzz.s1");
         Rnd rnd = (s0 != null && s1 != null)
@@ -1082,16 +1845,37 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", horizonJoin=").$(config.isHorizonJoinEnabled())
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
+                .$(", equiJoin=").$(config.isEquiJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
+                .$(", diffParallelJoin=").$(config.isDiffParallelJoinEnabled())
                 .$(", diffStream=").$(config.isDiffStreamEnabled())
                 .$(", diffMapPage=").$(config.isDiffMapPageEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
+                .$(", parallelJoinCap=").$(config.getParallelJoinTaskOutputMaxRows())
+                .$(", parallelJoinFrames=").$(config.getParallelJoinFrameMaxRows())
+                .$(", parallelJoinProbeFrames=").$(config.getParallelJoinProbeFrameMaxRows())
+                .$(", parallelJoinRing=").$(config.getParallelJoinRingMaxSize())
+                .$(", parallelJoinDispatch=").$(config.getParallelJoinDispatchLimit())
+                .$(", parquetRowGroup=").$(config.getParquetRowGroupSize())
+                .$(", storage=").$(config.isStorageAxesEnabled())
                 .$();
         if (config.getHashJoinPayloadLayout() != null) {
             config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
         }
         config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
+        if (config.getParallelJoinTaskOutputMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, config.getParallelJoinTaskOutputMaxRows());
+        }
+        if (config.getParallelJoinRingMaxSize() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, config.getParallelJoinRingMaxSize());
+        }
+        if (config.getParallelJoinProbeFrameMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, config.getParallelJoinProbeFrameMaxRows());
+        }
+        if (config.getParquetRowGroupSize() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, config.getParquetRowGroupSize());
+        }
 
         ObjList<FuzzTable> tables = createTables(rnd, config, sqlExecutionContext);
 
@@ -1102,18 +1886,29 @@ public class QueryFuzzTest extends AbstractCairoTest {
         engine.releaseInactive();
         writerPool.halt();
 
-        QueryFuzzDriver.run(engine, sqlExecutionContext, config, rnd, tables, queryWorkerNamePrefix,
+        return QueryFuzzDriver.run(engine, sqlExecutionContext, config, rnd, tables, queryWorkerNamePrefix,
                 QueryFuzzDriver.Phase.MIXED,
                 queryRnd -> setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(queryRnd.nextBoolean())));
+    }
+
+    @FunctionalInterface
+    private interface RunnerCheck {
+        void check(QueryRunner runner);
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     private static void setParallelFlags(SqlExecutionContext context, boolean[] flags) {
         context.setParallelFilterEnabled(flags[0]);
         context.setParallelGroupByEnabled(flags[1]);
-        context.setParallelHashJoinGroupByEnabled(flags[2]);
-        context.setParallelHorizonJoinEnabled(flags[3]);
-        context.setParallelReadParquetEnabled(flags[4]);
-        context.setParallelTopKEnabled(flags[5]);
-        context.setParallelWindowJoinEnabled(flags[6]);
+        context.setParallelHashJoinEnabled(flags[2]);
+        context.setParallelHashJoinGroupByEnabled(flags[3]);
+        context.setParallelHorizonJoinEnabled(flags[4]);
+        context.setParallelReadParquetEnabled(flags[5]);
+        context.setParallelTopKEnabled(flags[6]);
+        context.setParallelWindowJoinEnabled(flags[7]);
     }
 }

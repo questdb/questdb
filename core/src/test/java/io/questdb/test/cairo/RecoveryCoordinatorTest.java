@@ -165,6 +165,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             final List<Long> open = new ArrayList<>();
             final AtomicInteger acquisitions = new AtomicInteger();
             final AtomicInteger sectionReads = new AtomicInteger();
+            // The bytes of the _txn sections that the facade read in full, so the copies the cache may hold.
+            final AtomicLong sectionBytes = new AtomicLong();
             final FilesFacade probe = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ path) {
@@ -189,6 +191,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                             return -1;
                         }
                         long read = super.read(fd, address, len, offset);
+                        if (read == len) {
+                            sectionBytes.addAndGet(len);
+                        }
                         if (fault.equals("checksum") && read == len) {
                             Unsafe.getUnsafe().putByte(address, (byte) (Unsafe.getUnsafe().getByte(address) ^ 1));
                         }
@@ -214,6 +219,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                         Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256);
                     }
                     for (int i = 0; i < 8; i++) {
+                        final long defaultBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+                        final long o3Before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_O3);
+                        sectionBytes.set(0);
                         // This partition is absent: true under a fault must be conservative retention.
                         Assert.assertEquals(!fault.equals("none"), cache.namesPartition(
                                 probe, path, rootLen, token.getTableId(), 0, -1));
@@ -225,7 +233,20 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                                 probe, path, rootLen, token.getTableId(), 0, -1));
                         Assert.assertEquals(acquired, acquisitions.get());
                         Assert.assertEquals(rootLen, path.size());
+                        // O3PartitionPurgeJob owns the cache, so the cache accounts the _txn copies it holds
+                        // under the job's tag, NATIVE_O3. A query's RSS-after-close check counts NATIVE_DEFAULT,
+                        // and the purge job runs beside queries on the shared pool.
+                        if (fault.equals("none")) {
+                            Assert.assertTrue("must hold a _txn copy", sectionBytes.get() > 0);
+                        }
+                        Assert.assertEquals(defaultBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT));
+                        Assert.assertEquals(
+                                o3Before + (fault.equals("none") ? sectionBytes.get() : 0),
+                                Unsafe.getMemUsedByTag(MemoryTag.NATIVE_O3)
+                        );
                         cache.clear();
+                        Assert.assertEquals(defaultBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT));
+                        Assert.assertEquals(o3Before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_O3));
                         Assert.assertEquals(beforeMemory, Unsafe.getMemUsed());
                         Assert.assertTrue("manifest handles retained=" + open.size(), open.isEmpty());
                         Assert.assertEquals(beforeFds, io.questdb.std.Files.getOpenFileCount());

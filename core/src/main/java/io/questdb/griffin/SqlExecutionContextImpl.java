@@ -103,6 +103,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private CharSequence expiryMaterializingViewName;
     private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
+    // Number of rows the client is expected to read first from the next cursor; see getFirstReadRows().
+    private long firstReadRows = Long.MAX_VALUE;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
@@ -120,6 +122,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
+    private boolean parallelHashJoinEnabled;
     private boolean parallelHashJoinGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
@@ -152,6 +155,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
+        parallelHashJoinEnabled = cairoConfiguration.isSqlParallelHashJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelHashJoinGroupByEnabled = cairoConfiguration.isSqlParallelHashJoinGroupByEnabled();
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
@@ -345,6 +349,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getFirstReadRows() {
+        return firstReadRows;
+    }
+
+    @Override
     public int getIntervalFunctionType() {
         return intervalFunctionType;
     }
@@ -524,6 +533,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelGroupByEnabled() {
         return parallelGroupByEnabled;
+    }
+
+    @Override
+    public boolean isParallelHashJoinEnabled() {
+        return parallelHashJoinEnabled;
     }
 
     @Override
@@ -738,6 +752,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setFirstReadRows(long rows) {
+        this.firstReadRows = rows;
+    }
+
+    @Override
     public void setIntervalFunctionType(int intervalType) {
         this.intervalFunctionType = intervalType;
     }
@@ -799,6 +818,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
         this.parallelGroupByEnabled = parallelGroupByEnabled;
+    }
+
+    @Override
+    public void setParallelHashJoinEnabled(boolean isEnabled) {
+        this.parallelHashJoinEnabled = isEnabled;
     }
 
     @Override

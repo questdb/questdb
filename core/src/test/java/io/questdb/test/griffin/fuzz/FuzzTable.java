@@ -46,6 +46,7 @@ public final class FuzzTable {
     private final ParquetMode parquetMode;
     private final String parquetPartitions;
     private final FuzzTable shadow;
+    private final FuzzStorage storage;
     private final String tsColumnName;
 
     public FuzzTable(String name, ObjList<FuzzColumn> columns, String tsColumnName) {
@@ -61,6 +62,20 @@ public final class FuzzTable {
             String compositeDay,
             FuzzTable shadow
     ) {
+        this(name, columns, tsColumnName, parquetMode, parquetPartitions, compositeDay, shadow, FuzzStorage.PLAIN);
+    }
+
+    public FuzzTable(
+            String name,
+            ObjList<FuzzColumn> columns,
+            String tsColumnName,
+            ParquetMode parquetMode,
+            String parquetPartitions,
+            String compositeDay,
+            FuzzTable shadow,
+            FuzzStorage storage
+    ) {
+        this.storage = storage;
         this.name = name;
         this.columns = columns;
         this.tsColumnName = tsColumnName;
@@ -112,6 +127,13 @@ public final class FuzzTable {
 
     public FuzzTable getShadow() {
         return shadow;
+    }
+
+    /**
+     * The table's storage shape: WAL or not, partitioned or not, column tops and a dropped column.
+     */
+    public FuzzStorage getStorage() {
+        return storage;
     }
 
     public String getTsColumnName() {

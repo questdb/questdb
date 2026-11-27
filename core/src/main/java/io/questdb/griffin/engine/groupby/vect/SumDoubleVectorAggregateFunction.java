@@ -123,6 +123,18 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        double sum = 0;
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
+        }
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), sum);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count);
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
