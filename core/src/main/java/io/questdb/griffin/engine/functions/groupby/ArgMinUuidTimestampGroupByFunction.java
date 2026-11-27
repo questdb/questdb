@@ -145,4 +145,9 @@ public class ArgMinUuidTimestampGroupByFunction extends UuidFunction implements 
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

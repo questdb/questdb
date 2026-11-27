@@ -102,6 +102,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.BYTE, true));
 
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1.45"));
+        Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("+1.45"));
+        Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("-1.45"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1e-13"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1.0"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1"));

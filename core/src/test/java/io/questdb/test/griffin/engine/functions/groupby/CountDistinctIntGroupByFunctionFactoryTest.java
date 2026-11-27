@@ -30,6 +30,49 @@ import org.junit.Test;
 public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testByteAndBooleanEmptyAndNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BYTE, flag BOOLEAN)");
+            final String sql = "SELECT count(*) n, count_distinct(b) bytes, count_distinct(flag) flags, "
+                    + "approx_count_distinct(b) approx, approx_count_distinct(b, 4) low, approx_count_distinct(b, 18) high FROM t";
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    n\tbytes\tflags\tapprox\tlow\thigh
+                    0\t0\t0\t0\t0\t0
+                    """);
+            for (String aggregate : new String[]{"count_distinct(NULL)", "count(DISTINCT NULL)"}) {
+                assertQuery("SELECT " + aggregate + " d FROM t").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("d\n0\n");
+                assertQuery("SELECT count(*) n, " + aggregate + " d FROM t").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("n\td\n0\t0\n");
+            }
+            execute("INSERT INTO t VALUES (null, null), (0, false), (-128, true), (127, false)");
+            for (String aggregate : new String[]{"count_distinct(NULL)", "count(DISTINCT NULL)"}) {
+                assertQuery("SELECT " + aggregate + " d FROM t").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("d\n0\n");
+                assertQuery("SELECT count(*) n, " + aggregate + " d FROM t").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("n\td\n4\t0\n");
+            }
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    n\tbytes\tflags\tapprox\tlow\thigh
+                    4\t3\t2\t3\t3\t3
+                    """);
+            assertQuery("SELECT count_distinct(flag) flags FROM t").noLeakCheck().noRandomAccess().expectSize().returns("flags\n2\n");
+            assertQuery("SELECT count(DISTINCT flag) flags FROM t").noLeakCheck().noRandomAccess().expectSize().returns("flags\n2\n");
+            assertQuery("SELECT count_distinct(b) bytes FROM t").noLeakCheck().noRandomAccess().expectSize().returns("bytes\n3\n");
+            assertQuery("SELECT count_distinct(true) flags FROM t").noLeakCheck().noRandomAccess().expectSize().returns("flags\n1\n");
+            assertQuery("SELECT count(*) n, count_distinct(null) untyped, count_distinct(null::byte) bytes, "
+                    + "count_distinct(null::boolean) flags FROM t").noLeakCheck().noRandomAccess().expectSize().returns("""
+                    n\tuntyped\tbytes\tflags
+                    4\t0\t1\t1
+                    """);
+            assertQuery("SELECT approx_count_distinct(b, 3) FROM t").noLeakCheck()
+                    .fails(7, "precision must be between 4 and 18");
+            assertQuery("SELECT approx_count_distinct(b, 19) FROM t").noLeakCheck()
+                    .fails(7, "precision must be between 4 and 18");
+        });
+    }
+
+    @Test
     public void testConstant() throws Exception {
         String expected = """
                 a\tcount_distinct
