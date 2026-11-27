@@ -128,8 +128,10 @@ stages:
   # end-to-end verification that the packaged distribution builds, starts,
   # and answers a query. It lives in this pipeline, which runs when a PR
   # author asks for it (/azp run macwin), in the merge queue, and on the
-  # weekly master schedule declared at the top of this file, so it runs once
-  # per PR rather than on every push. The self-hosted boxes carry the Rust
+  # weekly master schedule declared at the top of this file, so it runs at
+  # most once per PR rather than on every push. Master CI
+  # (test-master-pipeline.yml) runs the same stage on master every two hours.
+  # The self-hosted boxes carry the Rust
   # toolchain, a C compiler, and Docker; the stage is independent of the hosted
   # macOS/Windows test jobs above.
   - stage: BinarySmokeTest

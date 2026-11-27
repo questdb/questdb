@@ -16,11 +16,12 @@ parameters:
   - name: artifactNameSuffix
     type: string
     default: ""
-  # Main CI runs every test shard on several jobs at once (the Linux legs of one stage, or the
-  # macOS and Windows halves of the hosted pipeline). Name those jobs here, space-separated, and
-  # select-test-commit-mode.yml puts half of them on NOSYNC and half on ADAPTIVE, swapping them on
-  # the branch's next run. Empty leaves the suite default (ADAPTIVE) in place, which is what the
-  # fuzz and adaptive-soak pipelines rely on.
+  # Master CI and the macwin pipeline run every test shard on several jobs at once (the Linux
+  # legs of one stage, or the macOS and Windows halves of the hosted jobs). Name those jobs
+  # here, space-separated, and select-test-commit-mode.yml puts half of them on NOSYNC and half
+  # on ADAPTIVE, swapping them on the branch's next run. Empty leaves the suite default
+  # (ADAPTIVE) in place: the fuzz and adaptive-soak pipelines rely on that, and the coverage
+  # legs of a PR build, which run each shard once, get it too.
   - name: testCommitModeGroup
     type: string
     default: ""

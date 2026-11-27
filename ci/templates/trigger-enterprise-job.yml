@@ -27,9 +27,10 @@ jobs:
     pool: hetzner-incus
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-    # A PR or merge-queue build triggers enterprise CI even when no source path changed:
-    # enterprise-ci (reported by the enterprise run) is a required check, so GitHub blocks a PR that
-    # never reports it from merging, and ejects a queue entry that never reports it.
+    # A PR or merge-queue build triggers enterprise CI even when no source path changed: the
+    # status the enterprise run reports (enterprise-ci, or enterprise-ci-compile for the compile
+    # flavour) can be a required check, and GitHub then blocks a PR that never reports it from
+    # merging, and ejects a queue entry that never reports it.
     condition: >-
       and(succeeded(),
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),

@@ -54,8 +54,8 @@ variables:
     value: "version"
   - name: MAVEN_VERSION_OPTION
     value: "Default"
-  # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows
-  # jobs run on demand in test-hosted-pipeline.yml, not here.
+  # The whole reactor by default. Only the linux-other coverage leg keeps it; the
+  # other coverage legs narrow it to core (templates/self-hosted-cover-jobs.yml).
   - name: TEST_REACTOR_ARGS
     value: ""
   - name: WEB_CONSOLE_PROFILE
