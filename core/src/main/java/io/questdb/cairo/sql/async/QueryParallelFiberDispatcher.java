@@ -835,8 +835,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
-        final AsyncQueryProgressState progressState = task.getShardingContext() != null
-                ? task.getShardingContext().getProgressState()
+        final AsyncQueryProgressState progressState = task.getMerger() != null
+                ? task.getMerger().getProgressState()
                 : null;
         try {
             task.clear();
@@ -940,8 +940,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
                 final AtomicInteger startedCounter = task.getStartedCounter();
                 final CountDownLatchSPI doneLatch = task.getDoneLatch();
-                final AsyncQueryProgressState progressState = task.getShardingContext() != null
-                        ? task.getShardingContext().getProgressState()
+                final AsyncQueryProgressState progressState = task.getMerger() != null
+                        ? task.getMerger().getProgressState()
                         : null;
                 task.clear();
                 try {

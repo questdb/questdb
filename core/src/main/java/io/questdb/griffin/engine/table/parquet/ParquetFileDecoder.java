@@ -71,6 +71,11 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
 
     public static native void destroyDecodeContext(long decodeContextPtr);
 
+    public boolean areRowGroupsInTimestampOrder(int timestampColumnIndex) {
+        assert ptr != 0;
+        return areRowGroupsInTimestampOrder(ptr, timestampColumnIndex);
+    }
+
     /**
      * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
      * <p>
@@ -291,6 +296,8 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         assert ptr != 0;
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
     }
+
+    private static native boolean areRowGroupsInTimestampOrder(long decoderPtr, int timestampColumnIndex);
 
     private static native boolean canSkipRowGroup(
             long decoderPtr,

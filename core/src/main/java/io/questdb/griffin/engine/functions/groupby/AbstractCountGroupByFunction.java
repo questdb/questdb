@@ -78,6 +78,11 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -132,7 +137,13 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("count(").val(arg).val(')');
     }
+
 }

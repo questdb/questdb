@@ -28,6 +28,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.FuzzColumn;
+import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
@@ -44,7 +45,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * Shape:
  * <pre>
  * SELECT [h.offset AS e0,] [t.sym AS e1,] agg(p.col) AS a0 [, agg(...) AS a1 ...]
- * FROM master t
+ * FROM master-or-sub-query t
  * HORIZON JOIN slave p [ON (t.sym = p.sym)]
  * (RANGE FROM f TO t STEP s | LIST (o0, o1, ...)) AS h
  * [WHERE master-only-predicate]
@@ -70,6 +71,9 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * <p>
  * A third of the draws emit a HORIZON JOIN without aggregation instead, which returns one row
  * per master row and offset (see {@link #generateProjection}).
+ * <p>
+ * The single-threaded HORIZON JOIN reads its left-hand side by row id, so that side may be a
+ * WINDOW JOIN sub-query of the master table instead (see {@link FuzzSource#rowIdJoinSide}).
  */
 public final class HorizonJoinClause {
 
@@ -84,10 +88,12 @@ public final class HorizonJoinClause {
     private HorizonJoinClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzTable master, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzTable masterTable, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
+        final FuzzSource masterSource = FuzzSource.rowIdJoinSide(rnd, masterTable, slave);
         if (rnd.nextInt(3) == 0) {
-            return generateProjection(rnd, master, slave, ctx, injectFaultFn);
+            return generateProjection(rnd, masterSource, slave, ctx, injectFaultFn);
         }
+        final FuzzTable master = masterSource.getTable();
         // The shared sym lets us always offer a keyed join; ~1/3 of queries go
         // non-keyed (no ON) to exercise the cross-matching path.
         boolean keyed = rnd.nextInt(3) != 0;
@@ -130,7 +136,7 @@ public final class HorizonJoinClause {
         JoinClauseSupport.appendRowSetGuard(sql, SLAVE_ALIAS, aggCount);
         aggCount++;
 
-        sql.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
+        sql.put(" FROM ").put(masterSource.getFromSql()).put(' ').put(MASTER_ALIAS);
         sql.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
         if (keyed) {
             sql.put(" ON (").put(MASTER_ALIAS).put(".sym = ").put(SLAVE_ALIAS).put(".sym)");
@@ -200,7 +206,7 @@ public final class HorizonJoinClause {
      * Shape, either the rows themselves:
      * <pre>
      * SELECT h.offset AS e0, t.ts AS e1, p.ts AS e2, p.col AS s0 [, ...] [, t.col AS m0 ...]
-     * FROM master t HORIZON JOIN slave p [ON (t.sym = p.sym)] (RANGE ... | LIST (...)) AS h
+     * FROM master-or-sub-query t HORIZON JOIN slave p [ON (t.sym = p.sym)] (RANGE ... | LIST (...)) AS h
      * [WHERE master-only-predicate] [ORDER BY ...] [LIMIT N]
      * </pre>
      * or an aggregation over them in an outer query, the shape of a markout computed over a
@@ -213,7 +219,8 @@ public final class HorizonJoinClause {
      * matched (NULL when none did); {@code count(*)} per offset is exactly the number of master
      * rows, so a merged or dropped row changes it.
      */
-    private static GeneratedQuery generateProjection(Rnd rnd, FuzzTable master, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
+    private static GeneratedQuery generateProjection(Rnd rnd, FuzzSource masterSource, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
+        final FuzzTable master = masterSource.getTable();
         final boolean isKeyed = rnd.nextInt(3) != 0;
         final boolean isListSpec = rnd.nextBoolean();
         final boolean isAggregated = rnd.nextBoolean();
@@ -235,7 +242,7 @@ public final class HorizonJoinClause {
                 rows.put(", ").put(MASTER_ALIAS).put('.').put(column.getName()).put(" AS m").put(masterColumnCount++);
             }
         }
-        rows.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
+        rows.put(" FROM ").put(masterSource.getFromSql()).put(' ').put(MASTER_ALIAS);
         rows.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
         if (isKeyed) {
             rows.put(" ON (").put(MASTER_ALIAS).put(".sym = ").put(SLAVE_ALIAS).put(".sym)");
