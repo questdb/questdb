@@ -252,6 +252,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(HTTP_FROZEN_CLOCK + "=true");
             // TESTS ONLY: writer invariant checks, see Overrides
             writer.println(DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED + "=true");
+            // TESTS ONLY: poison released Parquet base leases, see Overrides
+            writer.println(DEBUG_CAIRO_FREED_BUFFER_POISON_ENABLED + "=true");
 
             // Do not configure worker pools, use default values, e.g. 3 shared pools
             writer.println(SHARED_WORKER_COUNT + "=2");
