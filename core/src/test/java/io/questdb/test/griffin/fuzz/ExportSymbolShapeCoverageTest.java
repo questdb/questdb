@@ -76,7 +76,10 @@ import org.junit.Test;
  * reproducible.
  */
 public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
-    private static final int CORPUS_SIZE = 600;
+    // Only about 1 query in 240 yields an aggregate SYMBOL column the export writes as STRING. At 3_000 the pinned
+    // seed yields 8 of them, so a change to the generator that reshuffles the corpus does not empty the family; 600
+    // yielded 2 before ExpressionGenerator drew all-NULL CASEs, and none after.
+    private static final int CORPUS_SIZE = 3_000;
 
     @Test
     public void testGeneratedQueriesReachSymbolExportPaths() throws Exception {
