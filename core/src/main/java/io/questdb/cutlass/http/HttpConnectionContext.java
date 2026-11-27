@@ -33,6 +33,7 @@ import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
@@ -468,6 +469,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
+    public CharSequence getSelectCacheKey(
+            SecurityContext securityContext,
+            CharSequence sqlText,
+            CharSequence variables,
+            StringSink sink
+    ) {
+        if (getSelectCache() == HttpServer.NO_OP_CACHE) {
+            // The disabled cache ignores the key but still closes the factory on put().
+            return sqlText;
+        }
+        return SelectCacheKey.of(securityContext.getSelectCacheScope(), sqlText, variables, sink);
+    }
+
     public @NotNull StringSink getSessionIdSink() {
         return sessionIdSink;
     }
@@ -535,6 +549,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
+        // The variables of the request that ended. Clearing the processors' state above closes
+        // its cursors, whose log lines still show them.
+        if (httpSqlExecutionContext != null) {
+            httpSqlExecutionContext.setRequestVariables(null);
+        }
         // Preserve the breaker for protocol-switched connections (e.g., WebSocket); a parked
         // credit-suspended egress stream still needs it. clear() resets it on pool return.
         if (httpCircuitBreaker != null && !isProtocolSwitched) {

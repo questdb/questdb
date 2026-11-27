@@ -27,14 +27,17 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.QueryVariablesSqlTest.withVariables;
 import static org.junit.Assert.*;
 
 /**
@@ -46,6 +49,11 @@ import static org.junit.Assert.*;
  * The splice itself never looks at a member's type; the types matter downstream, where the IN node
  * the splice builds picks an overload, a JIT path or an intrinsic scan. So the fuzz runs every shape
  * against one column per such route, see {@link #COLUMNS}.
+ * <p>
+ * A client can also send the declaration outside the statement's text, as the variables parameter
+ * of the HTTP endpoints, which the statement reads as a DECLARE block that opens it, see
+ * {@link QueryVariablesSqlTest}. The parser reads such a declaration from a text of its own, at
+ * positions past the statement's, so the fuzz sends every declared list that way as well.
  */
 public class DeclareListFuzzTest extends AbstractCairoTest {
 
@@ -219,6 +227,22 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
             assertTrue("no list in the grid had a NULL member", listsWithNull > 0);
             assertTrue("no member in the grid was wrapped in brackets", bracketedMembers > 0);
             assertTrue("no list met a type without an IN overload", rejectedLists > 0);
+
+            // A member that fails on its own fails at that member in every spelling. The declared
+            // forms point into the declaration, which the client's variables hold when the statement
+            // is sent with them.
+            final String[][] failingMembers = {
+                    {"ts", "'2024-13-01',"},
+                    {"ts", "'2024-01-02','2024-13-01'"},
+                    {"tm", "'2024-01-02','2024-13-01'"},
+                    {"u", "'not-a-uuid',"},
+                    {"ip", "'300.1.1.1',"},
+            };
+            final int rejectedBefore = rejectedLists;
+            for (String[] c : failingMembers) {
+                assertSplicedListMatches(c[0], c[1], "", "", false, false);
+            }
+            assertEquals("a list with a member that fails on its own was taken", rejectedBefore + failingMembers.length, rejectedLists);
         });
     }
 
@@ -260,7 +284,7 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                     } catch (SqlException e) {
                         // The view body is compiled when the view is created, so that is where a type
                         // no IN overload takes has to be refused, and in the same words.
-                        assertFailsLikeWrittenOut(e, written, createView, () -> execute(createView));
+                        assertFailsLikeWrittenOut(e, written, createView, null, () -> execute(createView));
                         rejected++;
                         continue;
                     }
@@ -287,8 +311,10 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                                 + " IN (" + other + ") ORDER BY " + col;
                         printSql(writtenOverride);
                         final String expectedOverride = sink.toString();
-                        final String viaOverride = "DECLARE @x := (" + other + ") SELECT " + col
-                                + " FROM " + viewName + " ORDER BY " + col;
+                        // the caller's list in the statement's DECLARE block, and sent as a client's
+                        // variables with the read
+                        final String overrideVariables = "@x := (" + other + ')';
+                        final String viaOverride = "DECLARE " + overrideVariables + ' ' + viaView;
                         assertReturnsLikeWrittenOut(
                                 writtenOverride,
                                 viaOverride,
@@ -298,6 +324,16 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                                         + "\n  override: " + viaOverride
                                         + "\n  written : " + writtenOverride
                         );
+                        withVariables(overrideVariables, viaView, () -> assertReturnsLikeWrittenOut(
+                                writtenOverride,
+                                viaView,
+                                expectedOverride,
+                                col,
+                                "list sent as variables overrides the view's list unlike the written-out list"
+                                        + "\n  variables: " + overrideVariables
+                                        + "\n  read     : " + viaView
+                                        + "\n  written  : " + writtenOverride
+                        ));
                         overridden++;
                     }
                 }
@@ -312,17 +348,20 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
     }
 
     // The error has to read the same and point at the same text: a member's own error at that member,
-    // which in the declared form sits in the declaration, and an overload error at the IN.
+    // which in the declared form sits in the declaration, and an overload error at the IN. The
+    // declaration sits in the client's variables when the statement was sent with them.
     private static void assertFailsLikeWrittenOut(
             SqlException writtenError,
             String written,
             String sql,
+            @Nullable String variables,
             TestUtils.LeakProneCode code
     ) throws Exception {
+        final String context = "\n  written: " + written + "\n  other  : " + sql
+                + (variables != null ? "\n  variables: " + variables : "");
         try {
             code.run();
         } catch (SqlException e) {
-            final String context = "\n  written: " + written + "\n  other  : " + sql;
             assertEquals(
                     "fails differently from the written-out list" + context,
                     writtenError.getFlyweightMessage().toString(),
@@ -331,12 +370,26 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
             assertEquals(
                     "error points elsewhere than in the written-out list" + context,
                     tokenAt(written, writtenError.getPosition()),
-                    tokenAt(sql, e.getPosition())
+                    tokenAt(sql, variables, e.getPosition())
             );
             return;
         }
-        fail("the written-out list fails with '" + writtenError.getFlyweightMessage() + "' but this succeeds"
-                + "\n  written: " + written + "\n  other  : " + sql);
+        fail("the written-out list fails with '" + writtenError.getFlyweightMessage() + "' but this succeeds" + context);
+    }
+
+    // Matching rows is the weaker half of the property. The splice also has to produce the same NODE
+    // as the written-out list, and only the plan shows that: a one-member list that kept the operator
+    // node type returned exactly these rows while quietly dropping off the JIT filter path. Comparing
+    // plans is what catches that class of divergence - anything that routes on node shape shows up
+    // here first.
+    private static void assertPlansLikeWrittenOut(String written, String writtenPlan, String declared, String plan) {
+        if (!writtenPlan.equals(plan)) {
+            throw new AssertionError("spliced list plans differently from the written-out list"
+                    + "\n  written : " + written
+                    + "\n  declared: " + declared
+                    + "\n  plan(written) : " + writtenPlan.replace('\n', '/')
+                    + "\n  plan(declared): " + plan.replace('\n', '/'));
+        }
     }
 
     private static void createTable(String name) throws SqlException {
@@ -359,6 +412,14 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
 
     private static String stripTrailingComma(String list) {
         return list.endsWith(",") ? list.substring(0, list.length() - 1) : list;
+    }
+
+    // The token at an error's position: in the statement, or in the client's variables it was sent
+    // with, which the parser reads from SqlParser.QUERY_VARIABLES_POSITION on.
+    private static String tokenAt(String sql, @Nullable String variables, int position) {
+        return variables != null && SqlParser.isInQueryVariables(position)
+                ? tokenAt(variables, position - SqlParser.QUERY_VARIABLES_POSITION)
+                : tokenAt(sql, position);
     }
 
     private static String tokenAt(String sql, int position) {
@@ -416,9 +477,11 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs one generated list both ways: written out in full, the reference behaviour, and reached
-     * through a declared variable, which has to return the same rows from a factory that makes the
-     * same promises and plans the same, or, when no IN overload takes the type, fail the same way.
+     * Runs one generated list three ways: written out in full, the reference behaviour, reached
+     * through a variable the statement's DECLARE block declares, and reached through the same
+     * declaration sent as a client's variables with the statement. Each declared form has to return
+     * the same rows from a factory that makes the same promises and plans the same, or, when no IN
+     * overload takes the type, fail the same way.
      */
     private void assertSplicedListMatches(
             String col,
@@ -434,8 +497,10 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
         final String declaredRhs = isParenthesised && before.isEmpty() && after.isEmpty()
                 ? "(@x)"
                 : before.isEmpty() && after.isEmpty() ? "@x" : "(" + before + "@x" + after + ")";
-        final String declared = "DECLARE @x := (" + list + ") SELECT " + col + " FROM t WHERE "
-                + col + op + declaredRhs + " ORDER BY " + col;
+        final String variables = "@x := (" + list + ')';
+        final String statement = "SELECT " + col + " FROM t WHERE " + col + op + declaredRhs + " ORDER BY " + col;
+        final String declared = "DECLARE " + variables + ' ' + statement;
+        final String sentWithVariables = statement + " with variables " + variables;
 
         // The reference side is printed, because what it returns is what the declared side has to
         // match.
@@ -444,7 +509,8 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
             printSql(written);
             expected = sink.toString();
         } catch (SqlException e) {
-            assertFailsLikeWrittenOut(e, written, declared, () -> printSql(declared));
+            assertFailsLikeWrittenOut(e, written, declared, null, () -> printSql(declared));
+            assertFailsLikeWrittenOut(e, written, statement, variables, () -> withVariables(variables, statement, () -> printSql(statement)));
             rejectedLists++;
             return;
         }
@@ -457,23 +523,23 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                         + "\n  written : " + written
                         + "\n  declared: " + declared
         );
+        withVariables(variables, statement, () -> assertReturnsLikeWrittenOut(
+                written,
+                statement,
+                expected,
+                col,
+                "list sent as variables differs from the written-out list"
+                        + "\n  written : " + written
+                        + "\n  declared: " + sentWithVariables
+        ));
 
-        // Matching rows is the weaker half of the property. The splice also has to produce the same
-        // NODE as the written-out list, and only the plan shows that: a one-member list that kept the
-        // operator node type returned exactly these rows while quietly dropping off the JIT filter
-        // path. Comparing plans is what catches that class of divergence - anything that routes on
-        // node shape shows up here first.
         printSql("EXPLAIN " + written);
         final String writtenPlan = sink.toString();
         printSql("EXPLAIN " + declared);
-        final String declaredPlan = sink.toString();
-        if (!writtenPlan.equals(declaredPlan)) {
-            throw new AssertionError("spliced list plans differently from the written-out list"
-                    + "\n  written : " + written
-                    + "\n  declared: " + declared
-                    + "\n  plan(written) : " + writtenPlan.replace('\n', '/')
-                    + "\n  plan(declared): " + declaredPlan.replace('\n', '/'));
-        }
+        assertPlansLikeWrittenOut(written, writtenPlan, declared, sink.toString());
+        final String explain = "EXPLAIN " + statement;
+        withVariables(variables, explain, () -> printSql(explain));
+        assertPlansLikeWrittenOut(written, writtenPlan, sentWithVariables, sink.toString());
     }
 
     private record FuzzColumn(String name, ObjList<String> members) {

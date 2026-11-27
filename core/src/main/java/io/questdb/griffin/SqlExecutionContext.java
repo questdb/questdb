@@ -225,6 +225,32 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return -1;
     }
 
+    /**
+     * Returns the variables the client declared outside the text of the statement it sent, or
+     * {@code null} for none: the assignments of a DECLARE block, without the DECLARE keyword,
+     * such as {@code @from := '2026-01-01', @to := dateadd('d', 1, @from)}. A text without an
+     * assignment declares none as well: an empty one, which the HTTP endpoints pass for a request
+     * without variables, or one of blanks and comments alone. The parser reads them as a DECLARE
+     * block that opens the text {@link #getQueryVariablesSqlText()} returns, when that text is a
+     * statement that reads them: a query, or an INSERT of a query's rows. It never reads them in
+     * another text it parses with this context.
+     * <p>
+     * The parser reads them at {@link SqlParser#QUERY_VARIABLES_POSITION}, which no other text
+     * reaches, so an error in them, however late the compile or the cursor reports it, has a
+     * position at or past it, and every other error a position before it.
+     */
+    default @Nullable CharSequence getQueryVariables() {
+        return null;
+    }
+
+    /**
+     * Returns the text of the statement the client sent {@link #getQueryVariables()} with, or
+     * {@code null} when that returns {@code null}.
+     */
+    default @Nullable CharSequence getQueryVariablesSqlText() {
+        return null;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
@@ -250,6 +276,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     long getRequestFd();
+
+    /**
+     * Returns the variables the client sent with the request this context runs, or {@code null}
+     * for none, for the log lines that show the statements it runs. Unlike
+     * {@link #getQueryVariables()}, they last for the whole request, and the parser never reads
+     * them.
+     */
+    default @Nullable CharSequence getRequestVariables() {
+        return null;
+    }
 
     @NotNull
     SecurityContext getSecurityContext();

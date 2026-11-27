@@ -67,7 +67,9 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     static final int VALIDATION_RESPONSE_BEGIN = 0;
     static final int VALIDATION_SUFFIX = 4;
     private static final byte DEFAULT_API_VERSION = 1;
-    private static final Log LOG = LogFactory.getLog(SqlValidationProcessorState.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(SqlValidationProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -75,6 +77,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
     private final StringSink query = new StringSink();
+    private final QueryVariablesParameter queryVariables = new QueryVariablesParameter();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private byte apiVersion = DEFAULT_API_VERSION;
     private int columnCount;
@@ -116,6 +119,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         columnNames.clear();
         queryTimestampIndex = -1;
         query.clear();
+        queryVariables.clear();
         validationState = VALIDATION_RESPONSE_BEGIN;
         columnIndex = 0;
         noMeta = false;
@@ -142,6 +146,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
                 throw Utf8Exception.INSTANCE;
             }
         }
+        queryVariables.clear();
         noMeta = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_NM));
         apiVersion = parseApiVersion(request);
     }
@@ -185,6 +190,14 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         return queryType;
     }
 
+    /**
+     * Returns the variables the client declared for the query, empty without the variables
+     * parameter, see {@link QueryVariablesParameter}.
+     */
+    public CharSequence getQueryVariables() {
+        return queryVariables.getText();
+    }
+
     public Rnd getRnd() {
         return rnd;
     }
@@ -198,10 +211,18 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     public void logTimings() {
-        info().$("timings ")
+        final LogRecord log = info().$("timings ")
                 .$("[compiler: ").$(compilerNanos)
-                .$(", q=`").$safe(getQueryOrHidden())
-                .$("`]").$();
+                .$(", q=`").$safe(getQueryOrHidden()).$('`');
+        queryVariables.putLog(log);
+        log.$(']').$();
+    }
+
+    /**
+     * Decodes the variables parameter of the request.
+     */
+    public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
+        queryVariables.of(request);
     }
 
     public void setCompilerNanos(long compilerNanos) {
@@ -220,9 +241,13 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         this.rnd = rnd;
     }
 
+    /**
+     * Stores an error at a position in what the query was compiled from, which can lie in the
+     * variables, see {@link QueryVariablesParameter#locateError}.
+     */
     public void storeError(int errorPosition, CharSequence errorMessage) {
         this.validationState = VALIDATION_ERROR;
-        this.errorPosition = errorPosition;
+        this.errorPosition = queryVariables.locateError(errorPosition);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
@@ -230,6 +255,17 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     public void storeQueryTypeStringConfirmation(String queryTypeString) {
         this.validationState = VALIDATION_CONFIRMATION;
         this.queryTypeStringConfirmation = queryTypeString;
+    }
+
+    /**
+     * Stores an error in the variables parameter itself, at a position in its text.
+     */
+    public void storeVariablesError(int errorPosition, CharSequence errorMessage) {
+        this.validationState = VALIDATION_ERROR;
+        queryVariables.markError();
+        this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {
@@ -377,8 +413,9 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(errorPosition)
-                .putAscii('}');
+                .putAsciiQuoted("position").putAscii(':').put(errorPosition);
+        queryVariables.putErrorSource(response);
+        response.putAscii('}');
         validationState = VALIDATION_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);

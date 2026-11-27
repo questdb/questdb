@@ -2344,11 +2344,19 @@ public class ExpressionParser {
             }
 
             if (shadowParseMismatchFirstPosition != -1) {
+                CharSequence text = lexer.getContent();
+                int position = shadowParseMismatchFirstPosition;
+                if (text instanceof QueryVariablesText variablesText) {
+                    // A client's variables log as themselves, with the position in them. The
+                    // blanks their text holds ahead of them are no text, and there are a billion.
+                    text = variablesText.getVariables();
+                    position -= SqlParser.QUERY_VARIABLES_POSITION;
+                }
                 LOG.advisory()
                         .$("operator precedence compat mode: detected expression parsing behaviour change for query=[")
-                        .$(lexer.getContent())
+                        .$(text)
                         .$("] at position=")
-                        .$(shadowParseMismatchFirstPosition)
+                        .$(position)
                         .$();
             }
         } catch (SqlException e) {

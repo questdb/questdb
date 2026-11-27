@@ -272,7 +272,14 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                     circuitBreaker.of(context.getFd())
             );
             sqlExecutionContext.setValidationOnly(true);
-            final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+            final CompiledQuery cc;
+            // the variables reach this compile and nothing else, as on /exec
+            sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.getQuery());
+            try {
+                cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+            } finally {
+                sqlExecutionContext.setQueryVariables(null, null);
+            }
             sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
             state.setQueryType(cc.getType());
@@ -471,6 +478,19 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             state.onResumeBadUtf8(response);
             return false;
         }
+
+        try {
+            state.parseQueryVariables(header);
+        } catch (SqlException e) {
+            state.info().$("invalid variables [msg=").$safe(e.getFlyweightMessage()).I$();
+            final HttpChunkedResponse response = context.getChunkedResponse();
+            state.storeVariablesError(e.getPosition(), e.getFlyweightMessage());
+            JsonQueryProcessor.header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
+            state.onResumeError(response);
+            return false;
+        }
+        // for the log lines of the statements the request runs; the connection clears them
+        context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount).setRequestVariables(state.getQueryVariables());
         return true;
     }
 

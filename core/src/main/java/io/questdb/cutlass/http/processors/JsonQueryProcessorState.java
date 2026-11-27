@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
@@ -98,7 +97,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_INSERT_CONFIRMATION = QUERY_CONFIRMATION + 1; // 15
     static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1; // 16
     private static final byte DEFAULT_API_VERSION = 1;
-    private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
@@ -111,6 +112,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final CharSequence keepAliveHeader;
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
+    private final QueryVariablesParameter queryVariables = new QueryVariablesParameter();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -148,8 +150,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long recordCountNanos;
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
-    // the select cache scope of the principal the query runs for, see getSelectCacheKey()
-    private CharSequence selectCacheScope;
+    private CharSequence selectCacheKey;
     private long skip;
     private long stop;
     private boolean timings = false;
@@ -204,17 +205,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             if (recordCursorFactory != null) {
                 if (queryCacheable && ownerEndFailure == null) {
-                    httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink),
-                            recordCursorFactory
-                    );
+                    assert selectCacheKey != null;
+                    httpConnectionContext.getSelectCache().put(selectCacheKey, recordCursorFactory);
                 } else {
                     recordCursorFactory.close();
                 }
                 recordCursorFactory = null;
             }
-            selectCacheScope = null;
+            selectCacheKey = null;
             query.clear();
+            queryVariables.clear();
             columnNameSink.clear();
             queryState = QUERY_SETUP_FIRST_RECORD;
             columnIndex = 0;
@@ -272,6 +272,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 throw Utf8Exception.INSTANCE;
             }
         }
+        queryVariables.clear();
         this.skip = skip;
         this.stop = stop;
         count = 0L;
@@ -341,18 +342,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return queryType;
     }
 
+    /**
+     * Returns the variables the client declared for the query: the assignments of a DECLARE
+     * block, see {@link SqlExecutionContext#getQueryVariables()}, empty without the variables
+     * parameter. Valid after {@link #parseQueryVariables(HttpRequestHeader)}.
+     */
+    public CharSequence getQueryVariables() {
+        return queryVariables.getText();
+    }
+
     public Rnd getRnd() {
         return rnd;
     }
 
     /**
-     * Returns the select cache key of the query for the principal it runs for, and remembers the
-     * principal's scope, so that clear() returns the factory to the same scope it came from or was
-     * compiled in.
+     * Prepares the lookup key. Both the query and the key sink stay intact until clear() returns the factory.
      */
     public CharSequence getSelectCacheKey(SecurityContext securityContext) {
-        selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink);
+        selectCacheKey = httpConnectionContext.getSelectCacheKey(securityContext, query, queryVariables.getText(), selectCacheKeySink);
+        return selectCacheKey;
     }
 
     public long getStatementTimeout() {
@@ -376,12 +384,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logTimings() {
-        info().$("timings ")
+        final long executeNanos = nanosecondClock.getTicks() - executeStartNanos;
+        final LogRecord log = info().$("timings ")
                 .$("[compiler: ").$(compilerNanos)
                 .$(", count: ").$(recordCountNanos)
-                .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
-                .$(", q=`").$safe(getQueryOrHidden())
-                .$("`]").$();
+                .$(", execute: ").$(executeNanos)
+                .$(", q=`").$safe(getQueryOrHidden()).$('`');
+        queryVariables.putLog(log);
+        log.$(']').$();
     }
 
     public void beginSqlExecutionOwner(
@@ -439,6 +449,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             // succeeding. The ordering is still timer first, owner second.
             unmountSqlExecutionOwner();
         }
+    }
+
+    /**
+     * Decodes the variables parameter of the request. The parser reads the text when it compiles
+     * the query.
+     */
+    public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
+        queryVariables.of(request);
     }
 
     public void resumeExecutionTimer() {
@@ -514,16 +532,21 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_EMPTY_QUERY;
     }
 
+    /**
+     * Stores an error at a position in what the query was compiled from. An error in the
+     * variables the client declared then reports the position in the variables parameter, see
+     * {@link QueryVariablesParameter#locateError(int)}.
+     */
     public void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.errorPosition = errorPosition;
+        this.errorPosition = queryVariables.locateError(errorPosition);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
 
     public void storeError(CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.errorPosition = Numbers.INT_NULL;
+        this.errorPosition = queryVariables.locateError(Numbers.INT_NULL);
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
@@ -535,6 +558,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void storeUpdateConfirmation(long updateRecords) {
         queryState = QUERY_UPDATE_CONFIRMATION;
         this.updateRecords = updateRecords;
+    }
+
+    /**
+     * Stores an error in the variables parameter itself, at a position in its text.
+     */
+    public void storeVariablesError(int errorPosition, CharSequence errorMessage) {
+        this.queryState = QUERY_ERROR;
+        queryVariables.markError();
+        this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
     }
 
     public void suspendExecutionTimer() {
@@ -1358,6 +1392,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (errorPosition != Numbers.INT_NULL) {
             response.putAscii(',').putAsciiQuoted("position").putAscii(':').put(errorPosition);
         }
+        queryVariables.putErrorSource(response);
 
         response.putAscii('}');
         queryState = QUERY_DONE;
@@ -1394,7 +1429,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 response.putAscii(',')
                         .putAsciiQuoted("error").putAscii(':')
                         .putQuote().escapeJsonStr(message != null ? message : "Internal server error").putQuote()
-                        .putAscii(", \"errorPos\"").putAscii(':').put(messagePosition);
+                        .putAscii(", \"errorPos\"").putAscii(':').put(queryVariables.locateError(messagePosition));
+                queryVariables.putErrorSource(response);
             }
             if (timings) {
                 response.putAscii(',').putAsciiQuoted("timings").putAscii(':')

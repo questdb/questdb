@@ -105,6 +105,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_TIMEOUT = new Utf8String("timeout");
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
+    public static final Utf8String URL_PARAM_VARIABLES = new Utf8String("variables");
     public static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
 
     private HttpConstants() {
