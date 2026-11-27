@@ -787,6 +787,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewRejectsNonPersistedIntervalColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "create materialized view test as (" +
+                    "select ts, interval(ts, ts) x, count() c from " + TABLE1 + " sample by 1h" +
+                    ") partition by DAY";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(query.indexOf("interval"), "non-persisted type: INTERVAL");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewInvalidPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
