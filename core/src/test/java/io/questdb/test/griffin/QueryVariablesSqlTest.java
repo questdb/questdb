@@ -1033,6 +1033,24 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         return "operator precedence compat mode: detected expression parsing behaviour change for query=[" + text + "] at position=" + position + Misc.EOL;
     }
 
+    // The statement fails with the variables as it does without them. Returns the error message.
+    private static String assertFailsAsWithoutVariables(String sql, String variables) throws Exception {
+        final int position;
+        final String message;
+        try {
+            execute(sql);
+            throw new AssertionError("expected an error for " + sql);
+        } catch (Throwable e) {
+            if (!(e instanceof FlyweightMessageContainer container)) {
+                throw e;
+            }
+            position = container.getPosition();
+            message = container.getFlyweightMessage().toString();
+        }
+        withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+        return message;
+    }
+
     // The statement fails with the variables as it does without them, at a position before the
     // variables: no error in them. Compiling or reading the statement reports the error.
     private static void assertFailsWithVariablesAsWithout(String sql, String variables, String message) throws Exception {
@@ -1066,24 +1084,6 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     private static void executeWithVariables(String variables, String sql) throws Exception {
         withVariables(variables, sql, () -> execute(sql));
-    }
-
-    // The statement fails with the variables as it does without them. Returns the error message.
-    private String assertFailsAsWithoutVariables(String sql, String variables) throws Exception {
-        final int position;
-        final String message;
-        try {
-            execute(sql);
-            throw new AssertionError("expected an error for " + sql);
-        } catch (Throwable e) {
-            if (!(e instanceof FlyweightMessageContainer container)) {
-                throw e;
-            }
-            position = container.getPosition();
-            message = container.getFlyweightMessage().toString();
-        }
-        withVariables(variables, sql, () -> assertExceptionNoLeakCheck(sql, position, message));
-        return message;
     }
 
     // Runs the code with the variables a client sent with the statement's text, as /exec does.

@@ -143,6 +143,13 @@ public class SelectCacheKeyTest {
         final String keyB = SelectCacheKey.of(null, sql, "@a := 2", new StringSink()).toString();
         Assert.assertNotEquals(keyA, keyB);
         Assert.assertNotEquals(sql, keyA);
+        // the same text with the same values takes the same key again, which is the key the cache
+        // finds the compiled query by
+        Assert.assertEquals(keyA, SelectCacheKey.of(null, sql, "@a := 1", new StringSink()).toString());
+        Assert.assertEquals(
+                SelectCacheKey.of("alice", sql, "@a := 1", new StringSink()).toString(),
+                SelectCacheKey.of("alice", sql, "@a := 1", new StringSink()).toString()
+        );
         // without variables, the key is the one of the SQL text alone
         Assert.assertSame(sql, SelectCacheKey.of(null, sql, "", new StringSink()));
         Assert.assertEquals(

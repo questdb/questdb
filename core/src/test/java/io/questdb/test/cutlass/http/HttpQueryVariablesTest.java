@@ -124,6 +124,60 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testCachedQueryWithSameValues() throws Exception {
+        // The select cache keeps a query compiled with variables under its text and the variables,
+        // and serves it to the next request that sends both, on /exec and on /exp. The exe line
+        // tells whether the cache served the statement. The connection stays open, so the server
+        // returns a request's plan to the cache before it reads the next request.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        final LogCapture capture = new LogCapture();
+        try {
+            TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+                capture.start();
+                engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+                engine.execute("INSERT INTO t VALUES (1), (2), (3)", sqlExecutionContext);
+                final CharSequenceObjHashMap<String> min1 = new CharSequenceObjHashMap<>();
+                min1.put("variables", "@min := 1");
+                final CharSequenceObjHashMap<String> min2 = new CharSequenceObjHashMap<>();
+                min2.put("variables", "@min := 2");
+                // the endpoints share the cache, so each sends a text of its own
+                final String execSql = "SELECT v x FROM t WHERE v > @min";
+                final String expSql = "SELECT v e FROM t WHERE v > @min";
+                final String execRows = "{\"query\":\"SELECT v x FROM t WHERE v > @min\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2],[3]],\"count\":2}";
+                testHttpClient.setKeepConnection(true);
+                try {
+                    // the same values twice, then other values, which the cached plan must not serve
+                    testHttpClient.assertGet("/query", execRows, execSql, min1);
+                    testHttpClient.assertGet("/query", execRows, execSql, min1);
+                    testHttpClient.assertGet(
+                            "/query",
+                            "{\"query\":\"SELECT v x FROM t WHERE v > @min\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[3]],\"count\":1}",
+                            execSql,
+                            min2
+                    );
+                    testHttpClient.assertGet("/exp", "\"e\"\r\n2\r\n3\r\n", expSql, min1);
+                    testHttpClient.assertGet("/exp", "\"e\"\r\n2\r\n3\r\n", expSql, min1);
+                    testHttpClient.assertGet("/exp", "\"e\"\r\n3\r\n", expSql, min2);
+                } finally {
+                    testHttpClient.setKeepConnection(false);
+                    testHttpClient.disconnect();
+                }
+                // the exe line of the last request: one logging thread delivers the lines in order,
+                // so every line asserted below has arrived once this one has
+                capture.waitForRegex(exeLine(expSql, "@min := 2", false));
+                for (String sql : new String[]{execSql, expSql}) {
+                    capture.assertOnlyOnce(exeLine(sql, "@min := 1", false));
+                    capture.assertOnlyOnce(exeLine(sql, "@min := 1", true));
+                    capture.assertOnlyOnce(exeLine(sql, "@min := 2", false));
+                }
+            }));
+        } finally {
+            capture.stop();
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        }
+    }
+
+    @Test
     public void testCachedViewReadWithAndWithoutVariables() throws Exception {
         // A view's OVERRIDABLE variable makes the same text compile with and without the
         // parameter, to queries that return other rows. The select cache that /exec and /exp
@@ -834,6 +888,12 @@ public class HttpQueryVariablesTest extends AbstractTest {
         Assert.assertEquals(statusWithout, statusWith);
         TestUtils.assertEquals(without.toString(), with.toString());
         return with.toString();
+    }
+
+    // the exe line of a statement sent with the variables, which tells whether the select cache
+    // served the statement
+    private static String exeLine(String sql, String variables, boolean isCacheHit) {
+        return "exe \\[id=\\d+, sql=`" + Pattern.quote(sql) + "`, vars=`" + Pattern.quote(variables) + "`, principal=[^,]+, cache=" + isCacheHit + ',';
     }
 
     private static class VariablesHttpClient extends TestHttpClient {
