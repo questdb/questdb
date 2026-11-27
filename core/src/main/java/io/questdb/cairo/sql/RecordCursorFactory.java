@@ -304,10 +304,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if every cursor open within one execution yields the same rows, as the legacy planner's code
-     * generator asks the factory; the new planner derives the same fact from the bound plan instead.
+     * Returns true if every cursor open within one execution yields the same rows. Only the legacy planner asks a
+     * factory, and this goes with the io.questdb.legacy package; the new planner derives the fact from the bound plan.
      */
-    default boolean isStableWithinExecution() {
+    default boolean isLegacyStableWithinExecution() {
         return !isNonDeterministic();
     }
 

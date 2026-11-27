@@ -106,11 +106,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public IntList getColumnCrossIndex() {
         return columnCrossIndex;
     }

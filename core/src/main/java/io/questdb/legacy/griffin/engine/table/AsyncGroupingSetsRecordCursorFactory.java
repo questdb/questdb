@@ -209,7 +209,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         AsyncGroupingSetsAtom atom = frameSequence.getAtom();
         ObjList<Function> keyFunctions = atom.getOwnerKeyFunctions();
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
@@ -222,7 +222,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                 return false;
             }
         }
-        return LegacyRecordCursorFactory.isStableWithinExecution(base);
+        return base.isLegacyStableWithinExecution();
     }
 
     @Override

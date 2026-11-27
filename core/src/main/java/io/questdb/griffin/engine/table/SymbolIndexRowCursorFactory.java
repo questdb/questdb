@@ -116,7 +116,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         return symbolFunction == null || symbolFunction.isStableWithinExecution();
     }
 

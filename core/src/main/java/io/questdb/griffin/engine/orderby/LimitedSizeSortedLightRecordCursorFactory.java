@@ -96,7 +96,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         final Function loFunction = bounds.getLoFunction();
         if (loFunction != null && !loFunction.isStableWithinExecution()) {
             return false;
@@ -105,7 +105,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
             return false;
         }
-        return base.isStableWithinExecution();
+        return base.isLegacyStableWithinExecution();
     }
 
     @Override

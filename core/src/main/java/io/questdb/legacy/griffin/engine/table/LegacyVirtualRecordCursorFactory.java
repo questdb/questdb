@@ -56,14 +56,14 @@ public class LegacyVirtualRecordCursorFactory extends VirtualRecordCursorFactory
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         final ObjList<Function> functions = getFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isStableWithinExecution()) {
                 return false;
             }
         }
-        return LegacyRecordCursorFactory.isStableWithinExecution(getBaseFactory());
+        return getBaseFactory().isLegacyStableWithinExecution();
     }
 
     @Override

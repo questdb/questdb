@@ -96,7 +96,10 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return true;
     }
 
-    default boolean isStableWithinExecution() {
+    /**
+     * The partition frames' part of {@link RecordCursorFactory#isLegacyStableWithinExecution()}.
+     */
+    default boolean isLegacyStableWithinExecution() {
         return !isNonDeterministic();
     }
 

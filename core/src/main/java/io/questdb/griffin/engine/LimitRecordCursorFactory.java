@@ -112,7 +112,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         final Function leftFunc = bounds.getLoFunction();
         if (leftFunc != null && !leftFunc.isStableWithinExecution()) {
             return false;
@@ -121,7 +121,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         if (rightFunc != null && !rightFunc.isStableWithinExecution()) {
             return false;
         }
-        return base.isStableWithinExecution();
+        return base.isLegacyStableWithinExecution();
     }
 
     @Override

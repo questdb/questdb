@@ -195,21 +195,6 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

@@ -127,8 +127,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
+    public boolean isLegacyStableWithinExecution() {
+        return base.isLegacyStableWithinExecution();
     }
 
     @Override

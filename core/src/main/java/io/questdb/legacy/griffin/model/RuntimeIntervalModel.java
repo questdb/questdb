@@ -164,7 +164,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         if (isStatic()) {
             return true;
         }

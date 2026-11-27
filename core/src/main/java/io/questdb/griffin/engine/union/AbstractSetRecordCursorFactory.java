@@ -73,8 +73,8 @@ public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
+    public boolean isLegacyStableWithinExecution() {
+        return factoryA.isLegacyStableWithinExecution() && factoryB.isLegacyStableWithinExecution();
     }
 
     @Override

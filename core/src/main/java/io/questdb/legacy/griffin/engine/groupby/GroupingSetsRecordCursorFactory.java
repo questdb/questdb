@@ -203,7 +203,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
                 return false;
@@ -214,7 +214,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 return false;
             }
         }
-        return LegacyRecordCursorFactory.isStableWithinExecution(base);
+        return base.isLegacyStableWithinExecution();
     }
 
     @Override

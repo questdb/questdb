@@ -66,7 +66,7 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         return true;
     }
 

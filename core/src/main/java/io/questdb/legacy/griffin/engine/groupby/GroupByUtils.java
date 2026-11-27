@@ -892,7 +892,7 @@ public class GroupByUtils {
             ObjList<GroupByFunction> groupByFunctions
     ) {
         if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
-                || keyTypes.getColumnCount() == 0 || !LegacyRecordCursorFactory.isStableWithinExecution(base)) {
+                || keyTypes.getColumnCount() == 0 || !base.isLegacyStableWithinExecution()) {
             return -1;
         }
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {

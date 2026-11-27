@@ -235,11 +235,6 @@ public abstract class AbstractAsyncFilteredRecordCursorFactory<T extends AsyncFi
         return getFilter().isNonDeterministic() || base.isNonDeterministic();
     }
 
-    @Override
-    public boolean isStableWithinExecution() {
-        return getFilter().isStableWithinExecution() && base.isStableWithinExecution();
-    }
-
     /**
      * Supports random access whatever the base supports: the cursors serve {@code recordAt()} and
      * {@code getRecordB()} through page frame memory of their own.

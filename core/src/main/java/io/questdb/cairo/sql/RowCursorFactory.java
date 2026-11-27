@@ -74,10 +74,10 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
     }
 
     /**
-     * The row cursor's part of {@link RecordCursorFactory#isStableWithinExecution()}. An unknown row cursor reports
-     * false.
+     * The row cursor's part of {@link RecordCursorFactory#isLegacyStableWithinExecution()}. An unknown row cursor
+     * reports false.
      */
-    default boolean isStableWithinExecution() {
+    default boolean isLegacyStableWithinExecution() {
         return false;
     }
 

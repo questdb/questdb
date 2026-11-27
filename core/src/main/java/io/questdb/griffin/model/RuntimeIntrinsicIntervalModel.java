@@ -48,7 +48,10 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
         return true;
     }
 
-    default boolean isStableWithinExecution() {
+    /**
+     * The intervals' part of {@link io.questdb.cairo.sql.RecordCursorFactory#isLegacyStableWithinExecution()}.
+     */
+    default boolean isLegacyStableWithinExecution() {
         return !isNonDeterministic();
     }
 

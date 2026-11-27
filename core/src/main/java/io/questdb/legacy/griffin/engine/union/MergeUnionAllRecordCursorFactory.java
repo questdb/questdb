@@ -131,9 +131,9 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         for (int i = 0, n = sourceFactories.size(); i < n; i++) {
-            if (!LegacyRecordCursorFactory.isStableWithinExecution(sourceFactories.getQuick(i))) {
+            if (!sourceFactories.getQuick(i).isLegacyStableWithinExecution()) {
                 return false;
             }
         }

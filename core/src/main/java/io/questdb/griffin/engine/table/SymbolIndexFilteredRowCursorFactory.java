@@ -96,7 +96,7 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public boolean isStableWithinExecution() {
+    public boolean isLegacyStableWithinExecution() {
         final Function filter = cursor.getFilter();
         return (symbolFunction == null || symbolFunction.isStableWithinExecution())
                 && (filter == null || filter.isStableWithinExecution());

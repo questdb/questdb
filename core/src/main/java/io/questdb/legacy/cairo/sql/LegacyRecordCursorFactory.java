@@ -65,10 +65,6 @@ public interface LegacyRecordCursorFactory extends RecordCursorFactory {
         }
     }
 
-    static boolean isStableWithinExecution(RecordCursorFactory factory) {
-        return factory.isStableWithinExecution();
-    }
-
     /**
      * Hands the filter {@code factory} gave up to a steal, with its compiled form and bind variables, to the factory
      * that adopts them, so closing {@code factory} no longer frees them. A factory whose halfClose() already gives

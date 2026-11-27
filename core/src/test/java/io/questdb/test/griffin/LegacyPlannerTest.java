@@ -652,6 +652,25 @@ public class LegacyPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNewPlannerCallsNoLegacyOnlyApi() throws Exception {
+        final Path root = Paths.get("src", "main", "java", "io", "questdb", "griffin");
+        Assume.assumeTrue(Files.isDirectory(root));
+        final Pattern legacyOnly = Pattern.compile("\\b(isLegacyStableWithinExecution|supportsNegativeLimitPageFrame)\\(");
+        final StringSink violations = new StringSink();
+        for (String planner : new String[]{"bind", "codegen", "optimiser", "plan"}) {
+            try (Stream<Path> files = Files.walk(root.resolve(planner))) {
+                for (Path file : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".java"))::iterator) {
+                    final Matcher call = legacyOnly.matcher(Files.readString(file));
+                    if (call.find()) {
+                        violations.put(root.relativize(file).toString().replace(File.separatorChar, '/')).put(" calls ").put(call.group(1)).put('\n');
+                    }
+                }
+            }
+        }
+        TestUtils.assertEquals("", violations);
+    }
+
+    @Test
     public void testSharedCodeTypeChecksNoForkedClass() throws Exception {
         // A class the legacy planner forks has a legacy copy of another type, so a type check on the shared class in
         // code both planners reach misses what the legacy planner builds. The new planner's own packages, and shared

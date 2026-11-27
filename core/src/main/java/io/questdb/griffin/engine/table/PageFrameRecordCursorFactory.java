@@ -150,15 +150,15 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        if (!rowCursorFactory.isStableWithinExecution()) {
+    public boolean isLegacyStableWithinExecution() {
+        if (!rowCursorFactory.isLegacyStableWithinExecution()) {
             return false;
         }
         final Function filter = this.filter;
         if (filter != null && !filter.isStableWithinExecution()) {
             return false;
         }
-        return partitionFrameCursorFactory.isStableWithinExecution();
+        return partitionFrameCursorFactory.isLegacyStableWithinExecution();
     }
 
     @Override

@@ -197,23 +197,6 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        AsyncGroupingSetsAtom atom = frameSequence.getAtom();
-        ObjList<Function> keyFunctions = atom.getOwnerKeyFunctions();
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            if (!recordFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         if (usesCompiledFilter()) {
             sink.type("Async JIT Group By");

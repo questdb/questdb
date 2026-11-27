@@ -73,8 +73,8 @@ public class LegacySelectedRecordCursorFactory extends SelectedRecordCursorFacto
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return LegacyRecordCursorFactory.isStableWithinExecution(getBaseFactory());
+    public boolean isLegacyStableWithinExecution() {
+        return getBaseFactory().isLegacyStableWithinExecution();
     }
 
     @Override
