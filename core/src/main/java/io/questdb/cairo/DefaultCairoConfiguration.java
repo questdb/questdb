@@ -2086,6 +2086,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlStreamGroupByEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlWindowCachedLightEnabled() {
         return true;
     }

@@ -197,6 +197,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    @Override
+    protected boolean isSlaveHashed() {
+        return true;
+    }
+
     private class HashFullOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
         private final FullOuterJoinRecord record;
         private MapRecordCursor mapCursor;
