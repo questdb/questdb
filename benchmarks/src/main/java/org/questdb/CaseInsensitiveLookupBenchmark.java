@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -46,9 +47,10 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Case-insensitive hashing, comparison and map lookups of table and column names. A server passes many kinds of
- * CharSequence through {@link Chars}, so the setup does the same before the JIT compiles the code under test: with
- * a single kind of key, the JIT inlines calls that a server makes through a virtual call, and the numbers mislead.
+ * Case-insensitive hashing, comparison and map lookups of table and column names, and the creation of a
+ * {@link TableToken}, which hashes its name for such lookups. A server passes many kinds of CharSequence through
+ * {@link Chars}, so the setup does the same before the JIT compiles the code under test: with a single kind of key,
+ * the JIT inlines calls that a server makes through a virtual call, and the numbers mislead.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
@@ -78,6 +80,7 @@ public class CaseInsensitiveLookupBenchmark {
     private int[] tableNameHashCodes;
     private String[] tableNames;
     private String[] tableNamesOtherCase;
+    private TableToken tableToken;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -211,6 +214,14 @@ public class CaseInsensitiveLookupBenchmark {
             checksum += value(concurrentMap.get(shortNames[k])) + value(concurrentMap.get(shortNamesOtherCase[k]));
             checksum += value(concurrentMap.get(tableNames[k])) + value(objMap.get(tableNames[k]));
         }
+        tableToken = new TableToken(TABLE_NAMES[0], TABLE_NAMES[0], null, 1, false, false, false);
+    }
+
+    // renamed() reuses the token's directory name, so it measures little besides the fields a token sets, among them
+    // the hash of its name
+    @Benchmark
+    public TableToken tableTokenRenamed() {
+        return tableToken.renamed(tableNames[i++ & 3]);
     }
 
     private static String copy(String value) {
