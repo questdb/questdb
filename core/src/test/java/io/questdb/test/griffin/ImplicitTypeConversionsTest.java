@@ -148,6 +148,55 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertDoubleAsNarrowInteger_ErrorNamesDoubleValue() throws Exception {
+        // An out-of-range DOUBLE fails with DOUBLE and the value as written in the message, whether it
+        // comes from a constant, a column or a bind variable.
+        // {target column, value, message}
+        final String[][] failures = {
+                {"b", "300.5", "inconvertible value: 300.5 [DOUBLE -> BYTE]"},
+                {"b", "-300.5", "inconvertible value: -300.5 [DOUBLE -> BYTE]"},
+                {"b", "127.5", "inconvertible value: 127.5 [DOUBLE -> BYTE]"},
+                {"s", "40000.5", "inconvertible value: 40000.5 [DOUBLE -> SHORT]"},
+                {"s", "-40000.5", "inconvertible value: -40000.5 [DOUBLE -> SHORT]"},
+                {"i", "1e300", "inconvertible value: 1.0E300 [DOUBLE -> INT]"},
+                {"i", "-1e300", "inconvertible value: -1.0E300 [DOUBLE -> INT]"}
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (d DOUBLE)");
+            execute("CREATE TABLE dst (b BYTE, s SHORT, i INT)");
+            for (String[] failure : failures) {
+                execute("TRUNCATE TABLE src");
+                execute("INSERT INTO src VALUES (" + failure[1] + ")");
+                assertInsertFails("INSERT INTO dst (" + failure[0] + ") VALUES (" + failure[1] + ")", failure[2]);
+                assertInsertFails("INSERT INTO dst (" + failure[0] + ") SELECT d FROM src", failure[2]);
+                bindVariableService.clear();
+                bindVariableService.setDouble(0, Double.parseDouble(failure[1]));
+                assertInsertFails("INSERT INTO dst (" + failure[0] + ") VALUES ($1)", failure[2]);
+            }
+            // What the range checks accept: SHORT and INT truncate before the check, BYTE checks the
+            // value as it is, and NaN and the infinities store NULL, which BYTE and SHORT store as 0.
+            // No failed INSERT above left a row.
+            execute("""
+                    INSERT INTO dst VALUES
+                    (127.0, 32767.9, 2147483647.9),
+                    (-128.0, -32768.9, -2147483647.9),
+                    (NULL::DOUBLE, NULL::DOUBLE, NULL::DOUBLE),
+                    ('Infinity'::DOUBLE, '-Infinity'::DOUBLE, 'Infinity'::DOUBLE)
+                    """);
+            assertQuery("SELECT * FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\ts\ti
+                            127\t32767\t2147483647
+                            -128\t-32768\t-2147483647
+                            0\t0\tnull
+                            0\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testInsertDoubleAsShort_Causes_Overflow_and_throws_exception() throws Exception {
         testInsertCausesException("double", "32768", "short");
     }
@@ -520,6 +569,15 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
     @Test
     public void testInsertZeroShortAsByte_ReturnsExactValue() throws Exception {
         testInsert("short", "0", "byte");
+    }
+
+    private static void assertInsertFails(String sql, String message) throws Exception {
+        try {
+            execute(sql);
+            Assert.fail("INSERT should have failed: " + sql);
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
     }
 
     private void testInsert(String valueType, String value, String targetColumnType, String expectedValue) throws Exception {

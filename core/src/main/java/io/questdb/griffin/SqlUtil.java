@@ -1354,7 +1354,7 @@ public class SqlUtil {
             return 0;
         }
 
-        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.BYTE);
     }
 
     @SuppressWarnings("unused")
@@ -1374,7 +1374,12 @@ public class SqlUtil {
         if (Numbers.isNull(value)) {
             return Numbers.INT_NULL;
         }
-        return implicitCastAsInt((long) value, ColumnType.LONG);
+        // truncates first, so 2147483647.9 stores 2147483647; the error names the value as written
+        final long truncated = (long) value;
+        if (truncated >= Integer.MIN_VALUE && truncated <= Integer.MAX_VALUE) {
+            return (int) truncated;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.INT);
     }
 
     @SuppressWarnings("unused")
@@ -1397,7 +1402,12 @@ public class SqlUtil {
         if (Numbers.isNull(value)) {
             return 0;
         }
-        return implicitCastAsShort((long) value, ColumnType.LONG);
+        // truncates first, so 32767.9 stores 32767; the error names the value as written
+        final long truncated = (long) value;
+        if (truncated >= Short.MIN_VALUE && truncated <= Short.MAX_VALUE) {
+            return (short) truncated;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.SHORT);
     }
 
     @SuppressWarnings("unused")

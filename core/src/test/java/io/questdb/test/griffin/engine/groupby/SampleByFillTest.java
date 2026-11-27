@@ -2192,7 +2192,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                 "NULL::INT", "NULL::LONG", "NULL::DOUBLE", "NULL::STRING", "NULL::CHAR",
                 // ::FLOAT follows PostgreSQL and yields DOUBLE; ::FLOAT4 yields FLOAT
                 "1.5::FLOAT4", "127.5::FLOAT4", "(-128.5)::FLOAT4", "300.5::FLOAT4",
-                "32767.5::FLOAT4", "(-32768.5)::FLOAT4", "2147483647::FLOAT4", "(-2147483648)::FLOAT4",
+                "32767.5::FLOAT4", "(-32768.5)::FLOAT4", "2_147_483_647::FLOAT4", "(-2_147_483_648)::FLOAT4",
                 "65::BYTE", "65::SHORT", "true",
                 "'5'", "'a'", "'s'", "''", "'300'", "'1.5'", "'abc'", "'5'::VARCHAR", "'abc'::VARCHAR", "'abc'::SYMBOL",
                 "'2024-01-05'", "'2024-01-05T00:00:00.000Z'", "'0x01'", "'1.2.3.4'", "'11111111-1111-1111-1111-111111111111'",
@@ -2264,8 +2264,8 @@ public class SampleByFillTest extends AbstractCairoTest {
         // rules INSERT applies, so 1.5 fills 1 instead of reaching DoubleFunction.getLong.
         assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1h FILL(1.5)")
                 .ddl(
-                        "CREATE TABLE t_fv_dbl (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                        "INSERT INTO t_fv_dbl VALUES (1, '2024-01-01T00:00:00.000000Z'), (3, '2024-01-01T02:00:00.000000Z')"
+                        "CREATE TABLE t_fv_dbl (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl VALUES ('2024-01-01T00:00:00.000000Z'), ('2024-01-01T02:00:00.000000Z')"
                 )
                 .timestamp("ts")
                 .noRandomAccess()
@@ -2396,10 +2396,13 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_fv_bad (
-                        b BYTE, s SHORT, l LONG, f FLOAT, dt DATE, g GEOHASH(1c), ip IPv4, ts TIMESTAMP
+                        b BYTE, s SHORT, i INT, l LONG, f FLOAT, dt DATE, g GEOHASH(1c), ip IPv4, ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
             assertInconvertibleFill("first(b)", "300", "inconvertible value: 300 [INT -> BYTE]");
             assertInconvertibleFill("first(s)", "70_000", "inconvertible value: 70000 [INT -> SHORT]");
+            assertInconvertibleFill("first(b)", "300.5", "inconvertible value: 300.5 [DOUBLE -> BYTE]");
+            assertInconvertibleFill("first(s)", "40000.5", "inconvertible value: 40000.5 [DOUBLE -> SHORT]");
+            assertInconvertibleFill("first(i)", "1e300", "inconvertible value: 1.0E300 [DOUBLE -> INT]");
             assertInconvertibleFill("first(b)", "'300'", "inconvertible value: `300` [STRING -> BYTE]");
             assertInconvertibleFill("first(l)", "'abc'", "inconvertible value: `abc` [STRING -> LONG]");
             assertInconvertibleFill("first(f)", "1e300", "inconvertible value: 1.0E300 [DOUBLE -> FLOAT]");
