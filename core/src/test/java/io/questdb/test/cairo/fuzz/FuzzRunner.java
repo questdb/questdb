@@ -505,6 +505,8 @@ public class FuzzRunner {
                 }
 
                 try {
+                    rdr1 = openIfClosed(rdr1, tableName);
+                    rdr2 = openIfClosed(rdr2, tableName);
                     purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, columnPurgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
@@ -2698,6 +2700,18 @@ public class FuzzRunner {
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Returns the reader, or a fresh one in place of a closed one: a pooled reader that fails to go passive in
+     * close() is closed and dropped from the pool.
+     */
+    private @Nullable TableReader openIfClosed(@Nullable TableReader reader, String tableName) {
+        if (reader == null || reader.isOpen()) {
+            return reader;
+        }
+        readerSnapshots.remove(reader);
+        return getReader(tableName);
     }
 
     private String printReaderRows(TableReader reader, LongList rowIds) {
