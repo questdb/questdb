@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.OperationFuture;
@@ -41,11 +42,17 @@ import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.legacy.griffin.LegacyPlannerImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.FaultInjectingConfiguration;
+import io.questdb.test.tools.FaultInjectingConfiguration.FaultMethod;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -212,6 +219,155 @@ public class LegacyPlannerTest extends AbstractCairoTest {
                 Assert.assertSame(planners[0], planningEngine.getLegacyPlanner());
             }
         });
+    }
+
+    @Test
+    public void testConstructorFailureClosesAsOfJoinStolenFilterOnce() throws Exception {
+        assertConstructorFailuresCloseOnce(FaultMethod.SQL_AS_OF_JOIN_LOOK_AHEAD, (config, faultEngine, context, fixture) ->
+                assertConstructorFailureClosesOnce(
+                        config,
+                        faultEngine,
+                        context,
+                        fixture,
+                        "SELECT a.v, b.v FROM t a ASOF JOIN (SELECT * FROM t WHERE owned_long(v) > 1) b",
+                        "Filtered AsOf Join Fast",
+                        """
+                                v\tv1
+                                1\tnull
+                                2\t2
+                                3\t3
+                                """
+                )
+        );
+    }
+
+    @Test
+    public void testConstructorFailureClosesCachedWindowBaseOnce() throws Exception {
+        assertConstructorFailuresCloseOnce(FaultMethod.SQL_WINDOW_STORE_PAGE_SIZE, (config, faultEngine, context, fixture) -> {
+            assertConstructorFailureClosesOnce(
+                    config,
+                    faultEngine,
+                    context,
+                    fixture,
+                    "SELECT id, row_number() OVER (ORDER BY id DESC) FROM owned_table(0)",
+                    "CachedWindowLight",
+                    "id\trow_number\n"
+            );
+            assertConstructorFailureClosesOnce(
+                    config,
+                    faultEngine,
+                    context,
+                    fixture,
+                    "SELECT id, row_number() OVER (ORDER BY id DESC) FROM owned_table(1)",
+                    "CachedWindow\n",
+                    "id\trow_number\n"
+            );
+        });
+    }
+
+    @Test
+    public void testConstructorFailureClosesGroupByBaseOnce() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final String sql = "SELECT sum(id) s, min(id) lo, max(id) hi, count(id) c FROM owned_table(0)";
+            try (OwnershipFixture fixture = new OwnershipFixture(LegacyPlannerImpl.getFunctionFactoryCache(engine));
+                 SqlCompiler compiler = engine.getSqlCompiler()) {
+                fixture.table("id", ColumnType.LONG);
+                fixture.assertCompileOomSweep(compiler, sqlExecutionContext, sql);
+                assertLegacyRows(sql, "s\tlo\thi\tc\nnull\tnull\tnull\t0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFailureClosesLatestByFilterOnce() throws Exception {
+        assertConstructorFailuresCloseOnce(FaultMethod.SQL_PARQUET_CACHE_MEMORY_SIZE, (config, faultEngine, context, fixture) -> {
+            final String latestRows = """
+                    ts\ts\ts2\tv
+                    2024-01-02T00:00:00.000000Z\tb\ty\t2
+                    2024-01-03T00:00:00.000000Z\ta\ty\t3
+                    """;
+            final String allRows = """
+                    ts\ts\ts2\tv
+                    2024-01-01T00:00:00.000000Z\ta\tx\t1
+                    2024-01-02T00:00:00.000000Z\tb\ty\t2
+                    2024-01-03T00:00:00.000000Z\ta\ty\t3
+                    """;
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM t WHERE owned_long(v) > 0 LATEST ON ts PARTITION BY s",
+                    "LatestByDeferredListValuesFiltered", latestRows);
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM t WHERE s IN ('a', 'b') AND owned_long(v) > 0 LATEST ON ts PARTITION BY s",
+                    "LatestByDeferredListValuesFiltered", latestRows);
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM t WHERE owned_long(v) > 0 LATEST ON ts PARTITION BY s, s2",
+                    "LatestByAllSymbolsFiltered", allRows);
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM t WHERE owned_long(v) > 0 LATEST ON ts PARTITION BY s, v",
+                    "LatestByAllFiltered", allRows);
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM (SELECT * FROM ti WHERE s IN ('a', 'b') AND owned_long(v) > 0 LATEST ON ts PARTITION BY s) ORDER BY ts",
+                    "Index backward scan on: s", """
+                            ts\ts\tv
+                            2024-01-02T00:00:00.000000Z\tb\t2
+                            2024-01-03T00:00:00.000000Z\ta\t3
+                            """);
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM ti WHERE s IN (SELECT 'b'::STRING FROM long_sequence(1)) AND owned_long(v) > 0 LATEST ON ts PARTITION BY s",
+                    "LatestBySubQuery", """
+                            ts\ts\tv
+                            2024-01-02T00:00:00.000000Z\tb\t2
+                            """);
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM (SELECT sym, val FROM tc WHERE sym IN (null, 'A') AND owned_long(val::LONG) > 0 LATEST ON ts PARTITION BY sym) ORDER BY val",
+                    "CoveringIndex backup: true", """
+                            sym\tval
+                            \t20.0
+                            A\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstructorFailureClosesLatestByLightBaseOnce() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final String sql = "SELECT * FROM (SELECT * FROM owned_table(0)) LATEST ON ts PARTITION BY k";
+            try (OwnershipFixture fixture = new OwnershipFixture(LegacyPlannerImpl.getFunctionFactoryCache(engine));
+                 SqlCompiler compiler = engine.getSqlCompiler()) {
+                final OwnershipFixture.TableSpec spec = fixture.table("ts", ColumnType.TIMESTAMP, "k", ColumnType.VARCHAR, "id", ColumnType.LONG).timestamp(0);
+                spec.isRandomAccess = true;
+                spec.scanDirection = RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+                fixture.assertMetadataFaultSweep(compiler, sqlExecutionContext, sql);
+                assertLegacyRows(sql, "ts\tk\tid\n");
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFailureClosesSortBaseOnce() throws Exception {
+        assertConstructorFailuresCloseOnce(FaultMethod.SQL_SORT_KEY_MAX_BYTES, (config, faultEngine, context, fixture) -> {
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM owned_table(1) ORDER BY id", "Encode sort\n", "id\n");
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM owned_table(0) ORDER BY id", "Encode sort light\n", "ts\tk\tid\n");
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM owned_table(0) ORDER BY id LIMIT 3", "Encode sort light lo: 3", "ts\tk\tid\n");
+            assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                    "SELECT * FROM owned_table(1) ORDER BY id LIMIT 3", "Encode sort lo: 3", "id\n");
+        });
+    }
+
+    @Test
+    public void testConstructorFailureClosesTopKStolenFilterOnce() throws Exception {
+        assertConstructorFailuresCloseOnce(FaultMethod.SQL_SORT_KEY_MAX_BYTES, (config, faultEngine, context, fixture) ->
+                assertConstructorFailureClosesOnce(config, faultEngine, context, fixture,
+                        "SELECT * FROM t WHERE owned_long(v) > 0 ORDER BY v LIMIT 2", "Async Top K lo: 2", """
+                                ts\ts\ts2\tv
+                                2024-01-01T00:00:00.000000Z\ta\tx\t1
+                                2024-01-02T00:00:00.000000Z\tb\ty\t2
+                                """)
+        );
     }
 
     @Test
@@ -713,6 +869,66 @@ public class LegacyPlannerTest extends AbstractCairoTest {
         });
     }
 
+    // Compiles sql on the legacy planner with the configuration getter of faultMethod failing, expecting the factory
+    // constructor that reads it to throw after adopting its inputs, then checks every owned function and table function
+    // closed once, and that the statement still runs.
+    private static void assertConstructorFailureClosesOnce(
+            FaultInjectingConfiguration config,
+            CairoEngine faultEngine,
+            SqlExecutionContext context,
+            OwnershipFixture fixture,
+            String sql,
+            String planFragment,
+            String expected
+    ) throws Exception {
+        try (SqlCompiler compiler = faultEngine.getSqlCompiler()) {
+            TestUtils.assertContains(printSql(compiler, context, "EXPLAIN " + sql), planFragment);
+            fixture.reset();
+            config.setArmed(true);
+            try {
+                Assert.assertThrows(sql, FaultInjectedException.class, () -> compiler.compile(sql, context));
+            } finally {
+                config.setArmed(false);
+            }
+            fixture.assertAllClosedOnce();
+            TestUtils.assertEquals(sql, expected, printSql(compiler, context, sql));
+        }
+    }
+
+    private static void assertConstructorFailuresCloseOnce(FaultMethod faultMethod, ConstructorFailures failures) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+        final FaultInjectingConfiguration config = new FaultInjectingConfiguration(configuration, faultMethod, null, false);
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine faultEngine = new CairoEngine(config);
+                    SqlExecutionContext context = new SqlExecutionContextImpl(faultEngine, 4)
+                            .with(faultEngine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+                    OwnershipFixture fixture = new OwnershipFixture(LegacyPlannerImpl.getFunctionFactoryCache(faultEngine))
+            ) {
+                faultEngine.execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, s2 SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+                faultEngine.execute("""
+                        INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00', 'a', 'x', 1),
+                        ('2024-01-02T00:00:00', 'b', 'y', 2),
+                        ('2024-01-03T00:00:00', 'a', 'y', 3)
+                        """, context);
+                faultEngine.execute("CREATE TABLE ti (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+                faultEngine.execute("INSERT INTO ti SELECT ts, s, v FROM t", context);
+                faultEngine.execute("CREATE TABLE tc (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+                faultEngine.execute("INSERT INTO tc VALUES ('2024-01-01T00:00:00', 10.0), ('2024-01-01T01:00:00', 20.0)", context);
+                faultEngine.execute("ALTER TABLE tc ADD COLUMN sym SYMBOL", context);
+                faultEngine.execute("INSERT INTO tc VALUES ('2024-01-01T02:00:00', 30.0, 'A')", context);
+                faultEngine.execute("ALTER TABLE tc ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (ts, val)", context);
+                faultEngine.releaseAllWriters();
+                faultEngine.releaseAllReaders();
+                fixture.table("ts", ColumnType.TIMESTAMP, "k", ColumnType.VARCHAR, "id", ColumnType.LONG).timestamp(0).isRandomAccess = true;
+                fixture.table("id", ColumnType.LONG);
+                fixture.setLongRuntimeConstant(false);
+                failures.assertCloseOnce(config, faultEngine, context, fixture);
+            }
+        });
+    }
+
     private static void assertLegacy(boolean expected) throws SqlException {
         final int compilesBefore = COMPILER_FACTORY.getLegacyCompiles();
         try (SqlCompiler compiler = engine.getSqlCompiler();
@@ -786,6 +1002,22 @@ public class LegacyPlannerTest extends AbstractCairoTest {
                 """);
     }
 
+    private static StringSink printSql(SqlCompiler compiler, SqlExecutionContext context, String sql) throws SqlException {
+        final StringSink sink = new StringSink();
+        try (
+                RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            final RecordMetadata metadata = factory.getMetadata();
+            CursorPrinter.println(metadata, sink);
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                CursorPrinter.println(record, metadata, sink);
+            }
+        }
+        return sink;
+    }
+
     private static void printCursor(RecordCursorFactory factory, StringSink sink) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
@@ -802,5 +1034,10 @@ public class LegacyPlannerTest extends AbstractCairoTest {
         assertQuery("SELECT view_name, invalidation_reason, view_status FROM views() ORDER BY view_name")
                 .noLeakCheck()
                 .returns("view_name\tinvalidation_reason\tview_status\n" + expected);
+    }
+
+    @FunctionalInterface
+    private interface ConstructorFailures {
+        void assertCloseOnce(FaultInjectingConfiguration config, CairoEngine faultEngine, SqlExecutionContext context, OwnershipFixture fixture) throws Exception;
     }
 }

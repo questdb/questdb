@@ -136,6 +136,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory imp
     }
 
     @Override
+    public void releaseStolenFilter() {
+        filter = null;
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
     }

@@ -69,6 +69,17 @@ public interface LegacyRecordCursorFactory extends RecordCursorFactory {
         return factory.isStableWithinExecution();
     }
 
+    /**
+     * Hands the filter {@code factory} gave up to a steal, with its compiled form and bind variables, to the factory
+     * that adopts them, so closing {@code factory} no longer frees them. A factory whose halfClose() already gives
+     * them up does nothing.
+     */
+    static void releaseStolenFilter(RecordCursorFactory factory) {
+        if (factory instanceof LegacyRecordCursorFactory legacy) {
+            legacy.releaseStolenFilter();
+        }
+    }
+
     static RecordCursorFactory rewrapOverTopK(RecordCursorFactory factory, RecordCursorFactory topK, RecordMetadata orderedMetadata) {
         return factory instanceof LegacyRecordCursorFactory legacy ? legacy.rewrapOverTopK(topK, orderedMetadata) : topK;
     }
@@ -102,6 +113,9 @@ public interface LegacyRecordCursorFactory extends RecordCursorFactory {
     }
 
     default void halfClose() {
+    }
+
+    default void releaseStolenFilter() {
     }
 
     default RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {

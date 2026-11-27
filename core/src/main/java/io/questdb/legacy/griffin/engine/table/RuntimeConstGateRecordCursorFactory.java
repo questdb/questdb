@@ -226,6 +226,11 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         return base.recordCursorSupportsRandomAccess();
     }
 
+    @Override
+    public void releaseStolenFilter() {
+        filter = null;
+    }
+
     // The gate is a pure filter over a base with identical metadata, so parents may steal the
     // filter and use the base directly - the ASOF/LT join fast paths depend on this because they
     // need the base's time-frame cursor, which the gate does not forward. Guarded on the base's

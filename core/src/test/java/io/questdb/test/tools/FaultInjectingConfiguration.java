@@ -99,9 +99,27 @@ public class FaultInjectingConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public long getSqlParquetCacheMemorySize() {
+        throwIfArmed(FaultMethod.SQL_PARQUET_CACHE_MEMORY_SIZE);
+        return super.getSqlParquetCacheMemorySize();
+    }
+
+    @Override
     public int getSqlSmallPageFrameMinRows() {
         throwIfArmed(FaultMethod.SQL_SMALL_PAGE_FRAME_MIN_ROWS);
         return super.getSqlSmallPageFrameMinRows();
+    }
+
+    @Override
+    public long getSqlSortKeyMaxBytes() {
+        throwIfArmed(FaultMethod.SQL_SORT_KEY_MAX_BYTES);
+        return super.getSqlSortKeyMaxBytes();
+    }
+
+    @Override
+    public int getSqlWindowStorePageSize() {
+        throwIfArmed(FaultMethod.SQL_WINDOW_STORE_PAGE_SIZE);
+        return super.getSqlWindowStorePageSize();
     }
 
     public void setArmed(boolean isArmed) {
@@ -134,6 +152,9 @@ public class FaultInjectingConfiguration extends CairoConfigurationWrapper {
         SQL_AS_OF_JOIN_LOOK_AHEAD,
         SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE,
         SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD,
-        SQL_SMALL_PAGE_FRAME_MIN_ROWS
+        SQL_PARQUET_CACHE_MEMORY_SIZE,
+        SQL_SMALL_PAGE_FRAME_MIN_ROWS,
+        SQL_SORT_KEY_MAX_BYTES,
+        SQL_WINDOW_STORE_PAGE_SIZE
     }
 }

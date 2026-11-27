@@ -300,6 +300,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public void releaseStolenFilter() {
+        filter = null;
+    }
+
+    @Override
     public boolean supportsFilterStealing() {
         return limitLoFunction == null;
     }
