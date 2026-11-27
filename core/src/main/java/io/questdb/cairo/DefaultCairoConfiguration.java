@@ -1707,6 +1707,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getViewCompileBusyRetryTimeout() {
+        return 1000;
+    }
+
+    @Override
     public int getViewLexerPoolCapacity() {
         return 8;
     }
@@ -2077,6 +2082,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlStreamGroupByEnabled() {
         return true;
     }
 

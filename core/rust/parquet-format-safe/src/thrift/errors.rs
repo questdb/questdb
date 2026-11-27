@@ -354,10 +354,7 @@ impl From<TryReserveError> for Error {
 
 impl From<Infallible> for Error {
     fn from(err: Infallible) -> Self {
-        Error::Protocol(ProtocolError {
-            kind: ProtocolErrorKind::InvalidData,
-            message: err.to_string(),
-        })
+        match err {}
     }
 }
 

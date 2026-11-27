@@ -255,6 +255,7 @@ public class QueryRegistry {
         }
         final SqlExecutionLease executionLease = entry.executionLease;
         final MemoryTracker outerTracker = executionContext.getMemoryTracker();
+        final SqlExecutionResources outerResources = executionContext.getExecutionResources();
         boolean leaseMounted = false;
         executionContext.copyCancelledFlagsTo(entry.previousCancelledBinding, entry.previousSimpleCancelledBinding);
         try {
@@ -266,8 +267,12 @@ public class QueryRegistry {
             if (entry.memoryTracker != null) {
                 executionContext.setMemoryTracker(entry.memoryTracker);
             }
+            executionContext.setExecutionResources(entry.resources);
             bindOwner(queryId, entry);
         } catch (Throwable th) {
+            if (executionContext.getExecutionResources() == entry.resources) {
+                executionContext.setExecutionResources(outerResources);
+            }
             try {
                 restoreOwner(queryId, entry);
             } catch (Throwable cleanupFailure) {
@@ -376,6 +381,9 @@ public class QueryRegistry {
             if (memoryTracker != null && executionContext.getMemoryTracker() == memoryTracker) {
                 executionContext.setMemoryTracker(null);
             }
+            if (executionContext.getExecutionResources() == entry.resources) {
+                executionContext.setExecutionResources(null);
+            }
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
@@ -428,7 +436,7 @@ public class QueryRegistry {
             } catch (Throwable th) {
                 cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }
-            cleanupFailure = releaseEntryResources(e, executionContext, null, cleanupFailure);
+            cleanupFailure = releaseEntryResources(e, executionContext, null, null, cleanupFailure);
             if (detached) {
                 try {
                     recycle(e);
@@ -458,7 +466,9 @@ public class QueryRegistry {
     }
 
     /**
-     * Releases the memory tracker and execution lease this registration acquired. A null
+     * Clears the resources that functions registered with this execution, then releases the
+     * memory tracker and execution lease this registration acquired. The resources go first:
+     * their native memory is charged to the tracker. A null
      * entry tracker means the registration inherited an outer workload's tracker, which is
      * left untouched. The context slot is restored only while it still points at our tracker:
      * a concurrently-suspended sibling portal sharing the context may have rebound it.
@@ -467,8 +477,17 @@ public class QueryRegistry {
             Entry e,
             SqlExecutionContext executionContext,
             @Nullable MemoryTracker restoreTracker,
+            @Nullable SqlExecutionResources restoreResources,
             @Nullable Throwable failure
     ) {
+        try {
+            if (executionContext.getExecutionResources() == e.resources) {
+                executionContext.setExecutionResources(restoreResources);
+            }
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        failure = Misc.freeBestEffort(failure, e.resources);
         final MemoryTracker memoryTracker = e.memoryTracker;
         if (memoryTracker != null) {
             try {
@@ -586,6 +605,7 @@ public class QueryRegistry {
         e.referenceCount = 1;
 
         final MemoryTracker outerTracker = executionContext.getMemoryTracker();
+        final SqlExecutionResources outerResources = executionContext.getExecutionResources();
 
         boolean isCancellationBound = false;
         try {
@@ -627,6 +647,7 @@ public class QueryRegistry {
                 executionContext.setMemoryTracker(tracker);
                 e.memoryTracker = tracker;
             }
+            executionContext.setExecutionResources(e.resources);
             if (deferQueryText) {
                 bindOwner(queryId, e);
             }
@@ -662,7 +683,7 @@ public class QueryRegistry {
                     Misc.foldCleanupFailure(th, cleanupFailure);
                 }
             }
-            releaseEntryResources(e, executionContext, outerTracker, th);
+            releaseEntryResources(e, executionContext, outerTracker, outerResources, th);
             boolean retired = false;
             try {
                 retired = e.retire(queryId);
@@ -770,6 +791,7 @@ public class QueryRegistry {
         private final CancellationBinding previousCancelledBinding = new CancellationBinding();
         private final CancellationBinding previousSimpleCancelledBinding = new CancellationBinding();
         private final StringSink query = new StringSink();
+        private final SqlExecutionResources resources = new SqlExecutionResources();
         private long cancelledGeneration;
         private long changedAtNs;
         private SqlExecutionContext executionContext;

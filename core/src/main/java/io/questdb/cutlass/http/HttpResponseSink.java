@@ -93,6 +93,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private int crc = 0;
     private boolean deflateBeforeSend = false;
     private boolean headersSent;
+    // true when the client of the current request asked to close the connection after the response
+    private boolean isConnectionCloseRequested;
     private Socket socket;
     private long total = 0;
     private long totalBytesSent = 0;
@@ -119,6 +121,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         headersSent = false;
         chunkedRequestDone = false;
         deflateBeforeSend = false;
+        isConnectionCloseRequested = false;
         simpleResponse.clear();
         resetZip();
     }
@@ -163,6 +166,14 @@ public class HttpResponseSink implements Closeable, Mutable {
                 break;
             }
         }
+    }
+
+    /**
+     * Tells whether the client of the current request asked to close the connection after
+     * the response, which then carries the Connection: close header.
+     */
+    public void setConnectionCloseRequested(boolean isConnectionCloseRequested) {
+        this.isConnectionCloseRequested = isConnectionCloseRequested;
     }
 
     public void setDeflateBeforeSend(boolean deflateBeforeSend, long bufferSize) {
@@ -681,7 +692,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 putAscii("Content-Type: ").put(contentType).putEOL();
             }
 
-            if (connectionCloseHeader) {
+            if (connectionCloseHeader || isConnectionCloseRequested) {
                 putAscii("Connection: close").putEOL();
             }
         }

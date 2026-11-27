@@ -180,6 +180,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public CharSequence valueBOf(int key) {
         return symbolTable != null ? symbolTable.valueBOf(key) : arg.valueBOf(key);
     }

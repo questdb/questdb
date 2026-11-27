@@ -52,6 +52,25 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMakePlainShapeNeedsAGenerationOnlyToLowerE() throws Exception {
+        assertMemoryLeak(() -> {
+            final TestConfiguration cfg = new TestConfiguration();
+            try (TestTxWriter tx = new TestTxWriter(cfg); TestGeometry geometry = new TestGeometry(tx)) {
+                geometry.firstPieceRowOffset = 0;
+                for (boolean hasGeneration : new boolean[]{false, true}) {
+                    geometry.hasGeneration = hasGeneration;
+                    geometry.e = 100;
+                    Assert.assertTrue("E at the live rows", PartitionCompactionPolicy.isMakePlainShape(tx, geometry, 0));
+                    geometry.e = 109;
+                    Assert.assertEquals("E above the live rows", hasGeneration, PartitionCompactionPolicy.isMakePlainShape(tx, geometry, 0));
+                    geometry.e = 99;
+                    Assert.assertFalse("E below the live rows", PartitionCompactionPolicy.isMakePlainShape(tx, geometry, 0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPressureRanksWasteAndNeverFallsThroughToAge() throws Exception {
         assertMemoryLeak(() -> {
             final TestConfiguration cfg = new TestConfiguration();
@@ -270,6 +289,9 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
 
     private static class TestGeometry extends PartitionGeometry {
         private final TestTxWriter tx;
+        private long e = -1;
+        private long firstPieceRowOffset = 5;
+        private boolean hasGeneration = true;
         private int pieceCount = 1;
         private long writerTxn = 80;
 
@@ -279,7 +301,7 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
 
         @Override
         public long getE(int partitionIndex) {
-            return 100 + tx.deadRows[partitionIndex];
+            return e > -1 ? e : 100 + tx.deadRows[partitionIndex];
         }
 
         @Override
@@ -304,7 +326,7 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
         @Override
         public long getPieceRowOffset(int partitionIndex, int pieceIndex) {
             return switch (pieceIndex) {
-                case 0 -> 5;
+                case 0 -> firstPieceRowOffset;
                 case 1 -> 75;
                 default -> 0;
             };
@@ -328,6 +350,11 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
         @Override
         public long getWriterTxn(int partitionIndex) {
             return writerTxn;
+        }
+
+        @Override
+        public boolean hasGenerationForNextPublish(int partitionIndex, int pieceCount) {
+            return hasGeneration;
         }
     }
 

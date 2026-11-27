@@ -5329,7 +5329,30 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         );
                         context.setParallelGroupByEnabled(true);
                         context.changePageFrameSizes(1, 1);
-                        String query = "SELECT a, b, sum(v) s FROM t GROUP BY GROUPING SETS ((a, b), (a), ())";
+                        String query = "SELECT a, b, sum(CASE WHEN test_latched_counter() THEN v ELSE v END) s " +
+                                "FROM t GROUP BY GROUPING SETS ((a, b), (a), ())";
+                        final Thread ownerThread = Thread.currentThread();
+                        // Hold the owner at its first row until a worker starts filling a map to merge.
+                        final CountDownLatch workerAggregating = new CountDownLatch(1);
+                        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                            @Override
+                            public boolean onGet(Record record, int count) {
+                                if (Thread.currentThread() != ownerThread) {
+                                    workerAggregating.countDown();
+                                } else if (workerAggregating.getCount() > 0) {
+                                    try {
+                                        Assert.assertTrue(
+                                                "timed out waiting for worker aggregation",
+                                                workerAggregating.await(10, TimeUnit.SECONDS)
+                                        );
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        throw new AssertionError("interrupted waiting for worker aggregation", e);
+                                    }
+                                }
+                                return true;
+                            }
+                        });
                         try (RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory()) {
                             Assert.assertTrue(factory.getBaseFactory() instanceof AsyncGroupingSetsRecordCursorFactory);
                             try (RecordCursor cursor = factory.getCursor(context)) {
@@ -5354,6 +5377,8 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals(33, rows);
                             }
+                        } finally {
+                            TestLatchedCounterFunctionFactory.reset(null);
                         }
                     }
                 }, configuration, LOG);
