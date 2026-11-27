@@ -25,7 +25,7 @@
 //! 64-byte column chunk descriptor stored inside each row group block.
 
 use crate::error::ParquetMetaResult;
-use crate::types::{decode_stat_sizes, Codec, EncodingMask, StatFlags};
+use crate::types::{decode_stat_sizes, ChunkFlags, Codec, EncodingMask, StatFlags};
 
 /// On-disk layout of a column chunk (64 bytes).
 ///
@@ -38,8 +38,8 @@ pub struct ColumnChunkRaw {
     pub encodings: u8,
     pub stat_flags: u8,
     pub stat_sizes: u8,
-    /// Reserved for layout preservation. Must be zero.
-    pub _reserved: u32,
+    /// See [`ChunkFlags`].
+    pub flags: u32,
     pub num_values: u64,
     pub byte_range_start: u64,
     pub total_compressed: u64,
@@ -59,7 +59,7 @@ impl ColumnChunkRaw {
             encodings: 0,
             stat_flags: 0,
             stat_sizes: 0,
-            _reserved: 0,
+            flags: 0,
             num_values: 0,
             byte_range_start: 0,
             total_compressed: 0,
@@ -78,6 +78,11 @@ impl ColumnChunkRaw {
     /// Returns the encoding bitmask.
     pub const fn encodings(&self) -> EncodingMask {
         EncodingMask(self.encodings)
+    }
+
+    /// Returns the chunk flags bitfield.
+    pub const fn flags(&self) -> ChunkFlags {
+        ChunkFlags(self.flags)
     }
 
     /// Returns the stat flags bitmask.
@@ -109,7 +114,7 @@ mod tests {
         assert_eq!(c.encodings(), EncodingMask::new());
         assert_eq!(c.stat_flags(), StatFlags::new());
         assert_eq!(c.stat_sizes(), (0, 0));
-        assert_eq!(c._reserved, 0);
+        assert_eq!(c.flags(), ChunkFlags::new());
         assert_eq!(c.num_values, 0);
         assert_eq!(c.byte_range_start, 0);
         assert_eq!(c.total_compressed, 0);

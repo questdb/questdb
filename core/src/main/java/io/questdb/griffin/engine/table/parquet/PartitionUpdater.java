@@ -244,6 +244,19 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
+     * Gives a rewrite the {@code _pm} of the file it reads, so that the row groups it copies keep the ASCII flags of
+     * their VARCHAR chunks. Without it a copied chunk has no flag: the flag of a whole column, in the parquet footer
+     * or in the old header, flags no chunk. Call after {@link #of}, before the first row group.
+     *
+     * @param parquetMetaAddr     address of the mapped {@code _pm}
+     * @param parquetMetaFileSize size of the {@code _pm} snapshot that describes the file, which the map covers
+     */
+    public void setSourceParquetMeta(long parquetMetaAddr, long parquetMetaFileSize) {
+        assert ptr != 0;
+        setSourceParquetMeta(ptr, parquetMetaAddr, parquetMetaFileSize);
+    }
+
+    /**
      * Sets the target schema for the output file. Call this after {@link #of}
      * when the table schema differs from the source parquet file schema
      * (e.g., after ADD COLUMN or DROP COLUMN).
@@ -386,6 +399,8 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private static native void setColumnTopRowLimit(long impl, long limit) throws CairoException;
+
+    private static native void setSourceParquetMeta(long impl, long parquetMetaAddr, long parquetMetaFileSize) throws CairoException;
 
     private static native void setTargetSchema(
             long impl,
