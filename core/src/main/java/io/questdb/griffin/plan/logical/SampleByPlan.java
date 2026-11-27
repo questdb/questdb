@@ -38,7 +38,6 @@ public final class SampleByPlan extends GroupingPlan {
     private Algorithm algorithm;
     private BoundExpression bucket;
     private BoundExpression from;
-    private boolean isBaseCopied;
     private boolean isFillInput;
     private boolean isJoinInput;
     private boolean isTimestampRequired = true;
@@ -53,7 +52,6 @@ public final class SampleByPlan extends GroupingPlan {
         algorithm = null;
         bucket = null;
         from = null;
-        isBaseCopied = false;
         isFillInput = false;
         isJoinInput = false;
         isTimestampRequired = true;
@@ -121,16 +119,6 @@ public final class SampleByPlan extends GroupingPlan {
     }
 
     /**
-     * True when the generator copies the rows of the base: a fill that reads the rows of the keyed SAMPLE BY cursor
-     * scans their keys first and then rewinds the cursor, which rewinds the base and would run a stream GROUP BY under
-     * it again. The copy replays the rows while they fit the query memory limit; past it, the base computes them again.
-     */
-    public boolean isBaseCopied() {
-        checkPhysicalRead("SampleByPlan.isBaseCopied");
-        return isBaseCopied;
-    }
-
-    /**
      * True when a FILL the clause states fills the buckets this node emits.
      */
     public boolean isFillInput() {
@@ -157,10 +145,6 @@ public final class SampleByPlan extends GroupingPlan {
 
     public void setBucket(BoundExpression bucket) {
         this.bucket = bucket;
-    }
-
-    public void setBaseCopied(boolean isBaseCopied) {
-        this.isBaseCopied = isBaseCopied;
     }
 
     public void setFrom(BoundExpression from) {
@@ -194,7 +178,6 @@ public final class SampleByPlan extends GroupingPlan {
         super.visitFacts(visitor);
         visitor.facts("fillModes", fillModes);
         visitor.fact("algorithm", algorithm);
-        visitor.fact("isBaseCopied", isBaseCopied);
         visitor.fact("isFillInput", isFillInput);
         visitor.fact("isJoinInput", isJoinInput);
         visitor.fact("isTimestampRequired", isTimestampRequired);

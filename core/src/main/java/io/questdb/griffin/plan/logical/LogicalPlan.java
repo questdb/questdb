@@ -33,18 +33,32 @@ import io.questdb.griffin.SqlException;
 public abstract sealed class LogicalPlan implements PlanFactSource
         permits UnaryPlan, DomainReadPlan, FunctionSourcePlan, HorizonJoinPlan, JoinPlan, ScanPlan, SetOperationPlan, WindowJoinPlan {
     private final OutputSchema output = new OutputSchema();
+    private boolean isOutputCopyJoinBudgeted;
+    private RowCopy outputCopy;
     private int position = -1;
     private PlanStage stage;
 
     @Override
     public void clear() {
         output.clearAndTrim();
+        isOutputCopyJoinBudgeted = false;
+        outputCopy = null;
         position = -1;
         stage = null;
     }
 
     public OutputSchema getOutput() {
         return output;
+    }
+
+    /**
+     * The copy of the node's rows its consumer reads, which operator planning records for a consumer that reads the
+     * rows again or by row id; null when the consumer reads the node's own cursor. The copy is the node's factory as its
+     * consumer sees it, so the physical properties of the node are those of the copy.
+     */
+    public RowCopy getOutputCopy() {
+        checkPhysicalRead("LogicalPlan.outputCopy");
+        return outputCopy;
     }
 
     public int getPosition() {
@@ -62,6 +76,16 @@ public abstract sealed class LogicalPlan implements PlanFactSource
     public abstract LogicalPlan inputAt(int index);
 
     public abstract int inputCount();
+
+    /**
+     * Whether the join budget bounds the memory of {@link #getOutputCopy()}, as it does for a copy a join reads of rows
+     * computed once; a copy of rows a stream GROUP BY computes again stands in for the map of a hash GROUP BY, which
+     * only the query memory limit bounds.
+     */
+    public boolean isOutputCopyJoinBudgeted() {
+        checkPhysicalRead("LogicalPlan.isOutputCopyJoinBudgeted");
+        return isOutputCopyJoinBudgeted;
+    }
 
     public abstract void replaceInput(int index, LogicalPlan input);
 
@@ -82,6 +106,11 @@ public abstract sealed class LogicalPlan implements PlanFactSource
         return rewriter.rewrite(this);
     }
 
+    public void setOutputCopy(RowCopy outputCopy, boolean isJoinBudgeted) {
+        this.outputCopy = outputCopy;
+        this.isOutputCopyJoinBudgeted = isJoinBudgeted;
+    }
+
     public void setPosition(int position) {
         this.position = position;
     }
@@ -93,6 +122,8 @@ public abstract sealed class LogicalPlan implements PlanFactSource
     @Override
     public void visitFacts(PlanFactRecorder visitor) {
         visitor.output("output", output);
+        visitor.fact("outputCopy", outputCopy);
+        visitor.fact("isOutputCopyJoinBudgeted", isOutputCopyJoinBudgeted);
         visitor.fact("position", position);
     }
 

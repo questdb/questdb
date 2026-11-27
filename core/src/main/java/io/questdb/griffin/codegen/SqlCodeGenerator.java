@@ -71,6 +71,7 @@ import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanTables;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.RowCopy;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
@@ -344,6 +345,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Puts the copy of the rows the consumer of the plan reads, see {@link LogicalPlan#getOutputCopy()}, over the
+     * factory of the plan's own operator. Consumes the factory on entry, including on failure.
+     */
+    private RecordCursorFactory copyRows(LogicalPlan plan, RecordCursorFactory factory) {
+        final RowCopy copy = plan.getOutputCopy();
+        return copy == null ? factory : RowCopies.copy(configuration, asm, entityColumnFilter, factory, copy, plan.isOutputCopyJoinBudgeted());
+    }
+
+    /**
      * Builds a MASTER_SUFFIX LIMIT over the join, whose master scan's parallel filter wraps its LIMIT count in the count
      * the LIMIT sets. A master scan without a parallel filter reads all master rows, and the LIMIT runs the join once.
      */
@@ -397,7 +407,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateMasterSuffixLimit(frame, limit, executionContext);
             }
             case LimitPlan limit when input instanceof DistinctPlan distinct ->
-                    base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
+                    base = copyRows(distinct, aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext));
             default -> base = generate(frame, input, executionContext);
         }
         if (plan instanceof FilterPlan filter) {
@@ -443,9 +453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {
                     return base;
                 }
-                final RecordCursorFactory limited = limit.getApplication() == LimitPlan.Application.COPIED_INPUT
-                        ? RowCopies.copy(configuration, asm, entityColumnFilter, base, false, false, false) : base;
-                return new LimitRecordCursorFactory(limited, instantiateLimit(limit, limited, executionContext), null);
+                return new LimitRecordCursorFactory(base, instantiateLimit(limit, base, executionContext), null);
             }
             default -> {
                 final IllegalStateException failure = new IllegalStateException("unknown logical operation");
@@ -522,7 +530,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SetOperationPlan operation -> setOperationGenerator.generate(frame, operation, executionContext);
             default -> generateUnary(frame, plan, executionContext);
         };
-        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, factory) : factory;
+        final RecordCursorFactory copied = copyRows(plan, factory);
+        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, copied) : copied;
     }
 
     /**

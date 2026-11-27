@@ -350,9 +350,7 @@ final class SortFactoryGenerator {
         if (sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_TOP_K || sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K) {
             return generateParallelTopK(frame, sort, limit, executionContext);
         }
-        final RecordCursorFactory input = codeGenerator.generate(frame, sort.getChild(), executionContext);
-        final RecordCursorFactory base = limit.getApplication() == LimitPlan.Application.COPIED_INPUT
-                ? RowCopies.copy(configuration, asm, entityColumnFilter, input, false, false, false) : input;
+        final RecordCursorFactory base = codeGenerator.generate(frame, sort.getChild(), executionContext);
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
             return generate(frame, sort, base, null);
         }

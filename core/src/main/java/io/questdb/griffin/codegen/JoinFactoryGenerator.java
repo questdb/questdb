@@ -591,13 +591,6 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes the slave on entry, including failure.
-     */
-    private RecordCursorFactory materialize(RecordCursorFactory slave) {
-        return RowCopies.copy(configuration, asm, entityColumnFilter, slave, false, true, false);
-    }
-
-    /**
      * Consumes the raw factory, including failure. Maps the bound output onto the full-fat layout: master
      * columns, slave value columns, then slave keys. The full-fat map exposes normalized key types,
      * so widened text and timestamp keys are cast back to their bound types.
@@ -1207,22 +1200,6 @@ final class JoinFactoryGenerator {
                 Misc.free(slave, th);
                 Misc.free(master, th);
                 throw th;
-            }
-            if (step.isSlaveCopied()) {
-                try {
-                    slave = RowCopies.copy(configuration, asm, entityColumnFilter, slave, true, true, false);
-                } catch (Throwable th) {
-                    Misc.free(master, th);
-                    throw th;
-                }
-            }
-            if (step.getAlgorithm() == JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP) {
-                try {
-                    slave = materialize(slave);
-                } catch (Throwable th) {
-                    Misc.free(master, th);
-                    throw th;
-                }
             }
             final OuterCrossJoinRecordCursorFactory.SlaveRows stepSlaveRows = slaveRows;
             slaveRows = null;
